@@ -87,7 +87,7 @@ Detailed specs: [`tasks/M1-foundations.md`](./tasks/M1-foundations.md)
   Done when: every block node has a stable ID preserved across imports and saves (basis for extraction/read-points/sync).
 - [x] **T017 — Read-points** · done · _deps: T016_
   Done when: `read_point` (block ID + offset) is stored on source/topic; set/jump/auto-update-on-extract work; reopening a source resumes near the last read-point.
-- [ ] **T018 — Source reading mode** · _deps: T017, T004_
+- [x] **T018 — Source reading mode · done** · _deps: T017, T004_
   Done when: a clean reader shows title, metadata, body, read-point marker, extracted-span markers, and keyboard actions — pleasant enough to process a long article.
 
 ## M4 — Highlights, extraction & lineage (T019–T026)
@@ -318,6 +318,7 @@ overload management, semantic search, AI, media, reliability, scale.
 
 Record notable completions / decisions here as tasks land (newest first).
 
+- 2026-05-29 - T018 Source reading mode - done. A clean source reader (`apps/web` `SourceReader.tsx` + `reader.css`) shows title, metadata, body, the read-point marker, and extracted-span markers, with keyboard actions for processing a long article. Reader decoration logic lives in `packages/editor` (`reader-decorations.ts`) with unit tests; persistence/queries flow through the typed `window.appApi` surface (contract + db-service), renderer never touches the DB directly. Survives app restart (Playwright `tests/electron/source-reader.spec.ts`).
 - 2026-05-29 - T017 Read-points - done. Sources/topics now carry a `read_point` (block ID + offset) that can be set, jumped to, and auto-updated when an extract is created; reopening a source resumes near the last read-point. Read-point logic lives in `packages/editor` (`read-point.ts`) with the renderer hook in `apps/web` (`useReadPoint.ts`); persistence flows through the typed `window.appApi` surface (channels + contract + ipc + db-service), renderer never touches the DB directly. Survives app restart (Playwright `tests/electron/read-points.spec.ts`).
 - 2026-05-29 - T016 Stable block IDs - done. Every block node now carries a stable ID preserved across imports and saves (the basis for extraction, read-points, and sync). Block-ID generation/normalization lives in `packages/editor` (`block-id.ts`, `blocks.ts`) and the constrained Tiptap schema; IDs survive the ProseMirror JSON round-trip through `packages/core` (`prosemirror.ts`) and the typed `window.appApi` document surface (db-service + contract), and persist across app restart (Playwright `tests/electron/block-ids.spec.ts`). Renderer never touches the DB directly.
 - 2026-05-29 - T015 Tiptap document editor - done. Source bodies render/edit through a constrained Tiptap/ProseMirror schema (headings, paragraphs, bold, italic, links, blockquotes, lists, code, hr) in `packages/editor` (`schema.ts`, `serialize.ts`, `SourceEditor.tsx`); edits serialize to ProseMirror JSON and save/reload via the typed `window.appApi` document surface. Renderer never touches the DB directly.

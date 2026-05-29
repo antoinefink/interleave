@@ -270,6 +270,56 @@ describe("DbService", () => {
     expect(src).not.toMatch(/from "(node-fetch|undici|axios|got)"/);
   });
 
+  // -------------------------------------------------------------------------
+  // Source reader document load (T018) — extracted-span display anchors.
+  // -------------------------------------------------------------------------
+
+  it("getDocument returns the body + the source's extracted block ids (T018)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    // Seed the demo collection: the source has a child extract anchored at the
+    // definition paragraph block (`blk_def_p1`).
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    // Find the seeded source id by type.
+    const source = svc.raw.sqlite
+      .prepare("SELECT id FROM elements WHERE type = 'source' AND parent_id IS NULL LIMIT 1")
+      .get() as { id: string } | undefined;
+    expect(source).toBeDefined();
+
+    const result = svc.getDocument({ elementId: source?.id ?? "" });
+    expect(result.document).not.toBeNull();
+    expect(result.document?.plainText.length).toBeGreaterThan(0);
+    // The extract + sub-extract both anchor at the definition block; the list is
+    // DISTINCT, so it appears exactly once.
+    expect(result.extractedBlockIds).toContain("blk_def_p1");
+    expect(result.extractedBlockIds.filter((b) => b === "blk_def_p1")).toHaveLength(1);
+
+    svc.close();
+  });
+
+  it("getDocument returns [] extracted block ids for a source with no extracts (T018)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { id } = svc.importManualSource({
+      title: "Lonely source",
+      body: "A paragraph with no extracts yet.",
+    });
+    const result = svc.getDocument({ elementId: id });
+    expect(result.document).not.toBeNull();
+    expect(result.extractedBlockIds).toEqual([]);
+    svc.close();
+  });
+
+  it("getDocument returns null body + [] anchors for an unknown element (T018)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const result = svc.getDocument({ elementId: "el_does_not_exist" });
+    expect(result.document).toBeNull();
+    expect(result.extractedBlockIds).toEqual([]);
+    svc.close();
+  });
+
   it("persists the typed AppSettings across a full close + reopen (T011 restart analogue)", () => {
     const first = new DbService();
     first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });

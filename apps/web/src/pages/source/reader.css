@@ -1,0 +1,363 @@
+/* ============================================================
+   Source reading mode (T018) — reading-column + mark styles.
+
+   Reproduces the design kit's reading surface (design/kit/styles/app.css:
+   `.reader`, `.reader p/h3`, `.pbar`, `.readpoint`, `.readpara`, `mark.hl`,
+   `mark.extracted`, `.dimmed`) against the canonical tokens (design/tokens.css)
+   so the reader matches `screen-reader.jsx` pixel-for-pixel in light AND dark.
+   `design/kit` is immutable reference — this is the rebuilt renderer copy. No
+   hard-coded colors; every value derives from a `--token`.
+   ============================================================ */
+
+/* The serif reading column. The Tiptap surface (`SourceEditor`) renders with the
+   `.reader` class, so its paragraphs/headings inherit the read faces below. */
+.reader {
+  max-width: 680px;
+  margin: 0 auto;
+}
+.reader p {
+  font-family: var(--font-read);
+  font-size: 18px;
+  line-height: var(--lh-read);
+  color: var(--text);
+  margin: 0 0 20px;
+}
+.reader h1,
+.reader h2,
+.reader h3 {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  margin: 32px 0 14px;
+  color: var(--text);
+}
+.reader h1 {
+  font-size: var(--t-xl);
+}
+.reader h2 {
+  font-size: var(--t-lg);
+}
+.reader h3 {
+  font-size: var(--t-lg);
+}
+.reader blockquote {
+  border-left: 2px solid var(--border-strong);
+  padding-left: var(--s-4);
+  margin: 0 0 20px;
+  color: var(--text-2);
+  font-family: var(--font-read);
+}
+.reader ul,
+.reader ol {
+  font-family: var(--font-read);
+  font-size: 18px;
+  line-height: var(--lh-read);
+  color: var(--text);
+  margin: 0 0 20px;
+  padding-left: var(--s-7);
+}
+.reader ul {
+  list-style: disc;
+}
+.reader ol {
+  list-style: decimal;
+}
+.reader code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--surface-2);
+  border-radius: var(--r-xs);
+  padding: 0.5px 4px;
+}
+.reader pre {
+  font-family: var(--font-mono);
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--s-4);
+  margin: 0 0 20px;
+  overflow-x: auto;
+}
+.reader pre code {
+  background: none;
+  padding: 0;
+}
+.reader hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 28px 0;
+}
+.reader a {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+.reader a:hover {
+  text-decoration: underline;
+}
+/* The editor surface focus ring is removed; the reading column owns the look. */
+.reader .ProseMirror:focus {
+  outline: none;
+}
+.reader .ProseMirror {
+  min-height: 0;
+}
+
+/* Progress bar driven by the read-point position over total blocks. */
+.pbar {
+  height: 4px;
+  border-radius: var(--r-full);
+  background: var(--border);
+  overflow: hidden;
+}
+.pbar__fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: var(--r-full);
+  transition: width var(--med) var(--ease);
+}
+
+/* Reading marks. */
+mark.hl {
+  background: var(--mark-hl);
+  border-radius: 2px;
+  padding: 0.5px 1px;
+}
+mark.extracted {
+  background: var(--mark-extract);
+  border-bottom: 2px solid var(--mark-extract-bd);
+  border-radius: 2px 2px 0 0;
+  padding: 0.5px 1px;
+  cursor: pointer;
+}
+.dimmed {
+  color: var(--text-3);
+}
+
+/* The read-point divider: a dashed accent rule before the first unread block. */
+.readpoint {
+  display: block;
+  position: relative;
+  height: 0;
+  margin: var(--s-6) 0;
+  border-top: 2px dashed var(--accent);
+}
+.readpoint::before {
+  content: "READ-POINT";
+  position: absolute;
+  left: 0;
+  top: -9px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-on-accent);
+  background: var(--accent);
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+}
+.readpoint__hint {
+  position: absolute;
+  right: 0;
+  top: -8px;
+  font-size: var(--t-2xs);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+}
+
+/* The block the read-point lands on, briefly ringed after a jump. */
+.reader [data-readpoint-block="true"] {
+  scroll-margin-top: 80px;
+}
+
+/* ---------- Reader page chrome (header + action bar + columns) ---------- */
+.reader-screen {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+.reader-header {
+  padding: 18px 28px 14px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.reader-crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-sm);
+  color: var(--text-2);
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.reader-crumb {
+  color: var(--text-2);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  font: inherit;
+  padding: 0;
+}
+.reader-crumb:hover {
+  color: var(--text);
+}
+.reader-crumb--current {
+  color: var(--text);
+  font-weight: 500;
+}
+.reader-crumb-sep {
+  color: var(--text-3);
+  display: inline-flex;
+}
+.reader-title {
+  font-size: var(--t-xl);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0 0 6px;
+  color: var(--text);
+}
+.reader-metarow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.reader-meta {
+  font-size: var(--t-sm);
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.reader-meta--link {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+.reader-meta--link:hover {
+  text-decoration: underline;
+}
+.reader-meta--mono {
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+.reader-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: var(--r-full);
+  background: var(--text-3);
+  display: inline-block;
+  flex: none;
+}
+
+/* Action bar — the kit's row of `.btn`s. */
+.reader-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+.reader-btn {
+  font-family: var(--font-ui);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding: 0 var(--s-5);
+  height: 30px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--fast) var(--ease),
+    border-color var(--fast) var(--ease);
+  user-select: none;
+}
+.reader-btn:hover {
+  background: var(--surface-2);
+  border-color: var(--text-3);
+}
+.reader-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.reader-btn--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-on-accent);
+}
+.reader-btn--primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.reader-btn--danger {
+  color: var(--danger);
+  border-color: var(--border-strong);
+}
+.reader-btn--danger:hover {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+}
+.reader-btn--icon {
+  padding: 0;
+  width: 30px;
+  justify-content: center;
+}
+.reader-btn[disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: default;
+}
+
+/* The scrollable reading page. */
+.reader-page {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0 28px;
+}
+.reader-rail {
+  max-width: 680px;
+  margin: 0 auto;
+  padding: 36px 0 120px;
+}
+.reader-railhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  color: var(--text-3);
+}
+
+/* Loading / empty / desktop-only states. */
+.reader-state {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-3);
+  padding: var(--s-8);
+  text-align: center;
+  color: var(--text-2);
+}
+.reader-state__icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--r-lg);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}

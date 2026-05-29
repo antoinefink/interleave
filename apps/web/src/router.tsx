@@ -21,11 +21,12 @@
  * the Electron shell + native SQLite (T007) and the repositories (T008), reached
  * through the typed `window.appApi` bridge.
  */
-import { createRootRoute, createRoute, createRouter, useParams } from "@tanstack/react-router";
+import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { DesktopStatusPanel } from "./components/DesktopStatusPanel";
 import { InboxScreen } from "./pages/inbox/InboxScreen";
 import { Placeholder } from "./pages/Placeholder";
 import { Settings } from "./pages/Settings";
+import { SourceReader } from "./pages/source/SourceReader";
 import { Shell } from "./shell/Shell";
 
 const rootRoute = createRootRoute({ component: Shell });
@@ -65,20 +66,8 @@ const queueRoute = createRoute({
 const sourceRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/source/$id",
-  component: SourcePlaceholder,
+  component: SourceReader,
 });
-
-function SourcePlaceholder() {
-  const { id } = useParams({ from: "/source/$id" });
-  return (
-    <Placeholder
-      routeId="source"
-      icon="source"
-      title={`Source ${id}`}
-      body="The incremental reading workspace: read-point, highlights, and extraction."
-    />
-  );
-}
 
 const reviewRoute = createRoute({
   getParentRoute: () => rootRoute,

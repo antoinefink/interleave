@@ -289,6 +289,12 @@ export interface DocumentPayload {
 
 export interface DocumentsGetResult {
   readonly document: DocumentPayload | null;
+  /**
+   * Distinct stable block ids in this source that already have a child extract
+   * anchored to them (T018 display markers). M3 only DISPLAYS these; creating
+   * extracts is M4. Derived main-side from the source's child extract locations.
+   */
+  readonly extractedBlockIds: readonly string[];
 }
 
 /** One stable block descriptor (T016), derived renderer-side via `toBlockInputs`. */

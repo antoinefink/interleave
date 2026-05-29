@@ -38,6 +38,16 @@ export {
   resolveReadPointFromSelection,
   resolveReadPointFromState,
 } from "./read-point";
+// Reader display decorations (T018): the read-point divider + extracted-span
+// markers, drawn as ProseMirror decorations (not DOM mutation) and pushed via
+// `setReaderDecorations`.
+export {
+  createReaderDecorationsPlugin,
+  type ReaderDecorationState,
+  ReaderDecorations,
+  readerDecorationsKey,
+  setReaderDecorations,
+} from "./reader-decorations";
 export {
   SourceEditor,
   type SourceEditorChange,

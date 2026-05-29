@@ -485,6 +485,14 @@ export interface DocumentPayload {
 export interface DocumentsGetResult {
   /** The element's document body, or `null` when no document row exists. */
   readonly document: DocumentPayload | null;
+  /**
+   * The DISTINCT stable block ids in this source's body that already have a child
+   * extract anchored to them (derived main-side from the source's child extracts'
+   * `source_location.blockIds`). The reader (T018) renders `mark.extracted`
+   * display markers on these blocks. M3 only DISPLAYS these — creating extracts is
+   * M4. Empty for elements with no extracted anchors (or non-sources).
+   */
+  readonly extractedBlockIds: readonly string[];
 }
 
 /**

@@ -359,8 +359,13 @@ export class DbService {
    * when the element has no document row yet. Read-only; never re-parses the JSON.
    */
   getDocument(request: DocumentsGetRequest): DocumentsGetResult {
-    const doc = this.repos.documents.findById(request.elementId as ElementId);
-    if (!doc) return { document: null };
+    const elementId = request.elementId as ElementId;
+    const doc = this.repos.documents.findById(elementId);
+    if (!doc) return { document: null, extractedBlockIds: [] };
+    // Derive the source's already-extracted block ids from its child extracts'
+    // source locations (lineage stays main-side; the reader only DISPLAYS them in
+    // M3). Distinct + stable-ordered so the reader can mark `mark.extracted`.
+    const extractedBlockIds = this.collectExtractedBlockIds(elementId);
     return {
       document: {
         prosemirrorJson: doc.prosemirrorJson,
@@ -368,7 +373,24 @@ export class DbService {
         schemaVersion: doc.schemaVersion,
         updatedAt: doc.updatedAt,
       },
+      extractedBlockIds,
     };
+  }
+
+  /**
+   * The DISTINCT stable block ids in a source's body that have a child extract
+   * anchored to them (T018 display markers). Reads the source's `source_locations`
+   * (each extract's anchor stores the block ids it covers) — read-only lineage,
+   * computed main-side so the renderer never touches the DB. Returns `[]` for
+   * elements with no anchors (including non-sources).
+   */
+  private collectExtractedBlockIds(sourceElementId: ElementId): string[] {
+    const locations = this.repos.sources.listLocationsForSource(sourceElementId);
+    const seen = new Set<string>();
+    for (const loc of locations) {
+      for (const blockId of loc.blockIds) seen.add(blockId);
+    }
+    return [...seen];
   }
 
   /**

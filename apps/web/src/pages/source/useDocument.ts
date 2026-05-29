@@ -33,6 +33,18 @@ export interface UseDocumentResult {
    * document when the element has no body yet (so the editor always has content).
    */
   readonly initialDoc: unknown;
+  /**
+   * The latest known ProseMirror JSON — the loaded body, then the most recent
+   * edited body. The reader (T018) derives the progress bar + read-point divider
+   * position from this. `null` while loading.
+   */
+  readonly currentDoc: unknown;
+  /**
+   * Distinct stable block ids in this source that already have a child extract
+   * anchored to them (T018 display markers). M3 DISPLAYS them; creating extracts
+   * is M4. Empty until the document has loaded (or when the source has none).
+   */
+  readonly extractedBlockIds: readonly string[];
   /** The persisted plain-text mirror most recently loaded/saved. */
   readonly plainText: string;
   /** Whether a save is in flight. */
@@ -56,6 +68,8 @@ export interface UseDocumentResult {
 export function useDocument(elementId: string | null | undefined): UseDocumentResult {
   const [status, setStatus] = useState<DocumentStatus>(isDesktop() ? "loading" : "no-desktop");
   const [initialDoc, setInitialDoc] = useState<unknown>(null);
+  const [currentDoc, setCurrentDoc] = useState<unknown>(null);
+  const [extractedBlockIds, setExtractedBlockIds] = useState<readonly string[]>([]);
   const [plainText, setPlainText] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -84,7 +98,10 @@ export function useDocument(elementId: string | null | undefined): UseDocumentRe
       .then((result) => {
         if (cancelled) return;
         const doc: DocumentPayload | null = result.document;
-        setInitialDoc(doc?.prosemirrorJson ?? emptyDoc());
+        const loaded = doc?.prosemirrorJson ?? emptyDoc();
+        setInitialDoc(loaded);
+        setCurrentDoc(loaded);
+        setExtractedBlockIds(result.extractedBlockIds);
         setPlainText(doc?.plainText ?? "");
         setStatus("ready");
       })
@@ -101,6 +118,9 @@ export function useDocument(elementId: string | null | undefined): UseDocumentRe
   const persist = useCallback(async (change: SourceEditorChange) => {
     const id = idRef.current;
     if (!id || !isDesktop()) return;
+    // Track the latest body so the reader's progress bar / read-point divider
+    // reflect edits without a reload.
+    setCurrentDoc(change.prosemirrorJson);
     setSaving(true);
     try {
       // Derive the stable block list from the document's `blockId` attributes
@@ -150,5 +170,15 @@ export function useDocument(elementId: string | null | undefined): UseDocumentRe
   // Flush any pending save when unmounting so an edit is never lost.
   useEffect(() => flush, [flush]);
 
-  return { status, initialDoc, plainText, saving, error, save, flush };
+  return {
+    status,
+    initialDoc,
+    currentDoc,
+    extractedBlockIds,
+    plainText,
+    saving,
+    error,
+    save,
+    flush,
+  };
 }

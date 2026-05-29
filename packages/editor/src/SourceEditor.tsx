@@ -15,14 +15,20 @@
  *                    renderer's `useDocument` hook persists it via
  *                    `documents.save`. `plainText` is computed here with the
  *                    shared {@link toPlainText} so the stored mirror matches.
+ *  - `onEditorReady` — gives the host the live Tiptap {@link Editor} instance so
+ *                    it can drive read-point capture/jump (T017/T018) without the
+ *                    reader reaching into ProseMirror internals itself. Called
+ *                    with the instance when it mounts and `null` when it tears
+ *                    down. Read-point math still lives in `@interleave/editor`.
  *
  * Styling is class-based (`.reader` faces from the app stylesheet, derived from
  * the design tokens) — this component hard-codes no colors or pixel values.
  */
 
-import type { Content } from "@tiptap/core";
+import type { Content, Editor, Extensions } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
+import { ReaderDecorations } from "./reader-decorations";
 import { interleaveExtensions } from "./schema";
 import { emptyDoc, toPlainText } from "./serialize";
 
@@ -45,6 +51,20 @@ export interface SourceEditorProps {
   readonly debounceMs?: number;
   /** Optional extra class on the editor surface (composed with `.reader`). */
   readonly className?: string;
+  /**
+   * Receive the live Tiptap {@link Editor} instance (or `null` on teardown) so
+   * the host can drive read-point capture/jump (T017/T018). The host must not use
+   * it to reach into ProseMirror directly — pass it to the `@interleave/editor`
+   * read-point helpers.
+   */
+  readonly onEditorReady?: (editor: Editor | null) => void;
+  /**
+   * Install the reader display-decoration plugin ({@link ReaderDecorations}) so
+   * the host can overlay the read-point divider + extracted-span markers via
+   * `setReaderDecorations` (T018). View-only — it adds no schema/marks. Defaults
+   * to `false` (the plain editor); the source reader sets it `true`.
+   */
+  readonly readerDecorations?: boolean;
 }
 
 /**
@@ -57,24 +77,37 @@ export function SourceEditor({
   onChange,
   debounceMs = 400,
   className,
+  onEditorReady,
+  readerDecorations = false,
 }: SourceEditorProps): React.ReactElement {
   // Keep the latest onChange without re-creating the editor when it changes.
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onEditorReadyRef = useRef(onEditorReady);
+  onEditorReadyRef.current = onEditorReady;
   const debounceRef = useRef(debounceMs);
   debounceRef.current = debounceMs;
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Compose the constrained schema with the optional reader-decoration plugin.
+  const extensions: Extensions = useMemo(
+    () => (readerDecorations ? [...interleaveExtensions, ReaderDecorations] : interleaveExtensions),
+    [readerDecorations],
+  );
+
   const editor = useEditor({
-    extensions: interleaveExtensions,
+    extensions,
     // `initialDoc` is ProseMirror JSON (or empty when absent); fall back to a
     // single empty paragraph so the editor always has valid content.
     content: ((initialDoc as Content | null | undefined) ?? emptyDoc()) as Content,
     editable,
     // The renderer owns persistence; the editor never reaches the DB.
-    onUpdate: ({ editor: instance }) => {
+    onUpdate: ({ editor: instance, transaction }) => {
       const emit = onChangeRef.current;
       if (!emit) return;
+      // Ignore metadata-only transactions (e.g. the reader-decoration push) — only
+      // a real document change is worth persisting.
+      if (!transaction.docChanged) return;
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
         const json = instance.getJSON();
@@ -87,6 +120,13 @@ export function SourceEditor({
   useEffect(() => {
     editor?.setEditable(editable);
   }, [editor, editable]);
+
+  // Hand the live instance to the host (read-point capture/jump) and clear it on
+  // teardown so the host never holds a stale editor.
+  useEffect(() => {
+    onEditorReadyRef.current?.(editor ?? null);
+    return () => onEditorReadyRef.current?.(null);
+  }, [editor]);
 
   // Flush any pending debounce on unmount.
   useEffect(() => {
