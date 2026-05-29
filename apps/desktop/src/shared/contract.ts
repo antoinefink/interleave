@@ -15,7 +15,18 @@
  * `db.query(sql)` channel — the renderer can never run arbitrary SQL.
  */
 
+import {
+  type AppSettings,
+  DAILY_REVIEW_BUDGET_MAX,
+  DAILY_REVIEW_BUDGET_MIN,
+  DESIRED_RETENTION_MAX,
+  DESIRED_RETENTION_MIN,
+  KEYBOARD_LAYOUTS,
+  THEMES,
+} from "@interleave/core";
 import { z } from "zod";
+
+export type { AppSettings } from "@interleave/core";
 
 // Channel names live in their own dependency-free module so the preload can
 // import them without pulling Zod into the sandboxed bundle.
@@ -107,6 +118,55 @@ export type SettingsUpdateRequest = z.infer<typeof SettingsUpdateRequestSchema>;
 export interface SettingsUpdateResult {
   readonly key: string;
   readonly value: SettingValue;
+}
+
+// ---------------------------------------------------------------------------
+// settings.getAll() / settings.updateMany()  (T011 — typed AppSettings)
+// ---------------------------------------------------------------------------
+
+/**
+ * The typed user/domain settings surface (T011). On top of the generic key/value
+ * `settings.get/update`, this exposes the validated `AppSettings` model the
+ * scheduler + `/settings` UI read: defaults fill any unset key on read, and the
+ * patch is validated/clamped on the MAIN side (the renderer is untrusted) before
+ * it reaches SQLite. The authoritative model + bounds live in `@interleave/core`.
+ */
+
+/** `settings.getAll()` takes no arguments. */
+export const SettingsGetAllRequestSchema = z.void();
+
+export interface SettingsGetAllResult {
+  /** The complete, validated settings (unset keys resolved to defaults). */
+  readonly settings: AppSettings;
+}
+
+/**
+ * A partial settings patch. Every field is optional + bounded; the main side
+ * re-coerces with `@interleave/core` so even a malformed renderer payload cannot
+ * write an out-of-range value. Bounds mirror the core model so a bad value is
+ * rejected at the boundary rather than silently clamped.
+ */
+export const SettingsPatchSchema = z
+  .object({
+    dailyReviewBudget: z.number().int().min(DAILY_REVIEW_BUDGET_MIN).max(DAILY_REVIEW_BUDGET_MAX),
+    defaultDesiredRetention: z.number().min(DESIRED_RETENTION_MIN).max(DESIRED_RETENTION_MAX),
+    defaultTopicIntervalDays: z.number().int().positive(),
+    defaultSourcePriority: z.number().min(0).max(1),
+    keyboardLayout: z.enum(KEYBOARD_LAYOUTS),
+    theme: z.enum(THEMES),
+  })
+  .partial()
+  .strict();
+
+export const SettingsUpdateManyRequestSchema = z.object({
+  /** The partial patch to apply; at least one field should be present. */
+  patch: SettingsPatchSchema,
+});
+export type SettingsUpdateManyRequest = z.infer<typeof SettingsUpdateManyRequestSchema>;
+
+export interface SettingsUpdateManyResult {
+  /** The full settings after the patch is applied. */
+  readonly settings: AppSettings;
 }
 
 // ---------------------------------------------------------------------------
@@ -272,6 +332,10 @@ export interface AppApi {
     get(request?: SettingsGetRequest): Promise<SettingsGetResult>;
     /** Create/overwrite one setting; persists to SQLite. */
     update(request: SettingsUpdateRequest): Promise<SettingsUpdateResult>;
+    /** Read the complete, validated typed {@link AppSettings} (T011). */
+    getAll(): Promise<SettingsGetAllResult>;
+    /** Apply a validated partial patch to the typed settings (T011). */
+    updateMany(request: SettingsUpdateManyRequest): Promise<SettingsUpdateManyResult>;
   };
   readonly inspector: {
     /** All live element summaries (read-only) — drives the selection picker. */

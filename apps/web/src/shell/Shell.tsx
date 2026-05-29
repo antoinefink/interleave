@@ -26,6 +26,7 @@ import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-route
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { Inspector } from "../components/inspector/Inspector";
+import { appApi, isDesktop } from "../lib/appApi";
 import { toggleTheme as applyToggleTheme, getStoredTheme, type Theme } from "../theme";
 import { CheatSheet } from "./CheatSheet";
 import { CommandPalette } from "./CommandPalette";
@@ -242,7 +243,15 @@ export function Shell() {
   };
 
   const onToggleTheme = () => {
-    setTheme(applyToggleTheme());
+    const next = applyToggleTheme();
+    setTheme(next);
+    // Theme is a SQLite-backed setting (T011); persist the choice through the
+    // typed bridge so it survives an app restart and stays in sync with
+    // /settings. Best-effort — the in-memory + localStorage state already drives
+    // the UI if the bridge call fails.
+    if (isDesktop()) {
+      void appApi.updateAppSettings({ patch: { theme: next } }).catch(() => {});
+    }
   };
 
   useShellShortcuts({

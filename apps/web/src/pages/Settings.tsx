@@ -1,0 +1,335 @@
+/**
+ * Settings screen (T011).
+ *
+ * The real preferences surface, rebuilt from `design/kit/app/screen-settings.jsx`
+ * for React 19 + Tailwind v4. It reads and writes the typed user/domain settings
+ * (daily review budget, desired retention, default topic interval, default source
+ * priority, keyboard layout, theme) THROUGH the typed `window.appApi`
+ * (`settings.getAll()` / `settings.updateMany()`) — the renderer never touches
+ * SQLite. Every change persists immediately to the SQLite `settings` table and
+ * survives an app restart; the same values are what the scheduler reads.
+ *
+ * Pure UI: no domain logic lives here. Validation/clamping/defaults are owned by
+ * `@interleave/core` (and re-validated on the main side); this component only
+ * orchestrates UI state + optimistic updates and awaits the IPC promises. Outside
+ * Electron (browser/Vite-only) it shows a clear "desktop only" state.
+ */
+
+import { useCallback, useEffect, useState } from "react";
+import { Icon } from "../components/Icon";
+import { type AppSettings, appApi, isDesktop, type ThemePreference } from "../lib/appApi";
+import { applyTheme } from "../theme";
+
+/** Local fallback defaults mirroring `@interleave/core`'s DEFAULT_APP_SETTINGS. */
+const FALLBACK_SETTINGS: AppSettings = {
+  dailyReviewBudget: 60,
+  defaultDesiredRetention: 0.9,
+  defaultTopicIntervalDays: 7,
+  defaultSourcePriority: 0.375,
+  keyboardLayout: "qwerty",
+  theme: "dark",
+};
+
+const PRIORITY_LABELS = ["A", "B", "C", "D"] as const;
+type PriorityLabel = (typeof PRIORITY_LABELS)[number];
+const PRIORITY_VALUE: Record<PriorityLabel, number> = { A: 0.875, B: 0.625, C: 0.375, D: 0.125 };
+
+/** Numeric priority → coarse A/B/C/D label (mirrors core/priority). */
+function priorityToLabel(priority: number): PriorityLabel {
+  const v = Math.min(1, Math.max(0, priority));
+  if (v >= 0.75) return "A";
+  if (v >= 0.5) return "B";
+  if (v >= 0.25) return "C";
+  return "D";
+}
+
+const TOPIC_INTERVAL_OPTIONS = [3, 7, 14, 30] as const;
+const KEYBOARD_LAYOUTS: { value: AppSettings["keyboardLayout"]; label: string }[] = [
+  { value: "qwerty", label: "QWERTY" },
+  { value: "dvorak", label: "Dvorak" },
+  { value: "vim", label: "Vim" },
+];
+
+function SettingRow({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-5 border-border-faint border-b py-3.5 last:border-b-0">
+      <div className="min-w-0">
+        <div className="font-medium text-base text-text">{label}</div>
+        {hint ? <div className="mt-0.5 text-sm text-text-3">{hint}</div> : null}
+      </div>
+      <div className="flex-none">{children}</div>
+    </div>
+  );
+}
+
+function SectionPanel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="mb-6">
+      <div className="mb-1.5 font-medium text-text-2 text-xs uppercase tracking-wide">{title}</div>
+      <div className="rounded-lg border border-border bg-surface-2 px-4">{children}</div>
+    </section>
+  );
+}
+
+/** A small segmented control matching the kit's `Segmented`. */
+function Segmented<T extends string | number>({
+  value,
+  options,
+  onChange,
+  name,
+}: {
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (value: T) => void;
+  name: string;
+}) {
+  return (
+    <fieldset className="inline-flex rounded-md border border-border bg-surface p-0.5">
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <button
+            key={String(opt.value)}
+            type="button"
+            data-testid={`${name}-option-${opt.value}`}
+            aria-pressed={active}
+            onClick={() => onChange(opt.value)}
+            className={
+              active
+                ? "rounded-[5px] bg-accent px-3 py-1 font-medium text-sm text-text-on-accent"
+                : "rounded-[5px] px-3 py-1 font-medium text-sm text-text-2 hover:text-text"
+            }
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </fieldset>
+  );
+}
+
+export function Settings() {
+  const desktop = isDesktop();
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+
+  // Load the persisted settings from SQLite through the bridge on mount.
+  useEffect(() => {
+    if (!isDesktop()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { settings: loaded } = await appApi.getAppSettings();
+        if (cancelled) return;
+        setSettings(loaded);
+        applyTheme(loaded.theme);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /**
+   * Optimistically apply a patch in the UI, persist it through the bridge, and
+   * reconcile with the validated/coerced result the main side returns. Theme is
+   * applied to <html> immediately so the change is visible.
+   */
+  const patch = useCallback(async (next: Partial<AppSettings>) => {
+    setSettings((prev) => (prev ? { ...prev, ...next } : prev));
+    if (next.theme) applyTheme(next.theme);
+    try {
+      const { settings: confirmed } = await appApi.updateAppSettings({ patch: next });
+      setSettings(confirmed);
+      applyTheme(confirmed.theme);
+      setSavedAt(new Date().toISOString());
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  if (!desktop) {
+    return (
+      <div
+        className="mx-auto h-full w-full max-w-3xl overflow-auto px-7 py-8"
+        data-testid="route-settings"
+      >
+        <header className="mb-6">
+          <h1 className="font-semibold text-2xl text-text tracking-tight">Settings</h1>
+          <p className="mt-1 text-sm text-text-2">Local-first · everything stays on this device</p>
+        </header>
+        <section
+          data-testid="settings-desktop-only"
+          className="rounded-lg border border-border bg-surface-2 p-4"
+        >
+          <p className="text-sm text-text-2">
+            Running in a browser — settings persist in the native SQLite database, which is only
+            available in the Electron desktop app.
+          </p>
+        </section>
+      </div>
+    );
+  }
+
+  const s = settings ?? FALLBACK_SETTINGS;
+  const retentionPct = Math.round(s.defaultDesiredRetention * 100);
+
+  return (
+    <div
+      className="mx-auto h-full w-full max-w-3xl overflow-auto px-7 py-8"
+      data-testid="route-settings"
+    >
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-semibold text-2xl text-text tracking-tight">Settings</h1>
+          <p className="mt-1 text-sm text-text-2">Local-first · everything stays on this device</p>
+        </div>
+        {savedAt ? (
+          <span
+            data-testid="settings-saved"
+            className="inline-flex items-center gap-1.5 rounded-md bg-ok-soft px-2.5 py-1 text-ok text-xs"
+          >
+            <Icon name="check" size={13} />
+            Saved
+          </span>
+        ) : null}
+      </header>
+
+      <SectionPanel title="Review & scheduling">
+        <SettingRow
+          label="Daily review budget"
+          hint="Soft cap on items surfaced per day. Overflow auto-postpones by priority."
+        >
+          <div className="flex items-center gap-2.5">
+            <input
+              type="range"
+              min={10}
+              max={300}
+              step={5}
+              value={s.dailyReviewBudget}
+              data-testid="setting-budget"
+              onChange={(e) => void patch({ dailyReviewBudget: Number(e.target.value) })}
+              className="w-40 accent-accent"
+            />
+            <span
+              data-testid="setting-budget-value"
+              className="w-16 text-right font-mono font-semibold text-sm text-text"
+            >
+              {s.dailyReviewBudget}/day
+            </span>
+          </div>
+        </SettingRow>
+
+        <SettingRow
+          label="Desired retention"
+          hint="FSRS target recall probability. Higher = more reviews, stronger memory."
+        >
+          <div className="flex items-center gap-2.5">
+            <input
+              type="range"
+              min={80}
+              max={97}
+              step={1}
+              value={retentionPct}
+              data-testid="setting-retention"
+              onChange={(e) =>
+                void patch({ defaultDesiredRetention: Number(e.target.value) / 100 })
+              }
+              className="w-40 accent-accent"
+            />
+            <span
+              data-testid="setting-retention-value"
+              className="w-16 text-right font-mono font-semibold text-accent-text text-sm"
+            >
+              {retentionPct}%
+            </span>
+          </div>
+        </SettingRow>
+
+        <SettingRow
+          label="Default topic interval"
+          hint="How often a topic resurfaces on the attention scheduler."
+        >
+          <Segmented
+            name="setting-topic-interval"
+            value={s.defaultTopicIntervalDays}
+            onChange={(value) => void patch({ defaultTopicIntervalDays: value })}
+            options={TOPIC_INTERVAL_OPTIONS.map((d) => ({ value: d, label: `${d}d` }))}
+          />
+        </SettingRow>
+
+        <SettingRow
+          label="Default source priority"
+          hint="Priority assigned to newly imported sources."
+        >
+          <div className="flex items-center gap-1.5" data-testid="setting-priority">
+            {PRIORITY_LABELS.map((p) => {
+              const active = priorityToLabel(s.defaultSourcePriority) === p;
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  data-testid={`setting-priority-${p}`}
+                  aria-pressed={active}
+                  onClick={() => void patch({ defaultSourcePriority: PRIORITY_VALUE[p] })}
+                  className={
+                    active
+                      ? "inline-flex min-w-9 items-center justify-center gap-1.5 rounded-md border border-accent-soft-bd bg-accent-soft px-2 py-1 font-medium text-accent-text text-sm"
+                      : "inline-flex min-w-9 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 font-medium text-sm text-text-2 hover:text-text"
+                  }
+                >
+                  <span
+                    className="size-2 rounded-full"
+                    style={{ background: `var(--prio-${p.toLowerCase()})` }}
+                  />
+                  {p}
+                </button>
+              );
+            })}
+          </div>
+        </SettingRow>
+      </SectionPanel>
+
+      <SectionPanel title="Interface">
+        <SettingRow label="Theme" hint="Light or dark.">
+          <Segmented
+            name="setting-theme"
+            value={s.theme}
+            onChange={(value) => void patch({ theme: value as ThemePreference })}
+            options={[
+              { value: "light", label: "Light" },
+              { value: "dark", label: "Dark" },
+            ]}
+          />
+        </SettingRow>
+
+        <SettingRow label="Keyboard layout" hint="Affects default shortcut bindings.">
+          <Segmented
+            name="setting-keyboard"
+            value={s.keyboardLayout}
+            onChange={(value) => void patch({ keyboardLayout: value })}
+            options={KEYBOARD_LAYOUTS}
+          />
+        </SettingRow>
+      </SectionPanel>
+
+      {error ? (
+        <p data-testid="settings-error" className="mt-2 text-danger text-sm">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}

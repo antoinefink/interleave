@@ -24,6 +24,7 @@
 import { createRootRoute, createRoute, createRouter, useParams } from "@tanstack/react-router";
 import { DesktopStatusPanel } from "./components/DesktopStatusPanel";
 import { Placeholder } from "./pages/Placeholder";
+import { Settings } from "./pages/Settings";
 import { Shell } from "./shell/Shell";
 
 const rootRoute = createRootRoute({ component: Shell });
@@ -118,21 +119,18 @@ const settingsRoute = createRoute({
 });
 
 /**
- * Settings route. The full settings UI lands with T011; for now it renders the
- * placeholder plus the desktop status panel, which is the renderer's first real
- * consumer of the typed `window.appApi` bridge (health, DB status, and a
- * persisted setting that survives an app restart).
+ * Settings route (T011). Renders the real preferences surface — daily review
+ * budget, desired retention, default topic interval, default source priority,
+ * keyboard layout, and theme — all read/written through the typed
+ * `window.appApi` (`settings.getAll()` / `settings.updateMany()`) and persisted
+ * in the SQLite `settings` table. The desktop status panel (T007) stays below as
+ * the shell health/DB-status readout and a key/value persistence demonstration.
  */
 function SettingsScreen() {
   return (
     <div className="flex h-full min-h-full flex-col overflow-auto">
-      <Placeholder
-        routeId="settings"
-        icon="settings"
-        title="Settings"
-        body="Review budget, retention, default intervals, keyboard layout, and theme."
-      />
-      <div className="px-7 pb-10">
+      <Settings />
+      <div className="mx-auto w-full max-w-3xl px-7 pb-10">
         <DesktopStatusPanel />
       </div>
     </div>

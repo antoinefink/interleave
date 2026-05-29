@@ -60,6 +60,42 @@ export interface SettingsUpdateResult {
 }
 
 // ---------------------------------------------------------------------------
+// settings.getAll() / settings.updateMany()  (T011 — typed AppSettings)
+// ---------------------------------------------------------------------------
+
+/** Keyboard layouts affecting default shortcut bindings. */
+export type KeyboardLayout = "qwerty" | "dvorak" | "vim";
+
+/** UI theme preference (mirrors the `data-theme` attribute). */
+export type ThemePreference = "light" | "dark";
+
+/**
+ * The complete, validated user/domain settings the scheduler + UI read. Mirrors
+ * `@interleave/core`'s `AppSettings` (the authoritative model). Priority is
+ * numeric `0.0`–`1.0`; the UI derives the A/B/C/D label.
+ */
+export interface AppSettings {
+  readonly dailyReviewBudget: number;
+  readonly defaultDesiredRetention: number;
+  readonly defaultTopicIntervalDays: number;
+  readonly defaultSourcePriority: number;
+  readonly keyboardLayout: KeyboardLayout;
+  readonly theme: ThemePreference;
+}
+
+export interface SettingsGetAllResult {
+  readonly settings: AppSettings;
+}
+
+export interface SettingsUpdateManyRequest {
+  readonly patch: Partial<AppSettings>;
+}
+
+export interface SettingsUpdateManyResult {
+  readonly settings: AppSettings;
+}
+
+// ---------------------------------------------------------------------------
 // inspector.list() / inspector.get()  (T010 — read-only)
 // ---------------------------------------------------------------------------
 
@@ -158,6 +194,8 @@ export interface AppApi {
   readonly settings: {
     get(request?: SettingsGetRequest): Promise<SettingsGetResult>;
     update(request: SettingsUpdateRequest): Promise<SettingsUpdateResult>;
+    getAll(): Promise<SettingsGetAllResult>;
+    updateMany(request: SettingsUpdateManyRequest): Promise<SettingsUpdateManyResult>;
   };
   readonly inspector: {
     list(): Promise<InspectorListResult>;
@@ -207,6 +245,14 @@ export const appApi = {
   /** Create/overwrite a setting; persists to SQLite. */
   updateSetting(request: SettingsUpdateRequest): Promise<SettingsUpdateResult> {
     return requireAppApi().settings.update(request);
+  },
+  /** Read the complete, validated typed settings (T011). */
+  getAppSettings(): Promise<SettingsGetAllResult> {
+    return requireAppApi().settings.getAll();
+  },
+  /** Apply a validated partial patch to the typed settings (T011). */
+  updateAppSettings(request: SettingsUpdateManyRequest): Promise<SettingsUpdateManyResult> {
+    return requireAppApi().settings.updateMany(request);
   },
   /** All live element summaries for the inspector's selection picker (read-only). */
   listInspectableElements(): Promise<InspectorListResult> {

@@ -24,7 +24,9 @@ import type {
   DbStatus,
   InspectorGetResult,
   InspectorListResult,
+  SettingsGetAllResult,
   SettingsGetResult,
+  SettingsUpdateManyResult,
   SettingsUpdateResult,
   SettingValue,
 } from "../shared/contract";
@@ -140,6 +142,24 @@ export class DbService {
   updateSetting(key: string, value: unknown): SettingsUpdateResult {
     const stored = this.repos.settings.set(key, value ?? null);
     return { key, value: stored as SettingValue };
+  }
+
+  /**
+   * Read the complete, validated typed {@link AppSettings} (T011) through the
+   * `SettingsRepository` — unset keys resolve to the canonical defaults, so the
+   * scheduler/UI always see a complete object.
+   */
+  getAppSettings(): SettingsGetAllResult {
+    return { settings: this.repos.settings.getAppSettings() };
+  }
+
+  /**
+   * Apply a validated partial {@link AppSettings} patch (T011). The repository
+   * coerces/clamps and persists in one transaction, then returns the full
+   * resulting settings — so it survives an app restart.
+   */
+  updateAppSettings(patch: Readonly<Record<string, unknown>>): SettingsUpdateManyResult {
+    return { settings: this.repos.settings.updateAppSettings(patch) };
   }
 
   /** Read-only inspector query layer (T010), bound to the open database. */

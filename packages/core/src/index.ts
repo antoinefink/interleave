@@ -84,6 +84,26 @@ export {
 } from "./priority";
 // FSRS card review state + durable logs — cards only (./review).
 export type { ReviewLog, ReviewState } from "./review";
+// User/domain settings — the typed model scheduling + UI read (./settings).
+export type { AppSettings, KeyboardLayout, ThemePreference } from "./settings";
+export {
+  appSettingsFromStored,
+  coerceSettingsPatch,
+  coerceSettingValue,
+  DAILY_REVIEW_BUDGET_MAX,
+  DAILY_REVIEW_BUDGET_MIN,
+  DEFAULT_APP_SETTINGS,
+  DESIRED_RETENTION_MAX,
+  DESIRED_RETENTION_MIN,
+  isKeyboardLayout,
+  isThemePreference,
+  KEYBOARD_LAYOUTS,
+  SETTINGS_KEYS,
+  settingsPatchToStored,
+  sourcePriorityFromLabel,
+  THEMES,
+  TOPIC_INTERVAL_OPTIONS,
+} from "./settings";
 // Source provenance + editable document body (./source).
 export type { Document, DocumentSchemaVersion, Source } from "./source";
 // Desktop pivot: filesystem asset vault vocabulary (./vault).

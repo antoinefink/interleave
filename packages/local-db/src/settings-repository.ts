@@ -11,6 +11,12 @@
  * writes do not append an op-log entry; they are idempotent upserts on the key.
  */
 
+import {
+  type AppSettings,
+  appSettingsFromStored,
+  coerceSettingsPatch,
+  settingsPatchToStored,
+} from "@interleave/core";
 import { type InterleaveDatabase, settings } from "@interleave/db";
 import { eq } from "drizzle-orm";
 
@@ -66,5 +72,41 @@ export class SettingsRepository {
   /** Delete one setting by key (settings are not user data — hard delete is fine). */
   delete(key: string): void {
     this.db.delete(settings).where(eq(settings.key, key)).run();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Typed app-settings surface (T011)
+  //
+  // The canonical user/domain settings (daily review budget, desired retention,
+  // topic interval, default source priority, keyboard layout, theme) are read
+  // and written as one validated `AppSettings` model layered on the key/value
+  // store. Defaults fill any unset key, and every value is coerced/clamped via
+  // `@interleave/core` so a corrupt/legacy row can never reach the scheduler/UI.
+  // This is the surface the scheduler (T028/T036/T037) reads through.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Read the complete, validated {@link AppSettings}. Unset keys resolve to the
+   * canonical defaults, so the result is always complete even on a fresh DB.
+   */
+  getAppSettings(): AppSettings {
+    return appSettingsFromStored(this.getAll());
+  }
+
+  /**
+   * Apply a partial {@link AppSettings} patch (validated + coerced) in a single
+   * transaction, then return the full resulting settings. Unknown fields are
+   * dropped and out-of-range values are clamped before they are persisted.
+   *
+   * Accepts a loose record (the patch may arrive from validated-but-`undefined`-
+   * permitting IPC) — `coerceSettingsPatch` keeps only the known, valid fields.
+   */
+  updateAppSettings(patch: Readonly<Record<string, unknown>>): AppSettings {
+    const clean = coerceSettingsPatch(patch);
+    const stored = settingsPatchToStored(clean);
+    if (Object.keys(stored).length > 0) {
+      this.setMany(stored);
+    }
+    return this.getAppSettings();
   }
 }

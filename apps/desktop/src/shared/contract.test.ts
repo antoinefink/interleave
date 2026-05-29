@@ -13,17 +13,21 @@ import {
   IPC_CHANNELS,
   SettingKeySchema,
   SettingsGetRequestSchema,
+  SettingsPatchSchema,
+  SettingsUpdateManyRequestSchema,
   SettingsUpdateRequestSchema,
 } from "./contract";
 
 describe("IPC channels", () => {
-  it("exposes exactly the M1 commands (incl. the read-only inspector) and no generic SQL channel", () => {
+  it("exposes exactly the M1 commands (incl. the read-only inspector + typed settings) and no generic SQL channel", () => {
     expect(Object.values(IPC_CHANNELS).sort()).toEqual(
       [
         "app:health",
         "db:getStatus",
         "settings:get",
         "settings:update",
+        "settings:getAll",
+        "settings:updateMany",
         "inspector:list",
         "inspector:get",
       ].sort(),
@@ -59,6 +63,49 @@ describe("SettingsUpdateRequestSchema", () => {
 
   it("rejects an over-long key", () => {
     expect(() => SettingKeySchema.parse("x".repeat(200))).toThrow();
+  });
+});
+
+describe("SettingsPatchSchema (T011)", () => {
+  it("accepts a valid partial patch", () => {
+    const parsed = SettingsPatchSchema.parse({ dailyReviewBudget: 60, theme: "light" });
+    expect(parsed).toEqual({ dailyReviewBudget: 60, theme: "light" });
+  });
+
+  it("accepts an empty patch", () => {
+    expect(SettingsPatchSchema.parse({})).toEqual({});
+  });
+
+  it("rejects an unknown field (strict)", () => {
+    expect(() => SettingsPatchSchema.parse({ bogus: 1 })).toThrow();
+  });
+
+  it("rejects an out-of-range daily budget", () => {
+    expect(() => SettingsPatchSchema.parse({ dailyReviewBudget: 9999 })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ dailyReviewBudget: 1 })).toThrow();
+  });
+
+  it("rejects an out-of-range retention and a bad enum", () => {
+    expect(() => SettingsPatchSchema.parse({ defaultDesiredRetention: 0.5 })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ keyboardLayout: "azerty" })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ theme: "system" })).toThrow();
+  });
+
+  it("rejects a non-integer budget / topic interval", () => {
+    expect(() => SettingsPatchSchema.parse({ dailyReviewBudget: 60.5 })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ defaultTopicIntervalDays: 0 })).toThrow();
+  });
+});
+
+describe("SettingsUpdateManyRequestSchema (T011)", () => {
+  it("wraps a patch", () => {
+    expect(SettingsUpdateManyRequestSchema.parse({ patch: { theme: "dark" } })).toEqual({
+      patch: { theme: "dark" },
+    });
+  });
+
+  it("requires the patch field", () => {
+    expect(() => SettingsUpdateManyRequestSchema.parse({})).toThrow();
   });
 });
 

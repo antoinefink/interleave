@@ -16,7 +16,9 @@ import {
   InspectorGetRequestSchema,
   InspectorListRequestSchema,
   IPC_CHANNELS,
+  SettingsGetAllRequestSchema,
   SettingsGetRequestSchema,
+  SettingsUpdateManyRequestSchema,
   SettingsUpdateRequestSchema,
 } from "../shared/contract";
 import type { DbService } from "./db-service";
@@ -52,6 +54,16 @@ export function registerIpcHandlers(dbService: DbService): () => void {
   ipcMain.handle(IPC_CHANNELS.settingsUpdate, (_event, rawRequest: unknown) => {
     const request = SettingsUpdateRequestSchema.parse(rawRequest);
     return dbService.updateSetting(request.key, request.value);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.settingsGetAll, () => {
+    SettingsGetAllRequestSchema.parse(undefined);
+    return dbService.getAppSettings();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.settingsUpdateMany, (_event, rawRequest: unknown) => {
+    const request = SettingsUpdateManyRequestSchema.parse(rawRequest);
+    return dbService.updateAppSettings(request.patch);
   });
 
   ipcMain.handle(IPC_CHANNELS.inspectorList, () => {

@@ -13,6 +13,8 @@ export const IPC_CHANNELS = {
   dbGetStatus: "db:getStatus",
   settingsGet: "settings:get",
   settingsUpdate: "settings:update",
+  settingsGetAll: "settings:getAll",
+  settingsUpdateMany: "settings:updateMany",
   inspectorList: "inspector:list",
   inspectorGet: "inspector:get",
 } as const;

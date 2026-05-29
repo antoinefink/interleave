@@ -19,6 +19,7 @@ import type {
   AppApi,
   InspectorGetRequest,
   SettingsGetRequest,
+  SettingsUpdateManyRequest,
   SettingsUpdateRequest,
 } from "../shared/contract";
 
@@ -34,6 +35,9 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.settingsGet, request ?? {}),
     update: (request: SettingsUpdateRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.settingsUpdate, request),
+    getAll: () => ipcRenderer.invoke(IPC_CHANNELS.settingsGetAll),
+    updateMany: (request: SettingsUpdateManyRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.settingsUpdateMany, request),
   },
   inspector: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.inspectorList),

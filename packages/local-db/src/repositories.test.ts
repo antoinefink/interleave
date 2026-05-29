@@ -15,6 +15,7 @@
  */
 
 import type { BlockId, ElementId, FsrsState, ReviewRating } from "@interleave/core";
+import { DAILY_REVIEW_BUDGET_MAX, DEFAULT_APP_SETTINGS, SETTINGS_KEYS } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AssetRepository } from "./asset-repository";
@@ -509,6 +510,40 @@ describe("SettingsRepository", () => {
 
     settings.delete("theme");
     expect(settings.get("theme")).toBeNull();
+  });
+
+  it("reads the typed AppSettings with defaults on a fresh DB (T011)", () => {
+    const settings = new SettingsRepository(handle.db);
+    expect(settings.getAppSettings()).toEqual(DEFAULT_APP_SETTINGS);
+  });
+
+  it("updates the typed AppSettings, coercing/clamping and persisting (T011)", () => {
+    const settings = new SettingsRepository(handle.db);
+
+    const result = settings.updateAppSettings({
+      dailyReviewBudget: 9999, // clamped to the max
+      defaultDesiredRetention: 0.95,
+      keyboardLayout: "vim",
+      theme: "light",
+    });
+    expect(result.dailyReviewBudget).toBe(DAILY_REVIEW_BUDGET_MAX);
+    expect(result.defaultDesiredRetention).toBe(0.95);
+    expect(result.keyboardLayout).toBe("vim");
+    expect(result.theme).toBe("light");
+    // Untouched fields keep their defaults.
+    expect(result.defaultTopicIntervalDays).toBe(DEFAULT_APP_SETTINGS.defaultTopicIntervalDays);
+
+    // Persisted under the stable storage keys + readable as the typed model.
+    expect(settings.get<number>(SETTINGS_KEYS.dailyReviewBudget)).toBe(DAILY_REVIEW_BUDGET_MAX);
+    expect(settings.getAppSettings().theme).toBe("light");
+  });
+
+  it("drops unknown patch fields and ignores an empty patch (T011)", () => {
+    const settings = new SettingsRepository(handle.db);
+    const before = settings.getAppSettings();
+    const after = settings.updateAppSettings({ bogus: "x" });
+    expect(after).toEqual(before);
+    expect(settings.get("bogus")).toBeNull();
   });
 });
 

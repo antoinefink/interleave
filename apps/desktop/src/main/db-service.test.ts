@@ -128,4 +128,64 @@ describe("DbService", () => {
 
     svc.close();
   });
+
+  it("reads the typed AppSettings with defaults on a fresh DB (T011)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const { settings } = svc.getAppSettings();
+    expect(settings.dailyReviewBudget).toBe(60);
+    expect(settings.defaultDesiredRetention).toBe(0.9);
+    expect(settings.defaultTopicIntervalDays).toBe(7);
+    expect(settings.keyboardLayout).toBe("qwerty");
+    expect(settings.theme).toBe("dark");
+
+    svc.close();
+  });
+
+  it("updates the typed AppSettings, coercing/clamping (T011)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const { settings } = svc.updateAppSettings({
+      dailyReviewBudget: 120,
+      keyboardLayout: "vim",
+      theme: "light",
+    });
+    expect(settings.dailyReviewBudget).toBe(120);
+    expect(settings.keyboardLayout).toBe("vim");
+    expect(settings.theme).toBe("light");
+    // Untouched fields keep their defaults.
+    expect(settings.defaultTopicIntervalDays).toBe(7);
+
+    svc.close();
+  });
+
+  it("persists the typed AppSettings across a full close + reopen (T011 restart analogue)", () => {
+    const first = new DbService();
+    first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    first.updateAppSettings({
+      dailyReviewBudget: 90,
+      defaultDesiredRetention: 0.95,
+      defaultTopicIntervalDays: 30,
+      defaultSourcePriority: 0.875,
+      keyboardLayout: "dvorak",
+      theme: "light",
+    });
+    first.close();
+
+    // A brand-new service opening the SAME file must see every value.
+    const second = new DbService();
+    second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { settings } = second.getAppSettings();
+    expect(settings).toEqual({
+      dailyReviewBudget: 90,
+      defaultDesiredRetention: 0.95,
+      defaultTopicIntervalDays: 30,
+      defaultSourcePriority: 0.875,
+      keyboardLayout: "dvorak",
+      theme: "light",
+    });
+    second.close();
+  });
 });
