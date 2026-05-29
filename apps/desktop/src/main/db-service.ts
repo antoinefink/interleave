@@ -205,15 +205,19 @@ export class DbService {
   }
 
   /**
-   * Create a source in the `inbox` (T012). The {@link SourceRepository} writes
-   * the `elements` row + the `sources` provenance row in ONE transaction and
-   * appends `create_source` + `create_element`. The A/B/C/D label maps to a
-   * numeric priority via `priorityFromLabel` (default `C`, so new material never
-   * dominates older high-value material). Returns the new id + its inbox summary.
+   * Create a source in the `inbox` with its document body (T012 + T013). The
+   * {@link SourceRepository.createWithDocument} writes the `elements` row, the
+   * `sources` provenance row, AND the `documents` body + stable `document_blocks`
+   * in ONE transaction, appending `create_element` + `create_source` +
+   * `update_document` together — a source never persists without its body. The
+   * raw pasted `body` is converted main-side to plain text + ProseMirror JSON
+   * (the renderer never builds the doc). The A/B/C/D label maps to a numeric
+   * priority via `priorityFromLabel` (default `C`, so new material never dominates
+   * older high-value material). Returns the new id + its inbox summary.
    */
   importManualSource(request: SourcesImportManualRequest): SourcesImportManualResult {
     const label: PriorityLabel = request.priority ?? "C";
-    const { element } = this.repos.sources.create({
+    const { element } = this.repos.sources.createWithDocument({
       title: request.title,
       priority: priorityFromLabel(label),
       status: "inbox",
@@ -222,6 +226,7 @@ export class DbService {
       author: request.author ?? null,
       publishedAt: request.publishedAt ?? null,
       reasonAdded: request.reasonAdded ?? null,
+      body: request.body,
     });
     const detail = this.inbox.get(element.id);
     const item = detail?.summary ?? this.inbox.list().find((i) => i.id === element.id) ?? null;

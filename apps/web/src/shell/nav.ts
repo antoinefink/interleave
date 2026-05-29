@@ -54,7 +54,17 @@ export type CommandItem = {
   readonly to: string;
   /** Optional keyboard hint rendered on the right. */
   readonly kbd?: readonly string[];
+  /**
+   * Optional `window` CustomEvent name dispatched (after navigating to `to`)
+   * when the item is chosen. Lets a screen react to a palette action without the
+   * palette knowing about that screen — e.g. "New manual note…" navigates to
+   * `/inbox` AND opens its New-source modal. The detail is `undefined`.
+   */
+  readonly event?: string;
 };
+
+/** CustomEvent name the inbox listens for to open its New-source modal (⌘K). */
+export const NEW_SOURCE_EVENT = "interleave:new-source";
 
 /**
  * ⌘K catalogue — mirrors the kit's CMDK_ITEMS. "Create"/"Session" entries land
@@ -68,9 +78,21 @@ export const COMMAND_ITEMS: readonly CommandItem[] = [
   { group: "Go to", icon: "concepts", label: "Concept map", to: "/search", kbd: ["G", "C"] },
   { group: "Go to", icon: "settings", label: "Settings", to: "/settings", kbd: ["G", "S"] },
   { group: "Create", icon: "link", label: "Import from URL…", to: "/inbox" },
-  { group: "Create", icon: "paste", label: "Paste text as source…", to: "/inbox" },
+  {
+    group: "Create",
+    icon: "paste",
+    label: "Paste text as source…",
+    to: "/inbox",
+    event: NEW_SOURCE_EVENT,
+  },
   { group: "Create", icon: "upload", label: "Upload PDF / EPUB…", to: "/inbox" },
-  { group: "Create", icon: "text", label: "New manual note…", to: "/inbox" },
+  {
+    group: "Create",
+    icon: "text",
+    label: "New manual note…",
+    to: "/inbox",
+    event: NEW_SOURCE_EVENT,
+  },
   { group: "Session", icon: "play", label: "Start daily session", to: "/review" },
   { group: "Session", icon: "review", label: "Review-only mode", to: "/review" },
   { group: "Session", icon: "bookmark", label: "Reading-only mode", to: "/queue" },

@@ -82,6 +82,16 @@ export {
   priorityFromLabel,
   priorityToLabel,
 } from "./priority";
+// Plain-text → ProseMirror converter — deterministic, editor-free (./prosemirror).
+export type {
+  BlockIdMinter,
+  PlainTextConversion,
+  ProseMirrorBlock,
+  ProseMirrorDoc,
+  ProseMirrorParagraphNode,
+  ProseMirrorTextNode,
+} from "./prosemirror";
+export { plainTextToProseMirrorDoc } from "./prosemirror";
 // FSRS card review state + durable logs — cards only (./review).
 export type { ReviewLog, ReviewState } from "./review";
 // User/domain settings — the typed model scheduling + UI read (./settings).

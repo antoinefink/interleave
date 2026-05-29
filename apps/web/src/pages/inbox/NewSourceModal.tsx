@@ -1,20 +1,23 @@
 /**
- * New source modal (T012 — minimal; T013 extends it).
+ * New source modal (T013) — the manual text-import dialog.
  *
- * A small keyboard-driven dialog reached from the inbox import strip's "Paste
- * text" / "Manual note" options. In T012 it captures a title (and an optional
- * A/B/C/D priority) and creates an inbox source through the typed
- * `appApi.importManualSource` command; T013 adds URL / author / date / body
- * inputs and stores the body as plain text + ProseMirror JSON. Submittable with
- * ⌘↵ / Enter, closeable with Esc — matching the shell's command palette pattern.
+ * A keyboard-driven dialog reached from the inbox import strip's "Paste text" /
+ * "Manual note" options (and the ⌘K command palette). It captures the source's
+ * Title, URL, Author, Date (published), and Body, plus an A/B/C/D priority, and
+ * creates an inbox source through the single typed `appApi.importManualSource`
+ * command. On save the main process converts the body to plain text +
+ * ProseMirror JSON and stores both; pasting an article's text + a title makes it
+ * appear immediately in the inbox list. Submittable with ⌘↵ / Enter, closeable
+ * with Esc.
  *
  * Pure UI: it gathers field values and calls ONE bridge command; the main process
- * owns persistence + the label→numeric priority mapping (the layering rule).
+ * owns persistence + the label→numeric priority mapping AND the plain-text →
+ * ProseMirror conversion (the layering rule — no PM-building in the renderer).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
-import { appApi, type PriorityLabelInput } from "../../lib/appApi";
+import { appApi, type PriorityLabelInput, type SourcesImportManualRequest } from "../../lib/appApi";
 import { Kbd } from "../../shell/Kbd";
 
 const PRIORITY_LABELS: readonly PriorityLabelInput[] = ["A", "B", "C", "D"];
@@ -28,6 +31,10 @@ export type NewSourceModalProps = {
 
 export function NewSourceModal({ open, onClose, onCreated }: NewSourceModalProps) {
   const [title, setTitle] = useState("");
+  const [url, setUrl] = useState("");
+  const [author, setAuthor] = useState("");
+  const [publishedAt, setPublishedAt] = useState("");
+  const [body, setBody] = useState("");
   const [priority, setPriority] = useState<PriorityLabelInput>("C");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +44,10 @@ export function NewSourceModal({ open, onClose, onCreated }: NewSourceModalProps
   useEffect(() => {
     if (!open) return;
     setTitle("");
+    setUrl("");
+    setAuthor("");
+    setPublishedAt("");
+    setBody("");
     setPriority("C");
     setError(null);
     setSubmitting(false);
@@ -49,13 +60,26 @@ export function NewSourceModal({ open, onClose, onCreated }: NewSourceModalProps
     if (trimmed.length === 0 || submitting) return;
     setSubmitting(true);
     try {
-      const { id } = await appApi.importManualSource({ title: trimmed, priority });
+      // Build the request omitting empty optional fields (exactOptionalPropertyTypes:
+      // a missing key is correct, an explicit `undefined` is not).
+      const request: SourcesImportManualRequest = { title: trimmed, priority };
+      const trimmedUrl = url.trim();
+      const trimmedAuthor = author.trim();
+      const trimmedDate = publishedAt.trim();
+      const req: SourcesImportManualRequest = {
+        ...request,
+        ...(trimmedUrl ? { url: trimmedUrl } : {}),
+        ...(trimmedAuthor ? { author: trimmedAuthor } : {}),
+        ...(trimmedDate ? { publishedAt: trimmedDate } : {}),
+        ...(body.length > 0 ? { body } : {}),
+      };
+      const { id } = await appApi.importManualSource(req);
       onCreated(id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setSubmitting(false);
     }
-  }, [title, priority, submitting, onCreated]);
+  }, [title, url, author, publishedAt, body, priority, submitting, onCreated]);
 
   // Esc to close, ⌘↵ to submit while open.
   useEffect(() => {
@@ -75,9 +99,12 @@ export function NewSourceModal({ open, onClose, onCreated }: NewSourceModalProps
 
   if (!open) return null;
 
+  const fieldClass =
+    "w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text outline-none focus:border-accent";
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[12vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-[10vh]"
       data-testid="new-source-modal"
     >
       {/* Backdrop is a real button so click-to-dismiss is keyboard-accessible
@@ -90,12 +117,13 @@ export function NewSourceModal({ open, onClose, onCreated }: NewSourceModalProps
         onClick={onClose}
       />
       <div
-        className="relative w-full max-w-lg rounded-xl border border-border bg-surface shadow-lg"
+        className="relative flex max-h-[80vh] w-full max-w-xl flex-col rounded-xl border border-border bg-surface shadow-lg"
         role="dialog"
         aria-modal="true"
         aria-label="New source"
       >
         <form
+          className="flex min-h-0 flex-col"
           onSubmit={(e) => {
             e.preventDefault();
             void submit();
@@ -114,7 +142,7 @@ export function NewSourceModal({ open, onClose, onCreated }: NewSourceModalProps
             </button>
           </div>
 
-          <div className="space-y-4 px-4 py-4">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4">
             <label className="block">
               <span className="mb-1 block font-medium text-sm text-text-2">Title</span>
               <input
@@ -123,7 +151,53 @@ export function NewSourceModal({ open, onClose, onCreated }: NewSourceModalProps
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 placeholder="Title of the article, note, or idea…"
-                className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text outline-none focus:border-accent"
+                className={fieldClass}
+              />
+            </label>
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="mb-1 block font-medium text-sm text-text-2">URL</span>
+                <input
+                  data-testid="new-source-url"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="https://…"
+                  className={fieldClass}
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block font-medium text-sm text-text-2">Author</span>
+                <input
+                  data-testid="new-source-author"
+                  value={author}
+                  onChange={(e) => setAuthor(e.target.value)}
+                  placeholder="Add author…"
+                  className={fieldClass}
+                />
+              </label>
+            </div>
+
+            <label className="block">
+              <span className="mb-1 block font-medium text-sm text-text-2">Date</span>
+              <input
+                data-testid="new-source-date"
+                type="date"
+                value={publishedAt}
+                onChange={(e) => setPublishedAt(e.target.value)}
+                className={fieldClass}
+              />
+            </label>
+
+            <label className="block">
+              <span className="mb-1 block font-medium text-sm text-text-2">Body</span>
+              <textarea
+                data-testid="new-source-body"
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                rows={8}
+                placeholder="Paste the article text here. Blank lines separate paragraphs…"
+                className={`${fieldClass} resize-y font-read leading-relaxed`}
               />
             </label>
 

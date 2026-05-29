@@ -65,8 +65,10 @@ export { SettingsRepository } from "./settings-repository";
 export {
   type CreateExtractInput,
   type CreateSourceInput,
+  type CreateSourceWithDocumentInput,
   type ExtractWithLocation,
   SourceRepository,
+  type SourceWithDocument,
   type SourceWithElement,
 } from "./source-repository";
 export type { DbClient, TransactionClient } from "./types";

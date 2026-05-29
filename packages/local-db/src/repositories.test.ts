@@ -252,6 +252,86 @@ describe("SourceRepository — lineage", () => {
   });
 });
 
+describe("SourceRepository.createWithDocument — manual text import (T013)", () => {
+  it("creates the source + document body (plain text + ProseMirror JSON) atomically", () => {
+    const sources = new SourceRepository(handle.db);
+    const documents = new DocumentRepository(handle.db);
+    const ops = new OperationLogRepository(handle.db);
+
+    const body = "First paragraph of the article.\n\nSecond paragraph.\n\nThird paragraph.";
+    const { element, prosemirrorJson, plainText, blockCount } = sources.createWithDocument({
+      title: "Pasted article",
+      priority: 0.5,
+      status: "inbox",
+      stage: "raw_source",
+      author: "Ada Lovelace",
+      body,
+    });
+
+    // The source lands in the inbox as a raw source.
+    expect(element.type).toBe("source");
+    expect(element.status).toBe("inbox");
+    expect(element.stage).toBe("raw_source");
+    expect(sources.findById(element.id)?.source.author).toBe("Ada Lovelace");
+
+    // The document row persists both representations.
+    const doc = documents.findById(element.id);
+    expect(doc).not.toBeNull();
+    expect(doc?.plainText).toBe(
+      "First paragraph of the article.\n\nSecond paragraph.\n\nThird paragraph.",
+    );
+    expect(plainText).toBe(doc?.plainText);
+
+    // The stored ProseMirror JSON has one paragraph node per blank-line paragraph
+    // (DocumentRepository.findById parses the JSON text back into an object).
+    const parsed = doc?.prosemirrorJson as {
+      type: string;
+      content: { type: string; content?: { type: string; text: string }[] }[];
+    };
+    expect(parsed.type).toBe("doc");
+    expect(parsed.content).toHaveLength(3);
+    expect(parsed.content.every((n) => n.type === "paragraph")).toBe(true);
+    expect(parsed.content[0]?.content?.[0]?.text).toBe("First paragraph of the article.");
+
+    // The raw stored text is valid JSON for the same doc (verifies it persisted as text).
+    const rawJson = handle.sqlite
+      .prepare("SELECT prosemirror_json AS j FROM documents WHERE element_id = ?")
+      .get(element.id) as { j: string };
+    expect(JSON.parse(rawJson.j)).toEqual(parsed);
+
+    // The returned doc matches what was stored, and blocks are recorded.
+    expect((prosemirrorJson as { content: unknown[] }).content).toHaveLength(3);
+    expect(blockCount).toBe(3);
+    const blocks = documents.listBlocks(element.id);
+    expect(blocks).toHaveLength(3);
+    expect(blocks.map((b) => b.order)).toEqual([0, 1, 2]);
+    expect(new Set(blocks.map((b) => b.stableBlockId)).size).toBe(3);
+
+    // All three ops appended in ONE transaction.
+    const types = ops.listForElement(element.id).map((e) => e.opType);
+    expect(types).toContain("create_element");
+    expect(types).toContain("create_source");
+    expect(types).toContain("update_document");
+  });
+
+  it("stores a valid empty document for an empty body (still an inbox source)", () => {
+    const sources = new SourceRepository(handle.db);
+    const documents = new DocumentRepository(handle.db);
+
+    const { element, blockCount } = sources.createWithDocument({
+      title: "Title only",
+      priority: 0.5,
+    });
+
+    const doc = documents.findById(element.id);
+    expect(doc?.plainText).toBe("");
+    expect(doc?.prosemirrorJson).toEqual({ type: "doc", content: [] });
+    expect(blockCount).toBe(0);
+    expect(documents.listBlocks(element.id)).toHaveLength(0);
+    expect(element.status).toBe("inbox");
+  });
+});
+
 describe("DocumentRepository", () => {
   it("upserts a body + blocks and persists a read-point with set_read_point", () => {
     const sources = new SourceRepository(handle.db);

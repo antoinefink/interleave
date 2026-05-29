@@ -190,12 +190,15 @@ export interface InspectorGetResult {
 /** The four coarse priority labels the UI exposes. */
 export type PriorityLabelInput = "A" | "B" | "C" | "D";
 
-/** Request to create a source in the inbox (T012; body lands with T013). */
+/** Request to create a source in the inbox with its body (T012 + T013). */
 export interface SourcesImportManualRequest {
   readonly title: string;
   readonly url?: string;
   readonly author?: string;
+  /** The source's published date (loose string; stored as-is). */
   readonly publishedAt?: string;
+  /** Raw pasted body text; converted to plain text + ProseMirror JSON main-side. */
+  readonly body?: string;
   readonly reasonAdded?: string;
   readonly priority?: PriorityLabelInput;
 }
@@ -343,7 +346,7 @@ export const appApi = {
   getInspectorData(request: InspectorGetRequest): Promise<InspectorGetResult> {
     return requireAppApi().inspector.get(request);
   },
-  /** Create a source in the inbox (T012; body lands with T013). */
+  /** Create a source in the inbox with its body (T012 + T013). */
   importManualSource(request: SourcesImportManualRequest): Promise<SourcesImportManualResult> {
     return requireAppApi().sources.importManual(request);
   },

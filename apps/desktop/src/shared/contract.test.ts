@@ -143,6 +143,19 @@ describe("SourcesImportManualRequestSchema (T012)", () => {
     expect(parsed.priority).toBe("A");
   });
 
+  it("accepts a full payload with a multi-paragraph body + date (T013)", () => {
+    const parsed = SourcesImportManualRequestSchema.parse({
+      title: "Pasted article",
+      url: "https://example.com/post",
+      author: "Ada",
+      publishedAt: "2026-01-15",
+      body: "First paragraph.\n\nSecond paragraph.",
+      priority: "B",
+    });
+    expect(parsed.body).toBe("First paragraph.\n\nSecond paragraph.");
+    expect(parsed.publishedAt).toBe("2026-01-15");
+  });
+
   it("trims the title and rejects an empty / missing one", () => {
     expect(SourcesImportManualRequestSchema.parse({ title: "  Trimmed  " }).title).toBe("Trimmed");
     expect(() => SourcesImportManualRequestSchema.parse({})).toThrow();

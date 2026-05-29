@@ -25,10 +25,18 @@ import type {
   Source,
   SourceLocationId,
 } from "@interleave/core";
-import { elements, type InterleaveDatabase, sourceLocations, sources } from "@interleave/db";
+import { plainTextToProseMirrorDoc } from "@interleave/core";
+import {
+  documentBlocks,
+  documents,
+  elements,
+  type InterleaveDatabase,
+  sourceLocations,
+  sources,
+} from "@interleave/db";
 import { eq } from "drizzle-orm";
 import { ElementRepository } from "./element-repository";
-import { newSourceLocationId } from "./ids";
+import { newRowId, newSourceLocationId, nowIso } from "./ids";
 import { rowToElement, rowToSource, rowToSourceLocation } from "./mappers";
 import { OperationLogRepository } from "./operation-log-repository";
 
@@ -52,6 +60,30 @@ export interface CreateSourceInput {
 export interface SourceWithElement {
   readonly element: Element;
   readonly source: Source;
+}
+
+/**
+ * Create a source AND its document body in ONE transaction (T013). Extends
+ * {@link CreateSourceInput} with the raw pasted `body`; the repository flattens
+ * it to plain text + ProseMirror JSON via `plainTextToProseMirrorDoc` and writes
+ * the `documents` row + stable `document_blocks` alongside the element + sources
+ * rows, so a source can never persist without its body (and vice versa).
+ */
+export interface CreateSourceWithDocumentInput extends CreateSourceInput {
+  /** Raw pasted body text; converted to plain text + ProseMirror JSON. Optional/empty allowed. */
+  readonly body?: string | undefined;
+}
+
+/** A source element + provenance + its created document body (T013). */
+export interface SourceWithDocument {
+  readonly element: Element;
+  readonly source: Source;
+  /** ProseMirror `doc` JSON stored for the body (opaque to callers). */
+  readonly prosemirrorJson: unknown;
+  /** The flattened plain-text mirror stored for search/preview. */
+  readonly plainText: string;
+  /** Number of stable blocks written for the body. */
+  readonly blockCount: number;
 }
 
 /** Arguments to extract a child element anchored at a source location. */
@@ -121,6 +153,94 @@ export class SourceRepository {
         payload: { source },
       });
       return { element, source };
+    });
+  }
+
+  /**
+   * Create a `source` element + its provenance row + its document body, all in
+   * ONE transaction (T013). The element + `sources` rows are written exactly as
+   * in {@link create} (logging `create_element` + `create_source`); the body is
+   * converted with `plainTextToProseMirrorDoc` and inserted into `documents` +
+   * `document_blocks`, logging `update_document` — all on the same `tx`, so the
+   * source row, document row, blocks, and their ops commit (or roll back) as a
+   * unit. A source therefore never persists without its body. The main process
+   * owns the conversion; the renderer only ships the raw string (the layering
+   * rule — no ProseMirror building in the renderer).
+   */
+  createWithDocument(input: CreateSourceWithDocumentInput): SourceWithDocument {
+    const conversion = plainTextToProseMirrorDoc(input.body ?? "");
+    return this.db.transaction((tx) => {
+      const element = this.elementsRepo.createWithin(tx, {
+        type: "source",
+        status: input.status ?? "inbox",
+        stage: input.stage ?? "raw_source",
+        priority: input.priority,
+        title: input.title,
+        parentId: null,
+        sourceId: null,
+      });
+      const source: Source = {
+        elementId: element.id,
+        url: input.url ?? null,
+        canonicalUrl: input.canonicalUrl ?? null,
+        originalUrl: input.originalUrl ?? null,
+        author: input.author ?? null,
+        publishedAt: input.publishedAt ?? null,
+        accessedAt: input.accessedAt ?? null,
+        snapshotKey: input.snapshotKey ?? null,
+        reasonAdded: input.reasonAdded ?? null,
+      };
+      tx.insert(sources)
+        .values({ ...source })
+        .run();
+      const log = new OperationLogRepository(tx);
+      log.append(tx, {
+        opType: "create_source",
+        elementId: element.id,
+        payload: { source },
+      });
+
+      // Document body + stable blocks (same transaction → atomic with the source).
+      const updatedAt = nowIso();
+      const json = JSON.stringify(conversion.doc);
+      const schemaVersion = 1;
+      tx.insert(documents)
+        .values({
+          elementId: element.id,
+          prosemirrorJson: json,
+          plainText: conversion.plainText,
+          schemaVersion,
+          updatedAt,
+        })
+        .run();
+      for (const block of conversion.blocks) {
+        tx.insert(documentBlocks)
+          .values({
+            id: newRowId(),
+            documentId: element.id,
+            blockType: block.blockType,
+            order: block.order,
+            stableBlockId: block.stableBlockId,
+          })
+          .run();
+      }
+      log.append(tx, {
+        opType: "update_document",
+        elementId: element.id,
+        payload: {
+          elementId: element.id,
+          schemaVersion,
+          blockCount: conversion.blocks.length,
+        },
+      });
+
+      return {
+        element,
+        source,
+        prosemirrorJson: conversion.doc,
+        plainText: conversion.plainText,
+        blockCount: conversion.blocks.length,
+      };
     });
   }
 

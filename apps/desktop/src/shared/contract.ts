@@ -326,15 +326,21 @@ export const PriorityLabelSchema = z.enum(["A", "B", "C", "D"]);
 export type PriorityLabelInput = z.infer<typeof PriorityLabelSchema>;
 
 /**
- * Create a source in the `inbox` (T012 lands title-only; T013 extends the body).
+ * Create a source in the `inbox` (T012 landed title-only; T013 adds the body).
  * `title` is required (1–512 chars); provenance fields + priority label are
- * optional (priority defaults to `C` so new material never dominates).
+ * optional (priority defaults to `C` so new material never dominates). `body` is
+ * the raw pasted article text — the MAIN process converts it to plain text +
+ * ProseMirror JSON (the renderer never builds the doc) and stores both. The
+ * `publishedAt` "date" field is a loose date string stored as-is (T014 derives
+ * the rest of provenance); `body` is capped to keep IPC payloads bounded.
  */
 export const SourcesImportManualRequestSchema = z.object({
   title: z.string().trim().min(1).max(512),
   url: z.string().trim().max(2048).optional(),
   author: z.string().trim().max(512).optional(),
   publishedAt: z.string().trim().max(64).optional(),
+  /** Raw pasted body text; converted to plain text + ProseMirror JSON main-side. */
+  body: z.string().max(2_000_000).optional(),
   reasonAdded: z.string().trim().max(2048).optional(),
   /** Coarse A/B/C/D priority; mapped to a numeric value main-side. Defaults `C`. */
   priority: PriorityLabelSchema.optional(),

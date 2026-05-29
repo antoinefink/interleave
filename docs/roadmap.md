@@ -74,7 +74,7 @@ Detailed specs: [`tasks/M1-foundations.md`](./tasks/M1-foundations.md)
 
 - [x] **T012 — Inbox · done** · _deps: T008, T004_
   Done when: a source can be created in inbox, listed, viewed, kept, prioritized, accepted into active learning, or deleted.
-- [ ] **T013 — Manual text import** · _deps: T012_
+- [x] **T013 — Manual text import · done** · _deps: T012_
   Done when: a "New source" modal accepts title/URL/author/date/body and stores body as both plain text and ProseMirror JSON; a pasted article appears as a source in the inbox.
 - [ ] **T014 — Source provenance fields (no auto-fetch)** · _deps: T013_
   Done when: schema/UI capture canonical URL, original URL, accessed date, and snapshot fields for manual imports (no remote fetching yet).
@@ -318,6 +318,7 @@ overload management, semantic search, AI, media, reliability, scale.
 
 Record notable completions / decisions here as tasks land (newest first).
 
+- 2026-05-29 - T013 Manual text import - done. The "New source" modal now accepts a body that is stored both as plain text and as ProseMirror JSON; a pasted article appears as a source in the inbox. Plain-text-to-ProseMirror conversion lives in `packages/core`; the typed `window.appApi` source-import surface persists both representations, and renderer never touches the DB directly.
 - 2026-05-29 - T012 Inbox - done. Sources can be created in the inbox, listed, viewed, kept, prioritized, accepted into active learning, or deleted — all via the typed `window.appApi` surface (no renderer DB access). Mutations run in single transactions and append `operation_log` entries; deletes are soft.
 - 2026-05-29 - T011 Local settings in SQLite - done. User/domain settings (daily review budget, default desired retention, default topic interval, default source priority, keyboard layout, theme) now persist in the SQLite `settings` table and are read through the typed `window.appApi` surface; scheduler code consumes them via the typed API rather than touching the DB directly.
 - 2026-05-29 - T010 Universal element inspector - done. The right inspector panel now renders any selected element's type, status, stage, priority, due date, parent, children, source, tags, and review metadata, fetched through a new typed `window.appApi` inspector query (backed by `packages/local-db` `inspector-query`) — the renderer never touches the DB directly. Shell selection state lives in a dedicated `selection` context; Vitest covers the inspector query and a Playwright spec exercises the inspector end-to-end.

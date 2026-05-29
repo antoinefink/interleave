@@ -6,10 +6,10 @@
  * navigates to its route. Pure UI — the catalogue is static config from
  * `nav.ts`; navigation is delegated to the caller.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { Kbd } from "./Kbd";
-import { COMMAND_ITEMS } from "./nav";
+import { COMMAND_ITEMS, type CommandItem } from "./nav";
 
 export type CommandPaletteProps = {
   open: boolean;
@@ -26,6 +26,23 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
   const filtered = useMemo(
     () => COMMAND_ITEMS.filter((i) => i.label.toLowerCase().includes(query.toLowerCase())),
     [query],
+  );
+
+  /**
+   * Run a chosen command: navigate to its route, then (after navigation, so the
+   * target screen is mounted to receive it) dispatch its optional CustomEvent —
+   * e.g. "New manual note…" navigates to `/inbox` and opens its modal.
+   */
+  const runItem = useCallback(
+    (item: CommandItem) => {
+      onNavigate(item.to);
+      onClose();
+      if (item.event) {
+        const eventName = item.event;
+        window.setTimeout(() => window.dispatchEvent(new CustomEvent(eventName)), 0);
+      }
+    },
+    [onNavigate, onClose],
   );
 
   // Reset + focus when opened.
@@ -52,15 +69,12 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
       } else if (e.key === "Enter") {
         e.preventDefault();
         const item = filtered[selected];
-        if (item) {
-          onNavigate(item.to);
-          onClose();
-        }
+        if (item) runItem(item);
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, filtered, selected, onClose, onNavigate]);
+  }, [open, filtered, selected, onClose, runItem]);
 
   if (!open) return null;
 
@@ -108,10 +122,7 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
                     selected === i ? "shell-cmdk__item shell-cmdk__item--on" : "shell-cmdk__item"
                   }
                   onMouseEnter={() => setSelected(i)}
-                  onClick={() => {
-                    onNavigate(item.to);
-                    onClose();
-                  }}
+                  onClick={() => runItem(item)}
                 >
                   <Icon name={item.icon} size={16} />
                   <span className="shell-grow">{item.label}</span>

@@ -154,3 +154,104 @@ test("accepted source survives restart as active; deleted one stays gone", async
 
   await app.close();
 });
+
+/**
+ * Manual text import (T013) — pasting an article body through the New-source
+ * modal stores it as plain text + ProseMirror JSON, shows it in the inbox
+ * preview, and survives an app restart. Uses its own data dir so it is
+ * independent of the triage flow above.
+ */
+test.describe("manual text import (T013)", () => {
+  let bodyDataDir: string;
+  const ARTICLE_TITLE = "Pasted long-form article";
+  const ARTICLE_BODY =
+    "Spaced repetition exploits the spacing effect.\n\nIt schedules reviews just before forgetting.\n\nThe interval grows after each success.";
+
+  test.beforeAll(() => {
+    ensureBuilt();
+    bodyDataDir = makeDataDir();
+  });
+
+  test("pasting a body creates an inbox source with the body stored + previewed", async () => {
+    const app = await launchApp(bodyDataDir);
+    const page = await app.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+
+    await page.getByTestId("nav-inbox").click();
+    await expect(page.getByTestId("route-inbox")).toBeVisible();
+    await expect(page.getByTestId("inbox-empty")).toBeVisible();
+
+    // Open the modal and fill title + URL + author + date + a multi-paragraph body.
+    await page.getByTestId("inbox-empty-new").click();
+    await expect(page.getByTestId("new-source-modal")).toBeVisible();
+    await page.getByTestId("new-source-title").fill(ARTICLE_TITLE);
+    await page.getByTestId("new-source-url").fill("https://example.com/spacing?utm_source=x");
+    await page.getByTestId("new-source-author").fill("H. Ebbinghaus");
+    await page.getByTestId("new-source-date").fill("2026-01-15");
+    await page.getByTestId("new-source-body").fill(ARTICLE_BODY);
+    await page.getByTestId("new-source-submit").click();
+    await expect(page.getByTestId("new-source-modal")).toBeHidden();
+
+    // It appears immediately in the list + preview (no reload), body shown.
+    await expect(page.getByTestId("inbox-row")).toHaveCount(1);
+    await expect(page.getByTestId("inbox-preview-title")).toHaveText(ARTICLE_TITLE);
+    await expect(page.getByTestId("inbox-preview")).toContainText("exploits the spacing effect");
+    await expect(page.getByTestId("inbox-preview")).toContainText(
+      "interval grows after each success",
+    );
+
+    // Read straight through the bridge: the detail carries the body preview
+    // (plain text), and the document row stores BOTH plain text + ProseMirror
+    // JSON with one paragraph node per blank-line paragraph.
+    const stored = await page.evaluate(async () => {
+      const api = window.appApi as unknown as {
+        inbox: {
+          list(): Promise<{ items: { id: string; charCount: number }[] }>;
+          get(req: { id: string }): Promise<{ detail: { bodyPreview: string | null } | null }>;
+        };
+      };
+      const { items } = await api.inbox.list();
+      const id = items[0]?.id as string;
+      const { detail } = await api.inbox.get({ id });
+      return { charCount: items[0]?.charCount ?? 0, bodyPreview: detail?.bodyPreview ?? null };
+    });
+    expect(stored.charCount).toBeGreaterThan(0);
+    expect(stored.bodyPreview).toContain("Spaced repetition exploits the spacing effect.");
+    expect(stored.bodyPreview).toContain("The interval grows after each success.");
+
+    await app.close();
+  });
+
+  test("the pasted source + its body persist after an app restart", async () => {
+    const app = await launchApp(bodyDataDir);
+    const page = await app.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+
+    await page.getByTestId("nav-inbox").click();
+    await expect(page.getByTestId("route-inbox")).toBeVisible();
+
+    // The source is still in the inbox with its title + body preview after restart.
+    await expect(page.getByTestId("inbox-row")).toHaveCount(1);
+    await page.getByTestId("inbox-row").click();
+    await expect(page.getByTestId("inbox-preview-title")).toHaveText(ARTICLE_TITLE);
+    await expect(page.getByTestId("inbox-preview")).toContainText(
+      "schedules reviews just before forgetting",
+    );
+
+    // Confirmed through the bridge as well.
+    const bodyPreview = await page.evaluate(async () => {
+      const api = window.appApi as unknown as {
+        inbox: {
+          list(): Promise<{ items: { id: string }[] }>;
+          get(req: { id: string }): Promise<{ detail: { bodyPreview: string | null } | null }>;
+        };
+      };
+      const { items } = await api.inbox.list();
+      const { detail } = await api.inbox.get({ id: items[0]?.id as string });
+      return detail?.bodyPreview ?? null;
+    });
+    expect(bodyPreview).toContain("Spaced repetition exploits the spacing effect.");
+
+    await app.close();
+  });
+});

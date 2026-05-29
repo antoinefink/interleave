@@ -29,6 +29,7 @@ import {
   type PriorityLabelInput,
 } from "../../lib/appApi";
 import { Kbd } from "../../shell/Kbd";
+import { NEW_SOURCE_EVENT } from "../../shell/nav";
 import { useSelection } from "../../shell/selection";
 import { NewSourceModal } from "./NewSourceModal";
 
@@ -405,6 +406,14 @@ export function InboxScreen() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [desktop, modalOpen, selId, onTriage]);
+
+  // Open the New-source modal when the ⌘K command palette fires its event
+  // ("Paste text as source…" / "New manual note…").
+  useEffect(() => {
+    const open = () => setModalOpen(true);
+    window.addEventListener(NEW_SOURCE_EVENT, open);
+    return () => window.removeEventListener(NEW_SOURCE_EVENT, open);
+  }, []);
 
   if (!desktop) {
     return (
