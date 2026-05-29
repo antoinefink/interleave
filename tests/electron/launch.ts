@@ -43,17 +43,32 @@ export function makeDataDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "interleave-e2e-"));
 }
 
+/** Optional launch tweaks for a test run. */
+export interface LaunchOptions {
+  /** Seed the demo collection when the database is empty (T010 inspector E2E). */
+  readonly seedOnEmpty?: boolean;
+}
+
 /**
  * Launch the built Electron app against `dataDir`. The renderer loads from the
- * built files (production mode) because no `VITE_DEV_SERVER_URL` is set.
+ * built files (production mode) because no `VITE_DEV_SERVER_URL` is set. Pass
+ * `{ seedOnEmpty: true }` to populate an empty DB with the shared demo
+ * collection (used by the inspector E2E).
  */
-export async function launchApp(dataDir: string): Promise<ElectronApplication> {
+export async function launchApp(
+  dataDir: string,
+  options: LaunchOptions = {},
+): Promise<ElectronApplication> {
   return electron.launch({
-    args: [mainBundle],
+    // Isolate Electron's own `userData` (caches + the single-instance
+    // SingletonLock) per data dir, so back-to-back launches across spec files
+    // never collide on the shared global lock.
+    args: [`--user-data-dir=${path.join(dataDir, "chromium")}`, mainBundle],
     cwd: desktopDir,
     env: {
       ...process.env,
       INTERLEAVE_DATA_DIR: dataDir,
+      ...(options.seedOnEmpty ? { INTERLEAVE_SEED_ON_EMPTY: "1" } : {}),
       // Ensure production-mode renderer load (built files, not the dev server).
       VITE_DEV_SERVER_URL: "",
       NODE_ENV: "production",

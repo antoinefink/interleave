@@ -13,6 +13,8 @@ export const IPC_CHANNELS = {
   dbGetStatus: "db:getStatus",
   settingsGet: "settings:get",
   settingsUpdate: "settings:update",
+  inspectorList: "inspector:list",
+  inspectorGet: "inspector:get",
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

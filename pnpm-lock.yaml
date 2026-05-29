@@ -55,6 +55,9 @@ importers:
       '@interleave/local-db':
         specifier: workspace:*
         version: link:../../packages/local-db
+      '@interleave/testing':
+        specifier: workspace:*
+        version: link:../../packages/testing
       better-sqlite3:
         specifier: ^12.10.0
         version: 12.10.0

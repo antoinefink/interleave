@@ -25,11 +25,13 @@ import type { LocalVaultPath, VaultRoot } from "@interleave/core";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
+import { Inspector } from "../components/inspector/Inspector";
 import { toggleTheme as applyToggleTheme, getStoredTheme, type Theme } from "../theme";
 import { CheatSheet } from "./CheatSheet";
 import { CommandPalette } from "./CommandPalette";
 import { Kbd } from "./Kbd";
 import { type NavItem, PRIMARY_NAV, SECONDARY_NAV } from "./nav";
+import { SelectionProvider } from "./selection";
 import "./shell.css";
 import { useShellShortcuts } from "./useShellShortcuts";
 
@@ -194,23 +196,6 @@ function Topbar({ onOpenCommand }: { onOpenCommand: () => void }) {
   );
 }
 
-/** Right inspector — placeholder container; T010 fills it with the inspector. */
-function Inspector() {
-  return (
-    <aside className="shell-inspector" data-testid="inspector" aria-label="Inspector">
-      <div className="shell-inspector__head">
-        <span className="shell-inspector__title">Inspector</span>
-      </div>
-      <div className="shell-inspector__body">
-        <div className="shell-inspector__placeholder">
-          <Icon name="info" size={22} />
-          <p>Select an element to see its details, lineage, and scheduler signals.</p>
-        </div>
-      </div>
-    </aside>
-  );
-}
-
 /**
  * The local asset vault the desktop app persists into. Typed with the real
  * `@interleave/core` vocabulary so the renderer references the vault root by its
@@ -267,30 +252,32 @@ export function Shell() {
   });
 
   return (
-    <div className="app-shell">
-      <Sidebar
-        pathname={pathname}
-        theme={theme}
-        onToggleTheme={onToggleTheme}
-        onOpenCheat={() => setCheatOpen(true)}
-      />
+    <SelectionProvider>
+      <div className="app-shell">
+        <Sidebar
+          pathname={pathname}
+          theme={theme}
+          onToggleTheme={onToggleTheme}
+          onOpenCheat={() => setCheatOpen(true)}
+        />
 
-      <div className="shell-main">
-        <Topbar onOpenCommand={() => setCommandOpen(true)} />
-        <main className="shell-page">
-          <Outlet />
-        </main>
-        <StatusBar />
+        <div className="shell-main">
+          <Topbar onOpenCommand={() => setCommandOpen(true)} />
+          <main className="shell-page">
+            <Outlet />
+          </main>
+          <StatusBar />
+        </div>
+
+        <Inspector />
+
+        <CommandPalette
+          open={commandOpen}
+          onClose={() => setCommandOpen(false)}
+          onNavigate={onNavigate}
+        />
+        <CheatSheet open={cheatOpen} onClose={() => setCheatOpen(false)} />
       </div>
-
-      <Inspector />
-
-      <CommandPalette
-        open={commandOpen}
-        onClose={() => setCommandOpen(false)}
-        onNavigate={onNavigate}
-      />
-      <CheatSheet open={cheatOpen} onClose={() => setCheatOpen(false)} />
-    </div>
+    </SelectionProvider>
   );
 }

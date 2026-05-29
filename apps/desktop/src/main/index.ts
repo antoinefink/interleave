@@ -50,6 +50,19 @@ function bootstrap(): void {
     nativeBinding: resolveNativeBinding(distDir),
   });
 
+  // 2b) Dev/E2E convenience: seed an empty database with the shared demo
+  //     collection so the inspector (T010) has realistic lineage to show.
+  //     Opt-in via INTERLEAVE_SEED_ON_EMPTY; never seeds a non-empty DB, so a
+  //     real user collection is untouched and production launches do not seed.
+  if (process.env.INTERLEAVE_SEED_ON_EMPTY === "1") {
+    try {
+      const seeded = dbService.seedIfEmpty();
+      if (seeded) console.log("[main] seeded empty database with the demo collection");
+    } catch (error) {
+      console.error("[main] seed-on-empty failed:", error);
+    }
+  }
+
   // 3) Validated IPC surface.
   disposeIpc = registerIpcHandlers(dbService);
 

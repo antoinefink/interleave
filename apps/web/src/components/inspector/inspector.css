@@ -1,0 +1,426 @@
+/* ============================================================
+   Interleave — universal element inspector stylesheet (T010)
+
+   Rebuilds the *visual output* of the kit's inspector primitives
+   (design/kit/styles/app.css: badges, priority, status, stage, type-icon
+   chip, scheduler chips, FSRS stat readout, meta rows, tags, insp-sec, and
+   the lineage tree) for our React 19 + Tailwind v4 stack. Every value resolves
+   to a design token (surfaces, borders, text tiers, the element-type, priority,
+   and scheduler hues) — no hard-coded colors or px. It is NOT a copy of the
+   Babel-in-browser prototype structure; the markup is rebuilt in React.
+
+   Correct in BOTH light and dark because every color comes from a token that
+   re-themes on [data-theme].
+   ============================================================ */
+
+/* ---------- Badges ---------- */
+.badge {
+  font-family: var(--font-ui);
+  font-size: var(--t-2xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border-radius: var(--r-xs);
+  border: 1px solid transparent;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.badge--soft {
+  background: var(--surface-2);
+  color: var(--text-2);
+  border-color: var(--border);
+}
+.badge--due {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.badge--overdue {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.badge--done {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.badge--new {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.badge--suspended {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+.badge--dismissed {
+  background: var(--surface-2);
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+.badge--trashed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* priority badges */
+.prio {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.prio--a {
+  background: var(--prio-a-soft);
+  color: var(--prio-a);
+}
+.prio--b {
+  background: var(--prio-b-soft);
+  color: var(--prio-b);
+}
+.prio--c {
+  background: var(--prio-c-soft);
+  color: var(--prio-c);
+}
+.prio--d {
+  background: var(--prio-d-soft);
+  color: var(--prio-d);
+}
+
+/* ---------- Stage badge ---------- */
+.stage {
+  font-size: var(--t-2xs);
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--r-full);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.stage-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  flex: none;
+}
+
+/* ---------- Type-icon chip ---------- */
+.tico {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-sm);
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+.tico svg {
+  width: 14px;
+  height: 14px;
+}
+.tico--source {
+  color: var(--el-source);
+}
+.tico--extract {
+  color: var(--el-extract);
+}
+.tico--card {
+  color: var(--el-card);
+}
+.tico--task {
+  color: var(--el-task);
+}
+.tico--concept {
+  color: var(--el-concept);
+}
+.tico--media {
+  color: var(--el-media);
+}
+.tico--topic {
+  color: var(--el-topic);
+}
+.tico--synthesis {
+  color: var(--el-synthesis);
+}
+.tico--lg {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-md);
+}
+.tico--lg svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* ---------- Scheduler chips (the two-scheduler split) ---------- */
+.sched {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 7px 0 6px;
+  border-radius: var(--r-full);
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  font-weight: 500;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+.sched svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+.sched--fsrs {
+  color: var(--sched-fsrs);
+  border-color: color-mix(in oklch, var(--sched-fsrs) 30%, transparent);
+  background: color-mix(in oklch, var(--sched-fsrs) 9%, transparent);
+}
+.sched--attn {
+  color: var(--sched-attn);
+  border-color: color-mix(in oklch, var(--sched-attn) 30%, transparent);
+  background: color-mix(in oklch, var(--sched-attn) 9%, transparent);
+}
+.sched b {
+  font-weight: 600;
+}
+.sched__sep {
+  opacity: 0.4;
+}
+
+/* ---------- FSRS stat readout ---------- */
+.fsrs-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.fstat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface);
+}
+.fstat__v {
+  font-family: var(--font-ui);
+  font-size: var(--t-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1;
+}
+.fstat__l {
+  font-size: var(--t-2xs);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.fstat__bar {
+  height: 3px;
+  border-radius: var(--r-full);
+  background: var(--border);
+  overflow: hidden;
+  margin-top: 2px;
+}
+.fstat__bar > i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-full);
+}
+
+/* ---------- Tags ---------- */
+.tag {
+  font-family: var(--font-ui);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: var(--r-xs);
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid var(--border-faint);
+}
+.tag::before {
+  content: "#";
+  opacity: 0.45;
+}
+
+/* ---------- Metadata rows ---------- */
+.meta-list {
+  display: flex;
+  flex-direction: column;
+}
+.meta-row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: var(--s-4);
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--border-faint);
+  align-items: start;
+}
+.meta-row:last-child {
+  border-bottom: none;
+}
+.meta-key {
+  font-size: var(--t-sm);
+  color: var(--text-3);
+}
+.meta-val {
+  font-size: var(--t-sm);
+  color: var(--text);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Inspector sections + header ---------- */
+.insp {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.insp-head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-3);
+}
+.insp-head__title {
+  font-size: var(--t-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: var(--lh-snug);
+  margin: 0;
+}
+.insp-head__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 5px;
+}
+.insp-sec {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.insp-sec__title {
+  font-size: var(--t-2xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.insp-sec__count {
+  font-family: var(--font-mono);
+  color: var(--text-3);
+  font-weight: 500;
+}
+.insp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.insp-quote {
+  font-family: var(--font-read);
+  font-size: var(--t-sm);
+  color: var(--text-2);
+  line-height: var(--lh-snug);
+  border-left: 3px solid var(--border-strong);
+  padding: var(--s-2) var(--s-4);
+  background: var(--surface-2);
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+}
+.insp-empty {
+  font-size: var(--t-sm);
+  color: var(--text-3);
+}
+
+/* ---------- Lineage tree ---------- */
+.tree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+.tree-node:hover {
+  background: var(--surface-2);
+}
+.tree-node--on {
+  background: var(--accent-soft);
+}
+.tree-node:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.tree-node__title {
+  font-size: var(--t-sm);
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- Element picker (selection mechanism) ---------- */
+.insp-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.insp-picker__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+.insp-picker__item:hover {
+  background: var(--surface-2);
+}
+.insp-picker__item--on {
+  background: var(--accent-soft);
+}
+.insp-picker__item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.insp-picker__title {
+  font-size: var(--t-sm);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

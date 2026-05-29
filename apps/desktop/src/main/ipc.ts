@@ -13,6 +13,8 @@ import {
   DbStatusRequestSchema,
   HealthRequestSchema,
   type HealthResult,
+  InspectorGetRequestSchema,
+  InspectorListRequestSchema,
   IPC_CHANNELS,
   SettingsGetRequestSchema,
   SettingsUpdateRequestSchema,
@@ -50,6 +52,16 @@ export function registerIpcHandlers(dbService: DbService): () => void {
   ipcMain.handle(IPC_CHANNELS.settingsUpdate, (_event, rawRequest: unknown) => {
     const request = SettingsUpdateRequestSchema.parse(rawRequest);
     return dbService.updateSetting(request.key, request.value);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.inspectorList, () => {
+    InspectorListRequestSchema.parse(undefined);
+    return dbService.listInspectableElements();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.inspectorGet, (_event, rawRequest: unknown) => {
+    const request = InspectorGetRequestSchema.parse(rawRequest);
+    return dbService.getInspectorData(request.id);
   });
 
   return () => {

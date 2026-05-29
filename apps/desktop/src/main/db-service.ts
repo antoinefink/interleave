@@ -16,10 +16,14 @@
  * through the repository seam.
  */
 
+import type { ElementId } from "@interleave/core";
 import { type DbHandle, migrateDatabase, openDatabase } from "@interleave/db";
-import { createRepositories, type Repositories } from "@interleave/local-db";
+import { createRepositories, InspectorQuery, type Repositories } from "@interleave/local-db";
+import { seedDemoCollection } from "@interleave/testing";
 import type {
   DbStatus,
+  InspectorGetResult,
+  InspectorListResult,
   SettingsGetResult,
   SettingsUpdateResult,
   SettingValue,
@@ -28,6 +32,7 @@ import type {
 export class DbService {
   private handle: DbHandle | null = null;
   private repositories: Repositories | null = null;
+  private inspector: InspectorQuery | null = null;
   private migrated = false;
 
   /** Whether the database handle is currently open. */
@@ -57,6 +62,7 @@ export class DbService {
       : openDatabase(dbPath);
     migrateDatabase(this.handle.db, options.migrationsDir);
     this.repositories = createRepositories(this.handle.db);
+    this.inspector = new InspectorQuery(this.repositories);
     this.migrated = true;
   }
 
@@ -66,6 +72,7 @@ export class DbService {
     this.handle.sqlite.close();
     this.handle = null;
     this.repositories = null;
+    this.inspector = null;
     this.migrated = false;
   }
 
@@ -133,6 +140,41 @@ export class DbService {
   updateSetting(key: string, value: unknown): SettingsUpdateResult {
     const stored = this.repos.settings.set(key, value ?? null);
     return { key, value: stored as SettingValue };
+  }
+
+  /** Read-only inspector query layer (T010), bound to the open database. */
+  private get inspectorQuery(): InspectorQuery {
+    if (!this.inspector) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.inspector;
+  }
+
+  /** All live element summaries for the inspector's selection picker. */
+  listInspectableElements(): InspectorListResult {
+    return { elements: this.inspectorQuery.list() };
+  }
+
+  /** The full inspector payload for one element, or `null` if unknown/deleted. */
+  getInspectorData(id: string): InspectorGetResult {
+    return { data: this.inspectorQuery.get(id as ElementId) };
+  }
+
+  /**
+   * Populate an EMPTY database with the shared demo collection (the same factory
+   * the Vitest fixtures + `pnpm seed` use), so the inspector has realistic
+   * lineage to show in dev and E2E. A no-op when any element already exists, so
+   * it never duplicates data or overwrites a real user collection. Opt-in via the
+   * caller (gated by `INTERLEAVE_SEED_ON_EMPTY` in `bootstrap`) — production
+   * launches do not seed.
+   */
+  seedIfEmpty(): boolean {
+    const { db } = this.require();
+    const repos = this.repos;
+    const existing = repos.elements.listByType("source");
+    if (existing.length > 0) return false;
+    seedDemoCollection(repos, db);
+    return true;
   }
 
   /** Cheap connectivity check used by `app.health()`. */

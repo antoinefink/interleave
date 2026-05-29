@@ -33,6 +33,17 @@ export {
 } from "./element-repository";
 export { newElementId, newRowId, newSiblingGroupId, nowIso } from "./ids";
 export {
+  type ElementSummary,
+  type InspectorData,
+  InspectorQuery,
+  type LineageItem,
+  type LocationSummary,
+  type ReviewSummary,
+  type SchedulerSignals,
+  type SourceProvenance,
+  schedulerKindForType,
+} from "./inspector-query";
+export {
   type AppendOpInput,
   OperationLogRepository,
 } from "./operation-log-repository";

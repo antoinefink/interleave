@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  InspectorGetRequestSchema,
   IPC_CHANNELS,
   SettingKeySchema,
   SettingsGetRequestSchema,
@@ -16,9 +17,16 @@ import {
 } from "./contract";
 
 describe("IPC channels", () => {
-  it("exposes exactly the four M1 commands and no generic SQL channel", () => {
+  it("exposes exactly the M1 commands (incl. the read-only inspector) and no generic SQL channel", () => {
     expect(Object.values(IPC_CHANNELS).sort()).toEqual(
-      ["app:health", "db:getStatus", "settings:get", "settings:update"].sort(),
+      [
+        "app:health",
+        "db:getStatus",
+        "settings:get",
+        "settings:update",
+        "inspector:list",
+        "inspector:get",
+      ].sort(),
     );
     expect(Object.values(IPC_CHANNELS)).not.toContain("db:query");
   });
@@ -51,5 +59,16 @@ describe("SettingsUpdateRequestSchema", () => {
 
   it("rejects an over-long key", () => {
     expect(() => SettingKeySchema.parse("x".repeat(200))).toThrow();
+  });
+});
+
+describe("InspectorGetRequestSchema", () => {
+  it("accepts a non-empty element id", () => {
+    expect(InspectorGetRequestSchema.parse({ id: "el_123" })).toEqual({ id: "el_123" });
+  });
+
+  it("rejects a missing or empty id", () => {
+    expect(() => InspectorGetRequestSchema.parse({})).toThrow();
+    expect(() => InspectorGetRequestSchema.parse({ id: "" })).toThrow();
   });
 });
