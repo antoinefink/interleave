@@ -1,0 +1,213 @@
+/* ============================================================
+   INCREMENTAL READING — Design Tokens
+   IBM Plex superfamily · cool-neutral palette · blue accent
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Serif:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* ---- Type families ---- */
+  --font-ui: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --font-read: "IBM Plex Serif", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+
+  /* ---- Type scale (compact, pro-tool) ---- */
+  --t-2xs: 10.5px;
+  --t-xs: 11.5px;
+  --t-sm: 12.5px;
+  --t-base: 13.5px;
+  --t-md: 15px;
+  --t-lg: 17px;
+  --t-xl: 21px;
+  --t-2xl: 27px;
+  --t-3xl: 34px;
+
+  --lh-tight: 1.2;
+  --lh-snug: 1.4;
+  --lh-normal: 1.55;
+  --lh-read: 1.72;
+
+  /* ---- Spacing (4px base) ---- */
+  --s-1: 4px;
+  --s-2: 6px;
+  --s-3: 8px;
+  --s-4: 10px;
+  --s-5: 12px;
+  --s-6: 16px;
+  --s-7: 20px;
+  --s-8: 24px;
+  --s-9: 32px;
+  --s-10: 40px;
+  --s-12: 56px;
+
+  /* ---- Radii ---- */
+  --r-xs: 3px;
+  --r-sm: 5px;
+  --r-md: 7px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+  --r-full: 999px;
+
+  /* ---- Layout dims ---- */
+  --sidebar-w: 212px;
+  --inspector-w: 296px;
+  --topbar-h: 52px;
+
+  /* ---- Motion ---- */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --fast: 110ms;
+  --med: 200ms;
+
+  /* ============ LIGHT THEME ============ */
+  --canvas: oklch(1 0 0);
+  --surface: oklch(1 0 0);
+  --surface-2: oklch(0.972 0.003 250);
+  --sunken: oklch(0.965 0.004 255);
+  --raised: oklch(1 0 0);
+
+  --border: oklch(0.918 0.004 255);
+  --border-strong: oklch(0.86 0.006 255);
+  --border-faint: oklch(0.945 0.003 255);
+
+  --text: oklch(0.27 0.012 262);
+  --text-2: oklch(0.475 0.012 262);
+  --text-3: oklch(0.63 0.011 262);
+  --text-on-accent: oklch(0.99 0 0);
+
+  --accent: oklch(0.55 0.123 252);
+  --accent-hover: oklch(0.49 0.13 252);
+  --accent-soft: oklch(0.95 0.028 252);
+  --accent-soft-bd: oklch(0.88 0.05 252);
+  --accent-text: oklch(0.46 0.13 252);
+
+  /* priority + status (muted) */
+  --prio-a: oklch(0.56 0.16 25);
+  --prio-a-soft: oklch(0.95 0.03 25);
+  --prio-b: oklch(0.64 0.13 62);
+  --prio-b-soft: oklch(0.95 0.04 70);
+  --prio-c: oklch(0.55 0.1 230);
+  --prio-c-soft: oklch(0.95 0.025 240);
+  --prio-d: oklch(0.6 0.008 262);
+  --prio-d-soft: oklch(0.95 0.003 262);
+
+  --ok: oklch(0.58 0.1 158);
+  --ok-soft: oklch(0.95 0.03 158);
+  --warn: oklch(0.66 0.13 65);
+  --warn-soft: oklch(0.96 0.04 70);
+  --danger: oklch(0.57 0.16 25);
+  --danger-soft: oklch(0.96 0.03 25);
+
+  /* element-type hues (subtle) */
+  --el-source: oklch(0.55 0.1 252);
+  --el-extract: oklch(0.56 0.11 300);
+  --el-card: oklch(0.56 0.11 158);
+  --el-task: oklch(0.6 0.12 40);
+  --el-concept: oklch(0.55 0.1 200);
+  --el-media: oklch(0.56 0.11 330);
+  --el-topic: oklch(0.55 0.1 270);
+  --el-synthesis: oklch(0.58 0.11 130);
+
+  /* scheduler accents */
+  --sched-fsrs: oklch(0.56 0.11 158);
+  --sched-attn: oklch(0.55 0.1 270);
+
+  /* highlight / extract marks */
+  --mark-hl: oklch(0.92 0.09 95 / 0.7);
+  --mark-extract: oklch(0.9 0.06 300 / 0.55);
+  --mark-extract-bd: oklch(0.62 0.12 300);
+
+  --shadow-sm: 0 1px 2px oklch(0.2 0.02 262 / 0.06), 0 1px 1px oklch(0.2 0.02 262 / 0.04);
+  --shadow-md: 0 4px 12px oklch(0.2 0.02 262 / 0.08), 0 1px 3px oklch(0.2 0.02 262 / 0.06);
+  --shadow-lg: 0 12px 32px oklch(0.2 0.02 262 / 0.14), 0 3px 8px oklch(0.2 0.02 262 / 0.08);
+  --shadow-pop: 0 16px 48px oklch(0.18 0.02 262 / 0.18);
+
+  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--accent);
+}
+
+[data-theme="dark"] {
+  --canvas: oklch(0.181 0.006 264);
+  --surface: oklch(0.214 0.007 264);
+  --surface-2: oklch(0.234 0.008 264);
+  --sunken: oklch(0.158 0.006 264);
+  --raised: oklch(0.246 0.008 264);
+
+  --border: oklch(0.292 0.009 264);
+  --border-strong: oklch(0.36 0.011 264);
+  --border-faint: oklch(0.252 0.008 264);
+
+  --text: oklch(0.93 0.006 264);
+  --text-2: oklch(0.7 0.01 264);
+  --text-3: oklch(0.55 0.011 264);
+  --text-on-accent: oklch(0.99 0 0);
+
+  --accent: oklch(0.64 0.13 252);
+  --accent-hover: oklch(0.7 0.13 252);
+  --accent-soft: oklch(0.32 0.06 252);
+  --accent-soft-bd: oklch(0.42 0.08 252);
+  --accent-text: oklch(0.78 0.1 252);
+
+  --prio-a: oklch(0.66 0.16 28);
+  --prio-a-soft: oklch(0.33 0.07 28);
+  --prio-b: oklch(0.74 0.12 68);
+  --prio-b-soft: oklch(0.34 0.06 65);
+  --prio-c: oklch(0.68 0.1 235);
+  --prio-c-soft: oklch(0.32 0.05 240);
+  --prio-d: oklch(0.6 0.008 264);
+  --prio-d-soft: oklch(0.3 0.005 264);
+
+  --ok: oklch(0.7 0.11 158);
+  --ok-soft: oklch(0.3 0.05 158);
+  --warn: oklch(0.76 0.12 70);
+  --warn-soft: oklch(0.33 0.06 65);
+  --danger: oklch(0.68 0.16 28);
+  --danger-soft: oklch(0.33 0.07 28);
+
+  --el-source: oklch(0.7 0.1 252);
+  --el-extract: oklch(0.72 0.11 300);
+  --el-card: oklch(0.72 0.11 158);
+  --el-task: oklch(0.74 0.12 45);
+  --el-concept: oklch(0.7 0.1 200);
+  --el-media: oklch(0.72 0.11 330);
+  --el-topic: oklch(0.72 0.1 270);
+  --el-synthesis: oklch(0.74 0.11 130);
+  --sched-fsrs: oklch(0.72 0.11 158);
+  --sched-attn: oklch(0.72 0.1 270);
+
+  --mark-hl: oklch(0.78 0.12 95 / 0.28);
+  --mark-extract: oklch(0.6 0.1 300 / 0.32);
+  --mark-extract-bd: oklch(0.7 0.12 300);
+
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.3);
+  --shadow-md: 0 4px 14px oklch(0 0 0 / 0.4), 0 1px 3px oklch(0 0 0 / 0.3);
+  --shadow-lg: 0 14px 38px oklch(0 0 0 / 0.5), 0 3px 8px oklch(0 0 0 / 0.4);
+  --shadow-pop: 0 18px 52px oklch(0 0 0 / 0.6);
+
+  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--accent);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--t-base);
+  line-height: var(--lh-normal);
+  color: var(--text);
+  background: var(--canvas);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv05" 1, "ss01" 1;
+}
+
+::selection { background: var(--accent-soft); color: var(--accent-text); }
+
+/* Scrollbars */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: var(--r-full);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--text-3); background-clip: content-box; }
+*::-webkit-scrollbar-track { background: transparent; }

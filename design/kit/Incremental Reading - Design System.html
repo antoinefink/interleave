@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Incremental Reading — Design System</title>
+<link rel="stylesheet" href="styles/tokens.css">
+<link rel="stylesheet" href="styles/app.css">
+<style>
+  .ds { max-width: 1180px; margin: 0 auto; padding: 0 32px 120px; }
+  .ds-top {
+    position: sticky; top: 0; z-index: 20; background: color-mix(in oklch, var(--canvas) 85%, transparent);
+    backdrop-filter: blur(10px); border-bottom: 1px solid var(--border);
+    margin: 0 -32px 0; padding: 14px 32px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .ds-top h1 { font-size: var(--t-md); font-weight: 600; margin: 0; letter-spacing: -0.01em; display: flex; align-items: center; gap: 10px; }
+  .ds-logo { width: 26px; height: 26px; border-radius: var(--r-sm); background: var(--accent); color: var(--text-on-accent); display: grid; place-items: center; }
+  .ds-logo svg { width: 16px; height: 16px; }
+  .sec { margin-top: 64px; scroll-margin-top: 80px; }
+  .sec > h2 { font-size: var(--t-xl); font-weight: 600; letter-spacing: -0.02em; margin: 0 0 4px; }
+  .sec > .sub { color: var(--text-2); font-size: var(--t-base); margin: 0 0 24px; max-width: 640px; }
+  .grid { display: grid; gap: 16px; }
+  .cards-3 { grid-template-columns: repeat(3, 1fr); }
+  .cards-4 { grid-template-columns: repeat(4, 1fr); }
+  .cards-2 { grid-template-columns: repeat(2, 1fr); }
+  .demo { border: 1px solid var(--border); border-radius: var(--r-lg); padding: 24px; background: var(--surface); }
+  .demo-label { font-family: var(--font-mono); font-size: var(--t-2xs); color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px; }
+  .swatch { border-radius: var(--r-md); height: 64px; border: 1px solid var(--border); display: flex; align-items: flex-end; padding: 8px; }
+  .swrow { display: flex; flex-direction: column; gap: 6px; }
+  .swrow .nm { font-family: var(--font-mono); font-size: var(--t-2xs); color: var(--text-2); }
+  .typerow { display: flex; align-items: baseline; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--border-faint); }
+  .typerow .lbl { font-family: var(--font-mono); font-size: var(--t-2xs); color: var(--text-3); width: 130px; flex: none; }
+  .flow { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .reason { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
+  .reason .demo h3 { font-size: var(--t-base); margin: 0 0 8px; display: flex; align-items: center; gap: 8px; }
+  .reason .demo h3 svg { width: 15px; height: 15px; color: var(--accent-text); }
+  .reason .demo p, .reason .demo li { font-size: var(--t-sm); color: var(--text-2); line-height: var(--lh-normal); margin: 0; }
+  .reason .demo ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+  .toc { display: flex; gap: 6px; flex-wrap: wrap; }
+  .toc a { font-size: var(--t-sm); color: var(--text-2); text-decoration: none; padding: 5px 10px; border-radius: var(--r-full); border: 1px solid var(--border); }
+  .toc a:hover { color: var(--text); border-color: var(--text-3); }
+  .scale-vis { display: flex; align-items: flex-end; gap: 8px; }
+  .scale-vis .box { background: var(--accent-soft); border: 1px solid var(--accent-soft-bd); border-radius: var(--r-xs); }
+  .scale-vis .box span { font-family: var(--font-mono); font-size: 9px; color: var(--accent-text); display: block; text-align: center; margin-top: 4px; }
+</style>
+</head>
+<body>
+<div class="ds-top">
+  <h1><span class="ds-logo" data-icon="layers"></span> Incremental Reading — Design System</h1>
+  <div class="row">
+    <a class="btn btn--soft btn--sm" href="Incremental Reading.html">Open prototype <span data-icon="chevronRight"></span></a>
+    <button class="btn btn--icon" id="themeBtn" title="Toggle theme"><span data-icon="moon"></span></button>
+  </div>
+</div>
+
+<div class="ds">
+
+  <!-- ===== INTRO / REASONING ===== -->
+  <section class="sec" style="margin-top: 40px;">
+    <h2>Design rationale</h2>
+    <p class="sub">Before the screens — here's the thinking behind the system, so we're aligned on direction. I'm treating this as a serious, long-term knowledge environment: dense, calm, keyboard-first, with restraint as the dominant feeling.</p>
+    <div class="reason">
+      <div class="demo">
+        <h3><span data-icon="text"></span> Type — a single superfamily</h3>
+        <p style="margin-bottom:10px;">IBM Plex does all three jobs and keeps everything coherent:</p>
+        <ul>
+          <li><b>Plex Sans</b> — all UI chrome, labels, controls</li>
+          <li><b>Plex Serif</b> — long-form reading & card faces, so reading feels distinct from operating the tool</li>
+          <li><b>Plex Mono</b> — metadata, intervals, counts, shortcut keys</li>
+        </ul>
+      </div>
+      <div class="demo">
+        <h3><span data-icon="shield"></span> Color — neutral with intent</h3>
+        <p>A cool-neutral gray canvas carries 95% of the UI. Color appears <i>only</i> to mean something: priority (A–D), status (due / overdue / leech), and element type. No decorative gradients, no illustration.</p>
+      </div>
+      <div class="demo">
+        <h3><span data-icon="zap"></span> Density & speed</h3>
+        <p>Compact 4px spacing grid, 13.5px base UI text, tight rows. Designed so a power user processing 80 items a day never feels the chrome. Subtle borders over heavy shadows.</p>
+      </div>
+      <div class="demo">
+        <h3><span data-icon="command"></span> Keyboard-first, quietly</h3>
+        <p>Every primary action has a shortcut, shown subtly on hover and in corners — present for power users, never shouting at newcomers. A command bar anchors the top of every screen.</p>
+      </div>
+    </div>
+    <div class="toc" style="margin-top:24px;">
+      <a href="#type">Type</a><a href="#color">Color</a><a href="#space">Spacing & elevation</a>
+      <a href="#icons">Icons</a><a href="#badges">Badges & priority</a><a href="#controls">Controls</a>
+      <a href="#queue">Queue items</a><a href="#review">Review card</a><a href="#panels">Panels & inspectors</a>
+      <a href="#feedback">Banners & states</a>
+    </div>
+  </section>
+
+  <!-- ===== TYPE ===== -->
+  <section class="sec" id="type">
+    <h2>Typography</h2>
+    <p class="sub">Compact scale tuned for a dense workspace. Reading text steps up to a comfortable serif measure.</p>
+    <div class="demo">
+      <div class="demo-label">UI · IBM Plex Sans</div>
+      <div class="typerow"><span class="lbl">3xl / 34 / 600</span><span style="font-size:var(--t-3xl);font-weight:600;letter-spacing:-0.02em;">Knowledge compounds</span></div>
+      <div class="typerow"><span class="lbl">xl / 21 / 600</span><span style="font-size:var(--t-xl);font-weight:600;letter-spacing:-0.01em;">Daily queue is clear</span></div>
+      <div class="typerow"><span class="lbl">md / 15 / 600</span><span style="font-size:var(--t-md);font-weight:600;">Queue item title</span></div>
+      <div class="typerow"><span class="lbl">base / 13.5 / 400</span><span style="font-size:var(--t-base);">Body & default interface text</span></div>
+      <div class="typerow"><span class="lbl">sm / 12.5 / 400</span><span style="font-size:var(--t-sm);color:var(--text-2);">Secondary metadata and helper text</span></div>
+      <div class="typerow" style="border:none;"><span class="lbl">mono / xs / 500</span><span class="mono" style="font-size:var(--t-xs);color:var(--text-2);">12d · ease 2.5 · A · ⌘K</span></div>
+    </div>
+    <div class="demo" style="margin-top:16px;">
+      <div class="demo-label">Reading · IBM Plex Serif</div>
+      <p class="serif" style="font-size:var(--t-lg);line-height:var(--lh-read);max-width:62ch;margin:0;">Incremental reading treats every source as something you return to. You read a little, extract what matters, and let the rest wait — the schedule decides when an idea is worth your attention again.</p>
+    </div>
+  </section>
+
+  <!-- ===== COLOR ===== -->
+  <section class="sec" id="color">
+    <h2>Color</h2>
+    <p class="sub">Toggle the theme in the top bar — every token below is defined for light and dark. Color is reserved for meaning.</p>
+    <div class="demo">
+      <div class="demo-label">Surfaces & text</div>
+      <div class="grid cards-4">
+        <div class="swrow"><div class="swatch" style="background:var(--canvas)"></div><span class="nm">--canvas</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--surface)"></div><span class="nm">--surface</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--sunken)"></div><span class="nm">--sunken</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--surface-2)"></div><span class="nm">--surface-2</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--text)"></div><span class="nm">--text</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--text-2)"></div><span class="nm">--text-2</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--text-3)"></div><span class="nm">--text-3</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--border-strong)"></div><span class="nm">--border-strong</span></div>
+      </div>
+    </div>
+    <div class="grid cards-2" style="margin-top:16px;">
+      <div class="demo">
+        <div class="demo-label">Accent</div>
+        <div class="grid cards-3">
+          <div class="swrow"><div class="swatch" style="background:var(--accent)"></div><span class="nm">--accent</span></div>
+          <div class="swrow"><div class="swatch" style="background:var(--accent-hover)"></div><span class="nm">--accent-hover</span></div>
+          <div class="swrow"><div class="swatch" style="background:var(--accent-soft)"></div><span class="nm">--accent-soft</span></div>
+        </div>
+      </div>
+      <div class="demo">
+        <div class="demo-label">Semantic</div>
+        <div class="grid cards-4">
+          <div class="swrow"><div class="swatch" style="background:var(--ok)"></div><span class="nm">ok</span></div>
+          <div class="swrow"><div class="swatch" style="background:var(--warn)"></div><span class="nm">warn</span></div>
+          <div class="swrow"><div class="swatch" style="background:var(--danger)"></div><span class="nm">danger</span></div>
+          <div class="swrow"><div class="swatch" style="background:var(--accent)"></div><span class="nm">info</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="demo" style="margin-top:16px;">
+      <div class="demo-label">Priority & element-type hues</div>
+      <div class="grid cards-4" style="grid-template-columns:repeat(5,1fr);margin-bottom:18px;">
+        <div class="swrow"><div class="swatch" style="background:var(--prio-a)"></div><span class="nm">priority A</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--prio-b)"></div><span class="nm">priority B</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--prio-c)"></div><span class="nm">priority C</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--prio-d)"></div><span class="nm">priority D</span></div>
+      </div>
+      <div class="grid" style="grid-template-columns:repeat(6,1fr)">
+        <div class="swrow"><div class="swatch" style="background:var(--el-source)"></div><span class="nm">source</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--el-extract)"></div><span class="nm">extract</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--el-card)"></div><span class="nm">card</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--el-task)"></div><span class="nm">task</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--el-concept)"></div><span class="nm">concept</span></div>
+        <div class="swrow"><div class="swatch" style="background:var(--el-media)"></div><span class="nm">media</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SPACING ===== -->
+  <section class="sec" id="space">
+    <h2>Spacing & elevation</h2>
+    <p class="sub">A 4px grid. Three elevation levels only — borders do most of the separating.</p>
+    <div class="grid cards-2">
+      <div class="demo">
+        <div class="demo-label">Spacing scale</div>
+        <div class="scale-vis">
+          <div class="box" style="width:4px;height:4px"><span>4</span></div>
+          <div class="box" style="width:8px;height:8px"><span>8</span></div>
+          <div class="box" style="width:12px;height:12px"><span>12</span></div>
+          <div class="box" style="width:16px;height:16px"><span>16</span></div>
+          <div class="box" style="width:24px;height:24px"><span>24</span></div>
+          <div class="box" style="width:32px;height:32px"><span>32</span></div>
+          <div class="box" style="width:56px;height:56px"><span>56</span></div>
+        </div>
+        <div class="demo-label" style="margin-top:24px;">Radii</div>
+        <div class="flow">
+          <div style="width:48px;height:40px;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:var(--r-xs)"></div>
+          <div style="width:48px;height:40px;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:var(--r-sm)"></div>
+          <div style="width:48px;height:40px;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:var(--r-md)"></div>
+          <div style="width:48px;height:40px;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:var(--r-lg)"></div>
+          <div style="width:48px;height:40px;background:var(--surface-2);border:1px solid var(--border-strong);border-radius:var(--r-xl)"></div>
+        </div>
+      </div>
+      <div class="demo">
+        <div class="demo-label">Elevation</div>
+        <div class="flow" style="gap:20px;">
+          <div style="width:90px;height:64px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);box-shadow:var(--shadow-sm);display:grid;place-items:center;font-size:var(--t-2xs);color:var(--text-3)">sm</div>
+          <div style="width:90px;height:64px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);box-shadow:var(--shadow-md);display:grid;place-items:center;font-size:var(--t-2xs);color:var(--text-3)">md</div>
+          <div style="width:90px;height:64px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);box-shadow:var(--shadow-lg);display:grid;place-items:center;font-size:var(--t-2xs);color:var(--text-3)">lg</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== ICONS ===== -->
+  <section class="sec" id="icons">
+    <h2>Icons</h2>
+    <p class="sub">One 24px line set, currentColor. Element types get a subtle hued chip; actions stay neutral.</p>
+    <div class="demo">
+      <div class="demo-label">Element types</div>
+      <div class="flow" style="gap:20px;margin-bottom:8px;">
+        <div class="col" style="align-items:center;gap:6px;"><span class="tico tico--lg tico--source" data-icon="source"></span><span class="nm mono" style="font-size:var(--t-2xs)">Source</span></div>
+        <div class="col" style="align-items:center;gap:6px;"><span class="tico tico--lg tico--extract" data-icon="extract"></span><span class="nm mono" style="font-size:var(--t-2xs)">Extract</span></div>
+        <div class="col" style="align-items:center;gap:6px;"><span class="tico tico--lg tico--card" data-icon="card"></span><span class="nm mono" style="font-size:var(--t-2xs)">Card</span></div>
+        <div class="col" style="align-items:center;gap:6px;"><span class="tico tico--lg tico--task" data-icon="task"></span><span class="nm mono" style="font-size:var(--t-2xs)">Task</span></div>
+        <div class="col" style="align-items:center;gap:6px;"><span class="tico tico--lg tico--concept" data-icon="concept"></span><span class="nm mono" style="font-size:var(--t-2xs)">Concept</span></div>
+        <div class="col" style="align-items:center;gap:6px;"><span class="tico tico--lg tico--media" data-icon="media"></span><span class="nm mono" style="font-size:var(--t-2xs)">Media</span></div>
+      </div>
+    </div>
+    <div class="demo" style="margin-top:16px;">
+      <div class="demo-label">Action & system icons</div>
+      <div class="flow" id="iconWall" style="gap:18px;color:var(--text-2);"></div>
+    </div>
+  </section>
+
+  <!-- ===== BADGES ===== -->
+  <section class="sec" id="badges">
+    <h2>Badges, priority & stages</h2>
+    <p class="sub">Priority is shown as a compact letter chip or a 7px square dot when space is tight. Stages track an extract's journey to a card.</p>
+    <div class="grid cards-3">
+      <div class="demo">
+        <div class="demo-label">Priority</div>
+        <div class="flow">
+          <span class="badge prio prio--a">A</span><span class="badge prio prio--b">B</span>
+          <span class="badge prio prio--c">C</span><span class="badge prio prio--d">D</span>
+        </div>
+        <div class="flow" style="margin-top:14px;">
+          <span class="prio-dot prio-dot--a"></span><span class="prio-dot prio-dot--b"></span>
+          <span class="prio-dot prio-dot--c"></span><span class="prio-dot prio-dot--d"></span>
+        </div>
+      </div>
+      <div class="demo">
+        <div class="demo-label">Status</div>
+        <div class="flow">
+          <span class="badge badge--due">Due</span><span class="badge badge--overdue">Overdue</span>
+          <span class="badge badge--done">Done</span><span class="badge badge--leech">Leech</span><span class="badge badge--new">New</span>
+        </div>
+      </div>
+      <div class="demo">
+        <div class="demo-label">Extract stages</div>
+        <div class="col" style="gap:8px;align-items:flex-start;">
+          <span class="stage"><span class="stage-dot" style="background:var(--text-3)"></span>Raw extract</span>
+          <span class="stage"><span class="stage-dot" style="background:var(--el-extract)"></span>Clean extract</span>
+          <span class="stage"><span class="stage-dot" style="background:var(--accent)"></span>Atomic statement</span>
+          <span class="stage"><span class="stage-dot" style="background:var(--el-card)"></span>Card draft</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== CONTROLS ===== -->
+  <section class="sec" id="controls">
+    <h2>Controls</h2>
+    <p class="sub">Buttons, chips, fields, and keyboard hints.</p>
+    <div class="demo">
+      <div class="demo-label">Buttons</div>
+      <div class="flow">
+        <button class="btn btn--primary">Start session</button>
+        <button class="btn">Postpone</button>
+        <button class="btn btn--soft"><span data-icon="sparkle"></span> Suggest</button>
+        <button class="btn btn--ghost"><span data-icon="more"></span> More</button>
+        <button class="btn btn--danger"><span data-icon="trash"></span> Delete</button>
+        <button class="btn btn--icon"><span data-icon="settings"></span></button>
+        <button class="btn btn--sm">Small</button>
+        <button class="btn btn--lg btn--primary">Large primary</button>
+      </div>
+    </div>
+    <div class="grid cards-2" style="margin-top:16px;">
+      <div class="demo">
+        <div class="demo-label">Filter chips & tags</div>
+        <div class="flow" style="margin-bottom:14px;">
+          <span class="chip chip--active">All <span class="chip__count">128</span></span>
+          <span class="chip">Cards <span class="chip__count">64</span></span>
+          <span class="chip">Sources <span class="chip__count">22</span></span>
+          <span class="chip">High priority <span class="chip__count">9</span></span>
+        </div>
+        <div class="flow">
+          <span class="concept-tag">Spaced repetition</span>
+          <span class="tag">memory</span><span class="tag">learning</span>
+        </div>
+      </div>
+      <div class="demo">
+        <div class="demo-label">Keyboard hints</div>
+        <div class="flow" style="gap:18px;">
+          <span class="kbd-group"><span class="kbd">⌘</span><span class="kbd">K</span></span>
+          <span class="kbd-group"><span class="kbd">E</span> <span class="faint" style="font-size:var(--t-xs)">Extract</span></span>
+          <span class="kbd-group"><span class="kbd">␣</span> <span class="faint" style="font-size:var(--t-xs)">Reveal</span></span>
+          <span class="kbd-group"><span class="kbd">1</span><span class="kbd-sep">–</span><span class="kbd">4</span> <span class="faint" style="font-size:var(--t-xs)">Grade</span></span>
+        </div>
+      </div>
+    </div>
+    <div class="demo" style="margin-top:16px;">
+      <div class="demo-label">Fields</div>
+      <div class="grid cards-3">
+        <div class="field"><label class="field-label">Title</label><input class="input" value="Why we sleep — Ch. 4"></div>
+        <div class="field"><label class="field-label">Author</label><input class="input" placeholder="Add author…"></div>
+        <div class="field"><label class="field-label">Concept</label><input class="input" value="Sleep & memory"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== QUEUE ITEMS ===== -->
+  <section class="sec" id="queue">
+    <h2>Queue items</h2>
+    <p class="sub">The atomic row of the daily queue. Type icon, title, source line, priority, due status, and a suggested next action.</p>
+    <div class="col" style="gap:10px;">
+      <div class="qitem qitem--protected">
+        <span class="tico tico--source" data-icon="source"></span>
+        <div class="qitem__main">
+          <div class="qitem__title">Why We Sleep — The Memory Benefits of Sleep</div>
+          <div class="qitem__meta">
+            <span class="qitem__sub"><span data-icon="globe" style="width:13px;height:13px"></span> Matthew Walker</span>
+            <span class="dot-sep"></span><span class="concept-tag">Sleep & memory</span>
+            <span class="dot-sep"></span><span class="qitem__sub mono">12 min left</span>
+          </div>
+        </div>
+        <div class="qitem__action">
+          <span class="badge prio prio--a">A</span>
+          <span class="badge badge--due">Due</span>
+          <span class="next-action"><span data-icon="bookmark" style="width:12px;height:12px"></span> Resume reading</span>
+        </div>
+      </div>
+      <div class="qitem">
+        <span class="tico tico--card" data-icon="card"></span>
+        <div class="qitem__main">
+          <div class="qitem__title">Cloze · The hippocampus consolidates memories during {{…}}</div>
+          <div class="qitem__meta">
+            <span class="qitem__sub">from <i>Why We Sleep</i></span>
+            <span class="dot-sep"></span><span class="qitem__sub mono">ease 2.4 · rep 5</span>
+          </div>
+        </div>
+        <div class="qitem__action">
+          <span class="badge prio prio--b">B</span>
+          <span class="badge badge--overdue">2d overdue</span>
+          <span class="next-action"><span data-icon="review" style="width:12px;height:12px"></span> Review card</span>
+        </div>
+      </div>
+      <div class="qitem">
+        <span class="tico tico--extract" data-icon="extract"></span>
+        <div class="qitem__main">
+          <div class="qitem__title">Extract · "Sleep before learning refreshes our ability to make new memories"</div>
+          <div class="qitem__meta">
+            <span class="stage"><span class="stage-dot" style="background:var(--text-3)"></span>Raw extract</span>
+            <span class="dot-sep"></span><span class="qitem__sub">awaiting distillation</span>
+          </div>
+        </div>
+        <div class="qitem__action">
+          <span class="badge prio prio--c">C</span>
+          <span class="next-action"><span data-icon="sparkle" style="width:12px;height:12px"></span> Distill → card</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== REVIEW CARD ===== -->
+  <section class="sec" id="review">
+    <h2>Review card</h2>
+    <p class="sub">Centered, serif prompt, four-grade scale with interval previews. Cloze and Q&A share the frame.</p>
+    <div class="grid cards-2" style="align-items:start;">
+      <div class="demo" style="display:flex;justify-content:center;background:var(--canvas);">
+        <div class="rcard">
+          <div class="rcard__face">
+            <div class="row" style="gap:8px;margin-bottom:14px;"><span class="concept-tag">Sleep &amp; memory</span><span class="badge prio prio--b">B</span></div>
+            <div class="rcard__prompt">The hippocampus transfers memories to the neocortex primarily during <span class="cloze">[ … ]</span> sleep.</div>
+          </div>
+          <hr class="card-sep">
+          <div class="panel-pad">
+            <div class="grades">
+              <div class="grade grade--again"><span class="grade__label">Again</span><span class="grade__int">&lt;10m</span></div>
+              <div class="grade grade--hard"><span class="grade__label">Hard</span><span class="grade__int">3d</span></div>
+              <div class="grade grade--good"><span class="grade__label">Good</span><span class="grade__int">8d</span></div>
+              <div class="grade grade--easy"><span class="grade__label">Easy</span><span class="grade__int">21d</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="demo" style="display:flex;justify-content:center;background:var(--canvas);">
+        <div class="rcard">
+          <div class="rcard__face" style="min-height:auto;">
+            <div class="rcard__prompt" style="margin-bottom:18px;">The hippocampus transfers memories to the neocortex primarily during <span class="cloze cloze--revealed">deep NREM</span> sleep.</div>
+            <div class="refblock serif">
+              "Slow-wave sleep provides the conditions for hippocampal-neocortical dialogue…"
+              <div class="refblock__src"><span data-icon="source" style="width:12px;height:12px"></span> Why We Sleep · p. 112</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== PANELS ===== -->
+  <section class="sec" id="panels">
+    <h2>Panels, inspectors & hierarchy</h2>
+    <p class="sub">Metadata inspectors, source-reference blocks, breadcrumbs, analytics mini-cards, and the floating selection toolbar.</p>
+    <div class="grid cards-2" style="align-items:start;">
+      <div class="demo">
+        <div class="demo-label">Metadata inspector</div>
+        <div class="meta-list">
+          <div class="meta-row"><span class="meta-key">Author</span><span class="meta-val">Matthew Walker</span></div>
+          <div class="meta-row"><span class="meta-key">URL</span><span class="meta-val truncate" style="color:var(--accent-text)">sleepfoundation.org/why-we-sleep</span></div>
+          <div class="meta-row"><span class="meta-key">Concept</span><span class="meta-val"><span class="concept-tag">Sleep &amp; memory</span></span></div>
+          <div class="meta-row"><span class="meta-key">Reliability</span><span class="meta-val"><span class="badge badge--done">High</span></span></div>
+          <div class="meta-row"><span class="meta-key">Next due</span><span class="meta-val mono">May 31 · in 2d</span></div>
+        </div>
+      </div>
+      <div class="col" style="gap:16px;">
+        <div class="demo">
+          <div class="demo-label">Breadcrumb / hierarchy</div>
+          <div class="crumbs">
+            <span class="crumb"><span class="tico tico--source" data-icon="source" style="width:18px;height:18px"></span> Why We Sleep</span>
+            <span class="crumb-sep" data-icon="chevronRight" style="width:13px;height:13px;display:inline-flex"></span>
+            <span class="crumb"><span class="tico tico--extract" data-icon="extract" style="width:18px;height:18px"></span> Extract 4</span>
+            <span class="crumb-sep" data-icon="chevronRight" style="width:13px;height:13px;display:inline-flex"></span>
+            <span class="crumb crumb--current">Cloze card</span>
+          </div>
+        </div>
+        <div class="demo">
+          <div class="demo-label">Analytics mini-cards</div>
+          <div class="grid cards-3">
+            <div class="metric"><span class="metric__val">42</span><span class="metric__label">Due today</span></div>
+            <div class="metric metric--danger"><span class="metric__val">7</span><span class="metric__label">Overdue</span></div>
+            <div class="metric"><span class="metric__val">94<span style="font-size:var(--t-md)">%</span></span><span class="metric__label">Retention</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="demo" style="margin-top:16px;display:flex;justify-content:center;background:var(--canvas);">
+      <div class="sel-toolbar">
+        <button class="sel-tool sel-tool--accent"><span data-icon="extract"></span> Extract <span class="kbd">E</span></button>
+        <button class="sel-tool"><span data-icon="cloze"></span> Cloze <span class="kbd">C</span></button>
+        <button class="sel-tool"><span data-icon="highlight"></span> Highlight <span class="kbd">H</span></button>
+        <span class="tool-div"></span>
+        <button class="sel-tool"><span data-icon="task"></span> Task</button>
+        <button class="sel-tool"><span data-icon="copy"></span></button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== FEEDBACK ===== -->
+  <section class="sec" id="feedback">
+    <h2>Banners & states</h2>
+    <p class="sub">Maintenance warnings, duplicate detection, and the healthy empty state.</p>
+    <div class="col" style="gap:12px;">
+      <div class="banner banner--info">
+        <span data-icon="dup"></span>
+        <div><div class="banner__title">This source may already exist</div><div class="banner__body">"Why We Sleep — Ch. 4" was imported on Apr 2. Compare before adding a duplicate.</div></div>
+        <div class="banner__actions"><button class="btn btn--sm">Compare</button><button class="btn btn--sm btn--soft">Merge</button></div>
+      </div>
+      <div class="banner">
+        <span data-icon="leech"></span>
+        <div><div class="banner__title">3 leech cards detected</div><div class="banner__body">These cards have lapsed 8+ times. Consider rewriting, adding context, or suspending.</div></div>
+        <div class="banner__actions"><button class="btn btn--sm">Review leeches</button></div>
+      </div>
+      <div class="banner banner--danger">
+        <span data-icon="warning"></span>
+        <div><div class="banner__title">12 orphan cards have no source</div><div class="banner__body">Cards without lineage can't be verified. Attach a source or archive them.</div></div>
+        <div class="banner__actions"><button class="btn btn--sm">Resolve</button></div>
+      </div>
+    </div>
+    <div class="demo" style="margin-top:16px;">
+      <div class="empty">
+        <div class="empty__icon" data-icon="checkCircle"></div>
+        <div class="empty__title">Queue clear for today</div>
+        <div class="empty__body">You've processed everything due. 42 cards reviewed, 6 extracts distilled. Next items unlock tomorrow morning.</div>
+        <div class="flow" style="margin-top:6px;"><button class="btn">Catch-up mode</button><button class="btn btn--primary">Import something new</button></div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script src="app/icons.js"></script>
+<script>
+  // inject icons
+  document.querySelectorAll('[data-icon]').forEach(function (el) {
+    el.innerHTML = window.iconSvg(el.getAttribute('data-icon'), el.classList.contains('ds-logo') ? 16 : (el.closest('.tico--lg') ? 17 : 16));
+  });
+  // icon wall
+  var wallNames = ['highlight','cloze','copy','split','trim','postpone','checkCircle','trash','arrowDown','external','bookmark','edit','pause','merge','archive','star','context','leech','sparkle','filter','calendar','link','user','upload','paste','plus','command','return','search','more'];
+  var wall = document.getElementById('iconWall');
+  wallNames.forEach(function (n) {
+    var d = document.createElement('div'); d.className = 'col'; d.style.cssText = 'align-items:center;gap:6px;width:64px;';
+    d.innerHTML = window.iconSvg(n, 18) + '<span class="mono" style="font-size:9px;color:var(--text-3)">' + n + '</span>';
+    wall.appendChild(d);
+  });
+  // theme toggle
+  var root = document.documentElement, tbtn = document.getElementById('themeBtn');
+  function setTheme(t){ root.setAttribute('data-theme', t); localStorage.setItem('ir-theme', t); tbtn.innerHTML = window.iconSvg(t === 'dark' ? 'sun' : 'moon', 16); }
+  tbtn.addEventListener('click', function(){ setTheme(root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'); });
+  setTheme(localStorage.getItem('ir-theme') || 'light');
+</script>
+</body>
+</html>
