@@ -291,6 +291,14 @@ export interface DocumentsGetResult {
   readonly document: DocumentPayload | null;
 }
 
+/** One stable block descriptor (T016), derived renderer-side via `toBlockInputs`. */
+export interface DocumentBlockInputPayload {
+  readonly blockType: string;
+  readonly order: number;
+  /** The stable block id (a ULID) read off the editor's `blockId` attribute. */
+  readonly stableBlockId: string;
+}
+
 export interface DocumentsSaveRequest {
   readonly elementId: string;
   /** The ProseMirror document JSON (schema owned by `@interleave/editor`). */
@@ -298,6 +306,12 @@ export interface DocumentsSaveRequest {
   /** The flattened plain-text mirror, computed renderer-side via `toPlainText`. */
   readonly plainText: string;
   readonly schemaVersion?: number;
+  /**
+   * The ordered stable block list (T016). When present, the main side replaces
+   * `document_blocks` with it, preserving the stable ids extracts/read-points
+   * anchor to.
+   */
+  readonly blocks?: readonly DocumentBlockInputPayload[];
 }
 
 export interface DocumentsSaveResult {

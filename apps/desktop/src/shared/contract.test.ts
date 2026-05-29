@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  DocumentBlockInputSchema,
   DocumentsGetRequestSchema,
   DocumentsSaveRequestSchema,
   InboxGetRequestSchema,
@@ -313,6 +314,52 @@ describe("DocumentsSaveRequestSchema (T015)", () => {
         plainText: "x",
         schemaVersion: 1.5,
       }),
+    ).toThrow();
+  });
+
+  it("accepts an ordered stable block list (T016)", () => {
+    const parsed = DocumentsSaveRequestSchema.parse({
+      elementId: "el_1",
+      prosemirrorJson: { type: "doc", content: [] },
+      plainText: "hi",
+      blocks: [
+        { blockType: "paragraph", order: 0, stableBlockId: "01J0..." },
+        { blockType: "heading", order: 1, stableBlockId: "01J1..." },
+      ],
+    });
+    expect(parsed.blocks).toHaveLength(2);
+    expect(parsed.blocks?.[0]?.stableBlockId).toBe("01J0...");
+  });
+
+  it("omits blocks cleanly (T015 callers still validate)", () => {
+    const parsed = DocumentsSaveRequestSchema.parse({
+      elementId: "el_1",
+      prosemirrorJson: { type: "doc", content: [] },
+      plainText: "",
+    });
+    expect(parsed.blocks).toBeUndefined();
+  });
+});
+
+describe("DocumentBlockInputSchema (T016)", () => {
+  it("accepts a well-formed block", () => {
+    expect(
+      DocumentBlockInputSchema.parse({ blockType: "paragraph", order: 0, stableBlockId: "abc" }),
+    ).toEqual({ blockType: "paragraph", order: 0, stableBlockId: "abc" });
+  });
+
+  it("rejects an empty block type, a negative/non-integer order, and an empty id", () => {
+    expect(() =>
+      DocumentBlockInputSchema.parse({ blockType: "", order: 0, stableBlockId: "abc" }),
+    ).toThrow();
+    expect(() =>
+      DocumentBlockInputSchema.parse({ blockType: "paragraph", order: -1, stableBlockId: "abc" }),
+    ).toThrow();
+    expect(() =>
+      DocumentBlockInputSchema.parse({ blockType: "paragraph", order: 1.5, stableBlockId: "abc" }),
+    ).toThrow();
+    expect(() =>
+      DocumentBlockInputSchema.parse({ blockType: "paragraph", order: 0, stableBlockId: "" }),
     ).toThrow();
   });
 });

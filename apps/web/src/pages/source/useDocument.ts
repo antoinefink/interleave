@@ -15,7 +15,7 @@
  */
 
 import type { SourceEditorChange } from "@interleave/editor";
-import { emptyDoc } from "@interleave/editor";
+import { emptyDoc, toBlockInputs } from "@interleave/editor";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { appApi, type DocumentPayload, isDesktop } from "../../lib/appApi";
 
@@ -103,10 +103,16 @@ export function useDocument(elementId: string | null | undefined): UseDocumentRe
     if (!id || !isDesktop()) return;
     setSaving(true);
     try {
+      // Derive the stable block list from the document's `blockId` attributes
+      // (T016) so every save refreshes `document_blocks` while preserving the
+      // stable ids extracts/read-points anchor to. Ids are read, never minted,
+      // here — the editor's additive filler already assigned them.
+      const blocks = toBlockInputs(change.prosemirrorJson);
       const result = await appApi.saveDocument({
         elementId: id,
         prosemirrorJson: change.prosemirrorJson,
         plainText: change.plainText,
+        blocks,
       });
       setPlainText(result.document.plainText);
       setError(null);

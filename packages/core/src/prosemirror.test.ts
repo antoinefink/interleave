@@ -75,4 +75,13 @@ describe("plainTextToProseMirrorDoc", () => {
     const { blocks } = plainTextToProseMirrorDoc("x\n\ny", mint);
     expect(blocks.map((b) => b.stableBlockId)).toEqual(["blk-0", "blk-1"]);
   });
+
+  it("embeds each block id in the paragraph's `blockId` attr (T016: editor adopts it)", () => {
+    let n = 0;
+    const mint = () => `blk-${n++}` as BlockId;
+    const { doc, blocks } = plainTextToProseMirrorDoc("alpha\n\nbeta", mint);
+    // The node attr and the parallel block list carry the SAME id, in order.
+    expect(doc.content.map((p) => p.attrs?.blockId)).toEqual(["blk-0", "blk-1"]);
+    expect(blocks.map((b) => b.stableBlockId)).toEqual(["blk-0", "blk-1"]);
+  });
 });

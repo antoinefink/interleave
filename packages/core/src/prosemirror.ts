@@ -9,12 +9,16 @@
  *
  * `packages/core` is the natural home: `Document.prosemirrorJson` is typed
  * `unknown` precisely so core stays editor-free, and the converter must not pull
- * in ProseMirror/Tiptap. Every paragraph is assigned a STABLE block id so the
- * eventual editor, read-points, and extraction lineage have an anchor from day
- * one (T016 builds on these ids). The id minter is injectable so the function
- * stays pure + testable; the default uses the platform `crypto.randomUUID`,
- * which exists in both the Electron main process (Node 19+) and the renderer —
- * never `node:crypto`, so the helper is safe to import anywhere.
+ * in ProseMirror/Tiptap. Every paragraph is assigned a STABLE block id that is
+ * embedded BOTH in the node's `blockId` attribute (so the T016 editor ADOPTS it
+ * rather than minting a fresh one — preserving ids across import → edit → save)
+ * AND in the parallel `blocks` list (so `document_blocks` stores the same id).
+ * The id minter is injectable so the function stays pure + testable; the default
+ * uses the platform `crypto.randomUUID`, which exists in both the Electron main
+ * process (Node 19+) and the renderer — never `node:crypto`, so the helper is
+ * safe to import anywhere. (The editor mints ULIDs for blocks created live; an
+ * imported source's ids are UUIDs minted here. Both are valid opaque stable ids
+ * — what matters is that they are never regenerated.)
  */
 
 import type { BlockId } from "./ids";
@@ -28,6 +32,13 @@ export interface ProseMirrorTextNode {
 /** A minimal ProseMirror paragraph node (text content only in M2). */
 export interface ProseMirrorParagraphNode {
   readonly type: "paragraph";
+  /**
+   * The stable block id (T016), embedded as a node attribute so the editor
+   * ADOPTS it instead of minting a fresh one — this is what preserves block ids
+   * across import → edit → save → re-import. Mirrors the matching
+   * `document_blocks.stableBlockId`.
+   */
+  readonly attrs?: { readonly blockId: BlockId };
   readonly content?: readonly ProseMirrorTextNode[];
 }
 
@@ -100,16 +111,20 @@ export function plainTextToProseMirrorDoc(
 ): PlainTextConversion {
   const paragraphs = splitParagraphs(text);
 
-  const content: ProseMirrorParagraphNode[] = paragraphs.map((para) => ({
-    type: "paragraph",
-    content: [{ type: "text", text: para }],
-  }));
-
-  const blocks: ProseMirrorBlock[] = paragraphs.map((_, order) => ({
-    blockType: "paragraph",
-    order,
-    stableBlockId: mintBlockId(),
-  }));
+  // Mint one stable id per paragraph and embed it BOTH in the node attrs (so the
+  // editor adopts it) and in the parallel `blocks` list (so `document_blocks`
+  // gets the same id). Building both from one mapped id keeps them in lock-step.
+  const content: ProseMirrorParagraphNode[] = [];
+  const blocks: ProseMirrorBlock[] = [];
+  paragraphs.forEach((para, order) => {
+    const stableBlockId = mintBlockId();
+    content.push({
+      type: "paragraph",
+      attrs: { blockId: stableBlockId },
+      content: [{ type: "text", text: para }],
+    });
+    blocks.push({ blockType: "paragraph", order, stableBlockId });
+  });
 
   return {
     doc: { type: "doc", content },

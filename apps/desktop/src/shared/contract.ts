@@ -458,7 +458,14 @@ export interface InboxTriageResult {
  * `@interleave/editor`, not the contract, and the body is bounded by the IPC
  * payload limit rather than re-validated structurally here (the renderer already
  * enforced the constrained schema; main-side re-parsing is intentionally out of
- * scope for T015 — block-ID derivation lands in T016).
+ * scope for T015).
+ *
+ * `blocks` (T016) is the ordered, STABLE block-id list the renderer derives from
+ * the document's `blockId` attributes via `@interleave/editor`'s `toBlockInputs`.
+ * It is validated structurally here (block type + order + non-empty id) and
+ * persisted verbatim into `document_blocks` so every save refreshes the block set
+ * while preserving the stable ids extracts/read-points/sync anchor to. When
+ * omitted, the main side leaves the existing blocks untouched.
  */
 
 export const DocumentsGetRequestSchema = z.object({
@@ -480,6 +487,18 @@ export interface DocumentsGetResult {
   readonly document: DocumentPayload | null;
 }
 
+/**
+ * One stable block descriptor on the wire (T016): a block type, its 0-based
+ * document order, and the STABLE block id (a ULID) read off the editor's
+ * `blockId` attribute. The id is the lineage anchor — never re-minted main-side.
+ */
+export const DocumentBlockInputSchema = z.object({
+  blockType: z.string().min(1).max(64),
+  order: z.number().int().min(0),
+  stableBlockId: z.string().min(1).max(128),
+});
+export type DocumentBlockInputPayload = z.infer<typeof DocumentBlockInputSchema>;
+
 export const DocumentsSaveRequestSchema = z.object({
   /** The owning element id whose body to upsert. */
   elementId: ElementIdSchema,
@@ -489,6 +508,12 @@ export const DocumentsSaveRequestSchema = z.object({
   plainText: z.string().max(4_000_000),
   /** The schema version the JSON was authored against; defaults to `1`. */
   schemaVersion: z.number().int().positive().optional(),
+  /**
+   * The ordered stable block list derived renderer-side via `toBlockInputs`
+   * (T016). When present, the main side replaces `document_blocks` with it,
+   * preserving the stable ids. Bounded to keep IPC payloads sane.
+   */
+  blocks: z.array(DocumentBlockInputSchema).max(100_000).optional(),
 });
 export type DocumentsSaveRequest = z.infer<typeof DocumentsSaveRequestSchema>;
 

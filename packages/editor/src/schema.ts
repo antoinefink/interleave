@@ -30,6 +30,8 @@ import type { Extensions } from "@tiptap/core";
 import { getSchema } from "@tiptap/core";
 import type { Schema } from "@tiptap/pm/model";
 import StarterKit from "@tiptap/starter-kit";
+import { BlockId } from "./block-id";
+import type { BlockIdMinter } from "./block-ids";
 
 /** The heading levels the constrained schema permits. */
 export const ALLOWED_HEADING_LEVELS = [1, 2, 3] as const;
@@ -68,16 +70,33 @@ export const ALLOWED_NODE_NAMES = [
  */
 export const DISABLED_STARTER_KIT_MARKS = ["strike", "underline"] as const;
 
+/** Options for {@link buildExtensions}. */
+export interface BuildExtensionsOptions {
+  /**
+   * Include the stable-block-id extension (T016): adds the global `blockId`
+   * attribute + the additive filler that mints a ULID for any block lacking one.
+   * Defaults to `true` — the editor always wants stable ids. Set `false` only for
+   * a pure headless schema where the filler plugin (and its randomness) is
+   * irrelevant; the `blockId` attribute is harmless extra metadata either way.
+   */
+  readonly withBlockIds?: boolean;
+  /** Override the block-id minter (tests inject a deterministic one). */
+  readonly mintBlockId?: BlockIdMinter;
+  /** Extra extensions appended after the constrained set. */
+  readonly extra?: Extensions;
+}
+
 /**
- * Build the constrained Tiptap extension array. Optionally append extra
- * extensions (e.g. the stable-block-id global attribute in T016) without having
- * to re-derive the StarterKit configuration.
+ * Build the constrained Tiptap extension array. By default it includes the
+ * stable-block-id extension (T016); pass `withBlockIds: false` to omit it, or
+ * `extra` to append further extensions, without re-deriving the StarterKit config.
  *
  * StarterKit is configured to enable only the allowed set; `link` is locked down
  * (no auto-open, `https` default protocol, `noopener` rel) since the reader is a
  * trusted local surface but stored links are user content.
  */
-export function buildExtensions(extra: Extensions = []): Extensions {
+export function buildExtensions(options: BuildExtensionsOptions = {}): Extensions {
+  const { withBlockIds = true, mintBlockId, extra = [] } = options;
   return [
     StarterKit.configure({
       heading: { levels: [...ALLOWED_HEADING_LEVELS] },
@@ -92,21 +111,23 @@ export function buildExtensions(extra: Extensions = []): Extensions {
         HTMLAttributes: { rel: "noopener noreferrer nofollow" },
       },
     }),
+    ...(withBlockIds ? [mintBlockId ? BlockId.configure({ mintBlockId }) : BlockId] : []),
     ...extra,
   ];
 }
 
 /**
- * The canonical constrained extension array (no extras). The React editor +
- * the headless schema both build from this so they can never drift.
+ * The canonical constrained extension array (with stable block ids). The React
+ * editor builds from this so it can never drift from the schema.
  */
 export const interleaveExtensions: Extensions = buildExtensions();
 
 /**
  * The compiled ProseMirror {@link Schema} for the constrained document. Useful
  * for headless validation (parse stored JSON, reject disallowed nodes/marks)
- * without instantiating a full editor or touching the DOM.
+ * without instantiating a full editor or touching the DOM. The `blockId` global
+ * attribute is part of the schema so stored ids round-trip through it.
  */
 export function buildSchema(extra: Extensions = []): Schema {
-  return getSchema(buildExtensions(extra));
+  return getSchema(buildExtensions({ extra }));
 }

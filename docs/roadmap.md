@@ -83,7 +83,7 @@ Detailed specs: [`tasks/M1-foundations.md`](./tasks/M1-foundations.md)
 
 - [x] **T015 — Tiptap document editor** · done · _deps: T013, T005_
   Done when: a source body renders/edits with a constrained schema (headings, paragraphs, bold, italic, links, blockquotes, lists, code, hr); edits save and reload.
-- [ ] **T016 — Stable block IDs** · _deps: T015_
+- [x] **T016 — Stable block IDs** · done · _deps: T015_
   Done when: every block node has a stable ID preserved across imports and saves (basis for extraction/read-points/sync).
 - [ ] **T017 — Read-points** · _deps: T016_
   Done when: `read_point` (block ID + offset) is stored on source/topic; set/jump/auto-update-on-extract work; reopening a source resumes near the last read-point.
@@ -318,6 +318,7 @@ overload management, semantic search, AI, media, reliability, scale.
 
 Record notable completions / decisions here as tasks land (newest first).
 
+- 2026-05-29 - T016 Stable block IDs - done. Every block node now carries a stable ID preserved across imports and saves (the basis for extraction, read-points, and sync). Block-ID generation/normalization lives in `packages/editor` (`block-id.ts`, `blocks.ts`) and the constrained Tiptap schema; IDs survive the ProseMirror JSON round-trip through `packages/core` (`prosemirror.ts`) and the typed `window.appApi` document surface (db-service + contract), and persist across app restart (Playwright `tests/electron/block-ids.spec.ts`). Renderer never touches the DB directly.
 - 2026-05-29 - T015 Tiptap document editor - done. Source bodies render/edit through a constrained Tiptap/ProseMirror schema (headings, paragraphs, bold, italic, links, blockquotes, lists, code, hr) in `packages/editor` (`schema.ts`, `serialize.ts`, `SourceEditor.tsx`); edits serialize to ProseMirror JSON and save/reload via the typed `window.appApi` document surface. Renderer never touches the DB directly.
 - 2026-05-29 - T014 Source provenance fields - done. Manual imports now capture canonical URL, original URL, accessed date, and snapshot provenance fields (no remote fetching). URL normalization/canonicalization lives in `packages/core` (`url.ts`); the schema, typed `window.appApi` import contract, and the "New source" modal persist these fields, and the inspector surfaces them. Renderer never touches the DB directly.
 - 2026-05-29 - T013 Manual text import - done. The "New source" modal now accepts a body that is stored both as plain text and as ProseMirror JSON; a pasted article appears as a source in the inbox. Plain-text-to-ProseMirror conversion lives in `packages/core`; the typed `window.appApi` source-import surface persists both representations, and renderer never touches the DB directly.

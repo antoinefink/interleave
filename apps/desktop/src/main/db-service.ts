@@ -16,7 +16,7 @@
  * through the repository seam.
  */
 
-import type { ElementId, PriorityLabel } from "@interleave/core";
+import type { BlockId, ElementId, PriorityLabel } from "@interleave/core";
 import { canonicalizeUrl, priorityFromLabel } from "@interleave/core";
 import { type DbHandle, migrateDatabase, openDatabase } from "@interleave/db";
 import {
@@ -368,12 +368,15 @@ export class DbService {
   }
 
   /**
-   * Upsert an element's document body (T015) through {@link DocumentRepository},
-   * which persists the body + `plainText` and appends `update_document` in one
+   * Upsert an element's document body (T015 + T016) through
+   * {@link DocumentRepository}, which persists the body + `plainText`, replaces
+   * the stable `document_blocks`, and appends `update_document` in ONE
    * transaction. The main process stores EXACTLY what the renderer sent — it does
-   * not re-parse ProseMirror (the renderer already enforced the constrained
-   * schema and computed `plainText`). Stable `document_blocks` derivation lands in
-   * T016, so `blocks` are intentionally not refreshed here.
+   * not re-parse ProseMirror or re-mint ids (the renderer already enforced the
+   * constrained schema, computed `plainText`, and derived the stable block list
+   * via `toBlockInputs`). The `blocks` carry the STABLE ids; persisting them
+   * verbatim is what preserves the lineage anchor across saves. When `blocks` is
+   * omitted, the existing block set is left untouched.
    */
   saveDocument(request: DocumentsSaveRequest): DocumentsSaveResult {
     const saved = this.repos.documents.upsert({
@@ -381,6 +384,15 @@ export class DbService {
       prosemirrorJson: request.prosemirrorJson,
       plainText: request.plainText,
       ...(request.schemaVersion !== undefined ? { schemaVersion: request.schemaVersion } : {}),
+      ...(request.blocks !== undefined
+        ? {
+            blocks: request.blocks.map((b) => ({
+              blockType: b.blockType,
+              order: b.order,
+              stableBlockId: b.stableBlockId as BlockId,
+            })),
+          }
+        : {}),
     });
     return {
       document: {

@@ -441,6 +441,70 @@ describe("DocumentRepository", () => {
     const updateOps = ops.listForElement(source.id).filter((e) => e.opType === "update_document");
     expect(updateOps.length).toBe(2);
   });
+
+  it("preserves stable block ids across an idempotent re-save (T016)", () => {
+    const sources = new SourceRepository(handle.db);
+    const documents = new DocumentRepository(handle.db);
+
+    const { element: source } = sources.create({ title: "Stable ids", priority: 0.5 });
+
+    // First save: three blocks with stable ids in order.
+    documents.upsert({
+      elementId: source.id,
+      prosemirrorJson: { type: "doc", content: [] },
+      plainText: "a\nb\nc",
+      blocks: [
+        { blockType: "paragraph", order: 0, stableBlockId: "blk_a" as BlockId },
+        { blockType: "paragraph", order: 1, stableBlockId: "blk_b" as BlockId },
+        { blockType: "paragraph", order: 2, stableBlockId: "blk_c" as BlockId },
+      ],
+    });
+    expect(documents.listBlocks(source.id).map((b) => b.stableBlockId)).toEqual([
+      "blk_a",
+      "blk_b",
+      "blk_c",
+    ]);
+    const firstRowIds = documents.listBlocks(source.id).map((b) => b.id);
+
+    // Re-save with the SAME stable ids (editing the body, ids preserved): the
+    // stable ids are unchanged. Block rows are replaced (fresh row PKs), but the
+    // STABLE ids — the lineage anchor — survive verbatim.
+    documents.upsert({
+      elementId: source.id,
+      prosemirrorJson: { type: "doc", content: [] },
+      plainText: "a edited\nb\nc",
+      blocks: [
+        { blockType: "paragraph", order: 0, stableBlockId: "blk_a" as BlockId },
+        { blockType: "paragraph", order: 1, stableBlockId: "blk_b" as BlockId },
+        { blockType: "paragraph", order: 2, stableBlockId: "blk_c" as BlockId },
+      ],
+    });
+    const after = documents.listBlocks(source.id);
+    expect(after.map((b) => b.stableBlockId)).toEqual(["blk_a", "blk_b", "blk_c"]);
+    // Exactly three rows remain (no duplicates accumulated across saves).
+    expect(after).toHaveLength(3);
+    // Surrogate PK (`id`) is distinct from the stable id — replaced rows get new PKs.
+    expect(after.map((b) => b.id)).not.toEqual(firstRowIds);
+
+    // A save that inserts a new block + reorders keeps the surviving stable ids.
+    documents.upsert({
+      elementId: source.id,
+      prosemirrorJson: { type: "doc", content: [] },
+      plainText: "new\na\nb\nc",
+      blocks: [
+        { blockType: "paragraph", order: 0, stableBlockId: "blk_new" as BlockId },
+        { blockType: "paragraph", order: 1, stableBlockId: "blk_a" as BlockId },
+        { blockType: "paragraph", order: 2, stableBlockId: "blk_b" as BlockId },
+        { blockType: "paragraph", order: 3, stableBlockId: "blk_c" as BlockId },
+      ],
+    });
+    expect(documents.listBlocks(source.id).map((b) => b.stableBlockId)).toEqual([
+      "blk_new",
+      "blk_a",
+      "blk_b",
+      "blk_c",
+    ]);
+  });
 });
 
 describe("ReviewRepository — FSRS state/logs", () => {
