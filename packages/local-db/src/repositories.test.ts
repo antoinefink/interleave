@@ -507,6 +507,63 @@ describe("DocumentRepository", () => {
   });
 });
 
+describe("DocumentRepository — read-points (T017)", () => {
+  it("round-trips a read-point, updates the single row in place, and logs set_read_point", () => {
+    const sources = new SourceRepository(handle.db);
+    const documents = new DocumentRepository(handle.db);
+    const ops = new OperationLogRepository(handle.db);
+
+    const { element: source } = sources.create({ title: "Resumable", priority: 0.5 });
+    // The read-point's documentId FKs to a documents row, so create the body first
+    // (mirrors the real flow: a source always has its document body — T013).
+    documents.upsert({
+      elementId: source.id,
+      prosemirrorJson: { type: "doc", content: [] },
+      plainText: "First paragraph.\nSecond.",
+      blocks: [
+        { blockType: "paragraph", order: 0, stableBlockId: "blk_a" as BlockId },
+        { blockType: "paragraph", order: 1, stableBlockId: "blk_b" as BlockId },
+      ],
+    });
+
+    // No read-point until one is set.
+    expect(documents.getReadPoint(source.id)).toBeNull();
+
+    // Set it: a stable block id + a character offset round-trips intact.
+    const first = documents.setReadPoint({
+      elementId: source.id,
+      documentId: source.id,
+      blockId: "blk_a" as BlockId,
+      offset: 17,
+    });
+    expect(first.blockId).toBe("blk_a");
+    expect(first.offset).toBe(17);
+    const loaded = documents.getReadPoint(source.id);
+    expect(loaded?.blockId).toBe("blk_a");
+    expect(loaded?.offset).toBe(17);
+
+    // Advancing UPDATES the same row (one per element) — never appends a second.
+    documents.setReadPoint({
+      elementId: source.id,
+      documentId: source.id,
+      blockId: "blk_b" as BlockId,
+      offset: 4,
+    });
+    const advanced = documents.getReadPoint(source.id);
+    expect(advanced?.blockId).toBe("blk_b");
+    expect(advanced?.offset).toBe(4);
+
+    const rowCount = handle.sqlite
+      .prepare("SELECT COUNT(*) AS n FROM read_points WHERE element_id = ?")
+      .get(source.id) as { n: number };
+    expect(rowCount.n).toBe(1);
+
+    // Each set appends a durable set_read_point op (two sets ⇒ two ops).
+    const setOps = ops.listForElement(source.id).filter((e) => e.opType === "set_read_point");
+    expect(setOps.length).toBe(2);
+  });
+});
+
 describe("ReviewRepository — FSRS state/logs", () => {
   it("creates a card with a fresh review_state and records a review atomically", () => {
     const review = new ReviewRepository(handle.db);

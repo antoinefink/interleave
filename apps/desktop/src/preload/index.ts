@@ -22,6 +22,8 @@ import type {
   InboxGetRequest,
   InboxTriageRequest,
   InspectorGetRequest,
+  ReadPointGetRequest,
+  ReadPointSetRequest,
   SettingsGetRequest,
   SettingsUpdateManyRequest,
   SettingsUpdateRequest,
@@ -61,6 +63,10 @@ const appApi: AppApi = {
     get: (request: DocumentsGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.documentsGet, request),
     save: (request: DocumentsSaveRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.documentsSave, request),
+  },
+  readPoints: {
+    get: (request: ReadPointGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.readPointGet, request),
+    set: (request: ReadPointSetRequest) => ipcRenderer.invoke(IPC_CHANNELS.readPointSet, request),
   },
 };
 

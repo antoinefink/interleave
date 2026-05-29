@@ -85,7 +85,7 @@ Detailed specs: [`tasks/M1-foundations.md`](./tasks/M1-foundations.md)
   Done when: a source body renders/edits with a constrained schema (headings, paragraphs, bold, italic, links, blockquotes, lists, code, hr); edits save and reload.
 - [x] **T016 — Stable block IDs** · done · _deps: T015_
   Done when: every block node has a stable ID preserved across imports and saves (basis for extraction/read-points/sync).
-- [ ] **T017 — Read-points** · _deps: T016_
+- [x] **T017 — Read-points** · done · _deps: T016_
   Done when: `read_point` (block ID + offset) is stored on source/topic; set/jump/auto-update-on-extract work; reopening a source resumes near the last read-point.
 - [ ] **T018 — Source reading mode** · _deps: T017, T004_
   Done when: a clean reader shows title, metadata, body, read-point marker, extracted-span markers, and keyboard actions — pleasant enough to process a long article.
@@ -318,6 +318,7 @@ overload management, semantic search, AI, media, reliability, scale.
 
 Record notable completions / decisions here as tasks land (newest first).
 
+- 2026-05-29 - T017 Read-points - done. Sources/topics now carry a `read_point` (block ID + offset) that can be set, jumped to, and auto-updated when an extract is created; reopening a source resumes near the last read-point. Read-point logic lives in `packages/editor` (`read-point.ts`) with the renderer hook in `apps/web` (`useReadPoint.ts`); persistence flows through the typed `window.appApi` surface (channels + contract + ipc + db-service), renderer never touches the DB directly. Survives app restart (Playwright `tests/electron/read-points.spec.ts`).
 - 2026-05-29 - T016 Stable block IDs - done. Every block node now carries a stable ID preserved across imports and saves (the basis for extraction, read-points, and sync). Block-ID generation/normalization lives in `packages/editor` (`block-id.ts`, `blocks.ts`) and the constrained Tiptap schema; IDs survive the ProseMirror JSON round-trip through `packages/core` (`prosemirror.ts`) and the typed `window.appApi` document surface (db-service + contract), and persist across app restart (Playwright `tests/electron/block-ids.spec.ts`). Renderer never touches the DB directly.
 - 2026-05-29 - T015 Tiptap document editor - done. Source bodies render/edit through a constrained Tiptap/ProseMirror schema (headings, paragraphs, bold, italic, links, blockquotes, lists, code, hr) in `packages/editor` (`schema.ts`, `serialize.ts`, `SourceEditor.tsx`); edits serialize to ProseMirror JSON and save/reload via the typed `window.appApi` document surface. Renderer never touches the DB directly.
 - 2026-05-29 - T014 Source provenance fields - done. Manual imports now capture canonical URL, original URL, accessed date, and snapshot provenance fields (no remote fetching). URL normalization/canonicalization lives in `packages/core` (`url.ts`); the schema, typed `window.appApi` import contract, and the "New source" modal persist these fields, and the inspector surfaces them. Renderer never touches the DB directly.

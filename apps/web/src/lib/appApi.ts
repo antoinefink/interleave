@@ -318,6 +318,39 @@ export interface DocumentsSaveResult {
   readonly document: DocumentPayload;
 }
 
+// ---------------------------------------------------------------------------
+// readPoints.get() / readPoints.set()  (T017 — resume position)
+// ---------------------------------------------------------------------------
+
+export interface ReadPointGetRequest {
+  readonly elementId: string;
+}
+
+/** The persisted read-point (a STABLE block id + character offset). */
+export interface ReadPointPayload {
+  readonly blockId: string;
+  readonly offset: number;
+  readonly updatedAt: string;
+}
+
+export interface ReadPointGetResult {
+  readonly readPoint: ReadPointPayload | null;
+}
+
+export interface ReadPointSetRequest {
+  readonly elementId: string;
+  /** The element id of the document body the block lives in (usually the same). */
+  readonly documentId: string;
+  /** The STABLE block id (from T016) to resume at. */
+  readonly blockId: string;
+  /** Character offset within the block's text; non-negative integer. */
+  readonly offset: number;
+}
+
+export interface ReadPointSetResult {
+  readonly readPoint: ReadPointPayload;
+}
+
 /** The exact shape the preload exposes as `window.appApi`. */
 export interface AppApi {
   readonly app: {
@@ -347,6 +380,10 @@ export interface AppApi {
   readonly documents: {
     get(request: DocumentsGetRequest): Promise<DocumentsGetResult>;
     save(request: DocumentsSaveRequest): Promise<DocumentsSaveResult>;
+  };
+  readonly readPoints: {
+    get(request: ReadPointGetRequest): Promise<ReadPointGetResult>;
+    set(request: ReadPointSetRequest): Promise<ReadPointSetResult>;
   };
 }
 
@@ -432,5 +469,13 @@ export const appApi = {
   /** Upsert an element's document body; logs `update_document` (T015). */
   saveDocument(request: DocumentsSaveRequest): Promise<DocumentsSaveResult> {
     return requireAppApi().documents.save(request);
+  },
+  /** Load an element's read-point (resume position), or `null` (T017). */
+  getReadPoint(request: ReadPointGetRequest): Promise<ReadPointGetResult> {
+    return requireAppApi().readPoints.get(request);
+  },
+  /** Upsert an element's read-point; logs `set_read_point` (T017). */
+  setReadPoint(request: ReadPointSetRequest): Promise<ReadPointSetResult> {
+    return requireAppApi().readPoints.set(request);
   },
 } as const;

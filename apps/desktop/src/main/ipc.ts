@@ -21,6 +21,8 @@ import {
   InspectorGetRequestSchema,
   InspectorListRequestSchema,
   IPC_CHANNELS,
+  ReadPointGetRequestSchema,
+  ReadPointSetRequestSchema,
   SettingsGetAllRequestSchema,
   SettingsGetRequestSchema,
   SettingsUpdateManyRequestSchema,
@@ -110,6 +112,16 @@ export function registerIpcHandlers(dbService: DbService): () => void {
   ipcMain.handle(IPC_CHANNELS.documentsSave, (_event, rawRequest: unknown) => {
     const request = DocumentsSaveRequestSchema.parse(rawRequest);
     return dbService.saveDocument(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.readPointGet, (_event, rawRequest: unknown) => {
+    const request = ReadPointGetRequestSchema.parse(rawRequest);
+    return dbService.getReadPoint(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.readPointSet, (_event, rawRequest: unknown) => {
+    const request = ReadPointSetRequestSchema.parse(rawRequest);
+    return dbService.setReadPoint(request);
   });
 
   return () => {

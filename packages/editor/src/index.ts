@@ -14,6 +14,8 @@
 
 export const EDITOR_PACKAGE = "@interleave/editor" as const;
 
+// Read-points (T017): resolve/jump/resume helpers that anchor to stable block ids.
+export type { Editor } from "@tiptap/core";
 // Stable block ids (T016): the load-bearing anchor extracts/read-points/sync use.
 export {
   BLOCK_ID_DOM_ATTR,
@@ -24,6 +26,18 @@ export {
 } from "./block-id";
 export { type BlockIdMinter, newBlockId } from "./block-ids";
 export { blockIdsOf, type DocumentBlockInput, toBlockInputs } from "./blocks";
+export {
+  clampOffsetToBlock,
+  firstUnreadBlockId,
+  type JumpResult,
+  type JumpToReadPointOptions,
+  jumpToReadPoint,
+  type ResolvedReadPoint,
+  readPointProgress,
+  readThroughBlock,
+  resolveReadPointFromSelection,
+  resolveReadPointFromState,
+} from "./read-point";
 export {
   SourceEditor,
   type SourceEditorChange,

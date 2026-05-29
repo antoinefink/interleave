@@ -523,6 +523,63 @@ export interface DocumentsSaveResult {
 }
 
 // ---------------------------------------------------------------------------
+// readPoints.get() / readPoints.set()  (T017 — resume position)
+// ---------------------------------------------------------------------------
+
+/**
+ * The read-point surface (T017). A read-point is how far the user has processed
+ * a source/topic — a STABLE block id (from T016) plus a character offset within
+ * that block. There is exactly ONE read-point per element: `readPoints.set`
+ * UPSERTS it (it never appends a second row) and the MAIN process appends a
+ * `set_read_point` op in the same transaction via {@link DocumentRepository}.
+ * Reopening a source loads the read-point alongside the document and resumes
+ * near it. There is still no generic `db.query`.
+ *
+ * The stored `blockId` must reference a real `stableBlockId` from the document;
+ * the renderer resolves it from the editor selection. `offset` is a non-negative
+ * character offset within the block's text (clamped to the block length on jump).
+ * The `markReadThrough` auto-advance-on-extract call site is deferred to T021 —
+ * the seam reuses this same `readPoints.set` command.
+ */
+
+export const ReadPointGetRequestSchema = z.object({
+  /** The owning element id whose read-point to load. */
+  elementId: ElementIdSchema,
+});
+export type ReadPointGetRequest = z.infer<typeof ReadPointGetRequestSchema>;
+
+/** The persisted read-point returned to the renderer, or `null` when unset. */
+export interface ReadPointPayload {
+  /** The STABLE block id (from T016) the resume position anchors to. */
+  readonly blockId: string;
+  /** Character offset within the block's text (`>= 0`). */
+  readonly offset: number;
+  readonly updatedAt: string;
+}
+
+export interface ReadPointGetResult {
+  /** The element's read-point, or `null` when none has been set yet. */
+  readonly readPoint: ReadPointPayload | null;
+}
+
+export const ReadPointSetRequestSchema = z.object({
+  /** The owning element id (source/topic) the read-point belongs to. */
+  elementId: ElementIdSchema,
+  /** The element id of the document body the block lives in (usually the same). */
+  documentId: ElementIdSchema,
+  /** The STABLE block id (from T016) to resume at. */
+  blockId: z.string().min(1).max(128),
+  /** Character offset within the block's text; non-negative integer. */
+  offset: z.number().int().min(0),
+});
+export type ReadPointSetRequest = z.infer<typeof ReadPointSetRequestSchema>;
+
+export interface ReadPointSetResult {
+  /** The read-point after the upsert (the value the renderer treats as canonical). */
+  readonly readPoint: ReadPointPayload;
+}
+
+// ---------------------------------------------------------------------------
 // The typed surface the renderer sees as `window.appApi`.
 // ---------------------------------------------------------------------------
 
@@ -573,5 +630,11 @@ export interface AppApi {
     get(request: DocumentsGetRequest): Promise<DocumentsGetResult>;
     /** Upsert an element's document body; logs `update_document` (T015). */
     save(request: DocumentsSaveRequest): Promise<DocumentsSaveResult>;
+  };
+  readonly readPoints: {
+    /** Load an element's read-point (resume position), or `null` (T017). */
+    get(request: ReadPointGetRequest): Promise<ReadPointGetResult>;
+    /** Upsert an element's read-point; logs `set_read_point` (T017). */
+    set(request: ReadPointSetRequest): Promise<ReadPointSetResult>;
   };
 }

@@ -39,6 +39,10 @@ import type {
   InboxTriageResult,
   InspectorGetResult,
   InspectorListResult,
+  ReadPointGetRequest,
+  ReadPointGetResult,
+  ReadPointSetRequest,
+  ReadPointSetResult,
   SettingsGetAllResult,
   SettingsGetResult,
   SettingsUpdateManyResult,
@@ -401,6 +405,37 @@ export class DbService {
         schemaVersion: saved.schemaVersion,
         updatedAt: saved.updatedAt,
       },
+    };
+  }
+
+  /**
+   * Load an element's read-point (resume position) (T017) through
+   * {@link DocumentRepository}. Returns the STABLE block id + offset + updated
+   * timestamp, or `null` when no read-point has been set yet. Read-only.
+   */
+  getReadPoint(request: ReadPointGetRequest): ReadPointGetResult {
+    const rp = this.repos.documents.getReadPoint(request.elementId as ElementId);
+    if (!rp) return { readPoint: null };
+    return { readPoint: { blockId: rp.blockId, offset: rp.offset, updatedAt: rp.updatedAt } };
+  }
+
+  /**
+   * Upsert an element's read-point (T017) through {@link DocumentRepository},
+   * which writes the single `read_points` row (one per element) and appends
+   * `set_read_point` in ONE transaction. The renderer resolves the STABLE block
+   * id + offset from the editor selection; the main process persists exactly what
+   * it receives. The same command backs the `markReadThrough` auto-advance seam
+   * reserved for T021.
+   */
+  setReadPoint(request: ReadPointSetRequest): ReadPointSetResult {
+    const saved = this.repos.documents.setReadPoint({
+      elementId: request.elementId as ElementId,
+      documentId: request.documentId as ElementId,
+      blockId: request.blockId as BlockId,
+      offset: request.offset,
+    });
+    return {
+      readPoint: { blockId: saved.blockId, offset: saved.offset, updatedAt: saved.updatedAt },
     };
   }
 

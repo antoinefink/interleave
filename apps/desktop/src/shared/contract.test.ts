@@ -16,6 +16,8 @@ import {
   InboxTriageRequestSchema,
   InspectorGetRequestSchema,
   IPC_CHANNELS,
+  ReadPointGetRequestSchema,
+  ReadPointSetRequestSchema,
   SettingKeySchema,
   SettingsGetRequestSchema,
   SettingsPatchSchema,
@@ -25,7 +27,7 @@ import {
 } from "./contract";
 
 describe("IPC channels", () => {
-  it("exposes exactly the M1 commands plus the M2 inbox mutation + M3 document surface and no generic SQL channel", () => {
+  it("exposes exactly the M1 commands plus the M2 inbox mutation + M3 document/read-point surface and no generic SQL channel", () => {
     expect(Object.values(IPC_CHANNELS).sort()).toEqual(
       [
         "app:health",
@@ -42,6 +44,8 @@ describe("IPC channels", () => {
         "inbox:triage",
         "documents:get",
         "documents:save",
+        "readPoint:get",
+        "readPoint:set",
       ].sort(),
     );
     expect(Object.values(IPC_CHANNELS)).not.toContain("db:query");
@@ -360,6 +364,83 @@ describe("DocumentBlockInputSchema (T016)", () => {
     ).toThrow();
     expect(() =>
       DocumentBlockInputSchema.parse({ blockType: "paragraph", order: 0, stableBlockId: "" }),
+    ).toThrow();
+  });
+});
+
+describe("ReadPointGetRequestSchema (T017)", () => {
+  it("accepts a non-empty elementId", () => {
+    expect(ReadPointGetRequestSchema.parse({ elementId: "el_1" })).toEqual({ elementId: "el_1" });
+  });
+
+  it("rejects a missing / empty elementId", () => {
+    expect(() => ReadPointGetRequestSchema.parse({})).toThrow();
+    expect(() => ReadPointGetRequestSchema.parse({ elementId: "" })).toThrow();
+  });
+});
+
+describe("ReadPointSetRequestSchema (T017)", () => {
+  it("accepts a well-formed read-point", () => {
+    const parsed = ReadPointSetRequestSchema.parse({
+      elementId: "el_1",
+      documentId: "el_1",
+      blockId: "01J0ABCDEF",
+      offset: 42,
+    });
+    expect(parsed.blockId).toBe("01J0ABCDEF");
+    expect(parsed.offset).toBe(42);
+  });
+
+  it("accepts a zero offset (start of block)", () => {
+    expect(
+      ReadPointSetRequestSchema.parse({
+        elementId: "el_1",
+        documentId: "el_1",
+        blockId: "b1",
+        offset: 0,
+      }).offset,
+    ).toBe(0);
+  });
+
+  it("rejects a negative offset", () => {
+    expect(() =>
+      ReadPointSetRequestSchema.parse({
+        elementId: "el_1",
+        documentId: "el_1",
+        blockId: "b1",
+        offset: -1,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a non-integer offset", () => {
+    expect(() =>
+      ReadPointSetRequestSchema.parse({
+        elementId: "el_1",
+        documentId: "el_1",
+        blockId: "b1",
+        offset: 1.5,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects an empty blockId", () => {
+    expect(() =>
+      ReadPointSetRequestSchema.parse({
+        elementId: "el_1",
+        documentId: "el_1",
+        blockId: "",
+        offset: 0,
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a missing elementId or documentId", () => {
+    expect(() =>
+      ReadPointSetRequestSchema.parse({ documentId: "el_1", blockId: "b1", offset: 0 }),
+    ).toThrow();
+    expect(() =>
+      ReadPointSetRequestSchema.parse({ elementId: "el_1", blockId: "b1", offset: 0 }),
     ).toThrow();
   });
 });
