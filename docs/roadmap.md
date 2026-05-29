@@ -76,7 +76,7 @@ Detailed specs: [`tasks/M1-foundations.md`](./tasks/M1-foundations.md)
   Done when: a source can be created in inbox, listed, viewed, kept, prioritized, accepted into active learning, or deleted.
 - [x] **T013 — Manual text import · done** · _deps: T012_
   Done when: a "New source" modal accepts title/URL/author/date/body and stores body as both plain text and ProseMirror JSON; a pasted article appears as a source in the inbox.
-- [ ] **T014 — Source provenance fields (no auto-fetch)** · _deps: T013_
+- [x] **T014 — Source provenance fields (no auto-fetch)** · done · _deps: T013_
   Done when: schema/UI capture canonical URL, original URL, accessed date, and snapshot fields for manual imports (no remote fetching yet).
 
 ## M3 — Document editor & reading (T015–T018)
@@ -318,6 +318,7 @@ overload management, semantic search, AI, media, reliability, scale.
 
 Record notable completions / decisions here as tasks land (newest first).
 
+- 2026-05-29 - T014 Source provenance fields - done. Manual imports now capture canonical URL, original URL, accessed date, and snapshot provenance fields (no remote fetching). URL normalization/canonicalization lives in `packages/core` (`url.ts`); the schema, typed `window.appApi` import contract, and the "New source" modal persist these fields, and the inspector surfaces them. Renderer never touches the DB directly.
 - 2026-05-29 - T013 Manual text import - done. The "New source" modal now accepts a body that is stored both as plain text and as ProseMirror JSON; a pasted article appears as a source in the inbox. Plain-text-to-ProseMirror conversion lives in `packages/core`; the typed `window.appApi` source-import surface persists both representations, and renderer never touches the DB directly.
 - 2026-05-29 - T012 Inbox - done. Sources can be created in the inbox, listed, viewed, kept, prioritized, accepted into active learning, or deleted — all via the typed `window.appApi` surface (no renderer DB access). Mutations run in single transactions and append `operation_log` entries; deletes are soft.
 - 2026-05-29 - T011 Local settings in SQLite - done. User/domain settings (daily review budget, default desired retention, default topic interval, default source priority, keyboard layout, theme) now persist in the SQLite `settings` table and are read through the typed `window.appApi` surface; scheduler code consumes them via the typed API rather than touching the DB directly.

@@ -161,6 +161,115 @@ describe("DbService", () => {
     svc.close();
   });
 
+  // -------------------------------------------------------------------------
+  // Source provenance derivation (T014) — no remote fetching.
+  // -------------------------------------------------------------------------
+
+  /** Read the raw `sources` provenance row for an element id straight from SQLite. */
+  function readSourceRow(svc: DbService, id: string) {
+    return svc.raw.sqlite
+      .prepare(
+        "SELECT url, canonical_url, original_url, accessed_at, snapshot_key FROM sources WHERE element_id = ?",
+      )
+      .get(id) as {
+      url: string | null;
+      canonical_url: string | null;
+      original_url: string | null;
+      accessed_at: string | null;
+      snapshot_key: string | null;
+    };
+  }
+
+  it("derives canonical_url, keeps original_url verbatim, auto-stamps accessed_at, leaves snapshot_key null (T014)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const before = Date.now();
+    const messyUrl = "https://EXAMPLE.com/post/?utm_source=newsletter&id=42#section-2";
+    const { id } = svc.importManualSource({ title: "Provenance source", url: messyUrl });
+
+    const row = readSourceRow(svc, id);
+    // original_url preserves the as-entered URL verbatim.
+    expect(row.original_url).toBe(messyUrl);
+    expect(row.url).toBe(messyUrl);
+    // canonical_url is the normalized form (host lowercased, tracking + fragment
+    // stripped, trailing slash trimmed) — `id=42` is a real param and is kept.
+    expect(row.canonical_url).toBe("https://example.com/post?id=42");
+    // accessed_at is auto-stamped to "now" (a valid ISO timestamp around import).
+    expect(row.accessed_at).not.toBeNull();
+    const stamped = Date.parse(row.accessed_at as string);
+    expect(Number.isNaN(stamped)).toBe(false);
+    expect(stamped).toBeGreaterThanOrEqual(before - 1000);
+    expect(stamped).toBeLessThanOrEqual(Date.now() + 1000);
+    // No snapshot is fetched in M2.
+    expect(row.snapshot_key).toBeNull();
+
+    svc.close();
+  });
+
+  it("honors an explicit accessedAt and a urlless source (T014)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const explicit = "2026-01-15T00:00:00.000Z";
+    const { id } = svc.importManualSource({ title: "Hand-dated note", accessedAt: explicit });
+    const row = readSourceRow(svc, id);
+    expect(row.accessed_at).toBe(explicit);
+    // No URL → no canonical/original URL, but accessed_at is still set.
+    expect(row.url).toBeNull();
+    expect(row.canonical_url).toBeNull();
+    expect(row.original_url).toBeNull();
+
+    svc.close();
+  });
+
+  it("surfaces derived provenance through the inbox detail (T014)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const { id } = svc.importManualSource({
+      title: "Visible provenance",
+      url: "https://example.com/a?fbclid=x",
+    });
+    const { detail } = svc.getInboxItem(id);
+    expect(detail?.provenance.canonicalUrl).toBe("https://example.com/a");
+    expect(detail?.provenance.originalUrl).toBe("https://example.com/a?fbclid=x");
+    expect(detail?.provenance.accessedAt).not.toBeNull();
+
+    svc.close();
+  });
+
+  it("persists derived provenance across a close + reopen (T014 restart analogue)", () => {
+    const first = new DbService();
+    first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { id } = first.importManualSource({
+      title: "Durable provenance",
+      url: "https://example.com/x?utm_medium=email",
+    });
+    const accessed = readSourceRow(first, id).accessed_at;
+    first.close();
+
+    const second = new DbService();
+    second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const row = readSourceRow(second, id);
+    expect(row.canonical_url).toBe("https://example.com/x");
+    expect(row.original_url).toBe("https://example.com/x?utm_medium=email");
+    expect(row.accessed_at).toBe(accessed);
+    expect(row.snapshot_key).toBeNull();
+    second.close();
+  });
+
+  it("keeps the import path fetch-free: the DB service imports no network module (T014)", () => {
+    // The provenance derivation must work fully offline. Guard against a future
+    // edit accidentally pulling a fetcher into the import path by asserting the
+    // DB-service source references no HTTP/network import.
+    const src = fs.readFileSync(path.join(__dirname, "db-service.ts"), "utf8");
+    expect(src).not.toMatch(/from "node:https?"/);
+    expect(src).not.toMatch(/require\(["']node:https?["']\)/);
+    expect(src).not.toMatch(/\bfetch\s*\(/);
+    expect(src).not.toMatch(/from "(node-fetch|undici|axios|got)"/);
+  });
+
   it("persists the typed AppSettings across a full close + reopen (T011 restart analogue)", () => {
     const first = new DbService();
     first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });

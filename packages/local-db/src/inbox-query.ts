@@ -34,6 +34,10 @@ export interface InboxItemSummary {
 export interface InboxProvenance {
   readonly elementId: string;
   readonly url: string | null;
+  /** Normalized URL derived from `url` (tracking params/fragment stripped). */
+  readonly canonicalUrl: string | null;
+  /** The as-entered URL preserved verbatim for provenance. */
+  readonly originalUrl: string | null;
   readonly author: string | null;
   readonly publishedAt: string | null;
   readonly accessedAt: string | null;
@@ -95,6 +99,8 @@ export class InboxQuery {
     const provenance: InboxProvenance = {
       elementId: id,
       url: provenanceRow?.url ?? null,
+      canonicalUrl: provenanceRow?.canonicalUrl ?? null,
+      originalUrl: provenanceRow?.originalUrl ?? null,
       author: provenanceRow?.author ?? null,
       publishedAt: provenanceRow?.publishedAt ?? null,
       accessedAt: provenanceRow?.accessedAt ?? null,

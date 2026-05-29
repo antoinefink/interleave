@@ -17,7 +17,7 @@
  */
 
 import type { ElementId, PriorityLabel } from "@interleave/core";
-import { priorityFromLabel } from "@interleave/core";
+import { canonicalizeUrl, priorityFromLabel } from "@interleave/core";
 import { type DbHandle, migrateDatabase, openDatabase } from "@interleave/db";
 import {
   createRepositories,
@@ -213,16 +213,33 @@ export class DbService {
    * raw pasted `body` is converted main-side to plain text + ProseMirror JSON
    * (the renderer never builds the doc). The A/B/C/D label maps to a numeric
    * priority via `priorityFromLabel` (default `C`, so new material never dominates
-   * older high-value material). Returns the new id + its inbox summary.
+   * older high-value material).
+   *
+   * Provenance derivation (T014, NO remote fetching): the entered `url` is
+   * preserved verbatim as `originalUrl`, and a conservative `canonicalUrl` is
+   * derived from it with the pure `canonicalizeUrl` normalizer (tracking params /
+   * fragment stripped, host lowercased). `accessedAt` is auto-stamped to "now"
+   * (ISO) when the renderer did not supply one. `snapshotKey` stays `null` in M2.
+   * If the renderer explicitly passes any of these, its value wins. This entire
+   * path is fetch-free — it imports no network module and works fully offline.
+   * Returns the new id + its inbox summary.
    */
   importManualSource(request: SourcesImportManualRequest): SourcesImportManualResult {
     const label: PriorityLabel = request.priority ?? "C";
+    const url = request.url ?? null;
+    const canonicalUrl = request.canonicalUrl ?? canonicalizeUrl(url);
+    const originalUrl = request.originalUrl ?? url;
+    const accessedAt = request.accessedAt ?? new Date().toISOString();
     const { element } = this.repos.sources.createWithDocument({
       title: request.title,
       priority: priorityFromLabel(label),
       status: "inbox",
       stage: "raw_source",
-      url: request.url ?? null,
+      url,
+      canonicalUrl,
+      originalUrl,
+      accessedAt,
+      snapshotKey: request.snapshotKey ?? null,
       author: request.author ?? null,
       publishedAt: request.publishedAt ?? null,
       reasonAdded: request.reasonAdded ?? null,
@@ -251,6 +268,8 @@ export class DbService {
         provenance: {
           elementId: detail.provenance.elementId,
           url: detail.provenance.url,
+          canonicalUrl: detail.provenance.canonicalUrl,
+          originalUrl: detail.provenance.originalUrl,
           author: detail.provenance.author,
           publishedAt: detail.provenance.publishedAt,
           accessedAt: detail.provenance.accessedAt,

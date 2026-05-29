@@ -147,6 +147,10 @@ export interface ReviewSummary {
 export interface SourceProvenance {
   readonly elementId: string;
   readonly url: string | null;
+  /** Normalized URL derived from `url` (tracking params/fragment stripped). */
+  readonly canonicalUrl: string | null;
+  /** The as-entered URL preserved verbatim for provenance. */
+  readonly originalUrl: string | null;
   readonly author: string | null;
   readonly publishedAt: string | null;
   readonly accessedAt: string | null;
@@ -190,13 +194,21 @@ export interface InspectorGetResult {
 /** The four coarse priority labels the UI exposes. */
 export type PriorityLabelInput = "A" | "B" | "C" | "D";
 
-/** Request to create a source in the inbox with its body (T012 + T013). */
+/** Request to create a source in the inbox with its body (T012 + T013 + T014). */
 export interface SourcesImportManualRequest {
   readonly title: string;
   readonly url?: string;
+  /** Normalized URL; usually omitted — the main process derives it from `url`. */
+  readonly canonicalUrl?: string;
+  /** As-entered URL; usually omitted — the main process sets it from `url`. */
+  readonly originalUrl?: string;
   readonly author?: string;
   /** The source's published date (loose string; stored as-is). */
   readonly publishedAt?: string;
+  /** ISO accessed date; usually omitted — the main process auto-stamps "now". */
+  readonly accessedAt?: string;
+  /** Vault-relative snapshot key; stays absent in M2 (no snapshot is fetched). */
+  readonly snapshotKey?: string;
   /** Raw pasted body text; converted to plain text + ProseMirror JSON main-side. */
   readonly body?: string;
   readonly reasonAdded?: string;

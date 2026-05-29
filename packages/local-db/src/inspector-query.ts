@@ -72,6 +72,10 @@ export interface ReviewSummary {
 export interface SourceProvenance {
   readonly elementId: string;
   readonly url: string | null;
+  /** Normalized URL derived from `url` (tracking params/fragment stripped). */
+  readonly canonicalUrl: string | null;
+  /** The as-entered URL preserved verbatim for provenance. */
+  readonly originalUrl: string | null;
   readonly author: string | null;
   readonly publishedAt: string | null;
   readonly accessedAt: string | null;
@@ -187,6 +191,8 @@ export class InspectorQuery {
       ? {
           elementId: provenanceRow.element.id,
           url: provenanceRow.source.url,
+          canonicalUrl: provenanceRow.source.canonicalUrl,
+          originalUrl: provenanceRow.source.originalUrl,
           author: provenanceRow.source.author,
           publishedAt: provenanceRow.source.publishedAt,
           accessedAt: provenanceRow.source.accessedAt,

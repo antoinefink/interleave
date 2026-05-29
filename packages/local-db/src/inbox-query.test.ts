@@ -106,6 +106,23 @@ describe("InboxQuery (T012)", () => {
     expect(inbox.get(element.id)).toBeNull();
   });
 
+  it("get surfaces canonical + original URL provenance when present (T014)", () => {
+    const { element } = new SourceRepository(handle.db).create({
+      title: "Provenance source",
+      priority: priorityFromLabel("C"),
+      status: "inbox",
+      stage: "raw_source",
+      url: "https://example.com/a?utm_source=x",
+      canonicalUrl: "https://example.com/a",
+      originalUrl: "https://example.com/a?utm_source=x",
+      accessedAt: "2026-05-29T10:00:00.000Z",
+    });
+    const detail = inbox.get(element.id);
+    expect(detail?.provenance.canonicalUrl).toBe("https://example.com/a");
+    expect(detail?.provenance.originalUrl).toBe("https://example.com/a?utm_source=x");
+    expect(detail?.provenance.accessedAt).toBe("2026-05-29T10:00:00.000Z");
+  });
+
   it("accept flips status to active and writes update_element", () => {
     const elements = new ElementRepository(handle.db);
     const ops = new OperationLogRepository(handle.db);

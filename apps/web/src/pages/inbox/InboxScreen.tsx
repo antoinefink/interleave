@@ -216,6 +216,23 @@ function PreviewPane({
               <dt className="text-text-3">Published</dt>
               <dd className="text-text">{provenance.publishedAt?.slice(0, 10) ?? "—"}</dd>
             </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-text-3">Accessed</dt>
+              <dd className="text-text" data-testid="inbox-preview-accessed">
+                {provenance.accessedAt?.slice(0, 10) ?? "—"}
+              </dd>
+            </div>
+            {provenance.canonicalUrl ? (
+              <div className="flex justify-between gap-3">
+                <dt className="text-text-3">Canonical</dt>
+                <dd
+                  className="min-w-0 break-all text-right text-text"
+                  data-testid="inbox-preview-canonical"
+                >
+                  {provenance.canonicalUrl}
+                </dd>
+              </div>
+            ) : null}
             <div className="flex items-center justify-between gap-3">
               <dt className="text-text-3">Status</dt>
               <dd>

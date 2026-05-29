@@ -15,12 +15,18 @@
  * ProseMirror conversion (the layering rule — no PM-building in the renderer).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { canonicalizeUrl } from "@interleave/core";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { appApi, type PriorityLabelInput, type SourcesImportManualRequest } from "../../lib/appApi";
 import { Kbd } from "../../shell/Kbd";
 
 const PRIORITY_LABELS: readonly PriorityLabelInput[] = ["A", "B", "C", "D"];
+
+/** Today's date as a `yyyy-mm-dd` string for the accessed-date field default. */
+function todayDateInput(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 export type NewSourceModalProps = {
   open: boolean;
@@ -34,11 +40,18 @@ export function NewSourceModal({ open, onClose, onCreated }: NewSourceModalProps
   const [url, setUrl] = useState("");
   const [author, setAuthor] = useState("");
   const [publishedAt, setPublishedAt] = useState("");
+  const [accessedAt, setAccessedAt] = useState(todayDateInput);
   const [body, setBody] = useState("");
   const [priority, setPriority] = useState<PriorityLabelInput>("C");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // A live read-back of the canonical URL the main process WILL derive (T014).
+  // Uses the same pure `@interleave/core` normalizer the main process uses, so
+  // the preview is faithful; the renderer still never persists it — it only
+  // sends the raw URL and the main process re-derives + stores it.
+  const canonicalPreview = useMemo(() => canonicalizeUrl(url), [url]);
 
   // Reset + focus when opened.
   useEffect(() => {
@@ -47,6 +60,7 @@ export function NewSourceModal({ open, onClose, onCreated }: NewSourceModalProps
     setUrl("");
     setAuthor("");
     setPublishedAt("");
+    setAccessedAt(todayDateInput());
     setBody("");
     setPriority("C");
     setError(null);
@@ -66,11 +80,19 @@ export function NewSourceModal({ open, onClose, onCreated }: NewSourceModalProps
       const trimmedUrl = url.trim();
       const trimmedAuthor = author.trim();
       const trimmedDate = publishedAt.trim();
+      const trimmedAccessed = accessedAt.trim();
+      // The accessed-date field is a `yyyy-mm-dd` string; send it as an ISO
+      // timestamp when set so it overrides the main process's auto-stamp. When
+      // cleared, omit it and let the main process stamp "now" (T014).
+      const accessedIso = trimmedAccessed
+        ? new Date(`${trimmedAccessed}T00:00:00.000Z`).toISOString()
+        : "";
       const req: SourcesImportManualRequest = {
         ...request,
         ...(trimmedUrl ? { url: trimmedUrl } : {}),
         ...(trimmedAuthor ? { author: trimmedAuthor } : {}),
         ...(trimmedDate ? { publishedAt: trimmedDate } : {}),
+        ...(accessedIso ? { accessedAt: accessedIso } : {}),
         ...(body.length > 0 ? { body } : {}),
       };
       const { id } = await appApi.importManualSource(req);
@@ -79,7 +101,7 @@ export function NewSourceModal({ open, onClose, onCreated }: NewSourceModalProps
       setError(e instanceof Error ? e.message : String(e));
       setSubmitting(false);
     }
-  }, [title, url, author, publishedAt, body, priority, submitting, onCreated]);
+  }, [title, url, author, publishedAt, accessedAt, body, priority, submitting, onCreated]);
 
   // Esc to close, ⌘↵ to submit while open.
   useEffect(() => {
@@ -178,16 +200,36 @@ export function NewSourceModal({ open, onClose, onCreated }: NewSourceModalProps
               </label>
             </div>
 
-            <label className="block">
-              <span className="mb-1 block font-medium text-sm text-text-2">Date</span>
-              <input
-                data-testid="new-source-date"
-                type="date"
-                value={publishedAt}
-                onChange={(e) => setPublishedAt(e.target.value)}
-                className={fieldClass}
-              />
-            </label>
+            {/* Read-back of the canonical URL the app derives from the entered
+                URL (T014). Provenance only; the renderer never persists it. */}
+            {canonicalPreview && canonicalPreview !== url.trim() ? (
+              <p className="text-text-3 text-xs" data-testid="new-source-canonical">
+                Canonical: <span className="break-all font-mono">{canonicalPreview}</span>
+              </p>
+            ) : null}
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="mb-1 block font-medium text-sm text-text-2">Published date</span>
+                <input
+                  data-testid="new-source-date"
+                  type="date"
+                  value={publishedAt}
+                  onChange={(e) => setPublishedAt(e.target.value)}
+                  className={fieldClass}
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block font-medium text-sm text-text-2">Accessed date</span>
+                <input
+                  data-testid="new-source-accessed"
+                  type="date"
+                  value={accessedAt}
+                  onChange={(e) => setAccessedAt(e.target.value)}
+                  className={fieldClass}
+                />
+              </label>
+            </div>
 
             <label className="block">
               <span className="mb-1 block font-medium text-sm text-text-2">Body</span>

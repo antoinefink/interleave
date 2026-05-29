@@ -184,8 +184,24 @@ function InspectorBody({
                 "—"
               )}
             </MetaRow>
+            {provenance.canonicalUrl && (
+              <MetaRow k="Canonical URL">
+                <span data-testid="provenance-canonical-url" style={{ overflowWrap: "anywhere" }}>
+                  {provenance.canonicalUrl}
+                </span>
+              </MetaRow>
+            )}
+            {provenance.originalUrl && provenance.originalUrl !== provenance.url && (
+              <MetaRow k="Original URL">
+                <span data-testid="provenance-original-url" style={{ overflowWrap: "anywhere" }}>
+                  {provenance.originalUrl}
+                </span>
+              </MetaRow>
+            )}
             <MetaRow k="Published">{fmtDate(provenance.publishedAt)}</MetaRow>
-            <MetaRow k="Accessed">{fmtDate(provenance.accessedAt)}</MetaRow>
+            <MetaRow k="Accessed">
+              <span data-testid="provenance-accessed-at">{fmtDate(provenance.accessedAt)}</span>
+            </MetaRow>
             {provenance.reasonAdded && <MetaRow k="Reason">{provenance.reasonAdded}</MetaRow>}
           </div>
         </div>

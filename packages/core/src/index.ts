@@ -116,5 +116,7 @@ export {
 } from "./settings";
 // Source provenance + editable document body (./source).
 export type { Document, DocumentSchemaVersion, Source } from "./source";
+// URL canonicalization for provenance/duplicate detection — pure, fetch-free (./url).
+export { canonicalizeUrl } from "./url";
 // Desktop pivot: filesystem asset vault vocabulary (./vault).
 export type { Asset, AssetLocation, LocalVaultPath } from "./vault";

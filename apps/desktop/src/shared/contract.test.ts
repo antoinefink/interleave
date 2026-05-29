@@ -167,6 +167,37 @@ describe("SourcesImportManualRequestSchema (T012)", () => {
     expect(() => SourcesImportManualRequestSchema.parse({ title: "x".repeat(513) })).toThrow();
     expect(() => SourcesImportManualRequestSchema.parse({ title: "ok", priority: "Z" })).toThrow();
   });
+
+  it("accepts optional provenance fields (canonical/original URL, accessed date, snapshot) (T014)", () => {
+    const parsed = SourcesImportManualRequestSchema.parse({
+      title: "Provenance",
+      url: "https://example.com/a?utm_source=x",
+      canonicalUrl: "https://example.com/a",
+      originalUrl: "https://example.com/a?utm_source=x",
+      accessedAt: "2026-05-29T00:00:00.000Z",
+      snapshotKey: "assets/sources/abc/original.html",
+    });
+    expect(parsed.canonicalUrl).toBe("https://example.com/a");
+    expect(parsed.originalUrl).toBe("https://example.com/a?utm_source=x");
+    expect(parsed.accessedAt).toBe("2026-05-29T00:00:00.000Z");
+    expect(parsed.snapshotKey).toBe("assets/sources/abc/original.html");
+  });
+
+  it("treats the new provenance fields as optional — a title-only payload still validates (T014)", () => {
+    const parsed = SourcesImportManualRequestSchema.parse({ title: "Just a title" });
+    expect(parsed.canonicalUrl).toBeUndefined();
+    expect(parsed.accessedAt).toBeUndefined();
+    expect(parsed.snapshotKey).toBeUndefined();
+  });
+
+  it("rejects an over-long canonical URL (T014)", () => {
+    expect(() =>
+      SourcesImportManualRequestSchema.parse({
+        title: "ok",
+        canonicalUrl: `https://example.com/${"x".repeat(2100)}`,
+      }),
+    ).toThrow();
+  });
 });
 
 describe("InboxGetRequestSchema (T012)", () => {

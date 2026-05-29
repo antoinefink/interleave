@@ -44,7 +44,9 @@ function buildChain() {
     priority: 0.875,
     status: "active",
     author: "François Chollet",
-    url: "https://arxiv.org/abs/1911.01547",
+    url: "https://arxiv.org/abs/1911.01547?utm_source=feed",
+    canonicalUrl: "https://arxiv.org/abs/1911.01547",
+    originalUrl: "https://arxiv.org/abs/1911.01547?utm_source=feed",
     accessedAt: "2026-05-20T09:30:00.000Z",
     reasonAdded: "Foundational paper.",
   });
@@ -171,6 +173,9 @@ describe("InspectorQuery.get — attention scheduler", () => {
 
     expect(data.provenance?.author).toBe("François Chollet");
     expect(data.provenance?.url).toContain("arxiv.org");
+    // Provenance carries the normalized canonical URL + the verbatim original (T014).
+    expect(data.provenance?.canonicalUrl).toBe("https://arxiv.org/abs/1911.01547");
+    expect(data.provenance?.originalUrl).toBe("https://arxiv.org/abs/1911.01547?utm_source=feed");
 
     // The extract is a live child of the source.
     expect(data.children.map((c) => c.id)).toContain(extractId);

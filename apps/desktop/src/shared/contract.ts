@@ -253,6 +253,10 @@ export interface ReviewSummary {
 export interface SourceProvenance {
   readonly elementId: string;
   readonly url: string | null;
+  /** Normalized URL derived from `url` (tracking params/fragment stripped). */
+  readonly canonicalUrl: string | null;
+  /** The as-entered URL preserved verbatim for provenance. */
+  readonly originalUrl: string | null;
   readonly author: string | null;
   readonly publishedAt: string | null;
   readonly accessedAt: string | null;
@@ -331,14 +335,28 @@ export type PriorityLabelInput = z.infer<typeof PriorityLabelSchema>;
  * optional (priority defaults to `C` so new material never dominates). `body` is
  * the raw pasted article text — the MAIN process converts it to plain text +
  * ProseMirror JSON (the renderer never builds the doc) and stores both. The
- * `publishedAt` "date" field is a loose date string stored as-is (T014 derives
- * the rest of provenance); `body` is capped to keep IPC payloads bounded.
+ * `publishedAt` "date" field is a loose date string stored as-is.
+ *
+ * Provenance (T014, no remote fetching): the renderer MAY pass
+ * `canonicalUrl`/`originalUrl`/`accessedAt`/`snapshotKey`, but they are optional
+ * and normally left out — the MAIN process derives the canonical URL from `url`,
+ * preserves the as-entered URL as `originalUrl`, and auto-stamps `accessedAt` to
+ * "now". `snapshotKey` stays `null` in M2 (no snapshot is fetched). `body` is
+ * capped to keep IPC payloads bounded.
  */
 export const SourcesImportManualRequestSchema = z.object({
   title: z.string().trim().min(1).max(512),
   url: z.string().trim().max(2048).optional(),
+  /** Normalized URL; usually omitted — the main process derives it from `url`. */
+  canonicalUrl: z.string().trim().max(2048).optional(),
+  /** As-entered URL; usually omitted — the main process sets it from `url`. */
+  originalUrl: z.string().trim().max(2048).optional(),
   author: z.string().trim().max(512).optional(),
   publishedAt: z.string().trim().max(64).optional(),
+  /** ISO accessed date; usually omitted — the main process auto-stamps "now". */
+  accessedAt: z.string().trim().max(64).optional(),
+  /** Vault-relative snapshot key; stays absent in M2 (no snapshot is fetched). */
+  snapshotKey: z.string().trim().max(2048).optional(),
   /** Raw pasted body text; converted to plain text + ProseMirror JSON main-side. */
   body: z.string().max(2_000_000).optional(),
   reasonAdded: z.string().trim().max(2048).optional(),

@@ -255,3 +255,128 @@ test.describe("manual text import (T013)", () => {
     await app.close();
   });
 });
+
+/**
+ * Source provenance (T014) — a manual import with a messy URL captures the
+ * canonical URL, the verbatim original URL, and an auto-stamped accessed date,
+ * with NO remote fetching. The inbox preview + the universal inspector surface
+ * them, and they survive an app restart — all fully offline.
+ */
+test.describe("source provenance (T014)", () => {
+  let provDataDir: string;
+  const MESSY_URL = "https://EXAMPLE.com/spacing/?utm_source=newsletter&id=42#section";
+  const CANONICAL_URL = "https://example.com/spacing?id=42";
+
+  test.beforeAll(() => {
+    ensureBuilt();
+    provDataDir = makeDataDir();
+  });
+
+  test("a messy URL is captured as canonical + original; the inspector shows them, offline", async () => {
+    const app = await launchApp(provDataDir);
+    const page = await app.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+
+    // Assert the app never FETCHES the source: no outbound request to the
+    // entered URL's host (`example.com`). Web-font requests to fonts.gstatic.com
+    // from the design system are unrelated to provenance and are ignored — what
+    // matters for T014 is that capturing provenance does no remote fetching of
+    // the source itself (the flow must work offline).
+    const sourceFetches: string[] = [];
+    page.on("request", (req) => {
+      if (/^https?:\/\/(www\.)?example\.com/i.test(req.url())) {
+        sourceFetches.push(req.url());
+      }
+    });
+
+    await page.getByTestId("nav-inbox").click();
+    await expect(page.getByTestId("route-inbox")).toBeVisible();
+    await expect(page.getByTestId("inbox-empty")).toBeVisible();
+
+    // Import a source with a tracking-laden URL.
+    await page.getByTestId("inbox-empty-new").click();
+    await expect(page.getByTestId("new-source-modal")).toBeVisible();
+    await page.getByTestId("new-source-title").fill("Provenance article");
+    await page.getByTestId("new-source-url").fill(MESSY_URL);
+    // The modal's live canonical read-back reflects the derived form.
+    await expect(page.getByTestId("new-source-canonical")).toContainText(CANONICAL_URL);
+    await page.getByTestId("new-source-submit").click();
+    await expect(page.getByTestId("new-source-modal")).toBeHidden();
+
+    // The inbox preview metadata rail shows the canonical URL + an accessed date.
+    await expect(page.getByTestId("inbox-row")).toHaveCount(1);
+    await expect(page.getByTestId("inbox-preview-canonical")).toHaveText(CANONICAL_URL);
+    await expect(page.getByTestId("inbox-preview-accessed")).not.toHaveText("—");
+
+    // The universal inspector (right panel) shows the canonical URL + accessed
+    // date for the selected source. (The verbatim original URL is shown in the
+    // primary "URL" row; the inspector only adds a separate "Original URL" row
+    // when it differs from the entered URL — which it does not here, since M2
+    // does no redirect resolution.)
+    await expect(page.getByTestId("provenance-canonical-url")).toHaveText(CANONICAL_URL);
+    await expect(page.getByTestId("provenance-accessed-at")).not.toHaveText("—");
+
+    // Verified through the bridge: canonical normalized, original verbatim,
+    // accessed auto-stamped, snapshot left null.
+    const prov = await page.evaluate(async () => {
+      const api = window.appApi as unknown as {
+        inbox: {
+          list(): Promise<{ items: { id: string }[] }>;
+          get(req: { id: string }): Promise<{
+            detail: {
+              provenance: {
+                canonicalUrl: string | null;
+                originalUrl: string | null;
+                accessedAt: string | null;
+              };
+            } | null;
+          }>;
+        };
+      };
+      const { items } = await api.inbox.list();
+      const { detail } = await api.inbox.get({ id: items[0]?.id as string });
+      return detail?.provenance ?? null;
+    });
+    expect(prov?.canonicalUrl).toBe(CANONICAL_URL);
+    expect(prov?.originalUrl).toBe(MESSY_URL);
+    expect(prov?.accessedAt).not.toBeNull();
+
+    // The app never fetched the source URL — provenance is captured fully offline.
+    expect(sourceFetches).toEqual([]);
+
+    await app.close();
+  });
+
+  test("the captured provenance survives an app restart", async () => {
+    const app = await launchApp(provDataDir);
+    const page = await app.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+
+    await page.getByTestId("nav-inbox").click();
+    await expect(page.getByTestId("route-inbox")).toBeVisible();
+    await expect(page.getByTestId("inbox-row")).toHaveCount(1);
+    await page.getByTestId("inbox-row").click();
+
+    // Still shown in the preview + inspector after restart.
+    await expect(page.getByTestId("inbox-preview-canonical")).toHaveText(CANONICAL_URL);
+    await expect(page.getByTestId("provenance-canonical-url")).toHaveText(CANONICAL_URL);
+
+    // Confirmed verbatim through the bridge as well.
+    const prov = await page.evaluate(async () => {
+      const api = window.appApi as unknown as {
+        inbox: {
+          list(): Promise<{ items: { id: string }[] }>;
+          get(req: {
+            id: string;
+          }): Promise<{ detail: { provenance: { originalUrl: string | null } } | null }>;
+        };
+      };
+      const { items } = await api.inbox.list();
+      const { detail } = await api.inbox.get({ id: items[0]?.id as string });
+      return detail?.provenance ?? null;
+    });
+    expect(prov?.originalUrl).toBe(MESSY_URL);
+
+    await app.close();
+  });
+});
