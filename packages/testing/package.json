@@ -17,5 +17,8 @@
     "test": "echo \"@interleave/testing: no tests yet (wired in T002)\"",
     "lint": "echo \"@interleave/testing: no lint yet (wired in T002)\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@interleave/db": "workspace:*"
   }
 }

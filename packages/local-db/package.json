@@ -1,0 +1,30 @@
+{
+  "name": "@interleave/local-db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "dev": "echo \"@interleave/local-db: no dev step\"",
+    "build": "echo \"@interleave/local-db: no build step\"",
+    "test": "vitest run",
+    "lint": "echo \"@interleave/local-db: linted from repo root via biome\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@interleave/core": "workspace:*",
+    "@interleave/db": "workspace:*",
+    "drizzle-orm": "^0.45.2"
+  },
+  "devDependencies": {
+    "@interleave/testing": "workspace:*",
+    "better-sqlite3": "^12.10.0"
+  }
+}

@@ -1,12 +1,11 @@
 /**
- * @interleave/testing — shared factories, fixtures, and mock sources.
+ * @interleave/testing — shared factories, fixtures, and test harness helpers.
  *
- * Provides deterministic element/document/review factories and the in-memory
- * PGlite helpers reused by both Vitest unit tests and Playwright E2E (T008/T009).
- * Nothing is implemented yet — this trivial export only proves the package
- * resolves across the workspace.
+ * Provides the in-memory native-SQLite harness (`createInMemoryDb`) reused by
+ * both Vitest unit/repository tests (T008) and the seed/factory work (T009).
+ * Deterministic element/document/review factories land in T009.
  */
 export const TESTING_PACKAGE = "@interleave/testing" as const;
 
-/** Placeholder until factories/fixtures are defined in T008/T009. */
-export const testingPlaceholder = (): string => TESTING_PACKAGE;
+/** Native-SQLite, fully-migrated in-memory database for repository tests (T008). */
+export { createInMemoryDb } from "./db";

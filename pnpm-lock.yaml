@@ -43,6 +43,9 @@ importers:
       '@interleave/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@interleave/local-db':
+        specifier: workspace:*
+        version: link:../../packages/local-db
       better-sqlite3:
         specifier: ^12.10.0
         version: 12.10.0
@@ -129,9 +132,32 @@ importers:
 
   packages/editor: {}
 
+  packages/local-db:
+    dependencies:
+      '@interleave/core':
+        specifier: workspace:*
+        version: link:../core
+      '@interleave/db':
+        specifier: workspace:*
+        version: link:../db
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/better-sqlite3@7.6.13)(better-sqlite3@12.10.0)
+    devDependencies:
+      '@interleave/testing':
+        specifier: workspace:*
+        version: link:../testing
+      better-sqlite3:
+        specifier: ^12.10.0
+        version: 12.10.0
+
   packages/scheduler: {}
 
-  packages/testing: {}
+  packages/testing:
+    dependencies:
+      '@interleave/db':
+        specifier: workspace:*
+        version: link:../db
 
   packages/ui: {}
 

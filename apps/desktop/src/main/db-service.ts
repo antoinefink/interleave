@@ -10,13 +10,14 @@
  *  - serve `db.getStatus()` and the `settings.get/update` surface.
  *
  * The full repository layer (`packages/local-db`, with the operation-log append
- * and transactional multi-table mutations) lands in T008 and will plug in behind
- * this same service. For now the narrow settings surface is implemented directly
- * against the `@interleave/db` client so T007 has a real, persistent round-trip.
+ * and transactional multi-table mutations) is constructed here on open (T008):
+ * the renderer reaches it only through validated IPC, never directly. The narrow
+ * settings surface routes through `SettingsRepository` so all data access flows
+ * through the repository seam.
  */
 
-import { type DbHandle, migrateDatabase, openDatabase, settings } from "@interleave/db";
-import { eq } from "drizzle-orm";
+import { type DbHandle, migrateDatabase, openDatabase } from "@interleave/db";
+import { createRepositories, type Repositories } from "@interleave/local-db";
 import type {
   DbStatus,
   SettingsGetResult,
@@ -26,6 +27,7 @@ import type {
 
 export class DbService {
   private handle: DbHandle | null = null;
+  private repositories: Repositories | null = null;
   private migrated = false;
 
   /** Whether the database handle is currently open. */
@@ -54,6 +56,7 @@ export class DbService {
       ? openDatabase(dbPath, { nativeBinding: options.nativeBinding })
       : openDatabase(dbPath);
     migrateDatabase(this.handle.db, options.migrationsDir);
+    this.repositories = createRepositories(this.handle.db);
     this.migrated = true;
   }
 
@@ -62,6 +65,7 @@ export class DbService {
     if (!this.handle) return;
     this.handle.sqlite.close();
     this.handle = null;
+    this.repositories = null;
     this.migrated = false;
   }
 
@@ -70,6 +74,18 @@ export class DbService {
       throw new Error("DbService: database is not open");
     }
     return this.handle;
+  }
+
+  /**
+   * The repository layer (`packages/local-db`) bound to the open database. All
+   * domain data access goes through these — IPC handlers route here, never to
+   * raw SQL.
+   */
+  get repos(): Repositories {
+    if (!this.repositories) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.repositories;
   }
 
   /** Read effective pragmas + applied-migration count for `db.getStatus()`. */
@@ -102,35 +118,21 @@ export class DbService {
 
   /** Read one setting (by key) or all settings, parsing JSON values. */
   getSettings(key?: string): SettingsGetResult {
-    const { db } = this.require();
-    const rows = key
-      ? db.select().from(settings).where(eq(settings.key, key)).all()
-      : db.select().from(settings).all();
-
-    const result: Record<string, SettingValue> = {};
-    for (const row of rows) {
-      result[row.key] = JSON.parse(row.value) as SettingValue;
+    const repo = this.repos.settings;
+    if (key) {
+      const value = repo.get<SettingValue>(key);
+      return { settings: value === null ? {} : { [key]: value } };
     }
-    return { settings: result };
+    return { settings: repo.getAll() as Record<string, SettingValue> };
   }
 
   /**
-   * Create/overwrite a setting. The write runs in a transaction (the seam where
-   * T008/T011 will also append the relevant operation-log/repository work) and
-   * persists the value as JSON text, so it survives an app restart.
+   * Create/overwrite a setting through `SettingsRepository` (the repository seam)
+   * so the value persists as JSON text and survives an app restart.
    */
   updateSetting(key: string, value: unknown): SettingsUpdateResult {
-    const { db } = this.require();
-    const json = JSON.stringify(value ?? null);
-
-    db.transaction((tx) => {
-      tx.insert(settings)
-        .values({ key, value: json })
-        .onConflictDoUpdate({ target: settings.key, set: { value: json } })
-        .run();
-    });
-
-    return { key, value: JSON.parse(json) as SettingValue };
+    const stored = this.repos.settings.set(key, value ?? null);
+    return { key, value: stored as SettingValue };
   }
 
   /** Cheap connectivity check used by `app.health()`. */
