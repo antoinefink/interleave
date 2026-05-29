@@ -1,12 +1,29 @@
 /**
- * @interleave/db — Drizzle schemas, migrations, and repositories.
+ * @interleave/db — the native SQLite schema, client, and migrations (T006).
  *
- * All persistence lives behind this package: the Drizzle schema (T006), PGlite
- * wiring (T007), and the repository classes (T008) that are the only seam React
- * is allowed to touch. No SQL or schema definitions exist yet — this trivial
- * export only proves the package resolves across the workspace.
+ * The canonical local store is **native SQLite** (`better-sqlite3` + Drizzle,
+ * SQLite dialect). This package owns the Drizzle schema for all 18 M1 tables, a
+ * client factory that opens SQLite with the mandatory pragmas
+ * (`foreign_keys = ON`, `journal_mode = WAL`, `busy_timeout = 5000`), and the
+ * migration runner. The Electron main/DB service (T007) opens the DB and runs
+ * migrations on startup; `packages/local-db` (T008) builds the repositories on
+ * top. The renderer never imports this — all SQLite access stays behind the
+ * Electron/IPC boundary.
+ *
+ * Table column shapes mirror `@interleave/core`, and enum columns are constrained
+ * by CHECK lists derived from the same core tuples, so the DB and the domain
+ * vocabulary cannot drift.
  */
+
 export const DB_PACKAGE = "@interleave/db" as const;
 
-/** Placeholder until the Drizzle schema is defined in T006. */
-export const dbPlaceholder = (): string => DB_PACKAGE;
+export {
+  applyPragmas,
+  type DbHandle,
+  type InterleaveDatabase,
+  openDatabase,
+  type SqliteDatabase,
+} from "./client";
+export { migrateDatabase } from "./migrator";
+export { DEV_DB_PATH, MIGRATIONS_DIR, PACKAGE_ROOT } from "./paths";
+export * from "./schema";

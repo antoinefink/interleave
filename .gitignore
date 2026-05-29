@@ -27,6 +27,12 @@ blob-report/
 # Vite (added in T003+)
 .vite/
 
+# Local dev SQLite database (T006); generated migrations are committed, the DB is not
+packages/db/.dev/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
 # Logs
 *.log
 npm-debug.log*

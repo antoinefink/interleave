@@ -12,10 +12,23 @@
     }
   },
   "scripts": {
-    "dev": "echo \"@interleave/db: no dev step yet (wired in T002+)\"",
-    "build": "echo \"@interleave/db: no build step yet (wired in T002)\"",
-    "test": "echo \"@interleave/db: no tests yet (wired in T002)\"",
-    "lint": "echo \"@interleave/db: no lint yet (wired in T002)\"",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "dev": "echo \"@interleave/db: no dev step\"",
+    "build": "echo \"@interleave/db: no build step\"",
+    "test": "vitest run",
+    "lint": "echo \"@interleave/db: linted from repo root via biome\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:reset:dev": "tsx scripts/reset-dev.ts"
+  },
+  "dependencies": {
+    "@interleave/core": "workspace:^",
+    "better-sqlite3": "^12.10.0",
+    "drizzle-orm": "^0.45.2"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.20.6"
   }
 }

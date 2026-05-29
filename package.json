@@ -17,12 +17,16 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "db:generate": "pnpm --filter @interleave/db db:generate",
+    "db:migrate": "pnpm --filter @interleave/db db:migrate",
+    "db:reset:dev": "pnpm --filter @interleave/db db:reset:dev"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
     "@playwright/test": "^1.60.0",
     "@types/node": "^22.10.0",
+    "tsx": "^4.20.6",
     "turbo": "^2.5.5",
     "typescript": "^5.7.3",
     "vite": "^8.0.14",
