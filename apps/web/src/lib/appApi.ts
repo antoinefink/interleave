@@ -325,6 +325,56 @@ export interface DocumentsSaveResult {
 }
 
 // ---------------------------------------------------------------------------
+// documents.marks.add() / .remove() / .list()  (T020 — document annotations)
+// ---------------------------------------------------------------------------
+
+/** A persisted document mark (highlight / extracted-span / processed-span). */
+export interface DocumentMarkPayload {
+  readonly id: string;
+  readonly elementId: string;
+  /** The STABLE block id the mark anchors to. */
+  readonly blockId: string;
+  readonly markType: string;
+  /** Character range within the block, as `[start, end]`. */
+  readonly range: readonly [number, number];
+  /** Mark-specific attributes (JSON), or `null`. */
+  readonly attrs: Readonly<Record<string, unknown>> | null;
+}
+
+export interface DocumentMarksAddRequest {
+  readonly elementId: string;
+  /** The STABLE block id the mark anchors to. */
+  readonly blockId: string;
+  /** The mark kind (`highlight` for T020). */
+  readonly markType: string;
+  /** `[start, end]` character range within the block. */
+  readonly range: readonly [number, number];
+  readonly attrs?: Readonly<Record<string, unknown>> | null;
+}
+
+export interface DocumentMarksAddResult {
+  readonly mark: DocumentMarkPayload;
+}
+
+export interface DocumentMarksRemoveRequest {
+  readonly markId: string;
+}
+
+export interface DocumentMarksRemoveResult {
+  readonly removed: boolean;
+}
+
+export interface DocumentMarksListRequest {
+  readonly elementId: string;
+  /** Optionally filter to one kind (e.g. only `highlight`). */
+  readonly markType?: string;
+}
+
+export interface DocumentMarksListResult {
+  readonly marks: readonly DocumentMarkPayload[];
+}
+
+// ---------------------------------------------------------------------------
 // readPoints.get() / readPoints.set()  (T017 — resume position)
 // ---------------------------------------------------------------------------
 
@@ -386,6 +436,11 @@ export interface AppApi {
   readonly documents: {
     get(request: DocumentsGetRequest): Promise<DocumentsGetResult>;
     save(request: DocumentsSaveRequest): Promise<DocumentsSaveResult>;
+    readonly marks: {
+      add(request: DocumentMarksAddRequest): Promise<DocumentMarksAddResult>;
+      remove(request: DocumentMarksRemoveRequest): Promise<DocumentMarksRemoveResult>;
+      list(request: DocumentMarksListRequest): Promise<DocumentMarksListResult>;
+    };
   };
   readonly readPoints: {
     get(request: ReadPointGetRequest): Promise<ReadPointGetResult>;
@@ -475,6 +530,18 @@ export const appApi = {
   /** Upsert an element's document body; logs `update_document` (T015). */
   saveDocument(request: DocumentsSaveRequest): Promise<DocumentsSaveResult> {
     return requireAppApi().documents.save(request);
+  },
+  /** Add a highlight (or other) mark over a stable block range (T020). */
+  addDocumentMark(request: DocumentMarksAddRequest): Promise<DocumentMarksAddResult> {
+    return requireAppApi().documents.marks.add(request);
+  },
+  /** Remove a document mark by id (T020). */
+  removeDocumentMark(request: DocumentMarksRemoveRequest): Promise<DocumentMarksRemoveResult> {
+    return requireAppApi().documents.marks.remove(request);
+  },
+  /** List an element's document marks, optionally by kind (T020). */
+  listDocumentMarks(request: DocumentMarksListRequest): Promise<DocumentMarksListResult> {
+    return requireAppApi().documents.marks.list(request);
   },
   /** Load an element's read-point (resume position), or `null` (T017). */
   getReadPoint(request: ReadPointGetRequest): Promise<ReadPointGetResult> {

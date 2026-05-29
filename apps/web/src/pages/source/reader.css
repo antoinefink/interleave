@@ -120,6 +120,8 @@ mark.hl {
   background: var(--mark-hl);
   border-radius: 2px;
   padding: 0.5px 1px;
+  /* Persisted highlights are removable: click one to delete it (T020). */
+  cursor: pointer;
 }
 mark.extracted {
   background: var(--mark-extract);

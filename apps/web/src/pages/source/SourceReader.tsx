@@ -46,6 +46,7 @@ import { useTextSelection } from "../../reader/useTextSelection";
 import { Kbd } from "../../shell/Kbd";
 import { useSelection } from "../../shell/selection";
 import { useDocument } from "./useDocument";
+import { useHighlights } from "./useHighlights";
 import { useReadPoint } from "./useReadPoint";
 import "./reader.css";
 
@@ -135,6 +136,7 @@ export function SourceReader() {
 
   const doc = useDocument(id);
   const rp = useReadPoint(id);
+  const hl = useHighlights(id);
 
   const [inspector, setInspector] = useState<InspectorData | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
@@ -214,8 +216,15 @@ export function SourceReader() {
           break;
         }
         case "highlight":
-          // T020 wires highlight persistence; surface a stub acknowledgement.
-          toast("Highlight lands in T020");
+          // T020: persist the selection as a `highlight` document mark (annotation,
+          // not an extract). The hook writes through `documents.marks.add`; the
+          // overlay decoration re-renders from the refreshed highlight set.
+          if (loc) {
+            void hl.add(loc).then(
+              () => toast("Highlighted"),
+              () => toast("Could not highlight"),
+            );
+          }
           selection.dismiss();
           break;
         case "extract":
@@ -233,7 +242,7 @@ export function SourceReader() {
           break;
       }
     },
-    [selection, toast],
+    [selection, toast, hl],
   );
 
   // Keyboard while the toolbar is open: E → extract, C → cloze, H → highlight
@@ -281,6 +290,7 @@ export function SourceReader() {
       firstUnreadBlockId: rp.firstUnreadBlockId(doc.currentDoc),
       readPointBlockId: rp.readPoint?.blockId ?? null,
       extractedBlockIds: doc.extractedBlockIds,
+      highlights: hl.highlights,
     });
     // Resume near the read-point exactly once per load, so reopening lands at the
     // saved block rather than the top.
@@ -294,8 +304,31 @@ export function SourceReader() {
     doc.currentDoc,
     doc.extractedBlockIds,
     rp.firstUnreadBlockId,
+    hl.highlights,
     editorKey,
   ]);
+
+  // Clicking a persisted highlight removes it (T020 — highlights are removable).
+  // The highlight is rendered as an inline `mark.hl` ProseMirror decoration
+  // carrying `data-mark-id`; we read that id off the click target and delete the
+  // backing `document_marks` row through the hook, then the overlay re-renders.
+  useEffect(() => {
+    if (!desktop) return;
+    function onClick(e: MouseEvent) {
+      const target = e.target as HTMLElement | null;
+      const markEl = target?.closest?.("mark.hl[data-mark-id]") as HTMLElement | null;
+      if (!markEl) return;
+      const markId = markEl.getAttribute("data-mark-id");
+      if (!markId) return;
+      e.preventDefault();
+      void hl.remove(markId).then(
+        () => toast("Highlight removed"),
+        () => toast("Could not remove highlight"),
+      );
+    }
+    document.addEventListener("click", onClick);
+    return () => document.removeEventListener("click", onClick);
+  }, [desktop, hl, toast]);
 
   // Set read-point at the current caret (Space + the primary action button).
   const onSetReadPoint = useCallback(async () => {

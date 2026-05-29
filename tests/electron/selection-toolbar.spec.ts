@@ -4,11 +4,13 @@
  * Selecting a run of text in the source reader must pop the inline selection
  * toolbar (Extract / Cloze / Highlight / Copy / Cancel) anchored above the
  * selection, WITHOUT collapsing the live ProseMirror selection, and each button
- * must dispatch its action. T019 ships only the UI seam — Highlight (T020),
- * Extract (T021), and Cloze (M6) are stubs that toast — so this spec asserts the
- * seam: the toolbar appears with all five actions on a ≥3-char selection, the DOM
- * selection survives a button press (the `onMouseDown` preventDefault), an action
- * dispatches (a toast), and Cancel / Escape dismiss it without mutating the body.
+ * must dispatch its action. Highlight is now wired (T020 — it persists a
+ * `document_marks` row and toasts "Highlighted"); Extract (T021) and Cloze (M6)
+ * remain stubs that toast — so this spec asserts the seam: the toolbar appears
+ * with all five actions on a ≥3-char selection, the DOM selection survives a button
+ * press (the `onMouseDown` preventDefault), an action dispatches (a toast), and
+ * Cancel / Escape dismiss it without mutating the body. The full highlight
+ * persist/reload/restart/remove round-trip is covered by `highlights.spec.ts`.
  *
  * It reuses the shared seeded source ("On the Measure of Intelligence") and the
  * same launch/route helpers as the T018 reader spec; no persistence is involved
@@ -108,12 +110,12 @@ test("pressing a toolbar button keeps the selection and dispatches the action", 
   const selected = await selectBlockText(page, "blk_def_p1");
   await expect(page.getByTestId("selection-toolbar")).toBeVisible();
 
-  // Highlight is a stub in T019 — it must still dispatch (a toast) AND keep the
+  // Highlight now persists (T020) — it must dispatch (a toast) AND keep the
   // selection alive (the toolbar prevents the mousedown default). Assert on the
   // toast TEXT (the visible `position:fixed` span) rather than its zero-size
   // wrapper div.
   await page.getByTestId("sel-tool-highlight").click();
-  await expect(page.getByText("Highlight lands in T020")).toBeVisible();
+  await expect(page.getByText("Highlighted")).toBeVisible();
   // The DOM selection survived the button press (not collapsed to empty).
   expect((await currentSelection(page)).trim().length).toBeGreaterThan(0);
   // The selection text is unchanged by the action (no doc mutation).
@@ -136,7 +138,7 @@ test("the H shortcut dispatches highlight without typing into the editable body"
   // Press the bare letter shortcut. The capture-phase handler must run the action
   // AND suppress the keystroke so "h" is never inserted into the contentEditable.
   await page.keyboard.press("h");
-  await expect(page.getByText("Highlight lands in T020")).toBeVisible();
+  await expect(page.getByText("Highlighted")).toBeVisible();
 
   // The body is unchanged — the shortcut did not type "h" over the selection.
   const after = await page.locator(".reader .ProseMirror").innerText();

@@ -11,6 +11,9 @@
 import { app, ipcMain } from "electron";
 import {
   DbStatusRequestSchema,
+  DocumentMarksAddRequestSchema,
+  DocumentMarksListRequestSchema,
+  DocumentMarksRemoveRequestSchema,
   DocumentsGetRequestSchema,
   DocumentsSaveRequestSchema,
   HealthRequestSchema,
@@ -112,6 +115,21 @@ export function registerIpcHandlers(dbService: DbService): () => void {
   ipcMain.handle(IPC_CHANNELS.documentsSave, (_event, rawRequest: unknown) => {
     const request = DocumentsSaveRequestSchema.parse(rawRequest);
     return dbService.saveDocument(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.documentsMarksAdd, (_event, rawRequest: unknown) => {
+    const request = DocumentMarksAddRequestSchema.parse(rawRequest);
+    return dbService.addDocumentMark(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.documentsMarksRemove, (_event, rawRequest: unknown) => {
+    const request = DocumentMarksRemoveRequestSchema.parse(rawRequest);
+    return dbService.removeDocumentMark(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.documentsMarksList, (_event, rawRequest: unknown) => {
+    const request = DocumentMarksListRequestSchema.parse(rawRequest);
+    return dbService.listDocumentMarks(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.readPointGet, (_event, rawRequest: unknown) => {

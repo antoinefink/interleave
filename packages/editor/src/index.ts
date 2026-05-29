@@ -26,6 +26,14 @@ export {
 } from "./block-id";
 export { type BlockIdMinter, newBlockId } from "./block-ids";
 export { blockIdsOf, type DocumentBlockInput, toBlockInputs } from "./blocks";
+// Document marks (T020 →): highlight (and, later, processed-span) Tiptap marks +
+// commands. Marks are applied through these commands, never DOM surgery; the
+// canonical persistence is a `document_marks` row keyed by stable block id + range.
+export {
+  HIGHLIGHT_MARK_CLASS,
+  HIGHLIGHT_MARK_NAME,
+  Highlight,
+} from "./marks/highlight";
 export {
   clampOffsetToBlock,
   firstUnreadBlockId,
@@ -43,6 +51,7 @@ export {
 // `setReaderDecorations`.
 export {
   createReaderDecorationsPlugin,
+  type HighlightDecoration,
   type ReaderDecorationState,
   ReaderDecorations,
   readerDecorationsKey,

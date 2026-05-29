@@ -16,11 +16,12 @@
  * through the repository seam.
  */
 
-import type { BlockId, ElementId, PriorityLabel } from "@interleave/core";
+import type { BlockId, ElementId, MarkType, PriorityLabel } from "@interleave/core";
 import { canonicalizeUrl, priorityFromLabel } from "@interleave/core";
 import { type DbHandle, migrateDatabase, openDatabase } from "@interleave/db";
 import {
   createRepositories,
+  type DocumentMark,
   InboxQuery,
   InspectorQuery,
   type Repositories,
@@ -28,6 +29,13 @@ import {
 import { seedDemoCollection } from "@interleave/testing";
 import type {
   DbStatus,
+  DocumentMarkPayload,
+  DocumentMarksAddRequest,
+  DocumentMarksAddResult,
+  DocumentMarksListRequest,
+  DocumentMarksListResult,
+  DocumentMarksRemoveRequest,
+  DocumentMarksRemoveResult,
   DocumentsGetRequest,
   DocumentsGetResult,
   DocumentsSaveRequest,
@@ -431,6 +439,47 @@ export class DbService {
   }
 
   /**
+   * Add a document mark (T020 highlight; reused by T021/T026) over a STABLE block
+   * range through {@link DocumentRepository}, which inserts the `document_marks`
+   * row and appends `update_document` in ONE transaction. A mark is an annotation,
+   * NOT an element — no `elements` row is created. The renderer-supplied `markType`
+   * is already validated against `MARK_TYPES` at the IPC boundary.
+   */
+  addDocumentMark(request: DocumentMarksAddRequest): DocumentMarksAddResult {
+    const mark = this.repos.documents.addMark({
+      elementId: request.elementId as ElementId,
+      blockId: request.blockId as BlockId,
+      markType: request.markType as MarkType,
+      range: [request.range[0], request.range[1]],
+      attrs: request.attrs ?? null,
+    });
+    return { mark: markToPayload(mark) };
+  }
+
+  /**
+   * Remove one document mark by id (T020) through {@link DocumentRepository},
+   * which deletes the annotation row and logs `update_document` in ONE
+   * transaction. The source BODY is untouched. Returns whether a row was removed.
+   */
+  removeDocumentMark(request: DocumentMarksRemoveRequest): DocumentMarksRemoveResult {
+    const removed = this.repos.documents.removeMark(request.markId);
+    return { removed };
+  }
+
+  /**
+   * List an element's document marks (T020), optionally filtered to one kind
+   * (e.g. only highlights). Read-only; the renderer renders them as overlay
+   * decorations keyed by stable block id + range.
+   */
+  listDocumentMarks(request: DocumentMarksListRequest): DocumentMarksListResult {
+    const elementId = request.elementId as ElementId;
+    const marks = request.markType
+      ? this.repos.documents.listMarksByType(elementId, request.markType as MarkType)
+      : this.repos.documents.listMarks(elementId);
+    return { marks: marks.map(markToPayload) };
+  }
+
+  /**
    * Load an element's read-point (resume position) (T017) through
    * {@link DocumentRepository}. Returns the STABLE block id + offset + updated
    * timestamp, or `null` when no read-point has been set yet. Read-only.
@@ -489,4 +538,16 @@ export class DbService {
   get raw(): DbHandle {
     return this.require();
   }
+}
+
+/** Map a repository {@link DocumentMark} onto the flat, JSON-serializable IPC payload. */
+function markToPayload(mark: DocumentMark): DocumentMarkPayload {
+  return {
+    id: mark.id,
+    elementId: mark.elementId,
+    blockId: mark.blockId,
+    markType: mark.markType,
+    range: [mark.range[0], mark.range[1]],
+    attrs: mark.attrs,
+  };
 }

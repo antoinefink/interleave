@@ -22,6 +22,7 @@ import {
   DESIRED_RETENTION_MAX,
   DESIRED_RETENTION_MIN,
   KEYBOARD_LAYOUTS,
+  MARK_TYPES,
   THEMES,
 } from "@interleave/core";
 import { z } from "zod";
@@ -588,6 +589,87 @@ export interface ReadPointSetResult {
 }
 
 // ---------------------------------------------------------------------------
+// documents.marks.add() / .remove() / .list()  (T020 — document annotations)
+// ---------------------------------------------------------------------------
+
+/**
+ * The document-mark surface (T020). A mark is a lightweight annotation over a
+ * STABLE block's character range — NOT an element and NOT lineage. M4 uses it for
+ * highlights (T020), the extracted-span breadcrumb (T021), and processed spans
+ * (T026); all share this surface but carry a different `markType`. The main side
+ * validates `markType` against the canonical {@link MARK_TYPES} enum and persists
+ * via `DocumentRepository`, which logs `update_document` in ONE transaction —
+ * there is NO `add_mark` op (the operation set is closed). Adding/removing a mark
+ * creates NO `elements` row. Ranges are `[start,end]` within the block (the mark
+ * re-anchors by block id after a re-import — never an absolute ProseMirror
+ * position). There is still no generic `db.query`.
+ */
+
+/** A persisted document mark returned to the renderer. */
+export interface DocumentMarkPayload {
+  readonly id: string;
+  readonly elementId: string;
+  /** The STABLE block id the mark anchors to. */
+  readonly blockId: string;
+  readonly markType: string;
+  /** Character range within the block, as `[start, end]`. */
+  readonly range: readonly [number, number];
+  /** Mark-specific attributes (JSON), or `null`. */
+  readonly attrs: Readonly<Record<string, unknown>> | null;
+}
+
+/** The mark-type values the renderer may request (validated against `MARK_TYPES`). */
+export const MarkTypeSchema = z.enum(MARK_TYPES);
+
+/** A `[start, end]` character range within a block (start ≥ 0, end > start). */
+export const MarkRangeSchema = z
+  .tuple([z.number().int().min(0), z.number().int().min(0)])
+  .refine(([start, end]) => end > start, {
+    message: "range end must be greater than start",
+  });
+
+export const DocumentMarksAddRequestSchema = z.object({
+  /** The owning document/element id the mark lives on. */
+  elementId: ElementIdSchema,
+  /** The STABLE block id the mark anchors to. */
+  blockId: z.string().min(1).max(128),
+  /** The mark kind (validated against the canonical `MARK_TYPES`). */
+  markType: MarkTypeSchema,
+  /** `[start, end]` character range within the block. */
+  range: MarkRangeSchema,
+  /** Optional mark-specific attributes (JSON-serializable). */
+  attrs: z.record(z.string(), z.unknown()).nullable().optional(),
+});
+export type DocumentMarksAddRequest = z.infer<typeof DocumentMarksAddRequestSchema>;
+
+export interface DocumentMarksAddResult {
+  readonly mark: DocumentMarkPayload;
+}
+
+export const DocumentMarksRemoveRequestSchema = z.object({
+  /** The `document_marks.id` to remove. */
+  markId: z.string().min(1).max(128),
+});
+export type DocumentMarksRemoveRequest = z.infer<typeof DocumentMarksRemoveRequestSchema>;
+
+export interface DocumentMarksRemoveResult {
+  /** Whether a mark row was removed (false when the id was unknown). */
+  readonly removed: boolean;
+}
+
+export const DocumentMarksListRequestSchema = z.object({
+  /** The owning document/element id whose marks to list. */
+  elementId: ElementIdSchema,
+  /** Optionally filter to one kind (e.g. only `highlight`). */
+  markType: MarkTypeSchema.optional(),
+});
+export type DocumentMarksListRequest = z.infer<typeof DocumentMarksListRequestSchema>;
+
+export interface DocumentMarksListResult {
+  readonly marks: readonly DocumentMarkPayload[];
+}
+
+// ---------------------------------------------------------------------------
 // The typed surface the renderer sees as `window.appApi`.
 // ---------------------------------------------------------------------------
 
@@ -638,6 +720,15 @@ export interface AppApi {
     get(request: DocumentsGetRequest): Promise<DocumentsGetResult>;
     /** Upsert an element's document body; logs `update_document` (T015). */
     save(request: DocumentsSaveRequest): Promise<DocumentsSaveResult>;
+    /** Document-mark annotations (highlight / extracted-span / processed-span) (T020). */
+    readonly marks: {
+      /** Add a mark over a stable block range; logs `update_document` (T020). */
+      add(request: DocumentMarksAddRequest): Promise<DocumentMarksAddResult>;
+      /** Remove a mark by id; logs `update_document` (T020). */
+      remove(request: DocumentMarksRemoveRequest): Promise<DocumentMarksRemoveResult>;
+      /** List an element's marks (optionally filtered by kind) (T020). */
+      list(request: DocumentMarksListRequest): Promise<DocumentMarksListResult>;
+    };
   };
   readonly readPoints: {
     /** Load an element's read-point (resume position), or `null` (T017). */

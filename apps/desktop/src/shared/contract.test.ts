@@ -10,6 +10,9 @@
 import { describe, expect, it } from "vitest";
 import {
   DocumentBlockInputSchema,
+  DocumentMarksAddRequestSchema,
+  DocumentMarksListRequestSchema,
+  DocumentMarksRemoveRequestSchema,
   DocumentsGetRequestSchema,
   DocumentsSaveRequestSchema,
   InboxGetRequestSchema,
@@ -27,7 +30,7 @@ import {
 } from "./contract";
 
 describe("IPC channels", () => {
-  it("exposes exactly the M1 commands plus the M2 inbox mutation + M3 document/read-point surface and no generic SQL channel", () => {
+  it("exposes exactly the M1 commands plus the M2 inbox mutation + M3 document/read-point + M4 marks surface and no generic SQL channel", () => {
     expect(Object.values(IPC_CHANNELS).sort()).toEqual(
       [
         "app:health",
@@ -44,6 +47,9 @@ describe("IPC channels", () => {
         "inbox:triage",
         "documents:get",
         "documents:save",
+        "documents:marks:add",
+        "documents:marks:remove",
+        "documents:marks:list",
         "readPoint:get",
         "readPoint:set",
       ].sort(),
@@ -441,6 +447,99 @@ describe("ReadPointSetRequestSchema (T017)", () => {
     ).toThrow();
     expect(() =>
       ReadPointSetRequestSchema.parse({ elementId: "el_1", blockId: "b1", offset: 0 }),
+    ).toThrow();
+  });
+});
+
+describe("DocumentMarksAddRequestSchema (T020)", () => {
+  it("accepts a well-formed highlight add", () => {
+    const parsed = DocumentMarksAddRequestSchema.parse({
+      elementId: "el_1",
+      blockId: "b1",
+      markType: "highlight",
+      range: [4, 12],
+    });
+    expect(parsed.markType).toBe("highlight");
+    expect(parsed.range).toEqual([4, 12]);
+  });
+
+  it("accepts each canonical mark type", () => {
+    for (const markType of ["highlight", "extracted_span", "processed_span", "cloze"] as const) {
+      expect(
+        DocumentMarksAddRequestSchema.parse({
+          elementId: "el_1",
+          blockId: "b1",
+          markType,
+          range: [0, 1],
+        }).markType,
+      ).toBe(markType);
+    }
+  });
+
+  it("rejects an unknown mark type (validated against MARK_TYPES)", () => {
+    expect(() =>
+      DocumentMarksAddRequestSchema.parse({
+        elementId: "el_1",
+        blockId: "b1",
+        markType: "bogus",
+        range: [0, 1],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a degenerate or negative range", () => {
+    expect(() =>
+      DocumentMarksAddRequestSchema.parse({
+        elementId: "el_1",
+        blockId: "b1",
+        markType: "highlight",
+        range: [5, 5],
+      }),
+    ).toThrow();
+    expect(() =>
+      DocumentMarksAddRequestSchema.parse({
+        elementId: "el_1",
+        blockId: "b1",
+        markType: "highlight",
+        range: [-1, 3],
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a missing elementId / blockId", () => {
+    expect(() =>
+      DocumentMarksAddRequestSchema.parse({ blockId: "b1", markType: "highlight", range: [0, 1] }),
+    ).toThrow();
+    expect(() =>
+      DocumentMarksAddRequestSchema.parse({
+        elementId: "el_1",
+        markType: "highlight",
+        range: [0, 1],
+      }),
+    ).toThrow();
+  });
+});
+
+describe("DocumentMarksRemoveRequestSchema (T020)", () => {
+  it("accepts a non-empty mark id and rejects an empty one", () => {
+    expect(DocumentMarksRemoveRequestSchema.parse({ markId: "m_1" })).toEqual({ markId: "m_1" });
+    expect(() => DocumentMarksRemoveRequestSchema.parse({ markId: "" })).toThrow();
+  });
+});
+
+describe("DocumentMarksListRequestSchema (T020)", () => {
+  it("accepts an elementId, optionally filtered by mark type", () => {
+    expect(DocumentMarksListRequestSchema.parse({ elementId: "el_1" })).toEqual({
+      elementId: "el_1",
+    });
+    expect(
+      DocumentMarksListRequestSchema.parse({ elementId: "el_1", markType: "highlight" }).markType,
+    ).toBe("highlight");
+  });
+
+  it("rejects a bad mark-type filter", () => {
+    expect(() =>
+      DocumentMarksListRequestSchema.parse({ elementId: "el_1", markType: "bogus" }),
     ).toThrow();
   });
 });

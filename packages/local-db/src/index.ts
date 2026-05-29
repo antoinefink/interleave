@@ -20,7 +20,9 @@
 
 export { AssetRepository, type CreateAssetInput } from "./asset-repository";
 export {
+  type AddMarkInput,
   type DocumentBlockInput,
+  type DocumentMark,
   DocumentRepository,
   type ReadPointInput,
   type UpsertDocumentInput,

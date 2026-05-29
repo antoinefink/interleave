@@ -17,6 +17,9 @@ import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS } from "../shared/channels";
 import type {
   AppApi,
+  DocumentMarksAddRequest,
+  DocumentMarksListRequest,
+  DocumentMarksRemoveRequest,
   DocumentsGetRequest,
   DocumentsSaveRequest,
   InboxGetRequest,
@@ -63,6 +66,14 @@ const appApi: AppApi = {
     get: (request: DocumentsGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.documentsGet, request),
     save: (request: DocumentsSaveRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.documentsSave, request),
+    marks: {
+      add: (request: DocumentMarksAddRequest) =>
+        ipcRenderer.invoke(IPC_CHANNELS.documentsMarksAdd, request),
+      remove: (request: DocumentMarksRemoveRequest) =>
+        ipcRenderer.invoke(IPC_CHANNELS.documentsMarksRemove, request),
+      list: (request: DocumentMarksListRequest) =>
+        ipcRenderer.invoke(IPC_CHANNELS.documentsMarksList, request),
+    },
   },
   readPoints: {
     get: (request: ReadPointGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.readPointGet, request),

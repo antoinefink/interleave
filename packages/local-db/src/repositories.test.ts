@@ -507,6 +507,93 @@ describe("DocumentRepository", () => {
   });
 });
 
+describe("DocumentRepository — marks (T020 highlights)", () => {
+  it("add/list/remove round-trips a highlight, logs update_document, and creates no element", () => {
+    const sources = new SourceRepository(handle.db);
+    const documents = new DocumentRepository(handle.db);
+    const ops = new OperationLogRepository(handle.db);
+    const elements = new ElementRepository(handle.db);
+
+    const { element: source } = sources.create({ title: "Highlightable", priority: 0.5 });
+    // A mark references `documents.element_id`, so the body must exist first.
+    documents.upsert({
+      elementId: source.id,
+      prosemirrorJson: { type: "doc", content: [] },
+      plainText: "the quick brown fox",
+      blocks: [{ blockType: "paragraph", order: 0, stableBlockId: "b1" as BlockId }],
+    });
+    const elementsBefore = elements.listByType("source").length;
+
+    // Add a highlight over a stable block range.
+    const mark = documents.addMark({
+      elementId: source.id,
+      blockId: "b1" as BlockId,
+      markType: "highlight",
+      range: [4, 12],
+    });
+    expect(mark.id).toBeTruthy();
+    expect(mark.markType).toBe("highlight");
+    expect(mark.range).toEqual([4, 12]);
+
+    // It is listable (and filterable to the `highlight` kind).
+    const all = documents.listMarks(source.id);
+    expect(all).toHaveLength(1);
+    expect(documents.listMarksByType(source.id, "highlight")).toHaveLength(1);
+    // A different mark kind is NOT returned by the highlight filter.
+    expect(documents.listMarksByType(source.id, "extracted_span")).toHaveLength(0);
+
+    // The mark mutation logged `update_document` (NOT a new op type). One came
+    // from the body `upsert`, one from the `addMark` ⇒ two total so far.
+    const addOps = ops.listForElement(source.id).filter((e) => e.opType === "update_document");
+    expect(addOps.length).toBe(2);
+    // ... and created NO new element (a highlight is an annotation, not an element).
+    expect(elements.listByType("source").length).toBe(elementsBefore);
+    const markRowCount = handle.sqlite
+      .prepare("SELECT COUNT(*) AS n FROM document_marks WHERE document_id = ?")
+      .get(source.id) as { n: number };
+    expect(markRowCount.n).toBe(1);
+
+    // Removing it deletes the annotation row and logs another update_document.
+    const removed = documents.removeMark(mark.id);
+    expect(removed).toBe(true);
+    expect(documents.listMarks(source.id)).toHaveLength(0);
+    const afterRemove = ops.listForElement(source.id).filter((e) => e.opType === "update_document");
+    expect(afterRemove.length).toBe(3);
+
+    // Removing an unknown id is a no-op (false, no extra op).
+    expect(documents.removeMark("nope")).toBe(false);
+  });
+
+  it("keeps highlight strictly separate from extracted_span on the same block", () => {
+    const sources = new SourceRepository(handle.db);
+    const documents = new DocumentRepository(handle.db);
+
+    const { element: source } = sources.create({ title: "Mixed marks", priority: 0.5 });
+    documents.upsert({
+      elementId: source.id,
+      prosemirrorJson: { type: "doc", content: [] },
+      plainText: "the quick brown fox",
+      blocks: [{ blockType: "paragraph", order: 0, stableBlockId: "b1" as BlockId }],
+    });
+    documents.addMark({
+      elementId: source.id,
+      blockId: "b1" as BlockId,
+      markType: "highlight",
+      range: [0, 5],
+    });
+    documents.addMark({
+      elementId: source.id,
+      blockId: "b1" as BlockId,
+      markType: "extracted_span",
+      range: [6, 11],
+    });
+
+    expect(documents.listMarks(source.id)).toHaveLength(2);
+    expect(documents.listMarksByType(source.id, "highlight")).toHaveLength(1);
+    expect(documents.listMarksByType(source.id, "extracted_span")).toHaveLength(1);
+  });
+});
+
 describe("DocumentRepository — read-points (T017)", () => {
   it("round-trips a read-point, updates the single row in place, and logs set_read_point", () => {
     const sources = new SourceRepository(handle.db);

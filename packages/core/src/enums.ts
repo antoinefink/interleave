@@ -84,6 +84,34 @@ export const RELATION_TYPES = [
 export type RelationType = (typeof RELATION_TYPES)[number];
 
 /**
+ * Document-mark kinds (`document_marks.mark_type`). A mark is an annotation over a
+ * stable block's character range — NOT an element and NOT lineage. The four kinds
+ * are deliberately distinct in semantics even though they share one table:
+ *
+ *  - `highlight`       — a lightweight reading annotation (T020). Creates no
+ *                        element, no schedule, no lineage; freely added/removed.
+ *  - `extracted_span`  — the visual marker on a SOURCE/parent body showing where a
+ *                        child `extract` element was lifted from (T021). The extract
+ *                        is the first-class lineage; this is only the parent-side
+ *                        breadcrumb.
+ *  - `processed_span`  — a reversible "processed/dimmed" annotation (T026) that
+ *                        declutters a long source without destroying its body.
+ *  - `cloze`           — the structured cloze deletion span on a card body (M6).
+ *
+ * Per the "Document/editor rules" invariant, marks (highlights / extracted-spans /
+ * processed-spans / cloze) live on the document body and re-anchor by STABLE block
+ * id + character range, never by absolute ProseMirror position — so they survive a
+ * re-import. Mark add/remove is logged under `update_document` (no `add_mark` op).
+ */
+export const MARK_TYPES = ["highlight", "extracted_span", "processed_span", "cloze"] as const;
+export type MarkType = (typeof MARK_TYPES)[number];
+
+/** Type guard: is `value` one of the canonical document-mark-type strings? */
+export function isMarkType(value: unknown): value is MarkType {
+  return typeof value === "string" && (MARK_TYPES as readonly string[]).includes(value);
+}
+
+/**
  * Active-recall card flavours (`cards.kind`). Only `qa` and `cloze` ship in the
  * MVP; richer media-card kinds arrive in later milestones (M15).
  */

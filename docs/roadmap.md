@@ -94,7 +94,7 @@ Detailed specs: [`tasks/M1-foundations.md`](./tasks/M1-foundations.md)
 
 - [x] **T019 — Text-selection toolbar** · _deps: T018_ · done
   Done when: selecting text in the reader shows an inline toolbar (Extract, Cloze, Highlight, Copy, Cancel) without breaking editor selection.
-- [ ] **T020 — Highlights** · _deps: T019_
+- [x] **T020 — Highlights** · _deps: T019_ · done
   Done when: highlight marks persist as document annotations and can be removed (highlights are NOT extracts).
 - [ ] **T021 — Extraction** · _deps: T019, T008_
   Done when: Extract creates a child `extract` element with its own document body, source reference, parent link, source location, inherited priority, and scheduled review state; the parent text is visually marked extracted.
@@ -318,6 +318,7 @@ overload management, semantic search, AI, media, reliability, scale.
 
 Record notable completions / decisions here as tasks land (newest first).
 
+- 2026-05-29 - T020 Highlights - done. Highlights now persist as document marks (annotations), distinct from extracts: applying "Highlight" from the selection toolbar stores a highlight mark on the underlying document and renders it in the reader, and highlights can be removed without affecting extracts. Mark logic lives in `packages/editor` (`marks/`) with unit tests; the renderer hook is `apps/web/src/pages/source/useHighlights.ts`, persistence flows through the typed `window.appApi` document surface (channels + contract + ipc + db-service + document-repository), and the renderer never touches the DB directly. Survives app restart (Playwright `tests/electron/highlights.spec.ts`).
 - 2026-05-29 - T019 Text-selection toolbar - done. Selecting text in the source reader now surfaces an inline toolbar (Extract, Cloze, Highlight, Copy, Cancel) anchored to the selection without breaking editor selection. Selection-to-source-location logic lives in `packages/editor` (`selection-location.ts`) with unit tests; the toolbar UI/positioning lives in `apps/web/src/reader/`, wired into `SourceReader.tsx`. Covered by Playwright `tests/electron/selection-toolbar.spec.ts`.
 - 2026-05-29 - T018 Source reading mode - done. A clean source reader (`apps/web` `SourceReader.tsx` + `reader.css`) shows title, metadata, body, the read-point marker, and extracted-span markers, with keyboard actions for processing a long article. Reader decoration logic lives in `packages/editor` (`reader-decorations.ts`) with unit tests; persistence/queries flow through the typed `window.appApi` surface (contract + db-service), renderer never touches the DB directly. Survives app restart (Playwright `tests/electron/source-reader.spec.ts`).
 - 2026-05-29 - T017 Read-points - done. Sources/topics now carry a `read_point` (block ID + offset) that can be set, jumped to, and auto-updated when an extract is created; reopening a source resumes near the last read-point. Read-point logic lives in `packages/editor` (`read-point.ts`) with the renderer hook in `apps/web` (`useReadPoint.ts`); persistence flows through the typed `window.appApi` surface (channels + contract + ipc + db-service), renderer never touches the DB directly. Survives app restart (Playwright `tests/electron/read-points.spec.ts`).

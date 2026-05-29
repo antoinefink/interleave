@@ -23,6 +23,9 @@ export const IPC_CHANNELS = {
   inboxTriage: "inbox:triage",
   documentsGet: "documents:get",
   documentsSave: "documents:save",
+  documentsMarksAdd: "documents:marks:add",
+  documentsMarksRemove: "documents:marks:remove",
+  documentsMarksList: "documents:marks:list",
   readPointGet: "readPoint:get",
   readPointSet: "readPoint:set",
 } as const;

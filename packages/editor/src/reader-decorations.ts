@@ -36,6 +36,25 @@ import { BLOCK_ID_NODE_TYPES } from "./block-id";
 
 const BLOCK_ID_NODE_SET = new Set<string>(BLOCK_ID_NODE_TYPES);
 
+/**
+ * One persisted highlight to overlay (T020): a STABLE block id + the
+ * `[start,end]` character range within that block's text. The reader renders it as
+ * an INLINE `mark.hl` decoration (not a stored body mark) so highlights re-anchor
+ * by block id after a re-import and never enter the document JSON / extraction
+ * substrate. `markId` lets the reader map a clicked highlight back to the
+ * `document_marks` row to remove it.
+ */
+export interface HighlightDecoration {
+  /** The `document_marks.id` of the persisted highlight. */
+  readonly markId: string;
+  /** The STABLE block id the highlight anchors to. */
+  readonly blockId: string;
+  /** Char offset within the block where the highlight starts (`>= 0`). */
+  readonly start: number;
+  /** Char offset within the block where the highlight ends (`> start`). */
+  readonly end: number;
+}
+
 /** The inputs that drive the reader decorations (pushed by the host). */
 export interface ReaderDecorationState {
   /** The first UNREAD block id; the divider is placed before it. `null` ⇒ none. */
@@ -44,12 +63,15 @@ export interface ReaderDecorationState {
   readonly readPointBlockId: string | null;
   /** Block ids that already have a child extract anchored to them (display only). */
   readonly extractedBlockIds: readonly string[];
+  /** Persisted highlights to overlay as `mark.hl` inline decorations (T020). */
+  readonly highlights: readonly HighlightDecoration[];
 }
 
 const EMPTY_STATE: ReaderDecorationState = {
   firstUnreadBlockId: null,
   readPointBlockId: null,
   extractedBlockIds: [],
+  highlights: [],
 };
 
 /** Plugin key carrying the latest {@link ReaderDecorationState}. */
@@ -94,6 +116,13 @@ export function createReaderDecorationsPlugin(): Plugin<ReaderDecorationState> {
       decorations(editorState) {
         const inputs = readerDecorationsKey.getState(editorState) ?? EMPTY_STATE;
         const extracted = new Set(inputs.extractedBlockIds);
+        // Group highlights by block id so a single doc walk can place them inline.
+        const highlightsByBlock = new Map<string, HighlightDecoration[]>();
+        for (const hl of inputs.highlights) {
+          const list = highlightsByBlock.get(hl.blockId);
+          if (list) list.push(hl);
+          else highlightsByBlock.set(hl.blockId, [hl]);
+        }
         const decorations: Decoration[] = [];
 
         editorState.doc.descendants((node, pos) => {
@@ -117,6 +146,31 @@ export function createReaderDecorationsPlugin(): Plugin<ReaderDecorationState> {
             decorations.push(
               Decoration.widget(pos, buildDivider, { side: -1, key: "readpoint-divider" }),
             );
+          }
+
+          // Inline decorations: persisted highlights for this block, mapped from
+          // block-relative `[start,end]` offsets onto absolute document positions.
+          // The block's text starts at `pos + 1` (step inside the block node); we
+          // clamp to the block's text length so a stale range can never run past it.
+          const blockHighlights = highlightsByBlock.get(blockId);
+          if (blockHighlights) {
+            const textStart = pos + 1;
+            const textLen = node.textContent.length;
+            for (const hl of blockHighlights) {
+              const start = Math.max(0, Math.min(hl.start, textLen));
+              const end = Math.max(start, Math.min(hl.end, textLen));
+              if (end <= start) continue;
+              decorations.push(
+                Decoration.inline(
+                  textStart + start,
+                  textStart + end,
+                  // `nodeName: "mark"` wraps the range in `<mark class="hl">`
+                  // (matching the design kit) instead of the default `<span>`.
+                  { nodeName: "mark", class: "hl", "data-mark-id": hl.markId },
+                  { inclusiveStart: false, inclusiveEnd: false },
+                ),
+              );
+            }
           }
           // Block nodes are leaves for this walk (ids live on block level).
           return false;

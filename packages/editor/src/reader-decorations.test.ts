@@ -47,9 +47,17 @@ const DOC = {
   content: [PARA("first", "b1"), PARA("second", "b2"), PARA("third", "b3")],
 };
 
+/** A fully-defaulted decoration-input state; spread + override the fields a test needs. */
+const BASE: ReaderDecorationState = {
+  firstUnreadBlockId: null,
+  readPointBlockId: null,
+  extractedBlockIds: [],
+  highlights: [],
+};
+
 /** Apply a decoration-input meta to the state (mirrors `setReaderDecorations`). */
-function withInputs(state: EditorState, inputs: ReaderDecorationState): EditorState {
-  const tr = state.tr.setMeta(readerDecorationsKey, { state: inputs });
+function withInputs(state: EditorState, inputs: Partial<ReaderDecorationState>): EditorState {
+  const tr = state.tr.setMeta(readerDecorationsKey, { state: { ...BASE, ...inputs } });
   return state.apply(tr);
 }
 
@@ -129,5 +137,43 @@ describe("ReaderDecorations plugin", () => {
       extractedBlockIds: [],
     });
     expect(decorationsOf(state).find()).toHaveLength(0);
+  });
+
+  it("overlays a persisted highlight as an inline `hl` decoration with its mark id", () => {
+    const state = withInputs(buildState(DOC), {
+      highlights: [{ markId: "m1", blockId: "b2", start: 0, end: 6 }],
+    });
+    const decos = decorationsOf(state).find();
+    const inline = decos.filter(
+      (d) => (d as unknown as DecorationInternal).type?.attrs?.class === "hl",
+    );
+    expect(inline).toHaveLength(1);
+    expect((inline[0] as unknown as DecorationInternal).type?.attrs?.["data-mark-id"]).toBe("m1");
+  });
+
+  it("clamps a highlight range to the block text length", () => {
+    // "first" is 5 chars; an end of 999 must clamp so the decoration never runs
+    // past the block (a stale/over-long range can't produce a bad position).
+    const state = withInputs(buildState(DOC), {
+      highlights: [{ markId: "m1", blockId: "b1", start: 0, end: 999 }],
+    });
+    const inline = decorationsOf(state)
+      .find()
+      .filter((d) => (d as unknown as DecorationInternal).type?.attrs?.class === "hl");
+    expect(inline).toHaveLength(1);
+    // The decoration's `to` must not exceed the block's text end (b1 text = "first").
+    const deco = inline[0];
+    if (!deco) throw new Error("expected one highlight decoration");
+    expect(deco.to - deco.from).toBe(5);
+  });
+
+  it("drops a degenerate highlight (end <= start) without throwing", () => {
+    const state = withInputs(buildState(DOC), {
+      highlights: [{ markId: "m1", blockId: "b1", start: 3, end: 3 }],
+    });
+    const inline = decorationsOf(state)
+      .find()
+      .filter((d) => (d as unknown as DecorationInternal).type?.attrs?.class === "hl");
+    expect(inline).toHaveLength(0);
   });
 });
