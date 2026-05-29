@@ -26,6 +26,7 @@ import { and, eq } from "drizzle-orm";
 import { newRowId, nowIso } from "./ids";
 import { rowToDocument } from "./mappers";
 import { OperationLogRepository } from "./operation-log-repository";
+import type { DbClient } from "./types";
 
 /** One stable block to persist for a document. */
 export interface DocumentBlockInput {
@@ -105,54 +106,63 @@ export class DocumentRepository {
    * in one transaction so a half-written document can never persist.
    */
   upsert(input: UpsertDocumentInput): Document {
-    return this.db.transaction((tx) => {
-      const updatedAt = nowIso();
-      const json = JSON.stringify(input.prosemirrorJson ?? { type: "doc", content: [] });
-      const schemaVersion = input.schemaVersion ?? 1;
+    return this.db.transaction((tx) => this.upsertWithin(tx, input));
+  }
 
-      tx.insert(documents)
-        .values({
-          elementId: input.elementId,
-          prosemirrorJson: json,
-          plainText: input.plainText,
-          schemaVersion,
-          updatedAt,
-        })
-        .onConflictDoUpdate({
-          target: documents.elementId,
-          set: { prosemirrorJson: json, plainText: input.plainText, schemaVersion, updatedAt },
-        })
-        .run();
+  /**
+   * Upsert a document body + (optionally) its block set using an EXISTING
+   * transaction, logging `update_document` on the SAME `tx`. The tx-composable seam
+   * {@link ExtractionService} (T021) uses to seed a new extract's body inside the
+   * single extraction transaction, so the body, blocks, and op commit (or roll
+   * back) together with the extract element/location/relation/mark.
+   */
+  upsertWithin(tx: DbClient, input: UpsertDocumentInput): Document {
+    const updatedAt = nowIso();
+    const json = JSON.stringify(input.prosemirrorJson ?? { type: "doc", content: [] });
+    const schemaVersion = input.schemaVersion ?? 1;
 
-      if (input.blocks) {
-        tx.delete(documentBlocks).where(eq(documentBlocks.documentId, input.elementId)).run();
-        for (const block of input.blocks) {
-          tx.insert(documentBlocks)
-            .values({
-              id: newRowId(),
-              documentId: input.elementId,
-              blockType: block.blockType,
-              order: block.order,
-              stableBlockId: block.stableBlockId,
-            })
-            .run();
-        }
-      }
-
-      new OperationLogRepository(tx).append(tx, {
-        opType: "update_document",
+    tx.insert(documents)
+      .values({
         elementId: input.elementId,
-        payload: { elementId: input.elementId, schemaVersion, blockCount: input.blocks?.length },
-      });
-
-      return {
-        elementId: input.elementId,
-        prosemirrorJson: input.prosemirrorJson ?? { type: "doc", content: [] },
+        prosemirrorJson: json,
         plainText: input.plainText,
         schemaVersion,
         updatedAt,
-      };
+      })
+      .onConflictDoUpdate({
+        target: documents.elementId,
+        set: { prosemirrorJson: json, plainText: input.plainText, schemaVersion, updatedAt },
+      })
+      .run();
+
+    if (input.blocks) {
+      tx.delete(documentBlocks).where(eq(documentBlocks.documentId, input.elementId)).run();
+      for (const block of input.blocks) {
+        tx.insert(documentBlocks)
+          .values({
+            id: newRowId(),
+            documentId: input.elementId,
+            blockType: block.blockType,
+            order: block.order,
+            stableBlockId: block.stableBlockId,
+          })
+          .run();
+      }
+    }
+
+    new OperationLogRepository(tx).append(tx, {
+      opType: "update_document",
+      elementId: input.elementId,
+      payload: { elementId: input.elementId, schemaVersion, blockCount: input.blocks?.length },
     });
+
+    return {
+      elementId: input.elementId,
+      prosemirrorJson: input.prosemirrorJson ?? { type: "doc", content: [] },
+      plainText: input.plainText,
+      schemaVersion,
+      updatedAt,
+    };
   }
 
   /** Read the read-point (resume position) for an element, or `null`. */
@@ -220,43 +230,52 @@ export class DocumentRepository {
    * The mark id is a domain-minted row id; the range is stored as JSON `[s,e]`.
    */
   addMark(input: AddMarkInput): DocumentMark {
-    return this.db.transaction((tx) => {
-      const id = newRowId();
-      const [start, end] = input.range;
-      const attrsJson = input.attrs == null ? null : JSON.stringify(input.attrs);
-      tx.insert(documentMarks)
-        .values({
-          id,
-          documentId: input.elementId,
-          blockId: input.blockId,
-          markType: input.markType,
-          range: JSON.stringify([start, end]),
-          attrs: attrsJson,
-        })
-        .run();
+    return this.db.transaction((tx) => this.addMarkWithin(tx, input));
+  }
 
-      new OperationLogRepository(tx).append(tx, {
-        opType: "update_document",
-        elementId: input.elementId,
-        payload: {
-          elementId: input.elementId,
-          mark: "add",
-          markId: id,
-          markType: input.markType,
-          blockId: input.blockId,
-          range: [start, end],
-        },
-      });
-
-      return {
+  /**
+   * Add a document mark using an EXISTING transaction, logging `update_document` on
+   * the SAME `tx`. The tx-composable seam {@link ExtractionService} (T021) uses to
+   * place the parent/source `extracted_span` breadcrumb inside the single extraction
+   * transaction, so the parent mark commits (or rolls back) with the extract it
+   * marks. Creates NO `elements` row — a mark is a body annotation, not lineage.
+   */
+  addMarkWithin(tx: DbClient, input: AddMarkInput): DocumentMark {
+    const id = newRowId();
+    const [start, end] = input.range;
+    const attrsJson = input.attrs == null ? null : JSON.stringify(input.attrs);
+    tx.insert(documentMarks)
+      .values({
         id,
-        elementId: input.elementId,
+        documentId: input.elementId,
         blockId: input.blockId,
         markType: input.markType,
+        range: JSON.stringify([start, end]),
+        attrs: attrsJson,
+      })
+      .run();
+
+    new OperationLogRepository(tx).append(tx, {
+      opType: "update_document",
+      elementId: input.elementId,
+      payload: {
+        elementId: input.elementId,
+        mark: "add",
+        markId: id,
+        markType: input.markType,
+        blockId: input.blockId,
         range: [start, end],
-        attrs: input.attrs ?? null,
-      };
+      },
     });
+
+    return {
+      id,
+      elementId: input.elementId,
+      blockId: input.blockId,
+      markType: input.markType,
+      range: [start, end],
+      attrs: input.attrs ?? null,
+    };
   }
 
   /**

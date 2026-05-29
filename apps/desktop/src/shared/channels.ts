@@ -26,6 +26,7 @@ export const IPC_CHANNELS = {
   documentsMarksAdd: "documents:marks:add",
   documentsMarksRemove: "documents:marks:remove",
   documentsMarksList: "documents:marks:list",
+  extractionsCreate: "extractions:create",
   readPointGet: "readPoint:get",
   readPointSet: "readPoint:set",
 } as const;

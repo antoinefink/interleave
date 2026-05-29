@@ -39,6 +39,7 @@ import { ElementRepository } from "./element-repository";
 import { newRowId, newSourceLocationId, nowIso } from "./ids";
 import { rowToElement, rowToSource, rowToSourceLocation } from "./mappers";
 import { OperationLogRepository } from "./operation-log-repository";
+import type { DbClient } from "./types";
 
 /** Provenance fields for a new source (all optional — manual imports omit most). */
 export interface CreateSourceInput {
@@ -259,53 +260,65 @@ export class SourceRepository {
    * its `parentId`. Sub-extracts pass an explicit `parentId`.
    */
   createExtract(input: CreateExtractInput): ExtractWithLocation {
-    return this.db.transaction((tx) => {
-      const element = this.elementsRepo.createWithin(tx, {
-        type: "extract",
-        status: "pending",
-        stage: input.stage ?? "raw_extract",
-        priority: input.priority,
-        title: input.title,
-        parentId: input.parentId ?? input.sourceElementId,
-        sourceId: input.sourceElementId,
-      });
+    return this.db.transaction((tx) => this.createExtractWithin(tx, input));
+  }
 
-      const locationId: SourceLocationId = newSourceLocationId();
-      const location: ElementLocation = {
-        id: locationId,
-        elementId: element.id,
-        sourceElementId: input.sourceElementId,
-        blockIds: input.blockIds,
-        startOffset: input.startOffset ?? null,
-        endOffset: input.endOffset ?? null,
-        page: input.page ?? null,
-        timestampMs: input.timestampMs ?? null,
-        label: input.label ?? null,
-        selectedText: input.selectedText,
-      };
-      tx.insert(sourceLocations)
-        .values({
-          id: location.id,
-          elementId: location.elementId,
-          sourceElementId: location.sourceElementId,
-          blockIds: JSON.stringify(location.blockIds),
-          startOffset: location.startOffset,
-          endOffset: location.endOffset,
-          page: location.page,
-          timestampMs: location.timestampMs,
-          label: location.label,
-          selectedText: location.selectedText,
-        })
-        .run();
-
-      new OperationLogRepository(tx).append(tx, {
-        opType: "create_extract",
-        elementId: element.id,
-        payload: { extractId: element.id, sourceElementId: input.sourceElementId, locationId },
-      });
-
-      return { element, location };
+  /**
+   * Create an extract using an EXISTING transaction — the tx-composable seam used
+   * by {@link ExtractionService} (T021), which performs the full extraction (extract
+   * element + location + body seed + `derived_from` relation + tag/priority
+   * inheritance + attention reschedule + parent `extracted_span` mark) in ONE outer
+   * `db.transaction`. Mirrors {@link ElementRepository.createWithin}: it inserts the
+   * `elements` row (via `createWithin`, logging `create_element`) + the
+   * `source_locations` row and logs `create_extract` on the SAME `tx`, so a throw
+   * anywhere downstream rolls the whole extraction back (no orphan element/location).
+   */
+  createExtractWithin(tx: DbClient, input: CreateExtractInput): ExtractWithLocation {
+    const element = this.elementsRepo.createWithin(tx, {
+      type: "extract",
+      status: "pending",
+      stage: input.stage ?? "raw_extract",
+      priority: input.priority,
+      title: input.title,
+      parentId: input.parentId ?? input.sourceElementId,
+      sourceId: input.sourceElementId,
     });
+
+    const locationId: SourceLocationId = newSourceLocationId();
+    const location: ElementLocation = {
+      id: locationId,
+      elementId: element.id,
+      sourceElementId: input.sourceElementId,
+      blockIds: input.blockIds,
+      startOffset: input.startOffset ?? null,
+      endOffset: input.endOffset ?? null,
+      page: input.page ?? null,
+      timestampMs: input.timestampMs ?? null,
+      label: input.label ?? null,
+      selectedText: input.selectedText,
+    };
+    tx.insert(sourceLocations)
+      .values({
+        id: location.id,
+        elementId: location.elementId,
+        sourceElementId: location.sourceElementId,
+        blockIds: JSON.stringify(location.blockIds),
+        startOffset: location.startOffset,
+        endOffset: location.endOffset,
+        page: location.page,
+        timestampMs: location.timestampMs,
+        label: location.label,
+        selectedText: location.selectedText,
+      })
+      .run();
+
+    new OperationLogRepository(tx).append(tx, {
+      opType: "create_extract",
+      elementId: element.id,
+      payload: { extractId: element.id, sourceElementId: input.sourceElementId, locationId },
+    });
+
+    return { element, location };
   }
 
   /** Fetch one source location by id, or `null`. */

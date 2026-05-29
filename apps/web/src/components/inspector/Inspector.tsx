@@ -45,6 +45,22 @@ import {
   typeLabel,
 } from "./primitives";
 
+/**
+ * A window event any screen can dispatch (via {@link requestInspectorRefresh})
+ * after a mutation so the inspector re-fetches the selected element + picker list
+ * WITHOUT a navigation/reload — e.g. T021 extraction adds a child extract that
+ * should appear in "Extracts from this source" immediately. UI-only signal: it
+ * carries no data; the panel re-reads through `window.appApi`.
+ */
+export const INSPECTOR_REFRESH_EVENT = "interleave:inspector-refresh";
+
+/** Ask the inspector to re-fetch its current selection (after a mutation). */
+export function requestInspectorRefresh(): void {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(INSPECTOR_REFRESH_EVENT));
+  }
+}
+
 /** Format an ISO timestamp as a short, locale-independent date, or a dash. */
 function fmtDate(iso: string | null): string {
   if (!iso) return "—";
@@ -299,8 +315,20 @@ export function Inspector() {
   const [elements, setElements] = useState<readonly ElementSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped by the `INSPECTOR_REFRESH_EVENT` so the panel re-fetches the selected
+  // element + the picker list after a mutation elsewhere (e.g. T021 extraction adds
+  // a child extract) — surfacing the new lineage WITHOUT a navigation/reload.
+  const [refreshTick, setRefreshTick] = useState(0);
 
-  // Load the picker list once (and whenever desktop availability changes).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onRefresh = () => setRefreshTick((t) => t + 1);
+    window.addEventListener(INSPECTOR_REFRESH_EVENT, onRefresh);
+    return () => window.removeEventListener(INSPECTOR_REFRESH_EVENT, onRefresh);
+  }, []);
+
+  // Load the picker list once (and whenever desktop availability / refresh changes).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshTick is a deliberate re-fetch trigger
   useEffect(() => {
     if (!isDesktop()) return;
     let cancelled = false;
@@ -315,9 +343,10 @@ export function Inspector() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshTick]);
 
   // Fetch the selected element's full payload through the bridge.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshTick is a deliberate re-fetch trigger
   useEffect(() => {
     if (!isDesktop() || !selectedId) {
       setData(null);
@@ -342,7 +371,7 @@ export function Inspector() {
     return () => {
       cancelled = true;
     };
-  }, [selectedId]);
+  }, [selectedId, refreshTick]);
 
   const onSelect = useCallback((id: string) => select(id), [select]);
 

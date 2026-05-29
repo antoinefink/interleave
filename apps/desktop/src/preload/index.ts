@@ -22,6 +22,7 @@ import type {
   DocumentMarksRemoveRequest,
   DocumentsGetRequest,
   DocumentsSaveRequest,
+  ExtractionCreateRequest,
   InboxGetRequest,
   InboxTriageRequest,
   InspectorGetRequest,
@@ -74,6 +75,10 @@ const appApi: AppApi = {
       list: (request: DocumentMarksListRequest) =>
         ipcRenderer.invoke(IPC_CHANNELS.documentsMarksList, request),
     },
+  },
+  extractions: {
+    create: (request: ExtractionCreateRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.extractionsCreate, request),
   },
   readPoints: {
     get: (request: ReadPointGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.readPointGet, request),

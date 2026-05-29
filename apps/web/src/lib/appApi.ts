@@ -375,6 +375,66 @@ export interface DocumentMarksListResult {
 }
 
 // ---------------------------------------------------------------------------
+// extractions.create()  (T021 — lift selected text into an independent extract)
+// ---------------------------------------------------------------------------
+
+/** The four coarse priority labels (re-stated here for the renderer client). */
+export type ExtractionPriorityLabel = "A" | "B" | "C" | "D";
+
+export interface ExtractionCreateRequest {
+  /** The original source element the selection was lifted from (lineage root). */
+  readonly sourceElementId: string;
+  /** The origin element; omit for a top-level extract, set for a sub-extract (T025). */
+  readonly parentId?: string;
+  /** Verbatim snapshot of the selected text. */
+  readonly selectedText: string;
+  /** Ordered STABLE block ids the selection spans (≥ 1, document order). */
+  readonly blockIds: readonly string[];
+  /** Char offset within the FIRST spanned block where the selection starts. */
+  readonly startOffset?: number;
+  /** Char offset within the LAST spanned block where the selection ends. */
+  readonly endOffset?: number;
+  /** Optional explicit title; otherwise derived from the selection main-side. */
+  readonly title?: string;
+  /** Optional human label override; otherwise derived from the source's blocks. */
+  readonly label?: string;
+  /** Optional page (PDF, later); null/absent for text sources. */
+  readonly page?: number | null;
+  /** Optional A/B/C/D priority override; otherwise inherits the source's priority. */
+  readonly priority?: ExtractionPriorityLabel;
+}
+
+/** A flat summary of a freshly created extract element. */
+export interface ExtractSummary {
+  readonly id: string;
+  readonly type: string;
+  readonly status: string;
+  readonly stage: string;
+  readonly priority: number;
+  readonly title: string;
+  /** The attention `due_at` (ISO-8601) — extracts are attention items, never FSRS. */
+  readonly dueAt: string | null;
+  readonly sourceId: string | null;
+  readonly parentId: string | null;
+}
+
+/** The created extract's stored source-location anchor. */
+export interface ExtractLocationSummary {
+  readonly id: string;
+  readonly sourceElementId: string;
+  readonly blockIds: readonly string[];
+  readonly startOffset: number | null;
+  readonly endOffset: number | null;
+  readonly label: string | null;
+  readonly selectedText: string;
+}
+
+export interface ExtractionCreateResult {
+  readonly extract: ExtractSummary;
+  readonly location: ExtractLocationSummary;
+}
+
+// ---------------------------------------------------------------------------
 // readPoints.get() / readPoints.set()  (T017 — resume position)
 // ---------------------------------------------------------------------------
 
@@ -441,6 +501,9 @@ export interface AppApi {
       remove(request: DocumentMarksRemoveRequest): Promise<DocumentMarksRemoveResult>;
       list(request: DocumentMarksListRequest): Promise<DocumentMarksListResult>;
     };
+  };
+  readonly extractions: {
+    create(request: ExtractionCreateRequest): Promise<ExtractionCreateResult>;
   };
   readonly readPoints: {
     get(request: ReadPointGetRequest): Promise<ReadPointGetResult>;
@@ -542,6 +605,10 @@ export const appApi = {
   /** List an element's document marks, optionally by kind (T020). */
   listDocumentMarks(request: DocumentMarksListRequest): Promise<DocumentMarksListResult> {
     return requireAppApi().documents.marks.list(request);
+  },
+  /** Lift selected text into a new independent, attention-scheduled extract (T021). */
+  createExtraction(request: ExtractionCreateRequest): Promise<ExtractionCreateResult> {
+    return requireAppApi().extractions.create(request);
   },
   /** Load an element's read-point (resume position), or `null` (T017). */
   getReadPoint(request: ReadPointGetRequest): Promise<ReadPointGetResult> {

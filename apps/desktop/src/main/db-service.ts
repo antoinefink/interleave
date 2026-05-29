@@ -16,12 +16,13 @@
  * through the repository seam.
  */
 
-import type { BlockId, ElementId, MarkType, PriorityLabel } from "@interleave/core";
+import type { BlockId, ElementId, MarkType, Priority, PriorityLabel } from "@interleave/core";
 import { canonicalizeUrl, priorityFromLabel } from "@interleave/core";
 import { type DbHandle, migrateDatabase, openDatabase } from "@interleave/db";
 import {
   createRepositories,
   type DocumentMark,
+  ExtractionService,
   InboxQuery,
   InspectorQuery,
   type Repositories,
@@ -40,6 +41,8 @@ import type {
   DocumentsGetResult,
   DocumentsSaveRequest,
   DocumentsSaveResult,
+  ExtractionCreateRequest,
+  ExtractionCreateResult,
   InboxGetResult,
   InboxItemSummary,
   InboxListResult,
@@ -65,6 +68,7 @@ export class DbService {
   private repositories: Repositories | null = null;
   private inspector: InspectorQuery | null = null;
   private inboxQuery: InboxQuery | null = null;
+  private extraction: ExtractionService | null = null;
   private migrated = false;
 
   /** Whether the database handle is currently open. */
@@ -96,6 +100,7 @@ export class DbService {
     this.repositories = createRepositories(this.handle.db);
     this.inspector = new InspectorQuery(this.repositories);
     this.inboxQuery = new InboxQuery(this.repositories);
+    this.extraction = new ExtractionService(this.handle.db);
     this.migrated = true;
   }
 
@@ -107,6 +112,7 @@ export class DbService {
     this.repositories = null;
     this.inspector = null;
     this.inboxQuery = null;
+    this.extraction = null;
     this.migrated = false;
   }
 
@@ -477,6 +483,76 @@ export class DbService {
       ? this.repos.documents.listMarksByType(elementId, request.markType as MarkType)
       : this.repos.documents.listMarks(elementId);
     return { marks: marks.map(markToPayload) };
+  }
+
+  /** The extraction service (T021), bound to the open database. */
+  private get extractionService(): ExtractionService {
+    if (!this.extraction) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.extraction;
+  }
+
+  /**
+   * Lift selected source text into a new independent, attention-scheduled `extract`
+   * element (T021 — the keystone) via {@link ExtractionService}. In ONE transaction
+   * the service creates the extract element + its `source_locations` anchor, seeds
+   * the extract's own document body, adds a `derived_from` relation to its
+   * source/parent, inherits the source's priority + tags, sets an initial attention
+   * `due_at` (status `scheduled`; NEVER an FSRS `review_states` row), and marks the
+   * parent body `extracted_span`. A throw anywhere rolls the whole extraction back.
+   *
+   * The priority is INHERITED from the source by default (the A/B/C/D label, when
+   * supplied, overrides it); the title is derived from the selection main-side. The
+   * renderer-supplied payload is already validated against the contract schema at
+   * the IPC boundary.
+   */
+  createExtraction(request: ExtractionCreateRequest): ExtractionCreateResult {
+    const sourceElementId = request.sourceElementId as ElementId;
+    const sourceElement = this.repos.elements.findById(sourceElementId);
+    if (!sourceElement || sourceElement.deletedAt) {
+      throw new Error(`DbService.createExtraction: source ${sourceElementId} not found`);
+    }
+    // Inherit the source's numeric priority unless the renderer overrode it.
+    const priority: Priority = request.priority
+      ? priorityFromLabel(request.priority)
+      : sourceElement.priority;
+
+    const { element, location } = this.extractionService.createExtraction({
+      sourceElementId,
+      parentId: request.parentId as ElementId | undefined,
+      selectedText: request.selectedText,
+      blockIds: request.blockIds as BlockId[],
+      startOffset: request.startOffset,
+      endOffset: request.endOffset,
+      title: request.title,
+      label: request.label ?? undefined,
+      page: request.page ?? null,
+      priority,
+    });
+
+    return {
+      extract: {
+        id: element.id,
+        type: element.type,
+        status: element.status,
+        stage: element.stage,
+        priority: element.priority,
+        title: element.title,
+        dueAt: element.dueAt,
+        sourceId: element.sourceId,
+        parentId: element.parentId,
+      },
+      location: {
+        id: location.id,
+        sourceElementId: location.sourceElementId,
+        blockIds: location.blockIds,
+        startOffset: location.startOffset,
+        endOffset: location.endOffset,
+        label: location.label,
+        selectedText: location.selectedText,
+      },
+    };
   }
 
   /**

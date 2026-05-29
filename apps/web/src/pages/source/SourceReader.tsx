@@ -39,6 +39,7 @@ import {
 import { useParams } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
+import { requestInspectorRefresh } from "../../components/inspector/Inspector";
 import { Prio, SchedulerChip, Status } from "../../components/inspector/primitives";
 import { appApi, type InspectorData, isDesktop } from "../../lib/appApi";
 import { SelectionToolbar, type SelectionToolbarAction } from "../../reader/SelectionToolbar";
@@ -197,9 +198,38 @@ export function SourceReader() {
 
   // Text-selection toolbar (T019). The hook owns the anchor + resolved location;
   // this page owns only the action wiring. Highlight is wired in T020, Extract in
-  // T021, Cloze in M6 (T033/T034) — for now those are stubs. Copy/Cancel are
-  // renderer-only (no IPC). Using or dismissing the toolbar never mutates the doc.
+  // T021, Cloze in M6 (T033/T034). Copy/Cancel are renderer-only (no IPC). Using or
+  // dismissing the toolbar never mutates the doc.
   const selection = useTextSelection(editor, editorReady);
+
+  // T021 — lift the current selection into an independent, attention-scheduled
+  // `extract` element through `extractions.create` (all the lineage/transaction
+  // work happens main-side). On success the parent paints `.extracted` over the
+  // selected blocks immediately (`doc.markExtracted`) and the inspector re-fetches
+  // so the new extract appears under "Extracts from this source" WITHOUT a reload.
+  // The page never touches SQL — it only ships the resolved location across IPC.
+  const onExtract = useCallback(async () => {
+    const loc = selection.location;
+    if (!id || !loc) {
+      selection.dismiss();
+      return;
+    }
+    try {
+      await appApi.createExtraction({
+        sourceElementId: id,
+        selectedText: loc.selectedText,
+        blockIds: loc.blockIds,
+        startOffset: loc.startOffset,
+        endOffset: loc.endOffset,
+      });
+      doc.markExtracted(loc.blockIds);
+      requestInspectorRefresh();
+      toast("Extracted");
+    } catch {
+      toast("Could not extract");
+    }
+    selection.dismiss();
+  }, [id, selection, doc, toast]);
 
   const onSelectionAction = useCallback(
     (action: SelectionToolbarAction) => {
@@ -228,9 +258,8 @@ export function SourceReader() {
           selection.dismiss();
           break;
         case "extract":
-          // T021 wires extraction; surface a stub acknowledgement.
-          toast("Extract lands in T021");
-          selection.dismiss();
+          // T021: lift the selection into an independent, attention-scheduled extract.
+          void onExtract();
           break;
         case "cloze":
           // The card builder (Cloze) lands in M6 (T033/T034).
@@ -242,7 +271,7 @@ export function SourceReader() {
           break;
       }
     },
-    [selection, toast, hl],
+    [selection, toast, hl, onExtract],
   );
 
   // Keyboard while the toolbar is open: E → extract, C → cloze, H → highlight

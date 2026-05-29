@@ -16,6 +16,7 @@ import {
   DocumentMarksRemoveRequestSchema,
   DocumentsGetRequestSchema,
   DocumentsSaveRequestSchema,
+  ExtractionCreateRequestSchema,
   HealthRequestSchema,
   type HealthResult,
   InboxGetRequestSchema,
@@ -130,6 +131,11 @@ export function registerIpcHandlers(dbService: DbService): () => void {
   ipcMain.handle(IPC_CHANNELS.documentsMarksList, (_event, rawRequest: unknown) => {
     const request = DocumentMarksListRequestSchema.parse(rawRequest);
     return dbService.listDocumentMarks(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.extractionsCreate, (_event, rawRequest: unknown) => {
+    const request = ExtractionCreateRequestSchema.parse(rawRequest);
+    return dbService.createExtraction(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.readPointGet, (_event, rawRequest: unknown) => {

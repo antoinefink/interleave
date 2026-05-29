@@ -58,6 +58,12 @@ export interface UseDocumentResult {
   readonly save: (change: SourceEditorChange) => void;
   /** Force-flush a pending debounced save immediately (e.g. on blur / unmount). */
   readonly flush: () => void;
+  /**
+   * Optimistically merge newly extracted block ids into {@link extractedBlockIds}
+   * so the reader paints the `mark.extracted` display marker immediately after an
+   * extraction (T021), without re-fetching the document. Idempotent.
+   */
+  readonly markExtracted: (blockIds: readonly string[]) => void;
 }
 
 /**
@@ -170,6 +176,15 @@ export function useDocument(elementId: string | null | undefined): UseDocumentRe
   // Flush any pending save when unmounting so an edit is never lost.
   useEffect(() => flush, [flush]);
 
+  const markExtracted = useCallback((blockIds: readonly string[]) => {
+    if (blockIds.length === 0) return;
+    setExtractedBlockIds((prev) => {
+      const merged = new Set(prev);
+      for (const id of blockIds) merged.add(id);
+      return merged.size === prev.length ? prev : [...merged];
+    });
+  }, []);
+
   return {
     status,
     initialDoc,
@@ -180,5 +195,6 @@ export function useDocument(elementId: string | null | undefined): UseDocumentRe
     error,
     save,
     flush,
+    markExtracted,
   };
 }

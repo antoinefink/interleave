@@ -15,6 +15,7 @@ import {
   DocumentMarksRemoveRequestSchema,
   DocumentsGetRequestSchema,
   DocumentsSaveRequestSchema,
+  ExtractionCreateRequestSchema,
   InboxGetRequestSchema,
   InboxTriageRequestSchema,
   InspectorGetRequestSchema,
@@ -30,7 +31,7 @@ import {
 } from "./contract";
 
 describe("IPC channels", () => {
-  it("exposes exactly the M1 commands plus the M2 inbox mutation + M3 document/read-point + M4 marks surface and no generic SQL channel", () => {
+  it("exposes exactly the M1 commands plus the M2 inbox mutation + M3 document/read-point + M4 marks/extraction surface and no generic SQL channel", () => {
     expect(Object.values(IPC_CHANNELS).sort()).toEqual(
       [
         "app:health",
@@ -50,6 +51,7 @@ describe("IPC channels", () => {
         "documents:marks:add",
         "documents:marks:remove",
         "documents:marks:list",
+        "extractions:create",
         "readPoint:get",
         "readPoint:set",
       ].sort(),
@@ -540,6 +542,74 @@ describe("DocumentMarksListRequestSchema (T020)", () => {
   it("rejects a bad mark-type filter", () => {
     expect(() =>
       DocumentMarksListRequestSchema.parse({ elementId: "el_1", markType: "bogus" }),
+    ).toThrow();
+  });
+});
+
+describe("ExtractionCreateRequestSchema (T021)", () => {
+  it("accepts a minimal top-level extraction (source + selection + one block)", () => {
+    const parsed = ExtractionCreateRequestSchema.parse({
+      sourceElementId: "el_src",
+      selectedText: "Intelligence is …",
+      blockIds: ["blk_def_p1"],
+    });
+    expect(parsed.sourceElementId).toBe("el_src");
+    expect(parsed.blockIds).toEqual(["blk_def_p1"]);
+    expect(parsed.parentId).toBeUndefined();
+  });
+
+  it("accepts an explicit parentId (a sub-extract, T025), offsets, label, and priority", () => {
+    const parsed = ExtractionCreateRequestSchema.parse({
+      sourceElementId: "el_src",
+      parentId: "el_extract",
+      selectedText: "a narrower clause",
+      blockIds: ["blk_x", "blk_y"],
+      startOffset: 3,
+      endOffset: 20,
+      label: "¶4",
+      priority: "A",
+    });
+    expect(parsed.parentId).toBe("el_extract");
+    expect(parsed.startOffset).toBe(3);
+    expect(parsed.priority).toBe("A");
+  });
+
+  it("rejects a missing source, an empty selection, an empty block list, and a bad priority", () => {
+    expect(() =>
+      ExtractionCreateRequestSchema.parse({ selectedText: "x", blockIds: ["b1"] }),
+    ).toThrow();
+    expect(() =>
+      ExtractionCreateRequestSchema.parse({
+        sourceElementId: "el_src",
+        selectedText: "",
+        blockIds: ["b1"],
+      }),
+    ).toThrow();
+    expect(() =>
+      ExtractionCreateRequestSchema.parse({
+        sourceElementId: "el_src",
+        selectedText: "x",
+        blockIds: [],
+      }),
+    ).toThrow();
+    expect(() =>
+      ExtractionCreateRequestSchema.parse({
+        sourceElementId: "el_src",
+        selectedText: "x",
+        blockIds: ["b1"],
+        priority: "Z",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects negative offsets", () => {
+    expect(() =>
+      ExtractionCreateRequestSchema.parse({
+        sourceElementId: "el_src",
+        selectedText: "x",
+        blockIds: ["b1"],
+        startOffset: -1,
+      }),
     ).toThrow();
   });
 });

@@ -670,6 +670,89 @@ export interface DocumentMarksListResult {
 }
 
 // ---------------------------------------------------------------------------
+// extractions.create()  (T021 — the keystone: lift selected text into an extract)
+// ---------------------------------------------------------------------------
+
+/**
+ * The extraction surface (T021). The renderer hands the resolved selection anchor
+ * (the original `sourceElementId`, the spanned STABLE block ids + offsets, the
+ * verbatim snapshot) and the MAIN process runs the `ExtractionService` to create a
+ * NEW, independent, **attention-scheduled** `extract` element in ONE transaction:
+ * the extract element + its `source_locations` anchor, its own seeded `documents`
+ * body, a `derived_from` relation to its source/parent, inherited priority + tags,
+ * an initial attention `due_at` (NEVER FSRS — no `review_states` row), and an
+ * `extracted_span` mark on the parent body. A throw anywhere rolls the whole thing
+ * back. `parentId` is omitted for a top-level extract (defaults to the source) and
+ * set to the parent extract for a sub-extract (T025). There is still no generic
+ * `db.query`.
+ *
+ * `priority`/`title` are optional: when absent the main side INHERITS the source's
+ * numeric priority and derives a title from the selection, so the renderer never
+ * needs to read provenance. `markType` is not on the wire — extraction always
+ * writes `extracted_span`.
+ */
+
+export const ExtractionCreateRequestSchema = z.object({
+  /** The original source element the selection was lifted from (lineage root). */
+  sourceElementId: ElementIdSchema,
+  /** The origin element; omit for a top-level extract, set for a sub-extract (T025). */
+  parentId: ElementIdSchema.optional(),
+  /** Verbatim snapshot of the selected text; seeds the extract body + the anchor. */
+  selectedText: z.string().min(1).max(2_000_000),
+  /** Ordered STABLE block ids the selection spans (≥ 1, document order). */
+  blockIds: z.array(z.string().min(1).max(128)).min(1).max(10_000),
+  /** Char offset within the FIRST spanned block where the selection starts. */
+  startOffset: z.number().int().min(0).optional(),
+  /** Char offset within the LAST spanned block where the selection ends. */
+  endOffset: z.number().int().min(0).optional(),
+  /** Optional explicit title; otherwise derived from the selection main-side. */
+  title: z.string().trim().max(512).optional(),
+  /** Optional human label override; otherwise derived from the source's blocks. */
+  label: z.string().trim().max(512).optional(),
+  /** Optional page (PDF, later); null/absent for text sources. */
+  page: z.number().int().min(0).nullable().optional(),
+  /** Optional A/B/C/D priority override; otherwise INHERITS the source's priority. */
+  priority: PriorityLabelSchema.optional(),
+});
+export type ExtractionCreateRequest = z.infer<typeof ExtractionCreateRequestSchema>;
+
+/** A flat summary of the freshly created extract element. */
+export interface ExtractSummary {
+  readonly id: string;
+  readonly type: string;
+  readonly status: string;
+  readonly stage: string;
+  /** Numeric priority `0.0`–`1.0`; the UI derives the A/B/C/D label. */
+  readonly priority: number;
+  readonly title: string;
+  /** The attention `due_at` (ISO-8601) — extracts are attention items, never FSRS. */
+  readonly dueAt: string | null;
+  /** The original source element id (lineage root). */
+  readonly sourceId: string | null;
+  /** The parent element id (the source for a top-level extract; parent extract for a sub-extract). */
+  readonly parentId: string | null;
+}
+
+/** The created extract's stored source-location anchor. */
+export interface ExtractLocationSummary {
+  /** The `source_locations.id`. */
+  readonly id: string;
+  /** The element the location points INTO (source root or parent extract). */
+  readonly sourceElementId: string;
+  /** Ordered STABLE block ids the anchor covers. */
+  readonly blockIds: readonly string[];
+  readonly startOffset: number | null;
+  readonly endOffset: number | null;
+  readonly label: string | null;
+  readonly selectedText: string;
+}
+
+export interface ExtractionCreateResult {
+  readonly extract: ExtractSummary;
+  readonly location: ExtractLocationSummary;
+}
+
+// ---------------------------------------------------------------------------
 // The typed surface the renderer sees as `window.appApi`.
 // ---------------------------------------------------------------------------
 
@@ -729,6 +812,14 @@ export interface AppApi {
       /** List an element's marks (optionally filtered by kind) (T020). */
       list(request: DocumentMarksListRequest): Promise<DocumentMarksListResult>;
     };
+  };
+  readonly extractions: {
+    /**
+     * Lift selected source text into a new independent, attention-scheduled
+     * `extract` element + its lineage, in one transaction (T021). Marks the parent
+     * `extracted_span`; never creates an FSRS `review_states` row.
+     */
+    create(request: ExtractionCreateRequest): Promise<ExtractionCreateResult>;
   };
   readonly readPoints: {
     /** Load an element's read-point (resume position), or `null` (T017). */

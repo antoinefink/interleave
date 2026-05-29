@@ -202,18 +202,34 @@ export class ElementRepository {
    * the FSRS review flow alike (the scheduler decides the date elsewhere).
    */
   reschedule(id: ElementId, dueAt: IsoTimestamp | null): Element {
-    return this.db.transaction((tx) => {
-      const updatedAt = nowIso();
-      tx.update(elements).set({ dueAt, updatedAt }).where(eq(elements.id, id)).run();
-      const row = tx.select().from(elements).where(eq(elements.id, id)).get();
-      if (!row) throw new Error(`ElementRepository.reschedule: element ${id} not found`);
-      new OperationLogRepository(tx).append(tx, {
-        opType: "reschedule_element",
-        elementId: id,
-        payload: { id, dueAt },
-      });
-      return rowToElement(row);
+    return this.db.transaction((tx) => this.rescheduleWithin(tx, id, dueAt));
+  }
+
+  /**
+   * Set the next due time using an EXISTING transaction, logging
+   * `reschedule_element` on the SAME `tx`. Optionally also updates `status` (e.g.
+   * `pending` → `scheduled` when an extract gets its first attention due date). The
+   * tx-composable seam {@link ExtractionService} (T021) uses to give a new extract
+   * its initial attention `due_at` inside the single extraction transaction.
+   */
+  rescheduleWithin(
+    tx: DbClient,
+    id: ElementId,
+    dueAt: IsoTimestamp | null,
+    status?: ElementStatus,
+  ): Element {
+    const updatedAt = nowIso();
+    const set: Record<string, unknown> = { dueAt, updatedAt };
+    if (status !== undefined) set.status = status;
+    tx.update(elements).set(set).where(eq(elements.id, id)).run();
+    const row = tx.select().from(elements).where(eq(elements.id, id)).get();
+    if (!row) throw new Error(`ElementRepository.reschedule: element ${id} not found`);
+    new OperationLogRepository(tx).append(tx, {
+      opType: "reschedule_element",
+      elementId: id,
+      payload: { id, dueAt, ...(status !== undefined ? { status } : {}) },
     });
+    return rowToElement(row);
   }
 
   /**
@@ -278,33 +294,41 @@ export class ElementRepository {
    * groups keep interfering cloze/Q&A siblings from being shown back-to-back.
    */
   addRelation(input: AddRelationInput): ElementRelation {
-    return this.db.transaction((tx) => {
-      const id: RelationId = newRelationId();
-      const createdAt = nowIso();
-      tx.insert(elementRelations)
-        .values({
-          id,
-          fromElementId: input.fromElementId,
-          toElementId: input.toElementId,
-          relationType: input.relationType,
-          siblingGroupId: input.siblingGroupId ?? null,
-          createdAt,
-        })
-        .run();
-      new OperationLogRepository(tx).append(tx, {
-        opType: "add_relation",
-        elementId: input.fromElementId,
-        payload: { id, ...input },
-      });
-      return {
+    return this.db.transaction((tx) => this.addRelationWithin(tx, input));
+  }
+
+  /**
+   * Add a typed edge using an EXISTING transaction, logging `add_relation` on the
+   * SAME `tx`. The tx-composable seam {@link ExtractionService} (T021) uses to record
+   * the `derived_from` extract→source/parent edge inside the single extraction
+   * transaction.
+   */
+  addRelationWithin(tx: DbClient, input: AddRelationInput): ElementRelation {
+    const id: RelationId = newRelationId();
+    const createdAt = nowIso();
+    tx.insert(elementRelations)
+      .values({
         id,
         fromElementId: input.fromElementId,
         toElementId: input.toElementId,
         relationType: input.relationType,
         siblingGroupId: input.siblingGroupId ?? null,
         createdAt,
-      };
+      })
+      .run();
+    new OperationLogRepository(tx).append(tx, {
+      opType: "add_relation",
+      elementId: input.fromElementId,
+      payload: { id, ...input },
     });
+    return {
+      id,
+      fromElementId: input.fromElementId,
+      toElementId: input.toElementId,
+      relationType: input.relationType,
+      siblingGroupId: input.siblingGroupId ?? null,
+      createdAt,
+    };
   }
 
   /** Remove a relation edge by id + log `remove_relation`, atomically. */
@@ -342,19 +366,27 @@ export class ElementRepository {
    * atomically. Idempotent: re-tagging is a no-op on the join.
    */
   addTag(elementId: ElementId, tagName: string): void {
-    this.db.transaction((tx) => {
-      let tagRow = tx.select().from(tags).where(eq(tags.name, tagName)).get();
-      if (!tagRow) {
-        const tagId = newRowId();
-        tx.insert(tags).values({ id: tagId, name: tagName }).run();
-        tagRow = { id: tagId, name: tagName };
-      }
-      tx.insert(elementTags).values({ elementId, tagId: tagRow.id }).onConflictDoNothing().run();
-      new OperationLogRepository(tx).append(tx, {
-        opType: "add_tag",
-        elementId,
-        payload: { elementId, tagId: tagRow.id, tagName },
-      });
+    this.db.transaction((tx) => this.addTagWithin(tx, elementId, tagName));
+  }
+
+  /**
+   * Attach a tag using an EXISTING transaction, logging `add_tag` on the SAME `tx`.
+   * The tx-composable seam {@link ExtractionService} (T021) uses to inherit the
+   * source's tags onto a new extract inside the single extraction transaction.
+   * Idempotent: re-tagging is a no-op on the join.
+   */
+  addTagWithin(tx: DbClient, elementId: ElementId, tagName: string): void {
+    let tagRow = tx.select().from(tags).where(eq(tags.name, tagName)).get();
+    if (!tagRow) {
+      const tagId = newRowId();
+      tx.insert(tags).values({ id: tagId, name: tagName }).run();
+      tagRow = { id: tagId, name: tagName };
+    }
+    tx.insert(elementTags).values({ elementId, tagId: tagRow.id }).onConflictDoNothing().run();
+    new OperationLogRepository(tx).append(tx, {
+      opType: "add_tag",
+      elementId,
+      payload: { elementId, tagId: tagRow.id, tagName },
     });
   }
 

@@ -33,6 +33,12 @@ export {
   ElementRepository,
   type UpdateElementInput,
 } from "./element-repository";
+export {
+  type CreateExtractionInput,
+  type ExtractionResult,
+  ExtractionService,
+  rawExtractIntervalDays,
+} from "./extraction-service";
 export { newElementId, newRowId, newSiblingGroupId, nowIso } from "./ids";
 export {
   type InboxItemDetail,
@@ -64,6 +70,7 @@ export {
 } from "./review-repository";
 export { type SearchOptions, SearchRepository } from "./search-repository";
 export { SettingsRepository } from "./settings-repository";
+export { deriveSourceLocationLabel, type LabelBlock } from "./source-location-label";
 export {
   type CreateExtractInput,
   type CreateSourceInput,
