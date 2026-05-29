@@ -175,25 +175,33 @@ export class ElementRepository {
 
   /** Apply a patch + log `update_element`, atomically. Returns the new row. */
   update(id: ElementId, patch: UpdateElementInput): Element {
-    return this.db.transaction((tx) => {
-      const updatedAt = nowIso();
-      const set: Record<string, unknown> = { updatedAt };
-      if (patch.status !== undefined) set.status = patch.status;
-      if (patch.stage !== undefined) set.stage = patch.stage;
-      if (patch.priority !== undefined) set.priority = patch.priority;
-      if (patch.title !== undefined) set.title = patch.title;
-      if (patch.dueAt !== undefined) set.dueAt = patch.dueAt;
+    return this.db.transaction((tx) => this.updateWithin(tx, id, patch));
+  }
 
-      tx.update(elements).set(set).where(eq(elements.id, id)).run();
-      const row = tx.select().from(elements).where(eq(elements.id, id)).get();
-      if (!row) throw new Error(`ElementRepository.update: element ${id} not found`);
-      new OperationLogRepository(tx).append(tx, {
-        opType: "update_element",
-        elementId: id,
-        payload: { id, patch },
-      });
-      return rowToElement(row);
+  /**
+   * Apply a patch using an EXISTING transaction, logging `update_element` on the
+   * SAME `tx`. The tx-composable seam {@link ExtractService} (T024) uses to move an
+   * extract's stage AND reschedule it in ONE transaction (stage update +
+   * reschedule + both op rows commit together).
+   */
+  updateWithin(tx: DbClient, id: ElementId, patch: UpdateElementInput): Element {
+    const updatedAt = nowIso();
+    const set: Record<string, unknown> = { updatedAt };
+    if (patch.status !== undefined) set.status = patch.status;
+    if (patch.stage !== undefined) set.stage = patch.stage;
+    if (patch.priority !== undefined) set.priority = patch.priority;
+    if (patch.title !== undefined) set.title = patch.title;
+    if (patch.dueAt !== undefined) set.dueAt = patch.dueAt;
+
+    tx.update(elements).set(set).where(eq(elements.id, id)).run();
+    const row = tx.select().from(elements).where(eq(elements.id, id)).get();
+    if (!row) throw new Error(`ElementRepository.update: element ${id} not found`);
+    new OperationLogRepository(tx).append(tx, {
+      opType: "update_element",
+      elementId: id,
+      payload: { id, patch },
     });
+    return rowToElement(row);
   }
 
   /**
@@ -217,6 +225,13 @@ export class ElementRepository {
     id: ElementId,
     dueAt: IsoTimestamp | null,
     status?: ElementStatus,
+    /**
+     * Extra, command-specific fields merged into the `reschedule_element` op
+     * payload. The attention scheduler (T024 postpone) records a `postpone` marker
+     * + running count here so the postpone history is queryable WITHOUT a schema
+     * migration (the closed op set is unchanged — this only enriches the payload).
+     */
+    opExtras?: Readonly<Record<string, unknown>>,
   ): Element {
     const updatedAt = nowIso();
     const set: Record<string, unknown> = { dueAt, updatedAt };
@@ -227,7 +242,7 @@ export class ElementRepository {
     new OperationLogRepository(tx).append(tx, {
       opType: "reschedule_element",
       elementId: id,
-      payload: { id, dueAt, ...(status !== undefined ? { status } : {}) },
+      payload: { id, dueAt, ...(status !== undefined ? { status } : {}), ...(opExtras ?? {}) },
     });
     return rowToElement(row);
   }

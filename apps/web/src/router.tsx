@@ -2,11 +2,12 @@
  * Application router (T003, shell wired in T004) — code-based, fully typed
  * TanStack Router.
  *
- * Seven routes are defined here, each rendered inside the persistent app shell:
+ * Eight routes are defined here, each rendered inside the persistent app shell:
  *   /            home (daily queue / command center landing)
  *   /inbox       import & triage
  *   /queue       due queue
  *   /source/$id  source reader (typed dynamic param)
+ *   /extract/$id extract review mode (T024 — typed dynamic param)
  *   /review      active-recall review session
  *   /search      library / search
  *   /settings    local settings
@@ -27,6 +28,7 @@ import { InboxScreen } from "./pages/inbox/InboxScreen";
 import { Placeholder } from "./pages/Placeholder";
 import { Settings } from "./pages/Settings";
 import { SourceReader } from "./pages/source/SourceReader";
+import { ExtractView } from "./reader/ExtractView";
 import { Shell } from "./shell/Shell";
 
 const rootRoute = createRootRoute({ component: Shell });
@@ -67,6 +69,12 @@ const sourceRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/source/$id",
   component: SourceReader,
+});
+
+const extractRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/extract/$id",
+  component: ExtractView,
 });
 
 const reviewRoute = createRoute({
@@ -125,6 +133,7 @@ const routeTree = rootRoute.addChildren([
   inboxRoute,
   queueRoute,
   sourceRoute,
+  extractRoute,
   reviewRoute,
   searchRoute,
   settingsRoute,

@@ -817,6 +817,125 @@ export interface ExtractionCreateResult {
 }
 
 // ---------------------------------------------------------------------------
+// extracts.updateStage() / .rewrite() / .postpone() / .markDone() / .delete()
+//   (T024 — extract review mode actions)
+// ---------------------------------------------------------------------------
+
+/**
+ * The extract review surface (T024). After T021 lifts a fragment into an
+ * independent, attention-scheduled `extract`, the user processes it over time as
+ * a readable mini-topic. These commands are the distillation ACTIONS on an
+ * existing extract; the renderer drives them, the MAIN process runs the
+ * `ExtractService` (`packages/local-db`) inside ONE transaction per action and
+ * appends the right `operation_log` rows. The renderer never touches SQLite and
+ * there is still no generic `db.query`.
+ *
+ *  - `updateStage`  → walk `raw_extract → clean_extract → atomic_statement`,
+ *    persisting the new `stage` (`update_element`) AND rescheduling on the
+ *    ATTENTION scheduler (`reschedule_element`) by the by-stage interval. Never
+ *    creates a card and never touches FSRS — `atomic_statement` is "card-ready".
+ *  - `rewrite`      → save an edited (or trimmed) body via `DocumentRepository`
+ *    (`update_document`); lineage/anchor/scheduling untouched. `trim` is a
+ *    renderer-side normalization that flows through this same command.
+ *  - `postpone`     → reschedule further out (`reschedule_element`) + a postpone
+ *    marker/count in the op payload (no schema migration).
+ *  - `markDone`     → status `done` (`update_element`); leaves the rotation, keeps
+ *    lineage.
+ *  - `delete`       → SOFT delete (`soft_delete_element`); recoverable from trash.
+ */
+
+/** A flat summary of an extract after a review action (mirrors `ExtractSummary`). */
+export interface ExtractActionSummary {
+  readonly id: string;
+  readonly type: string;
+  readonly status: string;
+  readonly stage: string;
+  /** Numeric priority `0.0`–`1.0`; the UI derives the A/B/C/D label. */
+  readonly priority: number;
+  readonly title: string;
+  /** The attention `due_at` (ISO-8601) — extracts are attention items, never FSRS. */
+  readonly dueAt: string | null;
+  readonly sourceId: string | null;
+  readonly parentId: string | null;
+}
+
+/**
+ * Advance an extract one step along the chain, or jump to an explicit stage
+ * (the stepper can target any of the three). When `stage` is omitted the main
+ * side advances one step (`raw → clean → atomic`); when present it sets that
+ * stage. Either way it reschedules on the attention scheduler.
+ */
+export const ExtractStageSchema = z.enum(["raw_extract", "clean_extract", "atomic_statement"]);
+
+export const ExtractsUpdateStageRequestSchema = z.object({
+  /** The extract element id to advance/retarget. */
+  id: ElementIdSchema,
+  /** Explicit target stage; omit to advance one step from the current stage. */
+  stage: ExtractStageSchema.optional(),
+});
+export type ExtractsUpdateStageRequest = z.infer<typeof ExtractsUpdateStageRequestSchema>;
+
+export interface ExtractsUpdateStageResult {
+  readonly extract: ExtractActionSummary;
+}
+
+/**
+ * Rewrite (or trim) an extract's body. `prosemirrorJson` is `z.unknown()` on the
+ * wire (schema owned by `@interleave/editor`); `plainText` is the flattened
+ * mirror computed renderer-side; `blocks` is the ordered stable block list. The
+ * main side upserts via `DocumentRepository` (logs `update_document`).
+ */
+export const ExtractsRewriteRequestSchema = z.object({
+  /** The extract element id whose body to rewrite. */
+  id: ElementIdSchema,
+  /** The new ProseMirror document JSON (schema owned by `@interleave/editor`). */
+  prosemirrorJson: z.unknown(),
+  /** The flattened plain-text mirror, computed renderer-side. */
+  plainText: z.string().max(4_000_000),
+  /** The ordered stable block list (preserves the stable ids), when present. */
+  blocks: z.array(DocumentBlockInputSchema).max(100_000).optional(),
+});
+export type ExtractsRewriteRequest = z.infer<typeof ExtractsRewriteRequestSchema>;
+
+export interface ExtractsRewriteResult {
+  readonly extract: ExtractActionSummary;
+  /** The persisted plain-text body after the rewrite. */
+  readonly plainText: string;
+}
+
+export const ExtractsPostponeRequestSchema = z.object({
+  /** The extract element id to postpone. */
+  id: ElementIdSchema,
+});
+export type ExtractsPostponeRequest = z.infer<typeof ExtractsPostponeRequestSchema>;
+
+export interface ExtractsPostponeResult {
+  readonly extract: ExtractActionSummary;
+  /** The running postpone count after this postpone. */
+  readonly postponeCount: number;
+}
+
+export const ExtractsMarkDoneRequestSchema = z.object({
+  /** The extract element id to mark done. */
+  id: ElementIdSchema,
+});
+export type ExtractsMarkDoneRequest = z.infer<typeof ExtractsMarkDoneRequestSchema>;
+
+export interface ExtractsMarkDoneResult {
+  readonly extract: ExtractActionSummary;
+}
+
+export const ExtractsDeleteRequestSchema = z.object({
+  /** The extract element id to soft-delete. */
+  id: ElementIdSchema,
+});
+export type ExtractsDeleteRequest = z.infer<typeof ExtractsDeleteRequestSchema>;
+
+export interface ExtractsDeleteResult {
+  readonly extract: ExtractActionSummary;
+}
+
+// ---------------------------------------------------------------------------
 // The typed surface the renderer sees as `window.appApi`.
 // ---------------------------------------------------------------------------
 
@@ -888,6 +1007,22 @@ export interface AppApi {
      * `extracted_span`; never creates an FSRS `review_states` row.
      */
     create(request: ExtractionCreateRequest): Promise<ExtractionCreateResult>;
+  };
+  readonly extracts: {
+    /**
+     * Advance an extract `raw → clean → atomic` (or to an explicit stage),
+     * rescheduling it on the attention scheduler; logs `update_element` +
+     * `reschedule_element` (T024).
+     */
+    updateStage(request: ExtractsUpdateStageRequest): Promise<ExtractsUpdateStageResult>;
+    /** Rewrite/trim an extract's body; logs `update_document` (T024). */
+    rewrite(request: ExtractsRewriteRequest): Promise<ExtractsRewriteResult>;
+    /** Postpone an extract (reschedule further out + count); logs `reschedule_element` (T024). */
+    postpone(request: ExtractsPostponeRequest): Promise<ExtractsPostponeResult>;
+    /** Mark an extract done (status `done`); logs `update_element` (T024). */
+    markDone(request: ExtractsMarkDoneRequest): Promise<ExtractsMarkDoneResult>;
+    /** Soft-delete an extract; logs `soft_delete_element` (T024). */
+    delete(request: ExtractsDeleteRequest): Promise<ExtractsDeleteResult>;
   };
   readonly readPoints: {
     /** Load an element's read-point (resume position), or `null` (T017). */

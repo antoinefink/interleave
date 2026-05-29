@@ -1,0 +1,202 @@
+/**
+ * Extract review mode styles (T024).
+ *
+ * The two-column distillation surface from `design/kit/app/screen-builder.jsx`
+ * (LEFT source context + LineageTree, CENTER distill editor + stage stepper +
+ * actions), built on the design tokens (`design/tokens.css`). Reuses the reader's
+ * `.reader-screen`/`.reader-header`/`.reader-btn`/`.reader-actions` classes; this
+ * file adds only the extract-specific layout + the stage stepper.
+ */
+
+.extract-view {
+  height: 100%;
+  min-height: 0;
+}
+
+.extract-body {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.extract-context {
+  border-right: 1px solid var(--border);
+  padding: 18px 16px;
+  overflow-y: auto;
+}
+
+.extract-passage {
+  font-family: var(--font-serif, Georgia, serif);
+  font-size: var(--t-base);
+  line-height: var(--lh-normal, 1.6);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 8px);
+  padding: 12px 14px;
+  margin: 0;
+}
+
+.extract-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+  padding: 3px 8px;
+  font-size: var(--t-2xs, 11px);
+  font-family: var(--font-mono, monospace);
+  color: var(--text-3);
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--r-full, 999px);
+  cursor: pointer;
+}
+
+.extract-jump:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.extract-distill {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 24px 24px;
+}
+
+.extract-distill__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 0 14px;
+  position: sticky;
+  top: 0;
+  background: var(--canvas);
+  z-index: 2;
+}
+
+.extract-distill__title {
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* stage stepper — clickable raw → clean → atomic chain */
+.stage-stepper {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 18px;
+}
+
+.stage-step {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.stage-step:not(:last-child) {
+  flex: 1;
+}
+
+.stage-step__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+.stage-step__btn:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.stage-step__num {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  font-family: var(--font-mono, monospace);
+  background: var(--surface-2, var(--surface));
+  color: var(--text-3);
+  border: 1px solid var(--border);
+}
+
+.stage-step__num[data-on="true"] {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.stage-step__label {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.stage-step__label[data-current="true"] {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.stage-step__line {
+  flex: 1;
+  height: 1px;
+  min-width: 8px;
+  background: var(--border);
+  margin: 0 8px;
+}
+
+.stage-step__line[data-done="true"] {
+  background: var(--accent);
+}
+
+.extract-editor {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 8px);
+  padding: 12px 14px;
+  background: var(--surface);
+  min-height: 160px;
+}
+
+.extract-editor__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  gap: 12px;
+}
+
+.extract-actions {
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.extract-flash__pill {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text);
+  color: var(--canvas);
+  padding: 9px 16px;
+  border-radius: var(--r-full, 999px);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  box-shadow: var(--shadow-lg);
+  z-index: 90;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}

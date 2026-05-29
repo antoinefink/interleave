@@ -23,6 +23,11 @@ import type {
   DocumentsGetRequest,
   DocumentsSaveRequest,
   ExtractionCreateRequest,
+  ExtractsDeleteRequest,
+  ExtractsMarkDoneRequest,
+  ExtractsPostponeRequest,
+  ExtractsRewriteRequest,
+  ExtractsUpdateStageRequest,
   InboxGetRequest,
   InboxTriageRequest,
   InspectorGetRequest,
@@ -83,6 +88,18 @@ const appApi: AppApi = {
   extractions: {
     create: (request: ExtractionCreateRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.extractionsCreate, request),
+  },
+  extracts: {
+    updateStage: (request: ExtractsUpdateStageRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.extractsUpdateStage, request),
+    rewrite: (request: ExtractsRewriteRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.extractsRewrite, request),
+    postpone: (request: ExtractsPostponeRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.extractsPostpone, request),
+    markDone: (request: ExtractsMarkDoneRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.extractsMarkDone, request),
+    delete: (request: ExtractsDeleteRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.extractsDelete, request),
   },
   readPoints: {
     get: (request: ReadPointGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.readPointGet, request),

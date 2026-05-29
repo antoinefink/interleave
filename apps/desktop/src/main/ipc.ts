@@ -17,6 +17,11 @@ import {
   DocumentsGetRequestSchema,
   DocumentsSaveRequestSchema,
   ExtractionCreateRequestSchema,
+  ExtractsDeleteRequestSchema,
+  ExtractsMarkDoneRequestSchema,
+  ExtractsPostponeRequestSchema,
+  ExtractsRewriteRequestSchema,
+  ExtractsUpdateStageRequestSchema,
   HealthRequestSchema,
   type HealthResult,
   InboxGetRequestSchema,
@@ -142,6 +147,31 @@ export function registerIpcHandlers(dbService: DbService): () => void {
   ipcMain.handle(IPC_CHANNELS.extractionsCreate, (_event, rawRequest: unknown) => {
     const request = ExtractionCreateRequestSchema.parse(rawRequest);
     return dbService.createExtraction(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.extractsUpdateStage, (_event, rawRequest: unknown) => {
+    const request = ExtractsUpdateStageRequestSchema.parse(rawRequest);
+    return dbService.updateExtractStage(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.extractsRewrite, (_event, rawRequest: unknown) => {
+    const request = ExtractsRewriteRequestSchema.parse(rawRequest);
+    return dbService.rewriteExtract(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.extractsPostpone, (_event, rawRequest: unknown) => {
+    const request = ExtractsPostponeRequestSchema.parse(rawRequest);
+    return dbService.postponeExtract(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.extractsMarkDone, (_event, rawRequest: unknown) => {
+    const request = ExtractsMarkDoneRequestSchema.parse(rawRequest);
+    return dbService.markExtractDone(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.extractsDelete, (_event, rawRequest: unknown) => {
+    const request = ExtractsDeleteRequestSchema.parse(rawRequest);
+    return dbService.deleteExtract(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.readPointGet, (_event, rawRequest: unknown) => {

@@ -478,6 +478,80 @@ export interface ExtractionCreateResult {
 }
 
 // ---------------------------------------------------------------------------
+// extracts.updateStage() / .rewrite() / .postpone() / .markDone() / .delete()
+//   (T024 — extract review mode actions)
+// ---------------------------------------------------------------------------
+
+/** The three extract distillation stages the chain walks through (T024). */
+export type ExtractStage = "raw_extract" | "clean_extract" | "atomic_statement";
+
+/** A flat summary of an extract after a review action (mirrors `ExtractSummary`). */
+export interface ExtractActionSummary {
+  readonly id: string;
+  readonly type: string;
+  readonly status: string;
+  readonly stage: string;
+  readonly priority: number;
+  readonly title: string;
+  /** The attention `due_at` (ISO-8601) — extracts are attention items, never FSRS. */
+  readonly dueAt: string | null;
+  readonly sourceId: string | null;
+  readonly parentId: string | null;
+}
+
+export interface ExtractsUpdateStageRequest {
+  readonly id: string;
+  /** Explicit target stage; omit to advance one step from the current stage. */
+  readonly stage?: ExtractStage;
+}
+
+export interface ExtractsUpdateStageResult {
+  readonly extract: ExtractActionSummary;
+}
+
+export interface ExtractsRewriteRequest {
+  readonly id: string;
+  /** The new ProseMirror document JSON (schema owned by `@interleave/editor`). */
+  readonly prosemirrorJson: unknown;
+  /** The flattened plain-text mirror, computed renderer-side. */
+  readonly plainText: string;
+  /** The ordered stable block list (preserves the stable ids), when present. */
+  readonly blocks?: readonly DocumentBlockInputPayload[];
+}
+
+export interface ExtractsRewriteResult {
+  readonly extract: ExtractActionSummary;
+  /** The persisted plain-text body after the rewrite. */
+  readonly plainText: string;
+}
+
+export interface ExtractsPostponeRequest {
+  readonly id: string;
+}
+
+export interface ExtractsPostponeResult {
+  readonly extract: ExtractActionSummary;
+  /** The running postpone count after this postpone. */
+  readonly postponeCount: number;
+}
+
+export interface ExtractsMarkDoneRequest {
+  readonly id: string;
+}
+
+export interface ExtractsMarkDoneResult {
+  readonly extract: ExtractActionSummary;
+}
+
+export interface ExtractsDeleteRequest {
+  readonly id: string;
+}
+
+export interface ExtractsDeleteResult {
+  readonly extract: ExtractActionSummary;
+}
+
+// ---------------------------------------------------------------------------
 // readPoints.get() / readPoints.set()  (T017 — resume position)
 // ---------------------------------------------------------------------------
 
@@ -550,6 +624,13 @@ export interface AppApi {
   };
   readonly extractions: {
     create(request: ExtractionCreateRequest): Promise<ExtractionCreateResult>;
+  };
+  readonly extracts: {
+    updateStage(request: ExtractsUpdateStageRequest): Promise<ExtractsUpdateStageResult>;
+    rewrite(request: ExtractsRewriteRequest): Promise<ExtractsRewriteResult>;
+    postpone(request: ExtractsPostponeRequest): Promise<ExtractsPostponeResult>;
+    markDone(request: ExtractsMarkDoneRequest): Promise<ExtractsMarkDoneResult>;
+    delete(request: ExtractsDeleteRequest): Promise<ExtractsDeleteResult>;
   };
   readonly readPoints: {
     get(request: ReadPointGetRequest): Promise<ReadPointGetResult>;
@@ -659,6 +740,26 @@ export const appApi = {
   /** Lift selected text into a new independent, attention-scheduled extract (T021). */
   createExtraction(request: ExtractionCreateRequest): Promise<ExtractionCreateResult> {
     return requireAppApi().extractions.create(request);
+  },
+  /** Advance an extract `raw → clean → atomic` (or set a stage); reschedules it (T024). */
+  updateExtractStage(request: ExtractsUpdateStageRequest): Promise<ExtractsUpdateStageResult> {
+    return requireAppApi().extracts.updateStage(request);
+  },
+  /** Rewrite/trim an extract's body; logs `update_document` (T024). */
+  rewriteExtract(request: ExtractsRewriteRequest): Promise<ExtractsRewriteResult> {
+    return requireAppApi().extracts.rewrite(request);
+  },
+  /** Postpone an extract (reschedule further out + count); logs `reschedule_element` (T024). */
+  postponeExtract(request: ExtractsPostponeRequest): Promise<ExtractsPostponeResult> {
+    return requireAppApi().extracts.postpone(request);
+  },
+  /** Mark an extract done (status `done`); logs `update_element` (T024). */
+  markExtractDone(request: ExtractsMarkDoneRequest): Promise<ExtractsMarkDoneResult> {
+    return requireAppApi().extracts.markDone(request);
+  },
+  /** Soft-delete an extract; logs `soft_delete_element` (T024). */
+  deleteExtract(request: ExtractsDeleteRequest): Promise<ExtractsDeleteResult> {
+    return requireAppApi().extracts.delete(request);
   },
   /** Load an element's read-point (resume position), or `null` (T017). */
   getReadPoint(request: ReadPointGetRequest): Promise<ReadPointGetResult> {

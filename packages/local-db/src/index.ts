@@ -34,6 +34,18 @@ export {
   type UpdateElementInput,
 } from "./element-repository";
 export {
+  EXTRACT_STAGES,
+  type ExtractActionResult,
+  ExtractService,
+  type ExtractStage,
+  extractStageIntervalDays,
+  isExtractStage,
+  nextExtractStage,
+  postponeIntervalDays,
+  type RewriteExtractInput,
+  trimExtractText,
+} from "./extract-service";
+export {
   type CreateExtractionInput,
   type ExtractionResult,
   ExtractionService,

@@ -276,9 +276,10 @@ export class InspectorQuery {
         lapses: null,
         fsrsState: null,
         stage: element.stage,
-        // The attention scheduler's postponed-count + last-processed land with
-        // T028; until then they read from the available signals (0 / updatedAt).
-        postponed: 0,
+        // The postponed count is read from the op log (T024): each postpone records
+        // a `postpone` marker on its `reschedule_element` op, so the count needs no
+        // schema column. The full attention scheduler lands with T028.
+        postponed: this.countPostpones(id),
         lastProcessedAt: element.updatedAt,
       };
     }
@@ -294,6 +295,23 @@ export class InspectorQuery {
       tags,
       review: reviewSummary,
     };
+  }
+
+  /**
+   * How many times an attention element has been postponed (T024) — counted from
+   * its `reschedule_element` ops carrying the `postpone` marker. Read-only; this is
+   * the schema-churn-free postpone counter the `SchedulerChip` shows.
+   */
+  private countPostpones(id: ElementId): number {
+    return this.repos.operationLog
+      .listForElement(id)
+      .filter(
+        (op) =>
+          op.opType === "reschedule_element" &&
+          typeof op.payload === "object" &&
+          op.payload !== null &&
+          (op.payload as { postpone?: unknown }).postpone === true,
+      ).length;
   }
 }
 

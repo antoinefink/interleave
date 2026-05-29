@@ -16,6 +16,11 @@ import {
   DocumentsGetRequestSchema,
   DocumentsSaveRequestSchema,
   ExtractionCreateRequestSchema,
+  ExtractsDeleteRequestSchema,
+  ExtractsMarkDoneRequestSchema,
+  ExtractsPostponeRequestSchema,
+  ExtractsRewriteRequestSchema,
+  ExtractsUpdateStageRequestSchema,
   InboxGetRequestSchema,
   InboxTriageRequestSchema,
   InspectorGetRequestSchema,
@@ -32,7 +37,7 @@ import {
 } from "./contract";
 
 describe("IPC channels", () => {
-  it("exposes exactly the M1 commands plus the M2 inbox mutation + M3 document/read-point + M4 marks/extraction/lineage surface and no generic SQL channel", () => {
+  it("exposes exactly the M1 commands plus the M2 inbox mutation + M3 document/read-point + M4 marks/extraction/lineage/extract-review surface and no generic SQL channel", () => {
     expect(Object.values(IPC_CHANNELS).sort()).toEqual(
       [
         "app:health",
@@ -54,6 +59,11 @@ describe("IPC channels", () => {
         "documents:marks:remove",
         "documents:marks:list",
         "extractions:create",
+        "extracts:updateStage",
+        "extracts:rewrite",
+        "extracts:postpone",
+        "extracts:markDone",
+        "extracts:delete",
         "readPoint:get",
         "readPoint:set",
       ].sort(),
@@ -624,5 +634,71 @@ describe("ExtractionCreateRequestSchema (T021)", () => {
         startOffset: -1,
       }),
     ).toThrow();
+  });
+});
+
+describe("ExtractsUpdateStageRequestSchema (T024)", () => {
+  it("accepts an id with no stage (advance one step)", () => {
+    expect(ExtractsUpdateStageRequestSchema.parse({ id: "el_ex" })).toEqual({ id: "el_ex" });
+  });
+
+  it("accepts each explicit extract stage", () => {
+    for (const stage of ["raw_extract", "clean_extract", "atomic_statement"] as const) {
+      expect(ExtractsUpdateStageRequestSchema.parse({ id: "el_ex", stage }).stage).toBe(stage);
+    }
+  });
+
+  it("rejects a non-extract stage and a missing id", () => {
+    expect(() =>
+      ExtractsUpdateStageRequestSchema.parse({ id: "el_ex", stage: "card_draft" }),
+    ).toThrow();
+    expect(() => ExtractsUpdateStageRequestSchema.parse({ stage: "raw_extract" })).toThrow();
+    expect(() => ExtractsUpdateStageRequestSchema.parse({ id: "" })).toThrow();
+  });
+});
+
+describe("ExtractsRewriteRequestSchema (T024)", () => {
+  it("accepts a rewrite with body + plain text (no blocks)", () => {
+    const parsed = ExtractsRewriteRequestSchema.parse({
+      id: "el_ex",
+      prosemirrorJson: { type: "doc", content: [] },
+      plainText: "trimmed body",
+    });
+    expect(parsed.id).toBe("el_ex");
+    expect(parsed.plainText).toBe("trimmed body");
+    expect(parsed.blocks).toBeUndefined();
+  });
+
+  it("accepts an ordered stable block list", () => {
+    const parsed = ExtractsRewriteRequestSchema.parse({
+      id: "el_ex",
+      prosemirrorJson: { type: "doc", content: [] },
+      plainText: "body",
+      blocks: [{ blockType: "paragraph", order: 0, stableBlockId: "blk_1" }],
+    });
+    expect(parsed.blocks).toHaveLength(1);
+  });
+
+  it("rejects a missing id and a non-string plainText", () => {
+    expect(() =>
+      ExtractsRewriteRequestSchema.parse({ prosemirrorJson: {}, plainText: "x" }),
+    ).toThrow();
+    expect(() =>
+      ExtractsRewriteRequestSchema.parse({ id: "el_ex", prosemirrorJson: {}, plainText: 42 }),
+    ).toThrow();
+  });
+});
+
+describe("Extracts postpone/markDone/delete request schemas (T024)", () => {
+  it("each accepts a non-empty id and rejects an empty one", () => {
+    for (const schema of [
+      ExtractsPostponeRequestSchema,
+      ExtractsMarkDoneRequestSchema,
+      ExtractsDeleteRequestSchema,
+    ]) {
+      expect(schema.parse({ id: "el_ex" })).toEqual({ id: "el_ex" });
+      expect(() => schema.parse({ id: "" })).toThrow();
+      expect(() => schema.parse({})).toThrow();
+    }
   });
 });

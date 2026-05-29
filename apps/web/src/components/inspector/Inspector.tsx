@@ -429,14 +429,16 @@ export function Inspector() {
   const onSelect = useCallback((id: string) => select(id), [select]);
 
   // Clicking a lineage node navigates BOTH directions (T023): re-select the node
-  // (driving the inspector) and, for a source/topic, open its reader at
-  // `/source/$id` so the user lands on the page for that element. Cards/extracts
-  // select in the inspector (their dedicated views land in M4 T024 / M6).
+  // (driving the inspector) and open its dedicated page — a source/topic opens its
+  // reader at `/source/$id`, an extract opens its review view at `/extract/$id`
+  // (T024). Cards select in the inspector (their dedicated view lands in M6).
   const onPickLineageNode = useCallback(
     (node: LineageNode) => {
       select(node.id);
       if (node.type === "source" || node.type === "topic") {
         void navigate({ to: "/source/$id", params: { id: node.id } });
+      } else if (node.type === "extract") {
+        void navigate({ to: "/extract/$id", params: { id: node.id } });
       }
     },
     [select, navigate],

@@ -23,6 +23,7 @@ import {
   createRepositories,
   type DocumentMark,
   ExtractionService,
+  ExtractService,
   InboxQuery,
   InspectorQuery,
   LineageQuery,
@@ -42,8 +43,19 @@ import type {
   DocumentsGetResult,
   DocumentsSaveRequest,
   DocumentsSaveResult,
+  ExtractActionSummary,
   ExtractionCreateRequest,
   ExtractionCreateResult,
+  ExtractsDeleteRequest,
+  ExtractsDeleteResult,
+  ExtractsMarkDoneRequest,
+  ExtractsMarkDoneResult,
+  ExtractsPostponeRequest,
+  ExtractsPostponeResult,
+  ExtractsRewriteRequest,
+  ExtractsRewriteResult,
+  ExtractsUpdateStageRequest,
+  ExtractsUpdateStageResult,
   InboxGetResult,
   InboxItemSummary,
   InboxListResult,
@@ -72,6 +84,7 @@ export class DbService {
   private lineage: LineageQuery | null = null;
   private inboxQuery: InboxQuery | null = null;
   private extraction: ExtractionService | null = null;
+  private extractReview: ExtractService | null = null;
   private migrated = false;
 
   /** Whether the database handle is currently open. */
@@ -105,6 +118,7 @@ export class DbService {
     this.lineage = new LineageQuery(this.repositories);
     this.inboxQuery = new InboxQuery(this.repositories);
     this.extraction = new ExtractionService(this.handle.db);
+    this.extractReview = new ExtractService(this.handle.db);
     this.migrated = true;
   }
 
@@ -118,6 +132,7 @@ export class DbService {
     this.lineage = null;
     this.inboxQuery = null;
     this.extraction = null;
+    this.extractReview = null;
     this.migrated = false;
   }
 
@@ -576,6 +591,108 @@ export class DbService {
         selectedText: location.selectedText,
       },
     };
+  }
+
+  private get extractService(): ExtractService {
+    if (!this.extractReview) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.extractReview;
+  }
+
+  /** Map a domain {@link Element} into the flat `ExtractActionSummary` wire shape. */
+  private toExtractActionSummary(element: {
+    id: ElementId;
+    type: string;
+    status: string;
+    stage: string;
+    priority: number;
+    title: string;
+    dueAt: string | null;
+    sourceId: ElementId | null;
+    parentId: ElementId | null;
+  }): ExtractActionSummary {
+    return {
+      id: element.id,
+      type: element.type,
+      status: element.status,
+      stage: element.stage,
+      priority: element.priority,
+      title: element.title,
+      dueAt: element.dueAt,
+      sourceId: element.sourceId,
+      parentId: element.parentId,
+    };
+  }
+
+  /**
+   * Advance an extract `raw_extract → clean_extract → atomic_statement` (or set an
+   * explicit stage when the stepper targets one) (T024) via {@link ExtractService}.
+   * In ONE transaction the service persists the new `stage` (`update_element`) AND
+   * reschedules the extract on the ATTENTION scheduler (`reschedule_element`) by the
+   * by-stage interval — it never creates a card and never touches FSRS. The
+   * renderer payload is already validated at the IPC boundary.
+   */
+  updateExtractStage(request: ExtractsUpdateStageRequest): ExtractsUpdateStageResult {
+    const id = request.id as ElementId;
+    const { element } = request.stage
+      ? this.extractService.setStage(id, request.stage)
+      : this.extractService.advanceStage(id);
+    return { extract: this.toExtractActionSummary(element) };
+  }
+
+  /**
+   * Rewrite (or trim) an extract's body (T024) via {@link ExtractService}, which
+   * upserts the new ProseMirror body + stable blocks (logs `update_document`). The
+   * lineage/anchor + scheduling are untouched — editing the text is not a stage
+   * move. `trim` is a renderer-side normalization that flows through this command.
+   */
+  rewriteExtract(request: ExtractsRewriteRequest): ExtractsRewriteResult {
+    const result = this.extractService.rewrite({
+      elementId: request.id as ElementId,
+      prosemirrorJson: request.prosemirrorJson,
+      plainText: request.plainText,
+      ...(request.blocks ? { blocks: request.blocks } : {}),
+    });
+    return {
+      extract: this.toExtractActionSummary(result.element),
+      plainText: result.plainText ?? request.plainText,
+    };
+  }
+
+  /**
+   * Postpone an extract (T024) via {@link ExtractService}: reschedule it further out
+   * on the attention scheduler and record a postpone marker + running count in the
+   * `reschedule_element` op payload (no schema migration), so the attention
+   * scheduler (T028) + stagnation analytics (T084) can read the postpone history.
+   */
+  postponeExtract(request: ExtractsPostponeRequest): ExtractsPostponeResult {
+    const id = request.id as ElementId;
+    const { element } = this.extractService.postpone(id);
+    return {
+      extract: this.toExtractActionSummary(element),
+      postponeCount: this.extractService.countPostpones(id),
+    };
+  }
+
+  /**
+   * Mark an extract done (T024): status `done` via {@link ExtractService}
+   * (`update_element`). The extract leaves the active rotation; its body, anchor,
+   * and lineage stay intact and recoverable.
+   */
+  markExtractDone(request: ExtractsMarkDoneRequest): ExtractsMarkDoneResult {
+    const { element } = this.extractService.markDone(request.id as ElementId);
+    return { extract: this.toExtractActionSummary(element) };
+  }
+
+  /**
+   * SOFT-delete an extract (T024) via {@link ExtractService} (`soft_delete_element`):
+   * `deletedAt` + status `deleted`, never a hard DELETE. User data is never
+   * destroyed; lineage references remain valid and it is restorable from the trash.
+   */
+  deleteExtract(request: ExtractsDeleteRequest): ExtractsDeleteResult {
+    const { element } = this.extractService.delete(request.id as ElementId);
+    return { extract: this.toExtractActionSummary(element) };
   }
 
   /**
