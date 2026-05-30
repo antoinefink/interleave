@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  CardsCreateRequestSchema,
   DocumentBlockInputSchema,
   DocumentMarksAddRequestSchema,
   DocumentMarksListRequestSchema,
@@ -64,6 +65,7 @@ describe("IPC channels", () => {
         "documents:marks:remove",
         "documents:marks:list",
         "extractions:create",
+        "cards:create",
         "extracts:updateStage",
         "extracts:rewrite",
         "extracts:postpone",
@@ -112,6 +114,75 @@ describe("ElementsSetPriorityRequestSchema (T027)", () => {
 
   it("rejects a missing id", () => {
     expect(() => ElementsSetPriorityRequestSchema.parse({ action: { kind: "raise" } })).toThrow();
+  });
+});
+
+describe("CardsCreateRequestSchema (T032)", () => {
+  it("accepts a Q&A request with a non-empty prompt + answer", () => {
+    const parsed = CardsCreateRequestSchema.parse({
+      extractId: "el_1",
+      kind: "qa",
+      prompt: "What is intelligence?",
+      answer: "Skill-acquisition efficiency.",
+    });
+    expect(parsed.kind).toBe("qa");
+    expect(parsed.prompt).toBe("What is intelligence?");
+  });
+
+  it("accepts a cloze request with non-empty cloze text + an optional sibling group", () => {
+    const parsed = CardsCreateRequestSchema.parse({
+      extractId: "el_1",
+      kind: "cloze",
+      cloze: "Intelligence is {{c1::skill-acquisition efficiency}}.",
+      siblingGroupId: "grp_1",
+    });
+    expect(parsed.kind).toBe("cloze");
+    expect(parsed.siblingGroupId).toBe("grp_1");
+  });
+
+  it("accepts an optional A/B/C/D priority override", () => {
+    const parsed = CardsCreateRequestSchema.parse({
+      extractId: "el_1",
+      kind: "qa",
+      prompt: "Q?",
+      answer: "A.",
+      priority: "A",
+    });
+    expect(parsed.priority).toBe("A");
+  });
+
+  it("rejects a Q&A request with an empty (or missing) prompt", () => {
+    expect(() =>
+      CardsCreateRequestSchema.parse({ extractId: "el_1", kind: "qa", prompt: "", answer: "A." }),
+    ).toThrow();
+    expect(() =>
+      CardsCreateRequestSchema.parse({ extractId: "el_1", kind: "qa", answer: "A." }),
+    ).toThrow();
+  });
+
+  it("rejects a Q&A request with an empty (or missing) answer", () => {
+    expect(() =>
+      CardsCreateRequestSchema.parse({ extractId: "el_1", kind: "qa", prompt: "Q?", answer: "" }),
+    ).toThrow();
+    expect(() =>
+      CardsCreateRequestSchema.parse({ extractId: "el_1", kind: "qa", prompt: "Q?" }),
+    ).toThrow();
+  });
+
+  it("rejects a cloze request with empty (or missing) cloze text", () => {
+    expect(() =>
+      CardsCreateRequestSchema.parse({ extractId: "el_1", kind: "cloze", cloze: "" }),
+    ).toThrow();
+    expect(() => CardsCreateRequestSchema.parse({ extractId: "el_1", kind: "cloze" })).toThrow();
+  });
+
+  it("rejects an unknown card kind and a missing extractId", () => {
+    expect(() =>
+      CardsCreateRequestSchema.parse({ extractId: "el_1", kind: "image", cloze: "x" }),
+    ).toThrow();
+    expect(() =>
+      CardsCreateRequestSchema.parse({ kind: "qa", prompt: "Q?", answer: "A." }),
+    ).toThrow();
   });
 });
 

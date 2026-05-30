@@ -40,6 +40,7 @@ import { ElementRepository } from "./element-repository";
 import { newReviewLogId } from "./ids";
 import { rowToElement, rowToReviewLog, rowToReviewState } from "./mappers";
 import { OperationLogRepository } from "./operation-log-repository";
+import type { DbClient } from "./types";
 
 /** Arguments to create a card (Q&A or cloze). */
 export interface CreateCardInput {
@@ -93,42 +94,62 @@ export class ReviewRepository {
    * atomically, logging `create_card`. The card starts in FSRS state `new`.
    */
   createCard(input: CreateCardInput): CardWithElement {
-    return this.db.transaction((tx) => {
-      const element = this.elementsRepo.createWithin(tx, {
-        type: "card",
-        status: "pending",
-        stage: input.stage ?? "card_draft",
-        priority: input.priority,
-        title: input.title,
-        parentId: input.parentId ?? null,
-        sourceId: input.sourceId ?? null,
-      });
-      tx.insert(cards)
-        .values({
-          elementId: element.id,
-          kind: input.kind,
-          prompt: input.prompt ?? null,
-          answer: input.answer ?? null,
-          cloze: input.cloze ?? null,
-          sourceLocationId: input.sourceLocationId ?? null,
-        })
-        .run();
-      tx.insert(reviewStates).values({ elementId: element.id, fsrsState: "new" }).run();
+    return this.db.transaction((tx) => this.createCardWithin(tx, input));
+  }
 
-      new OperationLogRepository(tx).append(tx, {
-        opType: "create_card",
-        elementId: element.id,
-        payload: {
-          cardId: element.id,
-          kind: input.kind,
-          sourceLocationId: input.sourceLocationId ?? null,
-        },
-      });
-
-      const card = tx.select().from(cards).where(eq(cards.elementId, element.id)).get();
-      if (!card) throw new Error("ReviewRepository.createCard: card row missing after insert");
-      return { element, card };
+  /**
+   * Create a card using an EXISTING transaction — the tx-composable seam
+   * {@link CardService} (T032) uses to author a card from an extract in ONE outer
+   * `db.transaction` (card creation + sibling grouping + tag inheritance all
+   * commit together). Mirrors {@link ElementRepository.createWithin} /
+   * {@link SourceRepository.createExtractWithin}: it inserts the `elements` row
+   * (via `createWithin`, logging `create_element`), the `cards` side-table row,
+   * and a FRESH `review_states` row, then logs `create_card` on the SAME `tx`, so
+   * a throw anywhere downstream rolls the whole card back (no orphan
+   * element/card/review-state row).
+   *
+   * **Two-scheduler split (load-bearing):** the `review_states` row is created
+   * but left UN-DUE — `dueAt` defaults to `null` and `fsrsState` to `"new"`. M6
+   * authors the card and initializes its FSRS state; it does NO FSRS math. The
+   * first FSRS schedule + the `card_draft → active_card` transition are M7 (T036).
+   */
+  createCardWithin(tx: DbClient, input: CreateCardInput): CardWithElement {
+    const element = this.elementsRepo.createWithin(tx, {
+      type: "card",
+      status: "pending",
+      stage: input.stage ?? "card_draft",
+      priority: input.priority,
+      title: input.title,
+      parentId: input.parentId ?? null,
+      sourceId: input.sourceId ?? null,
     });
+    tx.insert(cards)
+      .values({
+        elementId: element.id,
+        kind: input.kind,
+        prompt: input.prompt ?? null,
+        answer: input.answer ?? null,
+        cloze: input.cloze ?? null,
+        sourceLocationId: input.sourceLocationId ?? null,
+      })
+      .run();
+    // The review_states row is created but NOT due (dueAt null, fsrsState "new"):
+    // a card_draft card is authored, not yet in FSRS rotation (M7 first-schedules it).
+    tx.insert(reviewStates).values({ elementId: element.id, fsrsState: "new" }).run();
+
+    new OperationLogRepository(tx).append(tx, {
+      opType: "create_card",
+      elementId: element.id,
+      payload: {
+        cardId: element.id,
+        kind: input.kind,
+        sourceLocationId: input.sourceLocationId ?? null,
+      },
+    });
+
+    const card = tx.select().from(cards).where(eq(cards.elementId, element.id)).get();
+    if (!card) throw new Error("ReviewRepository.createCard: card row missing after insert");
+    return { element, card };
   }
 
   /** Read a card (element + card row) by element id, or `null`. */

@@ -17,6 +17,7 @@
 
 import {
   type AppSettings,
+  CARD_KINDS,
   DAILY_REVIEW_BUDGET_MAX,
   DAILY_REVIEW_BUDGET_MIN,
   DESIRED_RETENTION_MAX,
@@ -1182,6 +1183,113 @@ export interface ExtractsDeleteResult {
 }
 
 // ---------------------------------------------------------------------------
+// cards.create()  (T032 — author a card from an extract)
+// ---------------------------------------------------------------------------
+
+/**
+ * The card-authoring surface (T032 — the M6 keystone). From an
+ * `atomic_statement` extract, the renderer hands the authored fields (a `qa`
+ * card's `prompt`/`answer`, or a `cloze` card's canonical `{{c1::answer}}` text)
+ * and the MAIN process runs the `CardService` to create a NEW `card` element in
+ * ONE transaction: the card element (stage `card_draft`) + its `cards` row
+ * (`kind`/prompt/answer/cloze + the INHERITED `sourceLocationId` anchor) + an
+ * UN-DUE `review_states` row (`fsrsState = "new"`, `dueAt = null`), inheriting the
+ * extract's priority + tags, and a `sibling_group` edge linking it to the group.
+ * A throw anywhere rolls the whole card back. There is still no generic `db.query`.
+ *
+ * **Two-scheduler split (load-bearing):** M6 AUTHORS the card; it does NO FSRS
+ * math. The card is created at `card_draft` and parked un-due — M7 (T036) owns the
+ * first FSRS schedule + the `card_draft → active_card` transition. The originating
+ * extract is UNCHANGED (it lives on as its own attention-scheduled element).
+ *
+ * `priority`/`title` are optional: when absent the main side INHERITS the
+ * extract's numeric priority and derives a title, so the renderer never reads
+ * lineage. `siblingGroupId` is omitted for the FIRST card from an extract (the
+ * main side mints one) and echoed back from a prior `cards.create` to group a
+ * subsequent sibling (a Q&A + cloze pair, or a multi-cloze set). The schema
+ * enforces a COARSE boundary check (a `qa` card carries non-empty `prompt` +
+ * `answer`; a `cloze` card carries non-empty `cloze`) — the rich card-quality
+ * gate is T035.
+ */
+
+/** The card kind values the renderer may request (validated against `CARD_KINDS`). */
+export const CardKindSchema = z.enum(CARD_KINDS);
+
+export const CardsCreateRequestSchema = z
+  .object({
+    /** The originating extract this card is distilled from (lineage parent). */
+    extractId: ElementIdSchema,
+    /** Card kind — `qa` or `cloze`. */
+    kind: CardKindSchema,
+    /** Q&A prompt (required, non-empty, for `qa`). */
+    prompt: z.string().trim().max(20_000).optional(),
+    /** Q&A answer (required, non-empty, for `qa`). */
+    answer: z.string().trim().max(20_000).optional(),
+    /** Canonical `{{c1::answer}}` cloze text (required, non-empty, for `cloze`). */
+    cloze: z.string().trim().max(20_000).optional(),
+    /** Optional explicit title; otherwise derived from the body main-side. */
+    title: z.string().trim().max(512).optional(),
+    /** Optional A/B/C/D priority override; otherwise INHERITS the extract's priority. */
+    priority: PriorityLabelSchema.optional(),
+    /** Optional sibling group id (to group with a prior sibling); minted when absent. */
+    siblingGroupId: z.string().min(1).max(128).optional(),
+  })
+  .superRefine((value, ctx) => {
+    // Coarse boundary check (the rich quality gate is T035): a Q&A card must carry
+    // a non-empty prompt AND answer; a cloze card must carry non-empty cloze text.
+    if (value.kind === "qa") {
+      if (!value.prompt || value.prompt.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["prompt"],
+          message: "a Q&A card requires a non-empty prompt",
+        });
+      }
+      if (!value.answer || value.answer.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["answer"],
+          message: "a Q&A card requires a non-empty answer",
+        });
+      }
+    } else if (value.kind === "cloze") {
+      if (!value.cloze || value.cloze.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["cloze"],
+          message: "a cloze card requires non-empty cloze text",
+        });
+      }
+    }
+  });
+export type CardsCreateRequest = z.infer<typeof CardsCreateRequestSchema>;
+
+/** A flat summary of a freshly created card element. */
+export interface CardSummary {
+  readonly id: string;
+  readonly type: string;
+  readonly status: string;
+  readonly stage: string;
+  /** Numeric priority `0.0`–`1.0`; the UI derives the A/B/C/D label. */
+  readonly priority: number;
+  readonly title: string;
+  /** Card kind (`qa`/`cloze`). */
+  readonly kind: string;
+  /** The originating extract id (lineage parent). */
+  readonly parentId: string | null;
+  /** The owning source element id (lineage root). */
+  readonly sourceId: string | null;
+  /** The sibling group the card joined (thread into the next sibling's create). */
+  readonly siblingGroupId: string;
+}
+
+export interface CardsCreateResult {
+  readonly card: CardSummary;
+  /** The inherited source-location anchor id (lineage), or `null` when the extract has none. */
+  readonly sourceLocationId: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // The typed surface the renderer sees as `window.appApi`.
 // ---------------------------------------------------------------------------
 
@@ -1281,6 +1389,15 @@ export interface AppApi {
      * `extracted_span`; never creates an FSRS `review_states` row.
      */
     create(request: ExtractionCreateRequest): Promise<ExtractionCreateResult>;
+  };
+  readonly cards: {
+    /**
+     * Author a `card` (Q&A or cloze) from an extract (T032), in one transaction:
+     * the card element (`card_draft`) + its `cards` row + an UN-DUE `review_states`
+     * row + inherited priority/tags + a `sibling_group` edge. Logs `create_card` (+
+     * `add_tag`/`add_relation`); does NO FSRS math (M7 first-schedules it).
+     */
+    create(request: CardsCreateRequest): Promise<CardsCreateResult>;
   };
   readonly extracts: {
     /**

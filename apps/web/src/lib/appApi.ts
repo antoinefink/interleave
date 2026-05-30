@@ -638,6 +638,56 @@ export interface ExtractionCreateResult {
 }
 
 // ---------------------------------------------------------------------------
+// cards.create()  (T032 — author a card from an extract)
+// ---------------------------------------------------------------------------
+
+/** The two card kinds the MVP ships. */
+export type CardKind = "qa" | "cloze";
+
+export interface CardsCreateRequest {
+  /** The originating extract this card is distilled from (lineage parent). */
+  readonly extractId: string;
+  /** Card kind — `qa` or `cloze`. */
+  readonly kind: CardKind;
+  /** Q&A prompt (required, non-empty, for `qa`). */
+  readonly prompt?: string;
+  /** Q&A answer (required, non-empty, for `qa`). */
+  readonly answer?: string;
+  /** Canonical `{{c1::answer}}` cloze text (required, non-empty, for `cloze`). */
+  readonly cloze?: string;
+  /** Optional explicit title; otherwise derived from the body main-side. */
+  readonly title?: string;
+  /** Optional A/B/C/D priority override; otherwise inherits the extract's priority. */
+  readonly priority?: ExtractionPriorityLabel;
+  /** Optional sibling group id (to group with a prior sibling); minted when absent. */
+  readonly siblingGroupId?: string;
+}
+
+/** A flat summary of a freshly created card element. */
+export interface CardSummary {
+  readonly id: string;
+  readonly type: string;
+  readonly status: string;
+  readonly stage: string;
+  readonly priority: number;
+  readonly title: string;
+  /** Card kind (`qa`/`cloze`). */
+  readonly kind: string;
+  /** The originating extract id (lineage parent). */
+  readonly parentId: string | null;
+  /** The owning source element id (lineage root). */
+  readonly sourceId: string | null;
+  /** The sibling group the card joined (thread into the next sibling's create). */
+  readonly siblingGroupId: string;
+}
+
+export interface CardsCreateResult {
+  readonly card: CardSummary;
+  /** The inherited source-location anchor id (lineage), or `null` when the extract has none. */
+  readonly sourceLocationId: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // extracts.updateStage() / .rewrite() / .postpone() / .markDone() / .delete()
 //   (T024 — extract review mode actions)
 // ---------------------------------------------------------------------------
@@ -793,6 +843,9 @@ export interface AppApi {
   readonly extractions: {
     create(request: ExtractionCreateRequest): Promise<ExtractionCreateResult>;
   };
+  readonly cards: {
+    create(request: CardsCreateRequest): Promise<CardsCreateResult>;
+  };
   readonly extracts: {
     updateStage(request: ExtractsUpdateStageRequest): Promise<ExtractsUpdateStageResult>;
     rewrite(request: ExtractsRewriteRequest): Promise<ExtractsRewriteResult>;
@@ -938,6 +991,15 @@ export const appApi = {
   /** Lift selected text into a new independent, attention-scheduled extract (T021). */
   createExtraction(request: ExtractionCreateRequest): Promise<ExtractionCreateResult> {
     return requireAppApi().extractions.create(request);
+  },
+  /**
+   * Author a card (Q&A or cloze) from an extract (T032). One transaction: the card
+   * element (`card_draft`) + its `cards` row + an UN-DUE `review_states` row +
+   * inherited priority/tags + a `sibling_group` edge. Does NO FSRS math (M7 first-
+   * schedules it). Returns the card summary + the (minted/reused) sibling group id.
+   */
+  createCard(request: CardsCreateRequest): Promise<CardsCreateResult> {
+    return requireAppApi().cards.create(request);
   },
   /** Advance an extract `raw → clean → atomic` (or set a stage); reschedules it (T024). */
   updateExtractStage(request: ExtractsUpdateStageRequest): Promise<ExtractsUpdateStageResult> {

@@ -17,6 +17,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS } from "../shared/channels";
 import type {
   AppApi,
+  CardsCreateRequest,
   DocumentMarksAddRequest,
   DocumentMarksListRequest,
   DocumentMarksRemoveRequest,
@@ -101,6 +102,9 @@ const appApi: AppApi = {
   extractions: {
     create: (request: ExtractionCreateRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.extractionsCreate, request),
+  },
+  cards: {
+    create: (request: CardsCreateRequest) => ipcRenderer.invoke(IPC_CHANNELS.cardsCreate, request),
   },
   extracts: {
     updateStage: (request: ExtractsUpdateStageRequest) =>

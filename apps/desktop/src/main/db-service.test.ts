@@ -609,4 +609,130 @@ describe("DbService", () => {
     expect(reopened?.dueAt).toBe(postponedDue);
     second.close();
   });
+
+  // -------------------------------------------------------------------------
+  // cards.create (T032) — author a card from an extract (the M6 keystone).
+  // -------------------------------------------------------------------------
+
+  /** Seed a source + an extract anchored at its first block; return both ids. */
+  function seedSourceAndExtract(svc: DbService): { extractId: string; sourceId: string } {
+    const { id: sourceId } = svc.importManualSource({
+      title: "On the Measure of Intelligence",
+      priority: "A",
+      body: "The definition paragraph.\n\nAnother paragraph.",
+    });
+    const blockId = (
+      svc.raw.sqlite
+        .prepare("SELECT stable_block_id AS b FROM document_blocks WHERE document_id = ? LIMIT 1")
+        .get(sourceId) as { b: string }
+    ).b;
+    const { extract } = svc.createExtraction({
+      sourceElementId: sourceId,
+      selectedText: "The definition paragraph.",
+      blockIds: [blockId],
+      startOffset: 0,
+      endOffset: 25,
+    });
+    return { extractId: extract.id, sourceId };
+  }
+
+  it("createCard (qa) maps the A/B/C/D label → numeric priority and round-trips lineage (T032)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { extractId, sourceId } = seedSourceAndExtract(svc);
+
+    const result = svc.createCard({
+      extractId,
+      kind: "qa",
+      prompt: "How does Chollet define intelligence?",
+      answer: "As skill-acquisition efficiency over a scope of tasks.",
+      priority: "A", // label → numeric mapping happens main-side
+    });
+
+    // The card summary carries the lineage + the mapped numeric priority.
+    expect(result.card.kind).toBe("qa");
+    expect(result.card.stage).toBe("card_draft");
+    expect(result.card.status).toBe("pending");
+    expect(result.card.priority).toBe(0.875); // "A"
+    expect(result.card.parentId).toBe(extractId);
+    expect(result.card.sourceId).toBe(sourceId);
+    expect(result.card.siblingGroupId).toBeTruthy();
+    // The extract has a source-location anchor, so the card inherited it.
+    expect(result.sourceLocationId).toBeTruthy();
+
+    // The cards row was written with the inherited anchor.
+    const cardRow = svc.repos.review.findCardById(result.card.id as never);
+    expect(cardRow?.card.kind).toBe("qa");
+    expect(cardRow?.card.sourceLocationId).toBe(result.sourceLocationId);
+
+    // The review_states row exists but is UN-DUE (no FSRS math in M6).
+    const rs = svc.repos.review.findReviewState(result.card.id as never);
+    expect(rs?.dueAt).toBeNull();
+    expect(rs?.fsrsState).toBe("new");
+
+    svc.close();
+  });
+
+  it("createCard (cloze) stores the canonical cloze text and groups a sibling pair (T032)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { extractId } = seedSourceAndExtract(svc);
+
+    const qa = svc.createCard({ extractId, kind: "qa", prompt: "Q?", answer: "A." });
+    const cloze = svc.createCard({
+      extractId,
+      kind: "cloze",
+      cloze: "Intelligence is {{c1::skill-acquisition efficiency}}.",
+      siblingGroupId: qa.card.siblingGroupId, // thread the prior sibling's group id
+    });
+
+    // The cloze card stores the canonical numbered text.
+    const clozeRow = svc.repos.review.findCardById(cloze.card.id as never);
+    expect(clozeRow?.card.cloze).toContain("{{c1::skill-acquisition efficiency}}");
+    // Both cards joined the SAME sibling group.
+    expect(cloze.card.siblingGroupId).toBe(qa.card.siblingGroupId);
+
+    svc.close();
+  });
+
+  it("createCard rejects an unknown / soft-deleted extract (T032)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    expect(() =>
+      svc.createCard({ extractId: "el_missing", kind: "qa", prompt: "Q?", answer: "A." }),
+    ).toThrow(/not found/);
+
+    svc.close();
+  });
+
+  it("a created card survives a full close + reopen with lineage intact (T032 restart analogue)", () => {
+    const first = new DbService();
+    first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { extractId, sourceId } = seedSourceAndExtract(first);
+    const { card } = first.createCard({
+      extractId,
+      kind: "qa",
+      prompt: "Durable prompt?",
+      answer: "Durable answer.",
+    });
+    const cardId = card.id;
+    first.close();
+
+    // A brand-new service opening the SAME file must see the card + its lineage.
+    const second = new DbService();
+    second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const reopened = second.repos.review.findCardById(cardId as never);
+    expect(reopened?.element.type).toBe("card");
+    expect(reopened?.element.stage).toBe("card_draft");
+    expect(reopened?.element.parentId).toBe(extractId);
+    expect(reopened?.element.sourceId).toBe(sourceId);
+    expect(reopened?.card.prompt).toBe("Durable prompt?");
+    expect(reopened?.card.answer).toBe("Durable answer.");
+    // Still un-due after the restart (FSRS scheduling is M7).
+    const rs = second.repos.review.findReviewState(cardId as never);
+    expect(rs?.dueAt).toBeNull();
+    expect(rs?.fsrsState).toBe("new");
+    second.close();
+  });
 });

@@ -18,12 +18,14 @@
 
 import type {
   BlockId,
+  CardKind,
   ElementId,
   ElementStatus,
   IsoTimestamp,
   MarkType,
   Priority,
   PriorityLabel,
+  SiblingGroupId,
 } from "@interleave/core";
 import {
   canonicalizeUrl,
@@ -34,6 +36,7 @@ import {
 } from "@interleave/core";
 import { type DbHandle, migrateDatabase, openDatabase } from "@interleave/db";
 import {
+  CardService,
   createRepositories,
   type DocumentMark,
   ExtractionService,
@@ -47,6 +50,8 @@ import {
 } from "@interleave/local-db";
 import { seedDemoCollection } from "@interleave/testing";
 import type {
+  CardsCreateRequest,
+  CardsCreateResult,
   DbStatus,
   DocumentMarkPayload,
   DocumentMarksAddRequest,
@@ -111,6 +116,7 @@ export class DbService {
   private queueAction: QueueActionService | null = null;
   private extraction: ExtractionService | null = null;
   private extractReview: ExtractService | null = null;
+  private cardService: CardService | null = null;
   private migrated = false;
 
   /** Whether the database handle is currently open. */
@@ -147,6 +153,7 @@ export class DbService {
     this.inboxQuery = new InboxQuery(this.repositories);
     this.extraction = new ExtractionService(this.handle.db);
     this.extractReview = new ExtractService(this.handle.db);
+    this.cardService = new CardService(this.handle.db);
     this.migrated = true;
   }
 
@@ -163,6 +170,7 @@ export class DbService {
     this.inboxQuery = null;
     this.extraction = null;
     this.extractReview = null;
+    this.cardService = null;
     this.migrated = false;
   }
 
@@ -748,6 +756,70 @@ export class DbService {
         label: location.label,
         selectedText: location.selectedText,
       },
+    };
+  }
+
+  /** The card-authoring service (T032), bound to the open database. */
+  private get cards(): CardService {
+    if (!this.cardService) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.cardService;
+  }
+
+  /**
+   * Author a card (Q&A or cloze) from an extract (T032 — the M6 keystone) via
+   * {@link CardService}. In ONE transaction the service creates the `card` element
+   * (stage `card_draft`) + its `cards` row (`kind`/prompt/answer/cloze + the
+   * INHERITED `sourceLocationId` anchor) + an UN-DUE `review_states` row
+   * (`fsrsState = "new"`, `dueAt = null`), inherits the extract's priority + tags,
+   * and links the card to a `sibling_group`. Logs `create_element` + `create_card`
+   * (+ `add_tag`/`add_relation`). A throw anywhere rolls the whole card back.
+   *
+   * **Two-scheduler split (load-bearing):** M6 does NO FSRS math — the card is
+   * authored at `card_draft` and parked un-due; M7 (T036) owns the first FSRS
+   * schedule + the `card_draft → active_card` transition. The originating extract is
+   * UNCHANGED (still its own attention-scheduled element).
+   *
+   * The priority is INHERITED from the extract by default (the A/B/C/D label, when
+   * supplied, overrides it, mapped to a numeric value here main-side); the title is
+   * derived from the body main-side when absent. The renderer-supplied payload is
+   * already validated against the contract schema (incl. the coarse Q&A/cloze
+   * non-empty check) at the IPC boundary.
+   */
+  createCard(request: CardsCreateRequest): CardsCreateResult {
+    const extractId = request.extractId as ElementId;
+    const extract = this.repos.elements.findById(extractId);
+    if (!extract || extract.deletedAt) {
+      throw new Error(`DbService.createCard: extract ${extractId} not found`);
+    }
+    const { element, siblingGroupId, sourceLocationId } = this.cards.createFromExtract({
+      extractId,
+      kind: request.kind as CardKind,
+      ...(request.prompt !== undefined ? { prompt: request.prompt } : {}),
+      ...(request.answer !== undefined ? { answer: request.answer } : {}),
+      ...(request.cloze !== undefined ? { cloze: request.cloze } : {}),
+      ...(request.title !== undefined ? { title: request.title } : {}),
+      // Inherit the extract's numeric priority unless the renderer overrode it.
+      ...(request.priority ? { priority: priorityFromLabel(request.priority) } : {}),
+      ...(request.siblingGroupId
+        ? { siblingGroupId: request.siblingGroupId as SiblingGroupId }
+        : {}),
+    });
+    return {
+      card: {
+        id: element.id,
+        type: element.type,
+        status: element.status,
+        stage: element.stage,
+        priority: element.priority,
+        title: element.title,
+        kind: request.kind,
+        parentId: element.parentId,
+        sourceId: element.sourceId,
+        siblingGroupId,
+      },
+      sourceLocationId,
     };
   }
 

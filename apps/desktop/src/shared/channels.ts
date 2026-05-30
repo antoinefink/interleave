@@ -32,6 +32,7 @@ export const IPC_CHANNELS = {
   documentsMarksRemove: "documents:marks:remove",
   documentsMarksList: "documents:marks:list",
   extractionsCreate: "extractions:create",
+  cardsCreate: "cards:create",
   extractsUpdateStage: "extracts:updateStage",
   extractsRewrite: "extracts:rewrite",
   extractsPostpone: "extracts:postpone",

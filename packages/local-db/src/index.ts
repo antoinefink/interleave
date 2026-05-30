@@ -20,6 +20,11 @@
 
 export { AssetRepository, type CreateAssetInput } from "./asset-repository";
 export {
+  CardService,
+  type CreateCardFromExtractInput,
+  type CreateCardResult,
+} from "./card-service";
+export {
   type AddMarkInput,
   type DocumentBlockInput,
   type DocumentMark,

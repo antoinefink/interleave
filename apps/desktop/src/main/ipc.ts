@@ -10,6 +10,7 @@
 
 import { app, ipcMain } from "electron";
 import {
+  CardsCreateRequestSchema,
   DbStatusRequestSchema,
   DocumentMarksAddRequestSchema,
   DocumentMarksListRequestSchema,
@@ -171,6 +172,11 @@ export function registerIpcHandlers(dbService: DbService): () => void {
   ipcMain.handle(IPC_CHANNELS.extractionsCreate, (_event, rawRequest: unknown) => {
     const request = ExtractionCreateRequestSchema.parse(rawRequest);
     return dbService.createExtraction(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.cardsCreate, (_event, rawRequest: unknown) => {
+    const request = CardsCreateRequestSchema.parse(rawRequest);
+    return dbService.createCard(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.extractsUpdateStage, (_event, rawRequest: unknown) => {
