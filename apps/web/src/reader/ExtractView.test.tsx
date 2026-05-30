@@ -72,6 +72,21 @@ const h = vi.hoisted(() => {
     postpone: vi.fn().mockResolvedValue({ extract: inspectorData.element, postponeCount: 1 }),
     markDone: vi.fn().mockResolvedValue({ extract: inspectorData.element }),
     deleteExtract: vi.fn().mockResolvedValue({ extract: inspectorData.element }),
+    createCard: vi.fn().mockResolvedValue({
+      card: {
+        id: "card_1",
+        type: "card",
+        status: "pending",
+        stage: "card_draft",
+        priority: 0.625,
+        title: "Q?",
+        kind: "qa",
+        parentId: "ex_1",
+        sourceId: "src_1",
+        siblingGroupId: "sg_1",
+      },
+      sourceLocationId: "loc_1",
+    }),
     createExtraction: vi.fn().mockResolvedValue({
       extract: { id: "sub_1", parentId: "ex_1", sourceId: "src_1" },
       location: { sourceElementId: "ex_1" },
@@ -136,6 +151,7 @@ vi.mock("../lib/appApi", () => ({
     markExtractDone: h.markDone,
     deleteExtract: h.deleteExtract,
     createExtraction: h.createExtraction,
+    createCard: h.createCard,
   },
 }));
 
@@ -204,13 +220,30 @@ describe("ExtractView — stage stepper", () => {
 });
 
 describe("ExtractView — actions", () => {
-  it("routes 'Convert to card' to the M6 placeholder (/review)", async () => {
+  it("'Convert to card' opens the card builder (Q&A) instead of navigating away (T033)", async () => {
     render(<ExtractView />);
     const convert = await screen.findByTestId("extract-convert");
     fireEvent.click(convert);
-    await waitFor(() => expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/review" }));
-    // Convert does NOT create a card / touch the stage.
+    // The builder mounts as the third column on the Q&A tab.
+    expect(await screen.findByTestId("card-builder")).toBeInTheDocument();
+    expect(screen.getByTestId("cb-qa-front")).toBeInTheDocument();
+    // Convert does NOT navigate away / touch the stage / create anything yet.
+    expect(h.navigateSpy).not.toHaveBeenCalled();
     expect(h.updateStage).not.toHaveBeenCalled();
+    expect(h.createCard).not.toHaveBeenCalled();
+  });
+
+  it("authoring a Q&A card in the builder calls cards.create with this extract's id (T033)", async () => {
+    render(<ExtractView />);
+    fireEvent.click(await screen.findByTestId("extract-convert"));
+    await screen.findByTestId("card-builder");
+    fireEvent.change(screen.getByTestId("cb-qa-front"), { target: { value: "Q?" } });
+    fireEvent.change(screen.getByTestId("cb-qa-back"), { target: { value: "A." } });
+    fireEvent.click(screen.getByTestId("cb-create"));
+    await waitFor(() => expect(h.createCard).toHaveBeenCalledTimes(1));
+    expect(h.createCard).toHaveBeenCalledWith(
+      expect.objectContaining({ extractId: "ex_1", kind: "qa", prompt: "Q?", answer: "A." }),
+    );
   });
 
   it("wires Trim → rewrite, Postpone, Mark done, and Delete to their commands", async () => {

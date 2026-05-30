@@ -1,0 +1,160 @@
+/**
+ * CardBuilder component tests (T033 — Q&A card creation).
+ *
+ * Covers the renderer seam the spec calls out for the Q&A tab:
+ *  - the Q&A tab shows Front + Back fields and a live preview;
+ *  - editing the front updates the preview (the prompt face);
+ *  - reveal toggles the preview to the back (the answer face);
+ *  - pressing Create calls the typed `cards.create` client with
+ *    `{ kind: "qa", prompt, answer }` + the chosen priority, and the returned
+ *    `siblingGroupId` is threaded into the NEXT create (the Q&A + cloze pair are
+ *    recorded as siblings);
+ *  - the Create button is disabled while a required field is empty (the coarse
+ *    boundary check — the rich quality gate is T035).
+ *
+ * The component is presentational: it ships only the authored strings + the
+ * `extractId` + the priority label over the mocked `cards.create`. No SQLite/IPC —
+ * the renderer is a pure UI consumer here, exactly as the layering rules require.
+ */
+
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const h = vi.hoisted(() => ({
+  createCard: vi.fn(),
+  onToast: vi.fn(),
+  onCardCreated: vi.fn(),
+  onClose: vi.fn(),
+}));
+
+vi.mock("../lib/appApi", () => ({
+  isDesktop: () => true,
+  appApi: { createCard: h.createCard },
+}));
+
+import { CardBuilder } from "./CardBuilder";
+
+function renderBuilder(props?: Partial<React.ComponentProps<typeof CardBuilder>>) {
+  return render(
+    <CardBuilder
+      extractId="ex_1"
+      extractPriority={0.625} // → "B"
+      seedBody="As skill-acquisition efficiency over a scope of tasks."
+      initialTab="qa"
+      onToast={h.onToast}
+      onCardCreated={h.onCardCreated}
+      onClose={h.onClose}
+      {...props}
+    />,
+  );
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  h.createCard.mockResolvedValue({
+    card: {
+      id: "card_1",
+      type: "card",
+      status: "pending",
+      stage: "card_draft",
+      priority: 0.625,
+      title: "Q?",
+      kind: "qa",
+      parentId: "ex_1",
+      sourceId: "src_1",
+      siblingGroupId: "sg_1",
+    },
+    sourceLocationId: "loc_1",
+  });
+});
+
+describe("CardBuilder — Q&A tab", () => {
+  it("shows the Front + Back fields and a preview, defaulting to the extract's priority band", () => {
+    renderBuilder();
+    expect(screen.getByTestId("cb-qa-front")).toBeInTheDocument();
+    expect(screen.getByTestId("cb-qa-back")).toBeInTheDocument();
+    expect(screen.getByTestId("cb-preview")).toBeInTheDocument();
+    // The default priority chip is the extract's band (0.625 → "B").
+    expect(screen.getByTestId("cb-priority-B")).toHaveAttribute("data-active", "true");
+    // The back field is seeded from the extract body.
+    expect((screen.getByTestId("cb-qa-back") as HTMLTextAreaElement).value).toContain(
+      "skill-acquisition efficiency",
+    );
+  });
+
+  it("updates the preview as the front is edited and reveal toggles to the back", () => {
+    renderBuilder();
+    const front = screen.getByTestId("cb-qa-front");
+    fireEvent.change(front, { target: { value: "How does Chollet define intelligence?" } });
+    // The preview shows the front (prompt face) by default.
+    expect(screen.getByTestId("cb-preview").textContent).toContain(
+      "How does Chollet define intelligence?",
+    );
+    // Reveal flips to the back (answer face).
+    fireEvent.click(screen.getByTestId("cb-reveal"));
+    expect(screen.getByTestId("cb-preview").textContent).toContain("skill-acquisition efficiency");
+  });
+
+  it("disables Create until both Front and Back are non-empty", () => {
+    renderBuilder({ seedBody: "" });
+    const create = screen.getByTestId("cb-create");
+    expect(create).toBeDisabled();
+    fireEvent.change(screen.getByTestId("cb-qa-front"), { target: { value: "Q?" } });
+    expect(create).toBeDisabled(); // back still empty
+    fireEvent.change(screen.getByTestId("cb-qa-back"), { target: { value: "A." } });
+    expect(create).not.toBeDisabled();
+  });
+
+  it("pressing Create calls cards.create with { kind: 'qa', prompt, answer } + the priority", async () => {
+    renderBuilder();
+    fireEvent.change(screen.getByTestId("cb-qa-front"), {
+      target: { value: "How does Chollet define intelligence?" },
+    });
+    fireEvent.change(screen.getByTestId("cb-qa-back"), {
+      target: { value: "As skill-acquisition efficiency." },
+    });
+    // Choose an A-priority override.
+    fireEvent.click(screen.getByTestId("cb-priority-A"));
+    fireEvent.click(screen.getByTestId("cb-create"));
+
+    await waitFor(() => expect(h.createCard).toHaveBeenCalledTimes(1));
+    expect(h.createCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extractId: "ex_1",
+        kind: "qa",
+        prompt: "How does Chollet define intelligence?",
+        answer: "As skill-acquisition efficiency.",
+        priority: "A",
+      }),
+    );
+    // The very first create from this extract has NO sibling group yet.
+    expect(h.createCard.mock.calls[0]?.[0]).not.toHaveProperty("siblingGroupId");
+    await waitFor(() => expect(h.onCardCreated).toHaveBeenCalled());
+    expect(h.onToast).toHaveBeenCalledWith("Q&A card created");
+  });
+
+  it("threads the returned siblingGroupId into the next create (sibling pair)", async () => {
+    renderBuilder();
+    fireEvent.change(screen.getByTestId("cb-qa-front"), { target: { value: "Q1?" } });
+    fireEvent.change(screen.getByTestId("cb-qa-back"), { target: { value: "A1." } });
+    fireEvent.click(screen.getByTestId("cb-create"));
+    await waitFor(() => expect(h.createCard).toHaveBeenCalledTimes(1));
+
+    // Author a SECOND card — it must carry the first card's sibling group id.
+    fireEvent.change(screen.getByTestId("cb-qa-front"), { target: { value: "Q2?" } });
+    // (back persists across creates by design — re-type it to be explicit)
+    fireEvent.change(screen.getByTestId("cb-qa-back"), { target: { value: "A2." } });
+    fireEvent.click(screen.getByTestId("cb-create"));
+    await waitFor(() => expect(h.createCard).toHaveBeenCalledTimes(2));
+    expect(h.createCard.mock.calls[1]?.[0]).toMatchObject({ siblingGroupId: "sg_1" });
+  });
+
+  it("renders the Cloze tab and the FSRS scheduler chip; close calls onClose", () => {
+    renderBuilder();
+    expect(screen.getByTestId("cb-scheduler-fsrs")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("cb-tab-cloze"));
+    expect(screen.getByTestId("cb-cloze-text")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("cb-close"));
+    expect(h.onClose).toHaveBeenCalledTimes(1);
+  });
+});

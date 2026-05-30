@@ -21,6 +21,12 @@
   overflow: hidden;
 }
 
+/* When the card builder is mounted, the surface becomes the kit's `split3`:
+   source context · distill · card builder. */
+.extract-body--builder {
+  grid-template-columns: minmax(200px, 280px) minmax(0, 1fr) minmax(300px, 360px);
+}
+
 .extract-context {
   border-right: 1px solid var(--border);
   padding: 18px 16px;
@@ -199,4 +205,287 @@
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+/* ============================================================
+   Card builder (T033/T034) — the RIGHT split3 column.
+   Rebuilt from `design/kit/app/screen-builder.jsx` (the RIGHT
+   card-builder column) against the canonical tokens.
+   ============================================================ */
+
+.card-builder {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.card-builder__tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.cb-tab {
+  flex: 1;
+  padding: 11px 8px;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  color: var(--text-3);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cb-tab:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.cb-tab[data-on="true"] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.cb-tab--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cb-tab--close {
+  flex: 0 0 auto;
+  width: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+}
+
+.cb-tab--close:hover {
+  color: var(--text);
+}
+
+.card-builder__body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.cb-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cb-field__label {
+  font-size: var(--t-2xs, 11px);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.cb-textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--font-ui);
+  font-size: var(--t-sm);
+  line-height: var(--lh-normal, 1.55);
+  color: var(--text);
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 8px);
+  padding: 9px 11px;
+}
+
+.cb-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.cb-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cardprev__label {
+  font-size: var(--t-2xs, 11px);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.cardprev {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 8px);
+  background: var(--canvas);
+  padding: 16px 14px;
+  min-height: 64px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.cardprev__face {
+  font-family: var(--font-serif, Georgia, serif);
+  font-size: var(--t-base);
+  line-height: var(--lh-normal, 1.6);
+  color: var(--text);
+}
+
+.cb-reveal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 10px;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  color: var(--text-2);
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 8px);
+  cursor: pointer;
+}
+
+.cb-reveal:hover {
+  color: var(--text);
+  border-color: var(--text-3);
+}
+
+.cb-kbd {
+  margin-left: 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: var(--t-2xs, 11px);
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--canvas);
+  color: var(--text-3);
+}
+
+.cb-quality__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cb-quality__pending {
+  font-size: var(--t-xs);
+}
+
+.cb-prio-row {
+  display: flex;
+  gap: 6px;
+}
+
+.cb-prio-chip {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  color: var(--text-2);
+  background: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: var(--r-full, 999px);
+  cursor: pointer;
+}
+
+.cb-prio-chip:hover {
+  border-color: var(--text-3);
+  color: var(--text);
+}
+
+.cb-prio-chip[data-active="true"] {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--canvas);
+}
+
+/* Priority dot (kit `.prio-dot`), driven by the canonical `--prio-*` tokens. */
+.prio-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.prio-dot--a {
+  background: var(--prio-a);
+}
+
+.prio-dot--b {
+  background: var(--prio-b);
+}
+
+.prio-dot--c {
+  background: var(--prio-c);
+}
+
+.prio-dot--d {
+  background: var(--prio-d);
+}
+
+.cb-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cb-meta__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--t-xs);
+}
+
+.cb-meta__k {
+  color: var(--text-3);
+}
+
+.cb-meta__v {
+  font-family: var(--font-mono, monospace);
+  color: var(--text-2);
+}
+
+.cb-create {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  padding: 10px 14px;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md, 8px);
+  cursor: pointer;
+}
+
+.cb-create:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.cb-create:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

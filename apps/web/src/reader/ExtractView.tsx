@@ -10,15 +10,18 @@
  *  - CENTER — distill: the `Stage`/`SchedulerChip` chips, the `Advance stage`
  *    action + a clickable stage stepper (`raw_extract → clean_extract →
  *    atomic_statement`), the editable extract body, and the action bar — Trim,
- *    Rewrite (save), Split (T025), Sub-extract (T025), Convert (M6 placeholder),
+ *    Rewrite (save), Split (T025), Sub-extract (T025), Convert to card (T033),
  *    Postpone, Mark done, Delete.
+ *  - RIGHT — the {@link CardBuilder} (T033/T034), mounted as the third `split3`
+ *    column when "Convert to card" (or the Cloze selection-toolbar action) opens
+ *    it; it authors a Q&A / cloze card from THIS extract via `cards.create`.
  *
- * Every mutation flows through the typed `window.appApi` `extracts.*` surface
- * (`updateStage`/`rewrite`/`postpone`/`markDone`/`delete`) — the renderer never
+ * Every mutation flows through the typed `window.appApi` surface (`extracts.*` for
+ * the distill actions, `cards.create` for card authoring) — the renderer never
  * touches SQLite/Node/fs. Stage transitions reschedule the extract on the
- * ATTENTION scheduler main-side and survive an app restart; this component only
- * orchestrates UI state + IPC. The RIGHT card-builder column is M6 (T033/T034) —
- * "Convert" routes to that placeholder.
+ * ATTENTION scheduler main-side and survive an app restart; card lineage/priority/
+ * tag inheritance happens main-side in `CardService`. This component only
+ * orchestrates UI state + IPC.
  *
  * Sub-extracts (T025): the same {@link SelectionToolbar} + {@link useTextSelection}
  * seam the source reader uses (T019) is reused INSIDE the extract body. Selecting a
@@ -44,6 +47,7 @@ import { Icon } from "../components/Icon";
 import { requestInspectorRefresh } from "../components/inspector/Inspector";
 import { LineageTree } from "../components/inspector/LineageTree";
 import { Prio, SchedulerChip, Stage, Status, stageLabel } from "../components/inspector/primitives";
+import type { CardKind } from "../lib/appApi";
 import {
   appApi,
   type ExtractStage,
@@ -52,6 +56,7 @@ import {
   type LineageData,
 } from "../lib/appApi";
 import { useDocument } from "../pages/source/useDocument";
+import { CardBuilder } from "./CardBuilder";
 import { useNavigateToLocation } from "./navigateToLocation";
 import { SelectionToolbar, type SelectionToolbarAction } from "./SelectionToolbar";
 import { useTextSelection } from "./useTextSelection";
@@ -87,6 +92,12 @@ export function ExtractView() {
   const [lineage, setLineage] = useState<LineageData | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Card builder (T033/T034) — null when closed; the tab + any pre-wrapped cloze
+  // text are seeded when the user opens it from Convert / the Cloze toolbar action.
+  const [builder, setBuilder] = useState<{
+    tab: CardKind;
+    clozeText?: string;
+  } | null>(null);
   const editorRef = useRef<Editor | null>(null);
   // A reactive mirror of the editor instance so the selection hook (T019/T025)
   // re-binds its listeners when the editor (re)mounts; the ref stays for imperative use.
@@ -251,12 +262,22 @@ export function ExtractView() {
     }
   }, [id, busy, inspector, navigate, toast]);
 
-  // Convert to a card is M6 (T033/T034). Wire the button to the review placeholder
-  // rather than inventing a builder now.
+  // Convert to a card (T033) — open the card builder as the third column, defaulting
+  // to the Q&A tab. The builder authors a card from THIS extract via `cards.create`;
+  // lineage/priority/tag inheritance happens main-side in `CardService`.
   const onConvert = useCallback(() => {
-    toast("Card builder lands in M6");
-    void navigate({ to: "/review" });
-  }, [navigate, toast]);
+    setBuilder({ tab: "qa" });
+  }, []);
+
+  // Close the builder column (returns to the two-column distill surface).
+  const onCloseBuilder = useCallback(() => setBuilder(null), []);
+
+  // After a card is authored, re-fetch the inspector + lineage so the new card
+  // appears under the extract in the tree, and refresh the shared inspector panel.
+  const onCardCreated = useCallback(() => {
+    reload();
+    requestInspectorRefresh();
+  }, [reload]);
 
   // The original source root this extract descends from (its lineage root). The
   // inspector resolves `source` from `elements.source_id`, which points at the
@@ -325,10 +346,15 @@ export function ExtractView() {
           selection.dismiss();
           break;
         }
-        case "cloze":
-          toast("Cloze lands in M6");
+        case "cloze": {
+          // Open the builder on the Cloze tab with the selection pre-wrapped as a
+          // numbered cloze deletion (T033 wires the entry point; T034 completes the
+          // structured cloze parsing + marks).
+          const sel = loc?.selectedText?.trim();
+          setBuilder(sel ? { tab: "cloze", clozeText: `{{c1::${sel}}}` } : { tab: "cloze" });
           selection.dismiss();
           break;
+        }
         case "highlight":
         case "cancel":
           selection.dismiss();
@@ -451,7 +477,7 @@ export function ExtractView() {
         </div>
       </header>
 
-      <div className="extract-body">
+      <div className={`extract-body${builder ? " extract-body--builder" : ""}`}>
         {/* LEFT — source context + lineage */}
         <aside className="extract-context" data-testid="extract-context">
           <div className="insp-sec__title">Source context</div>
@@ -644,6 +670,21 @@ export function ExtractView() {
             </button>
           </div>
         </section>
+
+        {/* RIGHT — card builder (T033/T034), mounted as the third split3 column. */}
+        {builder ? (
+          <CardBuilder
+            key={`${id ?? "none"}:${builder.tab}`}
+            extractId={id}
+            extractPriority={element?.priority ?? 0.5}
+            seedBody={doc.plainText}
+            initialTab={builder.tab}
+            {...(builder.clozeText !== undefined ? { initialClozeText: builder.clozeText } : {})}
+            onToast={toast}
+            onCardCreated={onCardCreated}
+            onClose={onCloseBuilder}
+          />
+        ) : null}
       </div>
 
       <SelectionToolbar position={selection.position} onAction={onSelectionAction} />
