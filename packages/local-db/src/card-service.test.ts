@@ -5,15 +5,18 @@
  * behaviour matches production. They assert the load-bearing card-authoring
  * invariants in ONE place:
  *
- *  - one `cards.create` produces EXACTLY one `card` element at stage `card_draft`,
- *    status `pending`, with `parentId = extractId` and `sourceId = extract.sourceId`;
+ *  - one `cards.create` produces EXACTLY one `card` element first-scheduled into
+ *    active rotation (stage `active_card`, status `active`), with
+ *    `parentId = extractId` and `sourceId = extract.sourceId`;
  *  - a `cards` row carrying `kind` + prompt/answer (or cloze) + the INHERITED
  *    `sourceLocationId` (the extract's anchor → `card → extract → source location →
  *    source` lineage);
- *  - an UN-DUE `review_states` row (`dueAt = null`, `fsrsState = "new"`) — M6 does
- *    NO FSRS math; the card never appears in a `dueAt <= now` query;
+ *  - a first-scheduled `review_states` row (`dueAt` set, `fsrsState = "new"`,
+ *    counters zero) — no interval math runs here (the first GRADE does that), but
+ *    the card IS due so it enters the deck and is reviewable;
  *  - inherited tags;
- *  - the exact `operation_log` rows (`create_element` + `create_card` + `add_tag`
+ *  - the exact `operation_log` rows (`create_element` + `create_card` +
+ *    `update_element` [the card_draft → active_card first-schedule] + `add_tag`
  *    + `add_relation`);
  *  - sibling grouping: two cards from one extract sharing a `siblingGroupId`
  *    produce two `sibling_group` edges sharing that id;
@@ -89,7 +92,7 @@ afterEach(() => {
 });
 
 describe("CardService.createFromExtract — Q&A card", () => {
-  it("creates exactly one card element at stage card_draft with extract/source lineage", () => {
+  it("creates exactly one active_card element (first-scheduled) with extract/source lineage", () => {
     const { sourceId, extractId } = seedExtract(handle);
     const service = new CardService(handle.db);
     const elementsRepo = new ElementRepository(handle.db);
@@ -105,8 +108,10 @@ describe("CardService.createFromExtract — Q&A card", () => {
     const after = elementsRepo.listByType("card");
     expect(after.length).toBe(before + 1);
     expect(element.type).toBe("card");
-    expect(element.stage).toBe("card_draft");
-    expect(element.status).toBe("pending");
+    // T036 first-schedule: an authored card is activated into FSRS rotation so it
+    // can actually be reviewed (card_draft → active_card, pending → active).
+    expect(element.stage).toBe("active_card");
+    expect(element.status).toBe("active");
     expect(element.parentId).toBe(extractId);
     expect(element.sourceId).toBe(sourceId);
   });
@@ -132,7 +137,7 @@ describe("CardService.createFromExtract — Q&A card", () => {
     expect(sourceLocationId).toBe(locationId);
   });
 
-  it("creates an UN-DUE review_states row (dueAt null, fsrsState new) — no FSRS math", () => {
+  it("first-schedules the review_states row (dueAt set, fsrsState new) — no interval math", () => {
     const { extractId } = seedExtract(handle);
     const service = new CardService(handle.db);
 
@@ -141,6 +146,7 @@ describe("CardService.createFromExtract — Q&A card", () => {
       kind: "qa",
       prompt: "Q?",
       answer: "A.",
+      asOf: "2026-05-30T00:00:00.000Z" as never,
     });
 
     const rs = handle.db
@@ -149,18 +155,21 @@ describe("CardService.createFromExtract — Q&A card", () => {
       .where(eq(reviewStates.elementId, element.id))
       .get();
     expect(rs).toBeTruthy();
-    expect(rs?.dueAt).toBeNull();
+    // T036 first-schedule: the card is DUE now (so it enters the deck and is
+    // reviewable), but no interval math has run yet — fsrsState is still "new" and
+    // the counters are zero. The first GRADE runs the real FSRS next() math.
+    expect(rs?.dueAt).toBe("2026-05-30T00:00:00.000Z");
     expect(rs?.fsrsState).toBe("new");
     expect(rs?.reps).toBe(0);
     expect(rs?.lapses).toBe(0);
 
-    // The card does NOT appear in a "due now" query (not FSRS-scheduled in M6).
+    // The card DOES appear in a "due now" query — it is first-scheduled at creation.
     const dueNow = handle.db
       .select()
       .from(reviewStates)
       .where(and(isNotNull(reviewStates.dueAt), lte(reviewStates.dueAt, nowIso())))
       .all();
-    expect(dueNow.length).toBe(0);
+    expect(dueNow.some((r) => r.elementId === element.id)).toBe(true);
   });
 
   it("inherits the extract's tags onto the card", () => {
@@ -178,7 +187,7 @@ describe("CardService.createFromExtract — Q&A card", () => {
     expect(elementsRepo.listTags(element.id).sort()).toEqual(["definitions", "machine-learning"]);
   });
 
-  it("appends create_element + create_card + add_tag + add_relation ops (no FSRS op)", () => {
+  it("appends create_element + create_card + update_element + add_tag + add_relation ops (no FSRS op)", () => {
     const { extractId } = seedExtract(handle);
     const service = new CardService(handle.db);
 
@@ -199,7 +208,11 @@ describe("CardService.createFromExtract — Q&A card", () => {
     expect(ops).toContain("create_card");
     expect(ops).toContain("add_tag");
     expect(ops).toContain("add_relation");
-    // M6 does NO FSRS scheduling — no review op is logged for the card.
+    // The card_draft → active_card first-schedule transition (T036) is logged as
+    // update_element (no new op type — the closed 15-op set is unchanged).
+    expect(ops).toContain("update_element");
+    // First-schedule sets the initial due time directly on the new review_states /
+    // element rows (NOT via reschedule_element), and no review has happened yet.
     expect(ops).not.toContain("add_review_log");
     expect(ops).not.toContain("reschedule_element");
   });
@@ -378,7 +391,7 @@ describe("CardService.createFromExtract — cloze card + siblings", () => {
     expect(marks.length).toBe(0);
   });
 
-  it("groups two cards from one extract under the same sibling_group id, and neither is FSRS-due", () => {
+  it("groups two cards from one extract under the same sibling_group id, both first-scheduled due", () => {
     const { extractId } = seedExtract(handle);
     const service = new CardService(handle.db);
 
@@ -408,13 +421,15 @@ describe("CardService.createFromExtract — cloze card + siblings", () => {
       new Set([qa.element.id, cloze.element.id]),
     );
 
-    // Neither card is FSRS-due: no review_states row has a dueAt <= now.
+    // Both cards are first-scheduled due (so they enter the deck) but still
+    // fsrsState "new" — the first grade is where the FSRS interval math runs.
     const dueNow = handle.db
       .select()
       .from(reviewStates)
       .where(and(isNotNull(reviewStates.dueAt), lte(reviewStates.dueAt, nowIso())))
       .all();
-    expect(dueNow.length).toBe(0);
+    expect(dueNow.map((r) => r.elementId).sort()).toEqual([qa.element.id, cloze.element.id].sort());
+    expect(dueNow.every((r) => r.fsrsState === "new")).toBe(true);
   });
 
   it("leaves the originating extract UNCHANGED (still attention-scheduled, no review_states row)", () => {

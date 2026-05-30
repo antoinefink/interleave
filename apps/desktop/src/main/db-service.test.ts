@@ -749,10 +749,12 @@ describe("DbService", () => {
       priority: "A", // label → numeric mapping happens main-side
     });
 
-    // The card summary carries the lineage + the mapped numeric priority.
+    // The card summary carries the lineage + the mapped numeric priority. The
+    // authored card is first-scheduled into active rotation (T036), so it can be
+    // reviewed straight away.
     expect(result.card.kind).toBe("qa");
-    expect(result.card.stage).toBe("card_draft");
-    expect(result.card.status).toBe("pending");
+    expect(result.card.stage).toBe("active_card");
+    expect(result.card.status).toBe("active");
     expect(result.card.priority).toBe(0.875); // "A"
     expect(result.card.parentId).toBe(extractId);
     expect(result.card.sourceId).toBe(sourceId);
@@ -765,10 +767,53 @@ describe("DbService", () => {
     expect(cardRow?.card.kind).toBe("qa");
     expect(cardRow?.card.sourceLocationId).toBe(result.sourceLocationId);
 
-    // The review_states row exists but is UN-DUE (no FSRS math in M6).
+    // The review_states row exists and is first-scheduled DUE (so the card enters
+    // the deck) but still fsrsState "new" — the first grade runs the interval math.
     const rs = svc.repos.review.findReviewState(result.card.id as never);
-    expect(rs?.dueAt).toBeNull();
+    expect(rs?.dueAt).not.toBeNull();
     expect(rs?.fsrsState).toBe("new");
+
+    svc.close();
+  });
+
+  it("a freshly authored card enters the review session deck with no prior grade (T036 first-schedule)", () => {
+    // Regression guard for the core-loop gap: an authored card must be first-
+    // scheduled so it actually surfaces in /review. Walk the SAME `session.next`
+    // seam the renderer uses — no direct grade, no manual due-date poke. Before the
+    // fix the card was parked un-due and never appeared here.
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { extractId } = seedSourceAndExtract(svc);
+
+    const { card } = svc.createCard({
+      extractId,
+      kind: "qa",
+      prompt: "What enters the deck?",
+      answer: "A freshly authored card.",
+    });
+
+    // It is due now (created with a real dueAt) and surfaces via the session seam.
+    const asOf = "2099-01-01T00:00:00.000Z";
+    const seen: string[] = [];
+    let found = false;
+    for (let i = 0; i < 200; i++) {
+      const res = svc.reviewSessionNext({ asOf, exclude: seen });
+      if (!res.card) break;
+      if (res.card.id === card.id) {
+        found = true;
+        break;
+      }
+      seen.push(res.card.id);
+    }
+    expect(found).toBe(true);
+
+    // And it can be graded straight away (the first grade runs the real FSRS math),
+    // advancing the FSRS state out of "new" and writing a durable review log.
+    const before = svc.repos.review.listReviewLogs(card.id as never).length;
+    const graded = svc.gradeCard(card.id as never, "good", 1200, asOf);
+    expect(graded.reviewState.reps).toBe(1);
+    expect(graded.reviewState.fsrsState).not.toBe("new");
+    expect(svc.repos.review.listReviewLogs(card.id as never).length).toBe(before + 1);
 
     svc.close();
   });
@@ -871,14 +916,14 @@ describe("DbService", () => {
     second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
     const reopened = second.repos.review.findCardById(cardId as never);
     expect(reopened?.element.type).toBe("card");
-    expect(reopened?.element.stage).toBe("card_draft");
+    expect(reopened?.element.stage).toBe("active_card");
     expect(reopened?.element.parentId).toBe(extractId);
     expect(reopened?.element.sourceId).toBe(sourceId);
     expect(reopened?.card.prompt).toBe("Durable prompt?");
     expect(reopened?.card.answer).toBe("Durable answer.");
-    // Still un-due after the restart (FSRS scheduling is M7).
+    // First-scheduled due, and that survives the restart (FSRS scheduling is M7).
     const rs = second.repos.review.findReviewState(cardId as never);
-    expect(rs?.dueAt).toBeNull();
+    expect(rs?.dueAt).not.toBeNull();
     expect(rs?.fsrsState).toBe("new");
     second.close();
   });
@@ -1102,8 +1147,9 @@ describe("DbService — review session (T037)", () => {
   // --- T039: sibling burying in the review session ---
 
   /**
-   * Create a due Q&A card and return its id. Cards are created un-due; we set
-   * `review_states.due_at` to a past date so it enters the FSRS deck at `ASOF`.
+   * Create a due Q&A card and return its id. Built via the low-level
+   * `ReviewRepository.createCard` (no first-schedule), so we set
+   * `review_states.due_at` to an explicit date so it enters the FSRS deck at `ASOF`.
    */
   function seedDueCard(svc: DbService, title: string, dueAt: string): string {
     const { element } = svc.repos.review.createCard({

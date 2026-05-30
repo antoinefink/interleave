@@ -58,6 +58,17 @@ export interface CreateCardInput {
   readonly sourceId?: ElementId | null;
   /** Anchor to the exact source position the card derives from. */
   readonly sourceLocationId?: SourceLocationId | null;
+  /**
+   * First FSRS schedule (T036). When supplied, the fresh `review_states` row is
+   * created DUE at this time (`dueAt = firstScheduledAt`, still `fsrsState: "new"`)
+   * so an authored card immediately enters the due deck (`QueueRepository.dueCards`)
+   * and can be surfaced in `/review` for its first grade — which then runs the real
+   * FSRS `next()` math. When omitted the row is left UN-DUE (`dueAt = null`), the M6
+   * "authored but not yet scheduled" shape. Setting `dueAt = now` for a brand-new
+   * card is NOT FSRS math (a new card is due now by definition, Anki/SM style); the
+   * first GRADE is where `CardSchedulerService.gradeCard` computes the interval.
+   */
+  readonly firstScheduledAt?: IsoTimestamp | null;
 }
 
 /** A card element + its `cards` side-table row. */
@@ -116,15 +127,23 @@ export class ReviewRepository {
    * element/card/review-state row).
    *
    * **Two-scheduler split (load-bearing):** the `review_states` row is created
-   * but left UN-DUE — `dueAt` defaults to `null` and `fsrsState` to `"new"`. M6
-   * authors the card and initializes its FSRS state; it does NO FSRS math. The
-   * first FSRS schedule + the `card_draft → active_card` transition are M7 (T036).
+   * with `fsrsState: "new"`. By default it is left UN-DUE (`dueAt = null`) — M6's
+   * "authored but not yet scheduled" shape. When `input.firstScheduledAt` is
+   * supplied (the M7/T036 first-schedule), the row is created DUE at that time so
+   * the card enters the due deck immediately; the element is also activated
+   * (`card_draft → active_card`, `pending → active`) and the activation is logged
+   * `update_element` on the SAME `tx`. The first GRADE is where the real FSRS
+   * `next()` math runs — setting `dueAt = now` for a brand-new card is not FSRS math.
    */
   createCardWithin(tx: DbClient, input: CreateCardInput): CardWithElement {
+    const firstScheduledAt = input.firstScheduledAt ?? null;
+    // A first-scheduled card is authored straight into active rotation; an un-due
+    // card stays at its requested stage (default card_draft) until it is graded.
+    const activate = firstScheduledAt != null && (input.stage ?? "card_draft") === "card_draft";
     const element = this.elementsRepo.createWithin(tx, {
       type: "card",
-      status: "pending",
-      stage: input.stage ?? "card_draft",
+      status: activate ? "active" : "pending",
+      stage: activate ? "active_card" : (input.stage ?? "card_draft"),
       priority: input.priority,
       title: input.title,
       parentId: input.parentId ?? null,
@@ -140,9 +159,15 @@ export class ReviewRepository {
         sourceLocationId: input.sourceLocationId ?? null,
       })
       .run();
-    // The review_states row is created but NOT due (dueAt null, fsrsState "new"):
-    // a card_draft card is authored, not yet in FSRS rotation (M7 first-schedules it).
-    tx.insert(reviewStates).values({ elementId: element.id, fsrsState: "new" }).run();
+    // The review_states row carries fsrsState "new"; its dueAt is the first schedule
+    // (so the card is reviewable now) or null (still authored-only). The element's
+    // dueAt mirrors review_states so any element-level read agrees with the deck.
+    tx.insert(reviewStates)
+      .values({ elementId: element.id, fsrsState: "new", dueAt: firstScheduledAt })
+      .run();
+    if (firstScheduledAt != null) {
+      tx.update(elements).set({ dueAt: firstScheduledAt }).where(eq(elements.id, element.id)).run();
+    }
 
     new OperationLogRepository(tx).append(tx, {
       opType: "create_card",
@@ -151,8 +176,26 @@ export class ReviewRepository {
         cardId: element.id,
         kind: input.kind,
         sourceLocationId: input.sourceLocationId ?? null,
+        firstScheduledAt,
       },
     });
+
+    // The card_draft → active_card transition (T036) — logged as update_element (no
+    // new op type), inside this same creation transaction so authoring + first
+    // schedule + activation are atomic (no durable state where a card is due but
+    // still a draft).
+    if (activate) {
+      new OperationLogRepository(tx).append(tx, {
+        opType: "update_element",
+        elementId: element.id,
+        payload: {
+          id: element.id,
+          patch: { stage: "active_card", status: "active" },
+          prev: { stage: "card_draft", status: "pending" },
+          firstScheduledAt,
+        },
+      });
+    }
 
     const card = tx.select().from(cards).where(eq(cards.elementId, element.id)).get();
     if (!card) throw new Error("ReviewRepository.createCard: card row missing after insert");
@@ -195,17 +238,40 @@ export class ReviewRepository {
    *
    * **Leech detection (T040):** after advancing the FSRS state, the new cumulative
    * `lapses` is consulted via the single leech rule (`@interleave/scheduler`'s
-   * {@link isLeech} — "warn at 4 lapses"). When the card CROSSES the threshold and
-   * is not already flagged, the durable `cards.is_leech` flag is set in the SAME
-   * transaction and the leech-flag change is logged as `update_element` (no new op
-   * type — the closed 15-op set is unchanged). Leech is flag + warn only — it never
-   * suspends or reschedules here (the two-scheduler split: FSRS owns the schedule,
-   * the leech flag is a quality attribute). Once flagged, the flag persists until a
-   * user un-leeches it after remediation.
+   * {@link isLeech} — "warn at 4 lapses"). The flag is set ONLY on a grade that
+   * ACTUALLY added a lapse (the running lapse count increased this review) and the
+   * card is at/over the threshold and is not already flagged — set in the SAME
+   * transaction, logged as `update_element` (no new op type — the closed 15-op set
+   * is unchanged). Gating on "added a lapse" (rather than "lapses >= 4 on any
+   * review") is load-bearing: a card manually UN-leeched after remediation
+   * ({@link setCardLeech}) keeps a high cumulative `lapses` (lapses never decrease),
+   * so re-flagging on every subsequent review — even a passing `good` — would
+   * silently defeat the un-leech. A remediated card only re-leeches if it fails
+   * AGAIN. Leech is flag + warn only — it never suspends or reschedules here (the
+   * two-scheduler split: FSRS owns the schedule, the leech flag is a quality
+   * attribute).
+   *
+   * **First-review activation (T036):** when `options.promoteFromDraft` is set and
+   * the card is still at stage `card_draft`, the `card_draft → active_card`
+   * (`status` → `active`) transition is applied in this SAME transaction (logged
+   * `update_element`), so the first review and the activation are atomic — there is
+   * no durable state where a review log exists but the card is still a draft.
    */
-  recordReview(cardElementId: ElementId, outcome: ReviewOutcome): ReviewLog {
+  recordReview(
+    cardElementId: ElementId,
+    outcome: ReviewOutcome,
+    options?: { readonly promoteFromDraft?: boolean },
+  ): ReviewLog {
     return this.db.transaction((tx) => {
       const id = newReviewLogId();
+      // The lapse count BEFORE this review — so we can tell whether THIS grade added
+      // a lapse (vs. a passing grade on an already-high-lapse, possibly-un-leeched card).
+      const prevLapses =
+        tx
+          .select({ lapses: reviewStates.lapses })
+          .from(reviewStates)
+          .where(eq(reviewStates.elementId, cardElementId))
+          .get()?.lapses ?? 0;
       tx.insert(reviewLogs)
         .values({
           id,
@@ -248,10 +314,14 @@ export class ReviewRepository {
         payload: { reviewLogId: id, rating: outcome.rating, nextDueAt: outcome.nextDueAt },
       });
 
-      // Leech detection (T040): if this grade pushed the card over the lapse
-      // threshold and it is not already flagged, set the durable leech flag + log
-      // `update_element` — all inside this same review transaction.
-      if (isLeech({ lapses: outcome.lapses })) {
+      // Leech detection (T040): only when THIS grade added a lapse (the running
+      // count increased) AND the card is at/over the threshold AND it is not already
+      // flagged — set the durable leech flag + log `update_element`, inside this same
+      // review transaction. Gating on "added a lapse" respects a manual un-leech: a
+      // remediated card with a high cumulative lapse count is NOT re-flagged on a
+      // passing grade, only if it fails again.
+      const addedLapse = outcome.lapses > prevLapses;
+      if (addedLapse && isLeech({ lapses: outcome.lapses })) {
         const cardRow = tx
           .select({ isLeech: cards.isLeech })
           .from(cards)
@@ -263,6 +333,31 @@ export class ReviewRepository {
             opType: "update_element",
             elementId: cardElementId,
             payload: { id: cardElementId, isLeech: true, lapses: outcome.lapses },
+          });
+        }
+      }
+
+      // First-review activation (T036): promote a still-draft card to active rotation
+      // in this same transaction (idempotent — only when actually a card_draft).
+      if (options?.promoteFromDraft) {
+        const el = tx
+          .select({ stage: elements.stage, status: elements.status })
+          .from(elements)
+          .where(eq(elements.id, cardElementId))
+          .get();
+        if (el && el.stage === "card_draft") {
+          tx.update(elements)
+            .set({ stage: "active_card", status: "active" })
+            .where(eq(elements.id, cardElementId))
+            .run();
+          new OperationLogRepository(tx).append(tx, {
+            opType: "update_element",
+            elementId: cardElementId,
+            payload: {
+              id: cardElementId,
+              patch: { stage: "active_card", status: "active" },
+              prev: { stage: el.stage, status: el.status },
+            },
           });
         }
       }

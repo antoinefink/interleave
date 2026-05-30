@@ -211,4 +211,50 @@ describe("ReviewRepository.setCardLeech (manual mark / un-leech)", () => {
     // Two manual toggles → two update_element ops (no new op type).
     expect(updates.length).toBeGreaterThanOrEqual(2);
   });
+
+  it("a remediated (un-leeched) card is NOT re-flagged on a passing grade", () => {
+    // Regression guard (minor): leech re-flagging is gated on a grade that ACTUALLY
+    // adds a lapse. A card that crossed the threshold and was manually un-leeched
+    // keeps its high cumulative `lapses` (lapses never decrease), but a passing
+    // `good` review must not silently re-leech it — only a fresh failure should.
+    const review = new ReviewRepository(handle.db);
+    const scheduler = new CardSchedulerService({ desiredRetention: 0.9, enableFuzz: false });
+    const cardId = seedCard();
+
+    // Drive it over the threshold (auto-leeched), then remediate (un-leech).
+    lapse(cardId, LEECH_LAPSE_THRESHOLD);
+    expect(review.isCardLeech(cardId)).toBe(true);
+    const lapsedState = review.findReviewState(cardId);
+    expect(lapsedState?.lapses).toBeGreaterThanOrEqual(LEECH_LAPSE_THRESHOLD);
+    review.setCardLeech(cardId, false);
+    expect(review.isCardLeech(cardId)).toBe(false);
+
+    // A passing `good` review (adds NO lapse) must leave it un-leeched.
+    const state = review.findReviewState(cardId);
+    if (!state) throw new Error("review state missing");
+    const lapsesBefore = state.lapses;
+    const out = scheduler.gradeCard(
+      state,
+      "good",
+      "2027-01-01T00:00:00.000Z" as IsoTimestamp,
+      4000,
+    );
+    review.recordReview(cardId, out);
+    const after = review.findReviewState(cardId);
+    expect(after?.lapses).toBe(lapsesBefore); // good added no lapse
+    expect(review.isCardLeech(cardId)).toBe(false); // and did NOT re-flag
+
+    // But failing AGAIN (a real new lapse over the threshold) re-flags it.
+    const failState = review.findReviewState(cardId);
+    if (!failState) throw new Error("review state missing");
+    const failOut = scheduler.gradeCard(
+      failState,
+      "again",
+      "2027-02-01T00:00:00.000Z" as IsoTimestamp,
+      4000,
+    );
+    review.recordReview(cardId, failOut);
+    expect(review.findReviewState(cardId)?.lapses).toBeGreaterThan(lapsesBefore);
+    expect(review.isCardLeech(cardId)).toBe(true);
+  });
 });

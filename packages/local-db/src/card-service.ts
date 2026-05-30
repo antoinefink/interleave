@@ -33,13 +33,17 @@
  * review-state / relation / tag rows. The op-log row is never appended in a
  * transaction separate from the mutation it records.
  *
- * **Two-scheduler split (NON-NEGOTIABLE):** M6 does NO FSRS math. The card's
- * `review_states` row is created (`fsrsState = "new"`) but left UN-DUE
- * (`dueAt = null`), so a `card_draft` card never appears in a due query before
- * activation. M7 (T036) owns the first FSRS schedule + the
- * `card_draft → active_card` transition. The originating extract is UNCHANGED —
- * it lives on as its own attention-scheduled element; converting it to a card
- * does NOT mutate it and does NOT give it a `review_states`/FSRS row.
+ * **Two-scheduler split (NON-NEGOTIABLE):** the card's `review_states` row is
+ * created with `fsrsState = "new"` and NO FSRS interval math is run here — the
+ * card is FIRST-SCHEDULED due now (`dueAt = asOf ?? now`) and activated
+ * (`card_draft → active_card`, `pending → active`) in the SAME creation
+ * transaction (T036), so an authored card immediately enters the due deck and
+ * can be reviewed. Setting `dueAt = now` for a brand-new card is not FSRS math (a
+ * new card is due now by definition); the first GRADE is where
+ * `CardSchedulerService.gradeCard` computes the real interval. The originating
+ * extract is UNCHANGED — it lives on as its own attention-scheduled element;
+ * converting it to a card does NOT mutate it and does NOT give it a
+ * `review_states`/FSRS row.
  *
  * The renderer never runs any of this; it reaches the service only through the
  * validated `cards.create` IPC command.
@@ -48,6 +52,7 @@
 import type {
   CardKind,
   ElementId,
+  IsoTimestamp,
   Priority,
   SiblingGroupId,
   SourceLocationId,
@@ -56,7 +61,7 @@ import { canonicalizeCloze, parseCloze } from "@interleave/core";
 import type { InterleaveDatabase } from "@interleave/db";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
-import { newBlockId, newSiblingGroupId } from "./ids";
+import { newBlockId, newSiblingGroupId, nowIso } from "./ids";
 import type { CardWithElement } from "./review-repository";
 import { ReviewRepository } from "./review-repository";
 import { SourceRepository } from "./source-repository";
@@ -88,6 +93,15 @@ export interface CreateCardFromExtractInput {
    * review never shows interfering siblings back-to-back (burying is M7).
    */
   readonly siblingGroupId?: SiblingGroupId;
+  /**
+   * The first FSRS schedule time (T036) — when this authored card becomes due.
+   * Defaults to "now" so a freshly created card immediately enters the due deck
+   * and can be reviewed (its first grade runs the real FSRS interval math). Passed
+   * explicitly only by tests that need a deterministic clock. Setting `dueAt = now`
+   * for a brand-new card is not FSRS math — the card stays `fsrsState: "new"` until
+   * graded; this just makes it reviewable rather than parked forever un-due.
+   */
+  readonly asOf?: IsoTimestamp;
 }
 
 /** The authored card element + its `cards` row + the sibling group it joined. */
@@ -166,9 +180,14 @@ export class CardService {
       (input.title ?? "").trim() ||
       titleFromBody(cloze !== undefined ? { ...input, cloze } : input);
 
+    // First FSRS schedule (T036): a freshly authored card becomes due NOW so it
+    // enters the due deck and is reviewable; its first grade runs the real FSRS math.
+    const firstScheduledAt = input.asOf ?? nowIso();
+
     const { element, card } = this.db.transaction((tx) => {
-      // 1–3) the card element + cards row + UN-DUE review_states row (create_element
-      //       + create_card), at stage card_draft. NO FSRS math here.
+      // 1–3) the card element + cards row + a DUE review_states row (create_element
+      //       + create_card), activated card_draft → active_card (update_element).
+      //       fsrsState stays "new"; the first grade is where the interval math runs.
       const created = this.review.createCardWithin(tx, {
         kind: input.kind,
         title,
@@ -180,6 +199,7 @@ export class CardService {
         parentId,
         sourceId,
         sourceLocationId,
+        firstScheduledAt,
       });
 
       // 4) inherit the extract's tags onto the card (add_tag).

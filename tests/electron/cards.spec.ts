@@ -10,11 +10,13 @@
  *   (a) CONVERT: "Convert to card" opens the card builder (the third split3
  *       column) on the Q&A tab — it does NOT navigate away;
  *   (b) AUTHOR: filling Front + Back and pressing "Create Q&A card" persists a
- *       `card` element at stage `card_draft` with kind `qa`, via `cards.create`;
+ *       `card` element first-scheduled into active rotation (stage `active_card`)
+ *       with kind `qa`, via `cards.create`;
  *   (c) LINEAGE: the new card appears under the extract in the lineage tree, with
  *       `parentId` = the extract and `sourceId` = the source root, an inherited
- *       `sourceLocationId` anchor, and an UN-DUE `review_states` row (M6 does NO
- *       FSRS math — the card is authored, not yet scheduled);
+ *       `sourceLocationId` anchor, and a first-scheduled (DUE) `review_states` row
+ *       (T036 first-schedules the card so it enters the deck; the first GRADE runs
+ *       the interval math — fsrsState stays "new" until then);
  *   (d) RESTART: relaunching the Electron app against the same data dir still
  *       shows the card, its kind/prompt/answer, and its lineage — it survives an
  *       app restart (the DoD bar).
@@ -186,18 +188,19 @@ test("authoring a Q&A card from an extract persists it with lineage and survives
   const lin = await lineage(page, extractId);
   expect((lin?.nodes ?? []).some((n) => n.id === cardId)).toBe(true);
 
-  // The persisted card: card_draft, parented on the extract, rooted at the source,
-  // with an UN-DUE review_states row (NO FSRS math in M6).
+  // The persisted card: first-scheduled into active rotation (active_card),
+  // parented on the extract, rooted at the source, with a DUE review_states row
+  // (first FSRS schedule — but fsrsState stays "new" until the first grade).
   const card = await inspect(page, cardId);
   expect(card?.element.type).toBe("card");
-  expect(card?.element.stage).toBe("card_draft");
+  expect(card?.element.stage).toBe("active_card");
   expect(card?.parent?.id).toBe(extractId);
   expect(card?.source?.id).toBe(sourceId);
   expect(card?.scheduler.kind).toBe("fsrs");
-  // review_states exists but is un-due (authored, not scheduled).
-  expect(card?.review?.dueAt ?? null).toBeNull();
+  // review_states exists and is first-scheduled DUE (so the card enters the deck).
+  expect(card?.review?.dueAt ?? null).not.toBeNull();
   expect(card?.review?.fsrsState).toBe("new");
-  expect(card?.element.dueAt ?? null).toBeNull();
+  expect(card?.element.dueAt ?? null).not.toBeNull();
 
   // (d) RESTART — relaunch against the same data dir; the card + lineage survive.
   await app.close();
@@ -207,10 +210,10 @@ test("authoring a Q&A card from an extract persists it with lineage and survives
 
   const afterRestart = await inspect(page, cardId);
   expect(afterRestart?.element.type).toBe("card");
-  expect(afterRestart?.element.stage).toBe("card_draft");
+  expect(afterRestart?.element.stage).toBe("active_card");
   expect(afterRestart?.parent?.id).toBe(extractId);
   expect(afterRestart?.source?.id).toBe(sourceId);
-  expect(afterRestart?.review?.dueAt ?? null).toBeNull();
+  expect(afterRestart?.review?.dueAt ?? null).not.toBeNull();
 
   // The card's prompt/answer/kind round-trip through the card read path.
   const cardRow = await page.evaluate(async (id) => {
@@ -291,7 +294,7 @@ test("authoring a multi-cloze card from an extract persists canonical text + clo
     const { data } = await api.inspector.get({ id });
     return data?.element ?? null;
   }, clozeCardId);
-  expect(clozeRow?.stage).toBe("card_draft");
+  expect(clozeRow?.stage).toBe("active_card");
   const marks = await clozeMarks(page, clozeCardId);
   expect(marks.length).toBe(2);
   expect(new Set(marks.map((m) => (m.attrs as { clozeIndex: number }).clozeIndex))).toEqual(
@@ -306,7 +309,7 @@ test("authoring a multi-cloze card from an extract persists canonical text + clo
 
   const afterRestart = await inspect(page, clozeCardId);
   expect(afterRestart?.element.type).toBe("card");
-  expect(afterRestart?.element.stage).toBe("card_draft");
+  expect(afterRestart?.element.stage).toBe("active_card");
   expect(afterRestart?.parent?.id).toBe(clozeExtractId);
   expect(afterRestart?.source?.id).toBe(srcId);
 

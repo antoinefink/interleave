@@ -1162,13 +1162,14 @@ export class DbService {
       throw new Error(`DbService.gradeCard: review state for card ${cardElementId} missing`);
     }
     const outcome: ReviewOutcome = this.cardScheduler.gradeCard(state, rating, asOf, responseMs);
-    const reviewLog = this.repos.review.recordReview(cardElementId, outcome);
-    // First real review promotes a parked draft card into active rotation. This is
-    // a stage move (`card_draft → active_card`) — never an FSRS-state change, and
-    // never applied to a non-`card_draft` card (mature cards keep their stage).
-    if (card.element.stage === "card_draft") {
-      this.repos.elements.update(cardElementId, { stage: "active_card", status: "active" });
-    }
+    // First real review promotes a parked draft card into active rotation
+    // (`card_draft → active_card`) in the SAME transaction as the review log, so the
+    // first review is atomic (no durable review log on a card still flagged draft).
+    // Normally a card is already `active_card` (it is first-scheduled + activated at
+    // creation), but this stays self-healing for any legacy un-activated draft.
+    const reviewLog = this.repos.review.recordReview(cardElementId, outcome, {
+      promoteFromDraft: card.element.stage === "card_draft",
+    });
     const reviewState = this.repos.review.findReviewState(cardElementId);
     if (!reviewState) {
       throw new Error(`DbService.gradeCard: review state vanished after recordReview`);

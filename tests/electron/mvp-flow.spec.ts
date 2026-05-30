@@ -366,16 +366,18 @@ test("5. convert-to-card: a Q&A card and a cloze card are authored from the extr
 
   // Classify each card (qa vs cloze) by its cloze-mark count — a READ-ONLY
   // discriminator (the cloze card holds 2 cloze marks; the Q&A card holds 0) — and
-  // assert each card's lineage parent/source + un-due FSRS state.
+  // assert each card's lineage parent/source + first-scheduled FSRS state.
   for (const id of cardIds) {
     const data = await inspect(page, id);
     expect(data?.element.type).toBe("card");
-    expect(data?.element.stage).toBe("card_draft");
+    // A freshly authored card is first-scheduled into active rotation (T036), so it
+    // enters the deck and is reviewable — stage active_card, with a real dueAt.
+    expect(data?.element.stage).toBe("active_card");
     expect(data?.parent?.id).toBe(extractId);
     expect(data?.source?.id).toBe(sourceId);
     expect(data?.scheduler.kind).toBe("fsrs");
-    // A freshly authored card is un-due (no FSRS math until first review).
-    expect(data?.review?.dueAt ?? null).toBeNull();
+    // First-scheduled due (no interval math yet — fsrsState stays "new" until graded).
+    expect(data?.review?.dueAt ?? null).not.toBeNull();
     const markCount = await page.evaluate(async (cardId) => {
       const api = window.appApi as unknown as {
         documents: {
@@ -461,10 +463,21 @@ test("6. review + reschedule: grading writes a durable log and advances the due 
 
   const afterGrade = await inspect(page, qaCardId);
   expect(afterGrade?.review?.logCount ?? 0).toBe(1);
-  expect(afterGrade?.element.stage).toBe("active_card"); // first review promotes the draft
+  expect(afterGrade?.element.stage).toBe("active_card"); // active rotation (first-scheduled at creation)
 
-  // Now drive the `/review` UI at a far-future clock so the card reads as due. The
-  // screen reveals the answer + shows the four interval previews, and a UI grade
+  // The cloze sibling card is ALSO first-scheduled (both authored cards enter the
+  // deck), so suspend it through the bridge FIRST — it leaves the deck entirely,
+  // leaving the Q&A card as the sole due card so the UI drive below is deterministic
+  // (the session completes after the single UI grade, as the review surface intends).
+  await page.evaluate(async (cardId) => {
+    const api = window.appApi as unknown as {
+      cards: { suspend(req: { cardId: string }): Promise<unknown> };
+    };
+    await api.cards.suspend({ cardId });
+  }, clozeCardId);
+
+  // Now drive the `/review` UI at a far-future clock so the Q&A card reads as due.
+  // The screen reveals the answer + shows the four interval previews, and a UI grade
   // writes ANOTHER durable log + reschedules — the real review surface, mouse-free.
   await page.goto(`${baseUrl}/review?asOf=${encodeURIComponent(AS_OF_DUE)}`);
   await page.waitForLoadState("domcontentloaded");
@@ -483,9 +496,10 @@ test("6. review + reschedule: grading writes a durable log and advances the due 
 
   // Grade "good" through the UI button → reschedule + a second durable log.
   await page.getByTestId("review-grade-good").click();
-  // The Q&A card was the only due card → the session completes.
+  // The Q&A card was the only remaining due card → the session completes.
   await expect(page.getByTestId("review-summary")).toBeVisible();
 
+  // The Q&A card got its SECOND durable log through the UI grade + rescheduled forward.
   const afterUi = await inspect(page, qaCardId);
   expect(afterUi?.review?.logCount ?? 0).toBe(2);
   expect(afterUi?.review?.reps ?? 0).toBe(2);

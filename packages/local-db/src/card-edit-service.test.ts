@@ -171,6 +171,9 @@ describe("CardEditService.flag", () => {
     const elements = new ElementRepository(handle.db);
 
     expect(service.isFlagged(cardId)).toBe(false);
+    // Baseline: the card was first-scheduled + activated at creation (T036), which
+    // itself logs an update_element. Measure the flag deltas against that baseline.
+    const updatesBefore = opCount(handle, cardId, "update_element");
 
     const flagged = service.flag(cardId, true, "ambiguous pronoun");
     expect(flagged.element.status).not.toBe("deleted");
@@ -183,8 +186,9 @@ describe("CardEditService.flag", () => {
     service.flag(cardId, false);
     expect(service.isFlagged(cardId)).toBe(false);
 
-    // Only update_element ops were used (no new op type for a flag).
-    expect(opCount(handle, cardId, "update_element")).toBe(2);
+    // Only update_element ops were used for the flag (no new op type): the two
+    // toggles add exactly two update_element ops over the creation baseline.
+    expect(opCount(handle, cardId, "update_element")).toBe(updatesBefore + 2);
   });
 
   it("leaves the body + lineage + FSRS state untouched", () => {

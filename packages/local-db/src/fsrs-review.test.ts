@@ -77,11 +77,12 @@ describe("FSRS grade path: CardSchedulerService → ReviewRepository.recordRevie
     const review = new ReviewRepository(handle.db);
     const scheduler = new CardSchedulerService({ desiredRetention: 0.9, enableFuzz: false });
 
-    // A newly authored card is parked un-due (`new`, dueAt null) — M6 did no FSRS.
+    // A newly authored card is first-scheduled DUE (so it enters the deck) but its
+    // FSRS memory state is still `new` with no reps — no interval math has run yet.
     const before = review.findReviewState(cardId);
     expect(before).not.toBeNull();
     expect(before?.fsrsState).toBe("new");
-    expect(before?.dueAt).toBeNull();
+    expect(before?.dueAt).not.toBeNull();
     expect(before?.reps).toBe(0);
 
     if (!before) throw new Error("review state missing");

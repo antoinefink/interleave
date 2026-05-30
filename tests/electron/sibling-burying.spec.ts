@@ -101,7 +101,7 @@ async function createCloze(
   );
 }
 
-/** Grade a card once (Good) at `asOf` so it leaves `card_draft` and becomes due. */
+/** Grade a card once (Good) at `asOf` to set a deterministic future due date. */
 async function gradeOnce(page: Page, cardId: string, asOf: string): Promise<void> {
   await page.evaluate(
     async ({ id, clock }) => {
@@ -197,7 +197,9 @@ test("with burying ON, two siblings from one group are never shown back-to-back"
   expect(sib1.siblingGroupId).toBe(sib2.siblingGroupId);
   expect(other.siblingGroupId).not.toBe(sib1.siblingGroupId);
 
-  // Make all three due (each card is created un-due; one grade schedules it).
+  // Give all three a deterministic future due date: a card is first-scheduled due
+  // at creation, and one Good grade at BASE re-schedules it to a fixed clock so the
+  // walk at REVIEW_AS_OF is reproducible regardless of wall-clock creation time.
   for (const id of [sib1.id, sib2.id, other.id]) await gradeOnce(page, id, BASE);
 
   // Default setting is burySiblings = true.
