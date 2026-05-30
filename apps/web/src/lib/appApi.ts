@@ -1293,6 +1293,24 @@ export interface BalanceGetResult {
   readonly severity: BalanceSeverity;
 }
 
+// ---------------------------------------------------------------------------
+// backups.*  (T047 — Electron-managed backup/export of the canonical store)
+// ---------------------------------------------------------------------------
+
+/** What `backups.create()` returns — only display-safe metadata, no raw fs access. */
+export interface BackupsCreateResult {
+  /** Absolute path to the produced `.zip` archive (for display only). */
+  readonly path: string;
+  /** The filesystem-safe timestamp the backup is named with. */
+  readonly timestamp: string;
+  /** Total size of the `.zip` archive in bytes. */
+  readonly sizeBytes: number;
+  /** Number of files captured (`app.sqlite` + every asset file). */
+  readonly fileCount: number;
+  /** The captured schema version (the latest applied Drizzle migration tag). */
+  readonly schemaVersion: string;
+}
+
 /** The exact shape the preload exposes as `window.appApi`. */
 export interface AppApi {
   readonly app: {
@@ -1395,6 +1413,9 @@ export interface AppApi {
   };
   readonly balance: {
     get(request?: BalanceGetRequest): Promise<BalanceGetResult>;
+  };
+  readonly backups: {
+    create(): Promise<BackupsCreateResult>;
   };
 }
 
@@ -1706,5 +1727,15 @@ export const appApi = {
    */
   getBalance(request?: BalanceGetRequest): Promise<BalanceGetResult> {
     return requireAppApi().balance.get(request);
+  },
+  /**
+   * Export the entire local knowledge base (T047) — the consistently checkpointed
+   * `app.sqlite` + the asset vault + a versioned, hashed `manifest.json` — into a
+   * deterministic `backups/<timestamp>/` directory + a portable `.zip`. Runs
+   * entirely in the Electron main process; returns only the final `.zip` path +
+   * size + timestamp for display (the renderer never touches the filesystem).
+   */
+  createBackup(): Promise<BackupsCreateResult> {
+    return requireAppApi().backups.create();
   },
 } as const;

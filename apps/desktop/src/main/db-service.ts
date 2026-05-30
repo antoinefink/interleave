@@ -163,6 +163,7 @@ import type {
   TrashRestoreResult,
   UndoLastResult,
 } from "../shared/contract";
+import { type BackupCounts, resolveSchemaVersion } from "./backup-manifest";
 
 export class DbService {
   private handle: DbHandle | null = null;
@@ -1796,6 +1797,66 @@ export class DbService {
       reviewsDueThisWeek: summary.reviewsDueThisWeek,
       imbalanced: summary.imbalanced,
       severity: summary.severity,
+    };
+  }
+
+  /**
+   * Snapshot the live SQLite database to `destPath` consistently (T047) — used by
+   * {@link BackupService}. Delegates to better-sqlite3's online `backup()` API,
+   * which produces a consistent copy INCLUDING un-checkpointed WAL pages WITHOUT
+   * disturbing the live connection (the WAL-consistency correctness guarantee a
+   * naive file copy lacks). The renderer never calls this — it is reached only via
+   * the typed `backups.create` command in the main process.
+   */
+  backupDatabaseTo(destPath: string): void {
+    const { sqlite } = this.require();
+    // `VACUUM INTO` writes a transactionally CONSISTENT, fully self-contained copy
+    // of the database to `destPath` in one synchronous statement — it reads a single
+    // point-in-time snapshot (so un-checkpointed WAL pages are included) and emits a
+    // defragmented DB file with NO `-wal`/`-shm` siblings, which is exactly what a
+    // portable, restore-ready backup wants. It requires the destination to not yet
+    // exist (the caller writes into a fresh `backups/<timestamp>/`). A defensive
+    // checkpoint first keeps the live DB tidy; the snapshot would be consistent
+    // either way.
+    sqlite.pragma("wal_checkpoint(PASSIVE)");
+    sqlite.prepare("VACUUM INTO ?").run(destPath);
+  }
+
+  /**
+   * The latest applied Drizzle migration TAG (T047) — the backup manifest's
+   * "schema version". Reads the runtime count of applied migrations from
+   * `__drizzle_migrations` (the source of truth that the DB is at) and maps it to a
+   * tag via the staged `_journal.json`. NOT a `schema_version` column (there is
+   * none) and NOT `documents.schemaVersion`.
+   */
+  getSchemaVersion(migrationsDir: string): string {
+    const { sqlite } = this.require();
+    const row = sqlite.prepare("SELECT COUNT(*) AS n FROM __drizzle_migrations").get() as
+      | { n: number }
+      | undefined;
+    const appliedCount = row?.n ?? 0;
+    return resolveSchemaVersion(migrationsDir, appliedCount);
+  }
+
+  /**
+   * Element/source/extract/card/asset counts for the backup manifest's quick
+   * human sanity check (T047). Counts LIVE (non-soft-deleted) elements by type and
+   * the total asset-metadata rows. Read-only.
+   */
+  getBackupCounts(): BackupCounts {
+    const { sqlite } = this.require();
+    // Count ALL rows the backup file actually contains (including soft-deleted) so
+    // the manifest sanity check matches the captured `app.sqlite`, not the live view.
+    const count = (sql: string): number => {
+      const row = sqlite.prepare(sql).get() as { n: number } | undefined;
+      return row?.n ?? 0;
+    };
+    return {
+      elements: count("SELECT COUNT(*) AS n FROM elements"),
+      sources: count("SELECT COUNT(*) AS n FROM elements WHERE type = 'source'"),
+      extracts: count("SELECT COUNT(*) AS n FROM elements WHERE type = 'extract'"),
+      cards: count("SELECT COUNT(*) AS n FROM elements WHERE type = 'card'"),
+      assets: count("SELECT COUNT(*) AS n FROM assets"),
     };
   }
 

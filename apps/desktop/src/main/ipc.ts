@@ -11,6 +11,7 @@
 import { app, ipcMain } from "electron";
 import {
   AnalyticsGetRequestSchema,
+  BackupsCreateRequestSchema,
   BalanceGetRequestSchema,
   CardsCreateRequestSchema,
   CardsDeleteRequestSchema,
@@ -68,13 +69,25 @@ import {
   TrashRestoreRequestSchema,
   UndoLastRequestSchema,
 } from "../shared/contract";
+import { BackupService } from "./backup-service";
 import type { DbService } from "./db-service";
+import type { AppPaths } from "./paths";
+
+/** Extra main-process context the backup handler (T047) needs (absolute paths). */
+export interface IpcHandlerContext {
+  /** The resolved app-data paths (`dbPath`/`assetsDir`/`backupsDir`). */
+  readonly paths: AppPaths;
+  /** The Drizzle migrations folder (its journal maps idx → schema-version tag). */
+  readonly migrationsDir: string;
+}
 
 /**
  * Register all IPC handlers. Call once after the DB service is open. Returns a
- * disposer that removes the handlers (used on shutdown / in tests).
+ * disposer that removes the handlers (used on shutdown / in tests). `context`
+ * supplies the absolute paths the backup command needs; it is optional so the
+ * contract/round-trip tests can register the non-filesystem handlers alone.
  */
-export function registerIpcHandlers(dbService: DbService): () => void {
+export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerContext): () => void {
   ipcMain.handle(IPC_CHANNELS.appHealth, (): HealthResult => {
     // No payload to validate (void), but keep the schema call for symmetry.
     HealthRequestSchema.parse(undefined);
@@ -356,6 +369,31 @@ export function registerIpcHandlers(dbService: DbService): () => void {
   ipcMain.handle(IPC_CHANNELS.balanceGet, (_event, rawRequest: unknown) => {
     const request = BalanceGetRequestSchema.parse(rawRequest);
     return dbService.getBalance(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.backupsCreate, async () => {
+    // No payload to validate (void); keep the schema call for symmetry.
+    BackupsCreateRequestSchema.parse(undefined);
+    if (!context) {
+      throw new Error("backups.create: handler registered without filesystem context");
+    }
+    // The backup runs entirely main-side: it snapshots `app.sqlite`, copies the
+    // asset vault, writes the hashed manifest, and zips — the renderer only gets
+    // the final path string back (no raw filesystem access crosses IPC).
+    const backupService = new BackupService({
+      dbService,
+      paths: context.paths,
+      migrationsDir: context.migrationsDir,
+      appVersion: app.getVersion(),
+    });
+    const result = await backupService.createBackup();
+    return {
+      path: result.path,
+      timestamp: result.timestamp,
+      sizeBytes: result.sizeBytes,
+      fileCount: result.fileCount,
+      schemaVersion: result.schemaVersion,
+    };
   });
 
   return () => {

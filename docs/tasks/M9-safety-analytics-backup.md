@@ -690,6 +690,29 @@ deferred** to the server/sync phase (M11/T055). The renderer triggers it through
   straightforward recursive copy + zip is fine; note that incremental/dedup backup is a later
   scale concern.
 
+### Restore (deferred to T055)
+
+Restore is **NOT** built in T047 — but the format produced here guarantees it is mechanical. A
+future one-way restore-onto-a-fresh-install (M11/T055) consumes a T047 archive as follows (the
+contract is also documented in the header comment of
+`apps/desktop/src/main/backup-service.ts`):
+
+1. **Unzip** the `.zip` and read `manifest.json`.
+2. **Verify `formatVersion`** is understood — reject an unknown/newer format (today: `1`).
+3. **Verify `schemaVersion`** is **not newer** than the installed Drizzle migration tag — reject a
+   backup from a newer app (the installed schema cannot represent it). A backup **older** than the
+   installed schema is fine: migrations run forward after the copy.
+4. **Verify integrity** — every entry in `files[]` exists and its on-disk SHA-256 matches the
+   recorded `sha256` (reject a corrupt/tampered archive **before** touching any data).
+5. **Copy `app.sqlite`** into a fresh app data directory's `dbPath` (the snapshot is a clean,
+   WAL-free `VACUUM INTO` file — no `-wal`/`-shm` siblings to carry).
+6. **Copy `assets/`** (rooted at `assetVaultRoot`, i.e. `"assets"`) into the vault.
+7. **Open the DB and run migrations forward** if the backup's schema is older than the installed one.
+
+The manifest's `counts` (element/source/extract/card/asset) give a quick human sanity check before
+and after a restore. Encrypted archives (M19/T098) would add an `encrypted: true` manifest flag at
+that time; T047 ships plaintext.
+
 ---
 
 ## Exit criteria for M9

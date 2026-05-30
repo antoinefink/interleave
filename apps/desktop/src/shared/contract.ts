@@ -2110,6 +2110,41 @@ export interface BalanceGetResult {
 }
 
 // ---------------------------------------------------------------------------
+// backups.create()  (T047 — Electron-managed backup of the canonical store)
+// ---------------------------------------------------------------------------
+
+/**
+ * The backup surface (T047). The renderer triggers a backup of the ENTIRE local
+ * knowledge base — the canonical native SQLite database (`app.sqlite`,
+ * consistently checkpointed via better-sqlite3's online `db.backup()`) plus the
+ * filesystem asset vault (`assets/`) — and the MAIN process packages it into a
+ * versioned, hashed, deterministic ZIP under `backups/<timestamp>/` + a sibling
+ * `<timestamp>.zip`. The backup is a COPY of the canonical store, never a JSON
+ * re-serialization. The `manifest.json` is the restore contract (format version,
+ * schema-migration tag, app version, ISO timestamp, per-file SHA-256 integrity
+ * hashes, element/asset counts), so a future restore (deferred to T055) can verify
+ * the archive and reject one that is too new or corrupt. The renderer never sees
+ * an absolute filesystem path or touches the vault — `backups.create` returns only
+ * the final `.zip` path string for display, and there is no generic `db.query`.
+ */
+
+/** `backups.create()` takes no arguments. */
+export const BackupsCreateRequestSchema = z.void();
+
+export interface BackupsCreateResult {
+  /** Absolute path to the produced `.zip` archive (for display only). */
+  readonly path: string;
+  /** The filesystem-safe timestamp used for the backup directory/archive name. */
+  readonly timestamp: string;
+  /** Total size of the `.zip` archive in bytes. */
+  readonly sizeBytes: number;
+  /** Number of files captured in the archive (`app.sqlite` + every asset). */
+  readonly fileCount: number;
+  /** The schema version captured — the latest applied Drizzle migration tag. */
+  readonly schemaVersion: string;
+}
+
+// ---------------------------------------------------------------------------
 // The typed surface the renderer sees as `window.appApi`.
 // ---------------------------------------------------------------------------
 
@@ -2352,5 +2387,15 @@ export interface AppApi {
      * Read-only.
      */
     get(request?: BalanceGetRequest): Promise<BalanceGetResult>;
+  };
+  readonly backups: {
+    /**
+     * Export the entire local knowledge base (T047) — the consistently
+     * checkpointed `app.sqlite` + the filesystem asset vault + a versioned, hashed
+     * `manifest.json` — into a deterministic `backups/<timestamp>/` directory and a
+     * portable `.zip`. Runs entirely in the Electron main process; returns only the
+     * final `.zip` path for display (no raw filesystem access reaches the renderer).
+     */
+    create(): Promise<BackupsCreateResult>;
   };
 }

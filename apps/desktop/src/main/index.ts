@@ -45,8 +45,9 @@ function bootstrap(): void {
   // 2) Open SQLite (pragmas applied in @interleave/db) + run migrations. The
   //    Electron-ABI native binding is loaded explicitly so the shared Node-ABI
   //    package binary keeps serving tests/scripts.
+  const migrationsDir = resolveMigrationsDir(distDir);
   dbService.open(paths.dbPath, {
-    migrationsDir: resolveMigrationsDir(distDir),
+    migrationsDir,
     nativeBinding: resolveNativeBinding(distDir),
   });
 
@@ -63,8 +64,9 @@ function bootstrap(): void {
     }
   }
 
-  // 3) Validated IPC surface.
-  disposeIpc = registerIpcHandlers(dbService);
+  // 3) Validated IPC surface. The backup command (T047) needs the absolute app-data
+  //    paths + the migrations folder (its journal maps to the schema-version tag).
+  disposeIpc = registerIpcHandlers(dbService, { paths, migrationsDir });
 
   // 4) In production, serve the built renderer over the app:// protocol.
   if (!devServerUrl) {

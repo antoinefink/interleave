@@ -64,6 +64,7 @@ export const IPC_CHANNELS = {
   undoLast: "undo:last",
   analyticsGet: "analytics:get",
   balanceGet: "balance:get",
+  backupsCreate: "backups:create",
 } as const;
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

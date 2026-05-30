@@ -17,8 +17,27 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../components/Icon";
-import { type AppSettings, appApi, isDesktop, type ThemePreference } from "../lib/appApi";
+import {
+  type AppSettings,
+  appApi,
+  type BackupsCreateResult,
+  isDesktop,
+  type ThemePreference,
+} from "../lib/appApi";
 import { applyTheme } from "../theme";
+
+/** Human-readable byte size for the backup toast. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(1)} ${units[unit]}`;
+}
 
 /** Local fallback defaults mirroring `@interleave/core`'s DEFAULT_APP_SETTINGS. */
 const FALLBACK_SETTINGS: AppSettings = {
@@ -159,6 +178,28 @@ export function Settings() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [backingUp, setBackingUp] = useState(false);
+  const [backup, setBackup] = useState<BackupsCreateResult | null>(null);
+  const [backupError, setBackupError] = useState<string | null>(null);
+
+  /**
+   * Trigger a full backup through the typed bridge (the main process does ALL the
+   * work — snapshot `app.sqlite`, copy the vault, write the hashed manifest, zip).
+   * The renderer only awaits the result + shows the path/size; it never touches
+   * the filesystem.
+   */
+  const runBackup = useCallback(async () => {
+    setBackingUp(true);
+    setBackupError(null);
+    try {
+      const result = await appApi.createBackup();
+      setBackup(result);
+    } catch (e) {
+      setBackupError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBackingUp(false);
+    }
+  }, []);
 
   // Load the persisted settings from SQLite through the bridge on mount.
   useEffect(() => {
@@ -383,6 +424,46 @@ export function Settings() {
             options={KEYBOARD_LAYOUTS}
           />
         </SettingRow>
+      </SectionPanel>
+
+      <SectionPanel title="Data & backup">
+        <SettingRow
+          label="Back up now"
+          hint="Export the database + asset vault to a portable, hashed ZIP under backups/."
+        >
+          <button
+            type="button"
+            data-testid="settings-backup-now"
+            disabled={backingUp}
+            onClick={() => void runBackup()}
+            className={
+              backingUp
+                ? "inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 font-medium text-sm text-text-3"
+                : "inline-flex items-center gap-2 rounded-md border border-accent-soft-bd bg-accent-soft px-3 py-1.5 font-medium text-accent-text text-sm hover:bg-accent-soft/80"
+            }
+          >
+            <Icon name="download" size={14} />
+            {backingUp ? "Backing up…" : "Back up now"}
+          </button>
+        </SettingRow>
+        {backup ? (
+          <SettingRow label="Last backup" hint={backup.path}>
+            <span
+              data-testid="settings-backup-result"
+              className="inline-flex items-center gap-1.5 rounded-md bg-ok-soft px-2.5 py-1 text-ok text-xs"
+            >
+              <Icon name="check" size={13} />
+              {formatBytes(backup.sizeBytes)} · {backup.fileCount} files · {backup.schemaVersion}
+            </span>
+          </SettingRow>
+        ) : null}
+        {backupError ? (
+          <SettingRow label="Backup failed" hint="See the error below.">
+            <span data-testid="settings-backup-error" className="text-danger text-sm">
+              {backupError}
+            </span>
+          </SettingRow>
+        ) : null}
       </SectionPanel>
 
       {error ? (

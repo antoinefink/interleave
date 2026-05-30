@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AnalyticsGetRequestSchema,
+  BackupsCreateRequestSchema,
   BalanceGetRequestSchema,
   CardsCreateRequestSchema,
   CardsDeleteRequestSchema,
@@ -113,6 +114,7 @@ describe("IPC channels", () => {
         "undo:last",
         "analytics:get",
         "balance:get",
+        "backups:create",
       ].sort(),
     );
     expect(Object.values(IPC_CHANNELS)).not.toContain("db:query");
@@ -1052,5 +1054,12 @@ describe("BalanceGetRequestSchema (T046)", () => {
     expect(() => BalanceGetRequestSchema.parse({ windowDays: 0 })).toThrow();
     expect(() => BalanceGetRequestSchema.parse({ windowDays: 400 })).toThrow();
     expect(() => BalanceGetRequestSchema.parse({ asOf: "" })).toThrow();
+  });
+});
+
+describe("BackupsCreateRequestSchema (T047)", () => {
+  it("takes no arguments (void request)", () => {
+    expect(BackupsCreateRequestSchema.parse(undefined)).toBeUndefined();
+    expect(() => BackupsCreateRequestSchema.parse({ anything: true })).toThrow();
   });
 });

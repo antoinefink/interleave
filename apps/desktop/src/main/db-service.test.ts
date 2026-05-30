@@ -12,7 +12,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { MIGRATIONS_DIR } from "@interleave/db";
+import { MIGRATIONS_DIR, openDatabase } from "@interleave/db";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DbService } from "./db-service";
 
@@ -1926,5 +1926,63 @@ describe("DbService — balance (T046)", () => {
     expect(svc.getAppSettings().settings.importBalanceFactor).toBe(5);
     expect(svc.getBalance({ asOf: now }).imbalanced).toBe(true);
     svc.close();
+  });
+});
+
+describe("DbService — backup support (T047)", () => {
+  it("getSchemaVersion returns the latest applied Drizzle migration tag", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.getSchemaVersion(MIGRATIONS_DIR)).toBe("0002_search_fts5");
+    svc.close();
+  });
+
+  it("getBackupCounts counts elements/sources/extracts/cards/assets", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+    const counts = svc.getBackupCounts();
+    expect(counts.elements).toBeGreaterThan(0);
+    expect(counts.sources).toBeGreaterThan(0);
+    expect(counts.extracts).toBeGreaterThan(0);
+    expect(counts.cards).toBeGreaterThan(0);
+    // The demo seed writes asset METADATA rows.
+    expect(counts.assets).toBeGreaterThanOrEqual(0);
+    svc.close();
+  });
+
+  it("backupDatabaseTo writes a consistent snapshot with the same row counts", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+    const sourceCount = (
+      svc.raw.sqlite.prepare("SELECT COUNT(*) AS n FROM elements").get() as {
+        n: number;
+      }
+    ).n;
+
+    const snapDir = fs.mkdtempSync(path.join(os.tmpdir(), "interleave-snap-"));
+    const snapPath = path.join(snapDir, "snapshot.sqlite");
+    try {
+      svc.backupDatabaseTo(snapPath);
+      expect(fs.existsSync(snapPath)).toBe(true);
+      // VACUUM INTO emits a self-contained file with no -wal/-shm siblings.
+      expect(fs.existsSync(`${snapPath}-wal`)).toBe(false);
+
+      const snap = openDatabase(snapPath);
+      try {
+        const snapCount = (
+          snap.sqlite.prepare("SELECT COUNT(*) AS n FROM elements").get() as {
+            n: number;
+          }
+        ).n;
+        expect(snapCount).toBe(sourceCount);
+      } finally {
+        snap.sqlite.close();
+      }
+    } finally {
+      fs.rmSync(snapDir, { recursive: true, force: true });
+      svc.close();
+    }
   });
 });

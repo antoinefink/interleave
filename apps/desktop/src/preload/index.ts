@@ -189,6 +189,9 @@ const appApi: AppApi = {
   balance: {
     get: (request?: BalanceGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.balanceGet, request),
   },
+  backups: {
+    create: () => ipcRenderer.invoke(IPC_CHANNELS.backupsCreate),
+  },
 };
 
 contextBridge.exposeInMainWorld("appApi", appApi);
