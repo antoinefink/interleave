@@ -168,10 +168,17 @@ export class UndoService {
    * carries NO object `prev` PRE-IMAGE, so re-applying it would mutate nothing —
    * inverting it must NOT be reported as a success (the bug this guards). Every other
    * undoable op type carries the state it needs in its payload, so it is invertible.
+   *
+   * The first-grade draft-card PROMOTE (`reviewPromote: true`) is a special case: it
+   * DOES carry a real `prev` (for audit/sync), but it rides WITH a review whose
+   * `add_review_log` is itself non-invertible. Demoting the card to `card_draft`
+   * while the durable review_log row + advanced FSRS due date persist would be an
+   * incoherent PARTIAL undo, so it is treated as non-invertible here too.
    */
   private isInvertible(op: ParsedOp): boolean {
     if (!op.elementId) return false;
     if (op.opType === "update_element") {
+      if (op.payload.reviewPromote === true) return false;
       const prev = op.payload.prev;
       return typeof prev === "object" && prev !== null && Object.keys(prev).length > 0;
     }
@@ -215,6 +222,9 @@ export class UndoService {
         return `Moved "${deleted.title}" to trash`;
       }
       case "update_element": {
+        // The first-grade draft-card promote rides with a (non-invertible) review —
+        // skip it so ⌘Z never partially undoes a review (see {@link isInvertible}).
+        if (op.payload.reviewPromote === true) return null;
         const prev = op.payload.prev;
         // A marker op (leech / flag / body edit) carries no object pre-image — there
         // is nothing to re-apply, so this op is non-invertible (return `null`, not a

@@ -357,6 +357,14 @@ export class ReviewRepository {
               id: cardElementId,
               patch: { stage: "active_card", status: "active" },
               prev: { stage: el.stage, status: el.status },
+              // This promote rides WITH the review (it fires on the first grade of a
+              // still-draft card). The `prev` is kept for audit/sync, but the global
+              // ⌘Z undo must treat the promote as part of the non-undoable review: a
+              // grade's `add_review_log` is not invertible, so demoting the card back
+              // to `card_draft` while the durable review_log row + the advanced FSRS
+              // due date persist would be an incoherent PARTIAL undo. `reviewPromote`
+              // marks this op so UndoService skips it (see UndoService.isInvertible).
+              reviewPromote: true,
             },
           });
         }

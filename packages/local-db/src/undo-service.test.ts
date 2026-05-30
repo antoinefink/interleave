@@ -63,6 +63,41 @@ function seedDueCard(handle: DbHandle, title = "Q: define intelligence"): Elemen
   return element.id;
 }
 
+/**
+ * Seed a Q&A card LEFT AT `card_draft` (no `firstScheduledAt`), so the first grade
+ * with `promoteFromDraft` fires the `card_draft → active_card` promote op.
+ */
+function seedDraftCard(handle: DbHandle, title = "Q: define recall"): ElementId {
+  const review = new ReviewRepository(handle.db);
+  const { element } = review.createCard({
+    kind: "qa",
+    title,
+    priority: 0.625,
+    prompt: "Define recall",
+    answer: "Retrieving stored information",
+  });
+  return element.id;
+}
+
+/** A passing (non-leech) FSRS outcome — a normal `good` grade, no added lapse. */
+function passingOutcome(): ReviewOutcome {
+  return {
+    rating: "good",
+    reviewedAt: "2026-05-30T12:00:00.000Z" as IsoTimestamp,
+    responseMs: 1500,
+    prevState: "new",
+    nextState: "review",
+    nextStability: 3.2,
+    nextDifficulty: 5.1,
+    nextDueAt: "2026-06-02T12:00:00.000Z" as IsoTimestamp,
+    elapsedDays: 0,
+    scheduledDays: 3,
+    reps: 1,
+    lapses: 0,
+    nextLearningSteps: 0,
+  };
+}
+
 /** A review outcome whose cumulative `lapses` crosses the leech threshold (4). */
 function leechOutcome(): ReviewOutcome {
   return {
@@ -282,6 +317,38 @@ describe("UndoService.undoLast", () => {
     expect(result.opType).toBe("update_element");
     // The leech flag is untouched and no inverting op was appended.
     expect(review.isCardLeech(id)).toBe(true);
+    expect(new OperationLogRepository(handle.db).count()).toBe(opsBefore);
+  });
+
+  it("reports { undone: false } when the last op is the first-grade draft-card PROMOTE (rides with the review)", () => {
+    const review = new ReviewRepository(handle.db);
+    const elements = new ElementRepository(handle.db);
+    const undo = new UndoService(handle.db);
+    const id = seedDraftCard(handle);
+    expect(elements.findById(id)?.stage).toBe("card_draft");
+
+    // First grade of a still-draft card: recordReview appends `add_review_log` THEN a
+    // promote `update_element` (card_draft → active_card) AS THE LAST op. That promote
+    // carries a real `prev` for audit, but it is tagged `reviewPromote` so global undo
+    // treats it as part of the (non-invertible) review — pressing ⌘Z must NOT demote
+    // the card back to a draft while the durable review_log + advanced FSRS due persist.
+    review.recordReview(id, passingOutcome(), { promoteFromDraft: true });
+    expect(elements.findById(id)?.stage).toBe("active_card");
+    expect(elements.findById(id)?.status).toBe("active");
+    const lastOp = new OperationLogRepository(handle.db).listAll(1)[0];
+    expect(lastOp?.opType).toBe("update_element"); // the promote is the last op
+    const reviewDueAfter = review.findReviewState(id)?.dueAt;
+    const opsBefore = new OperationLogRepository(handle.db).count();
+
+    const result = undo.undoLast();
+    expect(result.undone).toBe(false);
+    expect(result.opType).toBe("update_element");
+    expect(result.reason).toBeTruthy();
+    // The card STAYS promoted, the FSRS due date STANDS, and no inverting op was
+    // appended — no incoherent partial undo of the review.
+    expect(elements.findById(id)?.stage).toBe("active_card");
+    expect(elements.findById(id)?.status).toBe("active");
+    expect(review.findReviewState(id)?.dueAt).toBe(reviewDueAfter);
     expect(new OperationLogRepository(handle.db).count()).toBe(opsBefore);
   });
 

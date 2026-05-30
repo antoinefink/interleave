@@ -2179,7 +2179,7 @@ export interface BalanceGetResult {
 /**
  * The backup surface (T047). The renderer triggers a backup of the ENTIRE local
  * knowledge base — the canonical native SQLite database (`app.sqlite`,
- * consistently checkpointed via better-sqlite3's online `db.backup()`) plus the
+ * snapshotted consistently via SQLite's `VACUUM INTO`) plus the
  * filesystem asset vault (`assets/`) — and the MAIN process packages it into a
  * versioned, hashed, deterministic ZIP under `backups/<timestamp>/` + a sibling
  * `<timestamp>.zip`. The backup is a COPY of the canonical store, never a JSON

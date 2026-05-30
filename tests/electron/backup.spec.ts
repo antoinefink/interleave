@@ -50,6 +50,29 @@ async function gotoSettings(page: Page) {
   await expect(page.getByTestId("route-settings")).toBeVisible();
 }
 
+/**
+ * The latest applied Drizzle migration tag — read from the staged `_journal.json`
+ * (the same source of truth `DbService.getSchemaVersion` resolves against). Reading
+ * it dynamically means this spec cannot re-rot when a later migration is added.
+ */
+function latestMigrationTag(): string {
+  const journalPath = path.join(
+    __dirname,
+    "..",
+    "..",
+    "packages",
+    "db",
+    "drizzle",
+    "meta",
+    "_journal.json",
+  );
+  const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as {
+    entries: { idx: number; tag: string }[];
+  };
+  const latest = journal.entries.reduce((a, b) => (b.idx > a.idx ? b : a));
+  return latest.tag;
+}
+
 /** The shape `backups.create()` returns. */
 interface BackupResult {
   path: string;
@@ -100,7 +123,13 @@ test('/settings → "Back up now" produces a valid, hashed zip on disk', async (
   expect(result.path.endsWith(".zip")).toBe(true);
   expect(result.sizeBytes).toBeGreaterThan(0);
   expect(result.fileCount).toBeGreaterThanOrEqual(2); // app.sqlite + ≥1 asset
-  expect(result.schemaVersion).toBe("0002_search_fts5");
+  // The captured schema version is the live latest Drizzle migration tag. Assert it
+  // against the source of truth (the last entry of the staged `_journal.json`) and a
+  // shape guard rather than a hardcoded literal, so this can never re-rot when a later
+  // migration is added (it previously pinned `0002_search_fts5`, which went stale once
+  // migrations 0003–0005 landed).
+  expect(result.schemaVersion).toMatch(/^\d{4}_/);
+  expect(result.schemaVersion).toBe(latestMigrationTag());
 
   // The zip lives under the test data dir's backups/ — outside the DB.
   expect(result.path.startsWith(path.join(dataDir, "backups"))).toBe(true);
@@ -118,7 +147,11 @@ test('/settings → "Back up now" produces a valid, hashed zip on disk', async (
 
   const manifest = JSON.parse(fs.readFileSync(path.join(unzipDir, "manifest.json"), "utf8"));
   expect(manifest.formatVersion).toBe(1);
-  expect(manifest.schemaVersion).toBe("0002_search_fts5");
+  // The manifest's schema version must match the BackupResult's (both come from the
+  // same live migration-tag resolution) and the journal's latest tag — never a pinned
+  // literal that rots on the next migration.
+  expect(manifest.schemaVersion).toBe(result.schemaVersion);
+  expect(manifest.schemaVersion).toBe(latestMigrationTag());
   expect(manifest.assetVaultRoot).toBe("assets");
   expect(manifest.counts.elements).toBeGreaterThan(0);
   expect(manifest.files[0].path).toBe("app.sqlite");

@@ -5,8 +5,11 @@
  * A backup is a COPY of the canonical store, never a JSON re-serialization of the
  * domain:
  *   - the native SQLite database (`app.sqlite`), snapshotted CONSISTENTLY with
- *     better-sqlite3's online `db.backup()` API so un-checkpointed WAL pages are
- *     included without disturbing the live connection, and
+ *     SQLite's `VACUUM INTO` (see {@link DbService.backupDatabaseTo}): one
+ *     synchronous statement that reads a single point-in-time snapshot (so
+ *     un-checkpointed WAL pages are included) and writes a defragmented, fully
+ *     self-contained DB file with NO `-wal`/`-shm` siblings — without disturbing the
+ *     live connection, and
  *   - the filesystem asset vault (`assets/`), copied byte-for-byte.
  *
  * It writes a deterministic, restore-ready layout under `backups/<timestamp>/`:
@@ -70,7 +73,7 @@ export interface BackupResult {
 
 /** Inputs the service needs to package a backup. */
 export interface BackupServiceDeps {
-  /** The live DB service (for the online `db.backup()` snapshot + manifest counts). */
+  /** The live DB service (for the `VACUUM INTO` snapshot + manifest counts). */
   readonly dbService: DbService;
   /** The resolved app-data paths (`dbPath`, `assetsDir`, `backupsDir`). */
   readonly paths: AppPaths;
@@ -140,7 +143,7 @@ export class BackupService {
     const backupDir = path.join(paths.backupsDir, timestamp);
     fs.mkdirSync(backupDir, { recursive: true });
 
-    // 1) Consistent SQLite snapshot via the online backup API (includes WAL).
+    // 1) Consistent SQLite snapshot via `VACUUM INTO` (includes un-checkpointed WAL).
     const snapshotDbPath = path.join(backupDir, "app.sqlite");
     this.deps.dbService.backupDatabaseTo(snapshotDbPath);
 

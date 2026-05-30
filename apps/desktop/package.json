@@ -28,6 +28,7 @@
     "@interleave/local-db": "workspace:*",
     "@interleave/scheduler": "workspace:*",
     "@interleave/testing": "workspace:*",
+    "@interleave/web": "workspace:*",
     "@types/node": "^22.10.0",
     "@types/yazl": "^2.4.6",
     "drizzle-orm": "^0.45.2",

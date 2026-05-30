@@ -68,6 +68,9 @@ importers:
       '@interleave/testing':
         specifier: workspace:*
         version: link:../../packages/testing
+      '@interleave/web':
+        specifier: workspace:*
+        version: link:../web
       '@types/node':
         specifier: ^22.10.0
         version: 22.19.19
