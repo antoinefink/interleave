@@ -55,6 +55,9 @@ importers:
       '@interleave/local-db':
         specifier: workspace:*
         version: link:../../packages/local-db
+      '@interleave/scheduler':
+        specifier: workspace:*
+        version: link:../../packages/scheduler
       '@interleave/testing':
         specifier: workspace:*
         version: link:../../packages/testing
@@ -215,6 +218,9 @@ importers:
       '@interleave/core':
         specifier: workspace:*
         version: link:../core
+      ts-fsrs:
+        specifier: 5.4.1
+        version: 5.4.1
 
   packages/testing:
     dependencies:
@@ -2370,6 +2376,10 @@ packages:
     resolution: {integrity: sha512-hdF5ZgjTqgAntKkklYw0R03MG2x/bSzTtkxmIRw/sTNV8YXsCJ1tfLAX23lhxhHJlEf3CRCOCGGWw3vI3GaSPw==}
     engines: {node: '>=18'}
 
+  ts-fsrs@5.4.1:
+    resolution: {integrity: sha512-mOp9+oexJexBTkwjg/jQI1aSUQRLIAvbimeKHLSmVdNJPwObugFNKmZkoggH5d6kZ0uaWLboP1Al1DnXAfIb9w==}
+    engines: {node: '>=20.0.0'}
+
   tslib@2.8.1:
     resolution: {integrity: sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==}
 
@@ -4456,6 +4466,8 @@ snapshots:
   tr46@5.1.1:
     dependencies:
       punycode: 2.3.1
+
+  ts-fsrs@5.4.1: {}
 
   tslib@2.8.1:
     optional: true

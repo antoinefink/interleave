@@ -25,6 +25,9 @@ import type {
   MarkType,
   Priority,
   PriorityLabel,
+  ReviewLog,
+  ReviewRating,
+  ReviewState,
   SiblingGroupId,
 } from "@interleave/core";
 import {
@@ -47,7 +50,9 @@ import {
   QueueActionService,
   QueueQuery,
   type Repositories,
+  type ReviewOutcome,
 } from "@interleave/local-db";
+import { type IntervalPreview, SchedulerService } from "@interleave/scheduler";
 import { seedDemoCollection } from "@interleave/testing";
 import type {
   CardsCreateRequest,
@@ -117,6 +122,7 @@ export class DbService {
   private extraction: ExtractionService | null = null;
   private extractReview: ExtractService | null = null;
   private cardService: CardService | null = null;
+  private scheduler: SchedulerService | null = null;
   private migrated = false;
 
   /** Whether the database handle is currently open. */
@@ -154,6 +160,13 @@ export class DbService {
     this.extraction = new ExtractionService(this.handle.db);
     this.extractReview = new ExtractService(this.handle.db);
     this.cardService = new CardService(this.handle.db);
+    // The FSRS card scheduler (T036) — one instance per open DB, reading the
+    // `defaultDesiredRetention` setting (T011) as its first-class retention input.
+    // FSRS schedules CARDS ONLY; sources/topics/extracts stay on the separate
+    // attention scheduler (QueueActionService / ExtractService), never here.
+    this.scheduler = new SchedulerService({
+      desiredRetention: this.repositories.settings.getAppSettings().defaultDesiredRetention,
+    });
     this.migrated = true;
   }
 
@@ -171,6 +184,7 @@ export class DbService {
     this.extraction = null;
     this.extractReview = null;
     this.cardService = null;
+    this.scheduler = null;
     this.migrated = false;
   }
 
@@ -821,6 +835,76 @@ export class DbService {
       },
       sourceLocationId,
     };
+  }
+
+  /** The FSRS card scheduler (T036), bound to the open database. */
+  private get cardScheduler(): SchedulerService {
+    if (!this.scheduler) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.scheduler;
+  }
+
+  /**
+   * Preview the four possible next intervals for a card (T036) — the data the
+   * review grade buttons render (T037). Reads the card's current `review_states`
+   * via {@link ReviewRepository.findReviewState} and asks the FSRS
+   * {@link SchedulerService} for the four outcomes. PURE: it mutates NOTHING (no
+   * `review_states` write, no `operation_log`). Returns `null` when the id is not a
+   * card or has no review state. The renderer reaches this only over validated IPC
+   * (T037's `review.preview`); there is no generic `db.query`.
+   */
+  previewCardIntervals(
+    cardElementId: ElementId,
+    asOf: IsoTimestamp = new Date().toISOString() as IsoTimestamp,
+  ): Record<ReviewRating, IntervalPreview> | null {
+    const card = this.repos.review.findCardById(cardElementId);
+    if (card?.element.type !== "card" || card.element.deletedAt) return null;
+    const state = this.repos.review.findReviewState(cardElementId);
+    if (!state) return null;
+    return this.cardScheduler.previewIntervals(state, asOf);
+  }
+
+  /**
+   * Grade one card (T036) — the FSRS write path. FSRS is for CARDS ONLY: this
+   * rejects a non-card element so the engine never schedules an extract/source.
+   * It reads the card's current `review_states`, asks the FSRS
+   * {@link SchedulerService} to compute the next memory state (the FSRS math lives
+   * in `packages/scheduler`, never here or in the repository), then persists it via
+   * {@link ReviewRepository.recordReview} — which appends the immutable
+   * `review_logs` row, advances `review_states` (due/stability/difficulty/elapsed/
+   * scheduled/reps/lapses/fsrsState) + `elements.due_at`, and logs `add_review_log`,
+   * ALL in one transaction. A `card_draft`/un-due card is moved to `active_card` on
+   * its first real review (the `card_draft → active_card` transition). The renderer
+   * reaches this only over validated IPC (T037's `review.grade`).
+   */
+  gradeCard(
+    cardElementId: ElementId,
+    rating: ReviewRating,
+    responseMs: number,
+    asOf: IsoTimestamp = new Date().toISOString() as IsoTimestamp,
+  ): { reviewLog: ReviewLog; reviewState: ReviewState } {
+    const card = this.repos.review.findCardById(cardElementId);
+    if (card?.element.type !== "card" || card.element.deletedAt) {
+      throw new Error(`DbService.gradeCard: card ${cardElementId} not found`);
+    }
+    const state = this.repos.review.findReviewState(cardElementId);
+    if (!state) {
+      throw new Error(`DbService.gradeCard: review state for card ${cardElementId} missing`);
+    }
+    const outcome: ReviewOutcome = this.cardScheduler.gradeCard(state, rating, asOf, responseMs);
+    const reviewLog = this.repos.review.recordReview(cardElementId, outcome);
+    // First real review promotes a parked draft card into active rotation. This is
+    // a stage move (`card_draft → active_card`) — never an FSRS-state change, and
+    // never applied to a non-`card_draft` card (mature cards keep their stage).
+    if (card.element.stage === "card_draft") {
+      this.repos.elements.update(cardElementId, { stage: "active_card", status: "active" });
+    }
+    const reviewState = this.repos.review.findReviewState(cardElementId);
+    if (!reviewState) {
+      throw new Error(`DbService.gradeCard: review state vanished after recordReview`);
+    }
+    return { reviewLog, reviewState };
   }
 
   private get extractService(): ExtractService {

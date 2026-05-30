@@ -41,4 +41,12 @@ export {
   scheduleTomorrow,
   sourceIntervalDays,
 } from "./attention-scheduler";
+export {
+  formatInterval,
+  type IntervalPreview,
+  type ReviewOutcome,
+  SCHEDULER_REVIEW_RATINGS,
+  SchedulerService,
+  type SchedulerServiceOptions,
+} from "./card-scheduler";
 export { addDays, MS_PER_DAY } from "./date-util";

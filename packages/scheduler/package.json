@@ -19,6 +19,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@interleave/core": "workspace:*"
+    "@interleave/core": "workspace:*",
+    "ts-fsrs": "5.4.1"
   }
 }

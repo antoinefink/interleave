@@ -20,6 +20,7 @@
     "@interleave/core": "workspace:*",
     "@interleave/db": "workspace:*",
     "@interleave/local-db": "workspace:*",
+    "@interleave/scheduler": "workspace:*",
     "@interleave/testing": "workspace:*",
     "better-sqlite3": "^12.10.0",
     "drizzle-orm": "^0.45.2",
