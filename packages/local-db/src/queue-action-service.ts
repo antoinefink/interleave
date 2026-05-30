@@ -168,16 +168,21 @@ export class QueueActionService {
    */
   private deferCard(id: ElementId, now: IsoTimestamp, batchId?: string): Element {
     const state = this.review.findReviewState(id);
-    const base = state?.dueAt ? Date.parse(state.dueAt) : Date.parse(now);
+    const prevReviewDueAt = state?.dueAt ?? null;
+    const base = prevReviewDueAt ? Date.parse(prevReviewDueAt) : Date.parse(now);
     const from = Number.isNaN(base) ? Date.parse(now) : Math.max(base, Date.parse(now));
     const nextDue = new Date(from + CARD_DEFER_DAYS * 86_400_000).toISOString() as IsoTimestamp;
     return this.db.transaction((tx) => {
       // Keep the FSRS due (review_states) and the element due in lockstep so the
       // queue (which reads review_states.due_at for cards) picks up the new date.
       tx.update(reviewStates).set({ dueAt: nextDue }).where(eq(reviewStates.elementId, id)).run();
+      // Capture the FSRS due PRE-IMAGE in the `reschedule_element` op so command-level
+      // undo restores BOTH `elements.due_at` and `review_states.due_at` (otherwise the
+      // card would stay out of the FSRS due queue after undo — T044).
       return this.elements.rescheduleWithin(tx, id, nextDue, "scheduled", {
         postpone: true,
         cardDefer: true,
+        prevReviewDueAt,
         ...(batchId ? { batchId } : {}),
       });
     });

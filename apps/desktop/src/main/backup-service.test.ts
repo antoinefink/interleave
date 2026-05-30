@@ -106,7 +106,7 @@ describe("BackupService.createBackup (T047)", () => {
     expect(fs.existsSync(result.path)).toBe(true);
     expect(result.path.endsWith(".zip")).toBe(true);
     expect(result.sizeBytes).toBeGreaterThan(0);
-    expect(result.schemaVersion).toBe("0002_search_fts5");
+    expect(result.schemaVersion).toBe("0003_overrated_thundra");
     // app.sqlite + 2 asset files = 3 captured files.
     expect(result.fileCount).toBe(3);
 
@@ -144,7 +144,7 @@ describe("BackupService.createBackup (T047)", () => {
 
     const manifest = JSON.parse(fs.readFileSync(path.join(backupDir, "manifest.json"), "utf8"));
     expect(manifest.formatVersion).toBe(1);
-    expect(manifest.schemaVersion).toBe("0002_search_fts5");
+    expect(manifest.schemaVersion).toBe("0003_overrated_thundra");
     expect(manifest.appVersion).toBe("9.9.9");
     expect(typeof manifest.createdAt).toBe("string");
     expect(Number.isNaN(Date.parse(manifest.createdAt))).toBe(false);

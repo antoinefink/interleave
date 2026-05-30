@@ -157,13 +157,24 @@ export class SchedulerService {
    * next month / a manual date — computing the date with the pure scheduler and
    * persisting it via {@link ElementRepository.reschedule} (`reschedule_element`,
    * status → `scheduled`), in ONE transaction. Never writes FSRS state.
+   *
+   * `batchId` (when set) is recorded in the `reschedule_element` op payload — exactly
+   * like {@link rescheduleForAction} — so a future BULK explicit-schedule action's N
+   * rows share one batch id and undo as one (T044). The closed op set is unchanged;
+   * this only enriches the payload.
    */
-  scheduleAt(id: ElementId, choice: ScheduleChoice, now: IsoTimestamp = nowIso()): ScheduleResult {
+  scheduleAt(
+    id: ElementId,
+    choice: ScheduleChoice,
+    now: IsoTimestamp = nowIso(),
+    batchId?: string,
+  ): ScheduleResult {
     this.requireAttentionElement(id);
     const decision = scheduleForChoice(choice, now);
     return this.db.transaction((tx) => {
       const rescheduled = this.elements.rescheduleWithin(tx, id, decision.dueAt, "scheduled", {
         choice: typeof choice === "string" ? choice : "manual",
+        ...(batchId ? { batchId } : {}),
       });
       return { element: rescheduled, intervalDays: decision.intervalDays };
     });

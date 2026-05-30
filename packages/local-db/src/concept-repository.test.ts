@@ -16,13 +16,15 @@
 
 import type { ElementId } from "@interleave/core";
 import { PRIORITY_LABEL_VALUE } from "@interleave/core";
-import type { DbHandle } from "@interleave/db";
+import { concepts as conceptsTable, type DbHandle } from "@interleave/db";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ConceptRepository } from "./concept-repository";
 import type { ElementRepository } from "./element-repository";
 import { createRepositories, type Repositories } from "./index";
 import type { OperationLogRepository } from "./operation-log-repository";
 import { createInMemoryDb } from "./test-db";
+import { TrashRepository } from "./trash-query";
 
 let handle: DbHandle;
 let repos: Repositories;
@@ -226,5 +228,60 @@ describe("ConceptRepository.listConcepts", () => {
 
     elements.softDelete(a);
     expect(concepts.listConcepts().find((c) => c.id === concept.id)?.memberCount).toBe(0);
+  });
+});
+
+describe("ConceptRepository concept-node lifecycle (soft-delete + purge)", () => {
+  it("soft-deleting a concept node drops it from listConcepts but keeps the side-table row", () => {
+    const cog = concepts.createConcept({ name: "Cognition" });
+    expect(concepts.listConcepts().some((c) => c.id === cog.id)).toBe(true);
+
+    elements.softDelete(cog.id);
+
+    // listConcepts filters by live element ids, so the soft-deleted node drops out…
+    expect(concepts.listConcepts().some((c) => c.id === cog.id)).toBe(false);
+    // …but soft-delete is recoverable, so the side-table row still exists.
+    expect(concepts.findById(cog.id)).not.toBeNull();
+    const sideRows = handle.db
+      .select()
+      .from(conceptsTable)
+      .where(eq(conceptsTable.id, cog.id))
+      .all();
+    expect(sideRows).toHaveLength(1);
+  });
+
+  it("purging a concept node cascade-deletes its concepts side-table row (no orphan)", () => {
+    const trash = new TrashRepository(handle.db);
+    const cog = concepts.createConcept({ name: "Cognition" });
+
+    // Sanity: the side-table row exists before purge.
+    expect(
+      handle.db.select().from(conceptsTable).where(eq(conceptsTable.id, cog.id)).all(),
+    ).toHaveLength(1);
+
+    elements.softDelete(cog.id);
+    const purged = trash.purge(cog.id);
+    expect(purged).toBe(true);
+
+    // The element row is gone (hard delete)…
+    expect(elements.findById(cog.id)).toBeNull();
+    // …and the concepts side-table row cascade-deleted with it (no dangling row,
+    // no phantom summary). This is the cascade-FK fix on `concepts.id`.
+    expect(
+      handle.db.select().from(conceptsTable).where(eq(conceptsTable.id, cog.id)).all(),
+    ).toHaveLength(0);
+    expect(concepts.findById(cog.id)).toBeNull();
+  });
+
+  it("emptyTrash leaves no orphan concepts rows", () => {
+    const trash = new TrashRepository(handle.db);
+    const parent = concepts.createConcept({ name: "Cognition" });
+    const child = concepts.createConcept({ name: "Intelligence", parentConceptId: parent.id });
+
+    elements.softDelete(child.id);
+    elements.softDelete(parent.id);
+    trash.emptyTrash();
+
+    expect(handle.db.select().from(conceptsTable).all()).toHaveLength(0);
   });
 });

@@ -426,14 +426,20 @@ export class ElementRepository {
     };
   }
 
-  /** Remove a relation edge by id + log `remove_relation`, atomically. */
+  /**
+   * Remove a relation edge by id + log `remove_relation`, atomically. A no-op delete
+   * (the relation id does not exist) does NOT append an op — mirrors {@link removeTag},
+   * keeping phantom ops out of the append-only log (a phantom op could otherwise be the
+   * latest op a future undo inspects).
+   */
   removeRelation(id: RelationId): void {
     this.db.transaction((tx) => {
       const row = tx.select().from(elementRelations).where(eq(elementRelations.id, id)).get();
+      if (!row) return;
       tx.delete(elementRelations).where(eq(elementRelations.id, id)).run();
       new OperationLogRepository(tx).append(tx, {
         opType: "remove_relation",
-        elementId: (row?.fromElementId as ElementId | undefined) ?? null,
+        elementId: (row.fromElementId as ElementId | undefined) ?? null,
         payload: { id },
       });
     });

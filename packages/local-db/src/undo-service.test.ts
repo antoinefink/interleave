@@ -18,11 +18,15 @@
 
 import type { ElementId, IsoTimestamp } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
+import { reviewStates } from "@interleave/db";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CardEditService } from "./card-edit-service";
 import { ElementRepository } from "./element-repository";
 import { createRepositories } from "./index";
 import { OperationLogRepository } from "./operation-log-repository";
 import { QueueActionService } from "./queue-action-service";
+import { type ReviewOutcome, ReviewRepository } from "./review-repository";
 import { createInMemoryDb } from "./test-db";
 import { UndoService } from "./undo-service";
 
@@ -39,6 +43,42 @@ function createActiveElement(handle: DbHandle, title = "Spaced repetition"): Ele
     dueAt: "2026-01-01T00:00:00.000Z" as IsoTimestamp,
   });
   return el.id;
+}
+
+/** Seed a Q&A card with an FSRS review_states row, forced due so it reads in the queue. */
+function seedDueCard(handle: DbHandle, title = "Q: define intelligence"): ElementId {
+  const review = new ReviewRepository(handle.db);
+  const { element } = review.createCard({
+    kind: "qa",
+    title,
+    priority: 0.625,
+    prompt: "Define intelligence",
+    answer: "Skill-acquisition efficiency",
+  });
+  handle.db
+    .update(reviewStates)
+    .set({ dueAt: "2020-01-01T00:00:00.000Z" })
+    .where(eq(reviewStates.elementId, element.id))
+    .run();
+  return element.id;
+}
+
+/** A review outcome whose cumulative `lapses` crosses the leech threshold (4). */
+function leechOutcome(): ReviewOutcome {
+  return {
+    rating: "again",
+    reviewedAt: "2026-05-30T12:00:00.000Z" as IsoTimestamp,
+    responseMs: 1500,
+    prevState: "review",
+    nextState: "relearning",
+    nextStability: 1.2,
+    nextDifficulty: 8.4,
+    nextDueAt: "2026-05-31T12:00:00.000Z" as IsoTimestamp,
+    elapsedDays: 3,
+    scheduledDays: 1,
+    reps: 9,
+    lapses: 4,
+  };
 }
 
 beforeEach(() => {
@@ -182,5 +222,99 @@ describe("UndoService.undoLast", () => {
     const result = undo.undoLast();
     expect(result.undone).toBe(false);
     expect(result.opType).toBeNull();
+  });
+
+  // ── Marker `update_element` ops carry no pre-image → they are NON-invertible.
+  // Global undo immediately after them must NOT report a phantom success.
+
+  it("reports { undone: false } and changes nothing on a card FLAG (marker update_element, no prev)", () => {
+    const edit = new CardEditService(handle.db);
+    const undo = new UndoService(handle.db);
+    const id = seedDueCard(handle);
+
+    edit.flag(id, true, "ambiguous pronoun");
+    expect(edit.isFlagged(id)).toBe(true);
+    const opsBefore = new OperationLogRepository(handle.db).count();
+
+    const result = undo.undoLast();
+    expect(result.undone).toBe(false);
+    expect(result.opType).toBe("update_element");
+    expect(result.reason).toBeTruthy();
+    // The flag is UNCHANGED (the marker has no pre-image to revert) and NO inverting
+    // op was appended — undo did not fake a success.
+    expect(edit.isFlagged(id)).toBe(true);
+    expect(new OperationLogRepository(handle.db).count()).toBe(opsBefore);
+  });
+
+  it("reports { undone: false } and changes nothing on a card BODY edit (marker update_element, no prev)", () => {
+    const edit = new CardEditService(handle.db);
+    const review = new ReviewRepository(handle.db);
+    const undo = new UndoService(handle.db);
+    const id = seedDueCard(handle);
+
+    edit.updateBody(id, { prompt: "Define G", answer: "general intelligence" });
+    expect(review.findCardById(id)?.card.prompt).toBe("Define G");
+    const opsBefore = new OperationLogRepository(handle.db).count();
+
+    const result = undo.undoLast();
+    expect(result.undone).toBe(false);
+    expect(result.opType).toBe("update_element");
+    // The edited body STANDS (the marker op has no pre-image) and no op was appended.
+    expect(review.findCardById(id)?.card.prompt).toBe("Define G");
+    expect(new OperationLogRepository(handle.db).count()).toBe(opsBefore);
+  });
+
+  it("reports { undone: false } when the last op is the leech marker from a review (no prev)", () => {
+    const review = new ReviewRepository(handle.db);
+    const undo = new UndoService(handle.db);
+    const id = seedDueCard(handle);
+
+    // A grade that crosses the lapse threshold appends a leech `update_element` AS THE
+    // LAST op — pressing global Undo right after must not claim a phantom success.
+    review.recordReview(id, leechOutcome());
+    expect(review.isCardLeech(id)).toBe(true);
+    expect(new OperationLogRepository(handle.db).listAll(1)[0]?.opType).toBe("update_element");
+    const opsBefore = new OperationLogRepository(handle.db).count();
+
+    const result = undo.undoLast();
+    expect(result.undone).toBe(false);
+    expect(result.opType).toBe("update_element");
+    // The leech flag is untouched and no inverting op was appended.
+    expect(review.isCardLeech(id)).toBe(true);
+    expect(new OperationLogRepository(handle.db).count()).toBe(opsBefore);
+  });
+
+  // ── A card postpone-defer (T030) advances BOTH stores; undo must restore BOTH so
+  // the card returns to the FSRS due queue.
+
+  it("undoes a CARD postpone-defer: restores BOTH elements.due_at AND review_states.due_at", () => {
+    const repos = createRepositories(handle.db);
+    const qa = new QueueActionService(handle.db);
+    const undo = new UndoService(handle.db);
+    const review = new ReviewRepository(handle.db);
+    const id = seedDueCard(handle);
+
+    const elementDueBefore = repos.elements.findById(id)?.dueAt;
+    const reviewDueBefore = review.findReviewState(id)?.dueAt;
+    expect(reviewDueBefore).toBe("2020-01-01T00:00:00.000Z");
+
+    // Postpone the due card → both the element due and the FSRS due move forward.
+    qa.act(id, "postpone", "2026-05-30T12:00:00.000Z" as IsoTimestamp);
+    expect(review.findReviewState(id)?.dueAt).not.toBe(reviewDueBefore);
+    // The card has LEFT the due queue while deferred.
+    expect(
+      repos.queue.dueCards("2026-05-30T12:00:00.000Z" as IsoTimestamp).map((c) => c.id),
+    ).not.toContain(id);
+
+    const result = undo.undoLast();
+    expect(result.undone).toBe(true);
+    expect(result.opType).toBe("reschedule_element");
+    // BOTH stores restored — the queue (which reads review_states.due_at for cards)
+    // sees the card as due again.
+    expect(repos.elements.findById(id)?.dueAt).toBe(elementDueBefore);
+    expect(review.findReviewState(id)?.dueAt).toBe(reviewDueBefore);
+    expect(
+      repos.queue.dueCards("2026-05-30T12:00:00.000Z" as IsoTimestamp).map((c) => c.id),
+    ).toContain(id);
   });
 });

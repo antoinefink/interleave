@@ -944,6 +944,49 @@ describe("SearchRepository", () => {
     expect(search.query("   ")).toEqual([]);
     expect(search.byTitle("")).toEqual([]);
   });
+
+  it("byTitle treats LIKE wildcards in the query as literal characters", () => {
+    const elementsRepo = new ElementRepository(handle.db);
+    const search = new SearchRepository(handle.db);
+
+    const literal = elementsRepo.create({
+      type: "topic",
+      status: "active",
+      stage: "rough_topic",
+      priority: 0.5,
+      title: "Reached 50% retention",
+    });
+    const decoy = elementsRepo.create({
+      type: "topic",
+      status: "active",
+      stage: "rough_topic",
+      priority: 0.5,
+      title: "Reached 5000 retention",
+    });
+
+    // `%` is escaped, so it matches the literal percent sign — only the first row.
+    const percentHits = search.byTitle("50%").map((e) => e.id);
+    expect(percentHits).toEqual([literal.id]);
+    expect(percentHits).not.toContain(decoy.id);
+
+    // `_` is escaped too: it must NOT match an arbitrary single character.
+    const under = elementsRepo.create({
+      type: "topic",
+      status: "active",
+      stage: "rough_topic",
+      priority: 0.5,
+      title: "a_b token",
+    });
+    elementsRepo.create({
+      type: "topic",
+      status: "active",
+      stage: "rough_topic",
+      priority: 0.5,
+      title: "axb token",
+    });
+    const underHits = search.byTitle("a_b").map((e) => e.id);
+    expect(underHits).toEqual([under.id]);
+  });
 });
 
 describe("AssetRepository", () => {

@@ -37,8 +37,8 @@
  */
 
 import type { ElementId, ElementStatus, IsoTimestamp, OperationType } from "@interleave/core";
-import { type InterleaveDatabase, operationLog } from "@interleave/db";
-import { desc, sql } from "drizzle-orm";
+import { type InterleaveDatabase, operationLog, reviewStates } from "@interleave/db";
+import { desc, eq, sql } from "drizzle-orm";
 import { ElementRepository } from "./element-repository";
 
 /** The op types the global command-level undo can invert (the MVP scope). */
@@ -112,7 +112,7 @@ export class UndoService {
     }
 
     const last = this.parse(lastRow);
-    if (!UNDOABLE_OP_TYPES.has(last.opType)) {
+    if (!UNDOABLE_OP_TYPES.has(last.opType) || !this.isInvertible(last)) {
       return {
         undone: false,
         opType: last.opType,
@@ -128,21 +128,54 @@ export class UndoService {
 
     // Apply each inverse through the existing write paths (each appends its own
     // inverting op). One element may appear once per op — that is fine: applying in
-    // reverse insertion order yields the correct prior state.
+    // reverse insertion order yields the correct prior state. `invert` returns `null`
+    // for a marker op that carries no usable pre-image (see {@link isInvertible}); we
+    // skip those so a batch undoes every op that DID carry a pre-image and never
+    // reports a phantom success for an op that mutated nothing.
     let label = "";
+    let undoneCount = 0;
     for (const op of batch) {
       const opLabel = this.invert(op);
+      if (opLabel === null) continue;
+      undoneCount += 1;
       if (!label && opLabel) label = opLabel;
     }
 
-    const single = batch.length === 1;
+    if (undoneCount === 0) {
+      return {
+        undone: false,
+        opType: last.opType,
+        elementId: last.elementId,
+        label: "",
+        reason: `Can't undo "${last.opType}"`,
+        count: 0,
+      };
+    }
+
+    const single = undoneCount === 1;
     return {
       undone: true,
       opType: last.opType,
       elementId: last.elementId,
-      label: single ? label : `Undid ${batch.length} changes`,
-      count: batch.length,
+      label: single ? label : `Undid ${undoneCount} changes`,
+      count: undoneCount,
     };
+  }
+
+  /**
+   * Whether an op CAN actually be inverted (beyond merely having an undoable type).
+   * A marker `update_element` op (leech-flag-on-review, manual flag, card-body edit)
+   * carries NO object `prev` PRE-IMAGE, so re-applying it would mutate nothing —
+   * inverting it must NOT be reported as a success (the bug this guards). Every other
+   * undoable op type carries the state it needs in its payload, so it is invertible.
+   */
+  private isInvertible(op: ParsedOp): boolean {
+    if (!op.elementId) return false;
+    if (op.opType === "update_element") {
+      const prev = op.payload.prev;
+      return typeof prev === "object" && prev !== null && Object.keys(prev).length > 0;
+    }
+    return true;
   }
 
   /**
@@ -163,10 +196,14 @@ export class UndoService {
     return out;
   }
 
-  /** Apply the inverse of one op; returns a snackbar label (or `""`). */
-  private invert(op: ParsedOp): string {
+  /**
+   * Apply the inverse of one op; returns a snackbar label, or `null` when the op was
+   * NOT actually invertible (a marker `update_element` with no usable pre-image), so
+   * `undoLast` can skip it rather than report a phantom success.
+   */
+  private invert(op: ParsedOp): string | null {
     const id = op.elementId;
-    if (!id) return "";
+    if (!id) return null;
     switch (op.opType) {
       case "soft_delete_element": {
         const origin = this.originStatus(op);
@@ -179,7 +216,12 @@ export class UndoService {
       }
       case "update_element": {
         const prev = op.payload.prev;
-        if (!prev || typeof prev !== "object") return "";
+        // A marker op (leech / flag / body edit) carries no object pre-image — there
+        // is nothing to re-apply, so this op is non-invertible (return `null`, not a
+        // fake success that also blocks undoing the real action behind it).
+        if (typeof prev !== "object" || prev === null || Object.keys(prev).length === 0) {
+          return null;
+        }
         const updated = this.elements.update(id, prev as Record<string, never>);
         return `Reverted "${updated.title}"`;
       }
@@ -189,13 +231,30 @@ export class UndoService {
         const prevStatus =
           typeof prevStatusRaw === "string" ? (prevStatusRaw as ElementStatus) : undefined;
         const before = this.elements.findById(id);
-        const rescheduled = this.db.transaction((tx) =>
-          this.elements.rescheduleWithin(tx, id, prevDueAt, prevStatus),
-        );
+        // A card postpone-defer (T030) advances BOTH `elements.due_at` AND the FSRS
+        // `review_states.due_at` (the queue reads the latter for cards). Restoring
+        // only `elements.due_at` would leave the card out of the FSRS due queue, so a
+        // `cardDefer` op also restores `review_states.due_at` to its captured prior
+        // value — both stores in ONE transaction (the two-scheduler split stays
+        // consistent: the card returns to review after undo).
+        const isCardDefer = op.payload.cardDefer === true;
+        const prevReviewDueAt = isCardDefer
+          ? ((op.payload.prevReviewDueAt ?? null) as IsoTimestamp | null)
+          : null;
+        const rescheduled = this.db.transaction((tx) => {
+          const el = this.elements.rescheduleWithin(tx, id, prevDueAt, prevStatus);
+          if (isCardDefer) {
+            tx.update(reviewStates)
+              .set({ dueAt: prevReviewDueAt })
+              .where(eq(reviewStates.elementId, id))
+              .run();
+          }
+          return el;
+        });
         return `Restored schedule of "${(before ?? rescheduled).title}"`;
       }
       default:
-        return "";
+        return null;
     }
   }
 

@@ -1810,6 +1810,69 @@ describe("DbService — trash & undo (T044)", () => {
     expect(res.reason).toBeTruthy();
     svc.close();
   });
+
+  it("undoLastOperation on a card FLAG (marker update_element) reports false and leaves the flag set", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { element } = svc.repos.review.createCard({
+      kind: "qa",
+      title: "Define recall",
+      priority: 0.625,
+      prompt: "Define recall?",
+      answer: "Active retrieval.",
+      stage: "active_card",
+    });
+    const flagged = svc.flagCard({
+      cardId: element.id,
+      flagged: true,
+      reason: "ambiguous pronoun",
+    });
+    expect(flagged.card.flagged).toBe(true);
+    const opCount = () =>
+      (svc.raw.sqlite.prepare("SELECT COUNT(*) AS n FROM operation_log").get() as { n: number }).n;
+    const opsBefore = opCount();
+
+    // The flag marker carries no pre-image — undo must NOT report a phantom success
+    // and must NOT append an inverting op.
+    const res = svc.undoLastOperation();
+    expect(res.undone).toBe(false);
+    expect(res.reason).toBeTruthy();
+    expect(opCount()).toBe(opsBefore);
+    // The flag is still set (re-flagging to the same value reads true, latest marker wins).
+    expect(svc.flagCard({ cardId: element.id, flagged: true }).card.flagged).toBe(true);
+    svc.close();
+  });
+
+  it("undoLastOperation on a card POSTPONE restores review_states.due_at so the card is due again", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { element } = svc.repos.review.createCard({
+      kind: "qa",
+      title: "Define interleaving",
+      priority: 0.625,
+      prompt: "Define interleaving?",
+      answer: "Mixing topics across a session.",
+      stage: "active_card",
+    });
+    const dueAt = "2026-05-29T00:00:00.000Z";
+    svc.raw.sqlite
+      .prepare("UPDATE review_states SET due_at = ? WHERE element_id = ?")
+      .run(dueAt, element.id);
+
+    // Postpone the card → its FSRS due defers forward and it leaves the due deck.
+    svc.actOnQueueItem({ id: element.id, action: { kind: "postpone" } });
+    expect(svc.repos.review.findReviewState(element.id)?.dueAt).not.toBe(dueAt);
+
+    // Global undo restores BOTH stores; the card returns to the FSRS due queue.
+    const res = svc.undoLastOperation();
+    expect(res.undone).toBe(true);
+    expect(res.opType).toBe("reschedule_element");
+    expect(svc.repos.review.findReviewState(element.id)?.dueAt).toBe(dueAt);
+    expect(
+      svc.repos.queue.dueCards("2026-06-01T00:00:00.000Z" as never).map((c) => c.id),
+    ).toContain(element.id);
+    svc.close();
+  });
 });
 
 describe("DbService — analytics (T045)", () => {
@@ -1933,7 +1996,7 @@ describe("DbService — backup support (T047)", () => {
   it("getSchemaVersion returns the latest applied Drizzle migration tag", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
-    expect(svc.getSchemaVersion(MIGRATIONS_DIR)).toBe("0002_search_fts5");
+    expect(svc.getSchemaVersion(MIGRATIONS_DIR)).toBe("0003_overrated_thundra");
     svc.close();
   });
 

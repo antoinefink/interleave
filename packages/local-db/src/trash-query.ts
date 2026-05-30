@@ -17,9 +17,11 @@
  *   last word about that element; the real `DELETE` nulls that op's `element_id` via
  *   the `operation_log.element_id` FK (`onDelete: set null`), and the FTS5
  *   `elements_fts_ad` trigger + the FK cascades (`cards`/`review_states`/
- *   `review_logs`/`documents`/`sources`/`source_locations`/`assets`/relations)
- *   clean up every dependent row. Purge therefore leaves NO orphans and is the only
- *   hard delete in the app — it is gated behind explicit UI confirmation.
+ *   `review_logs`/`documents`/`sources`/`source_locations`/`assets`/`concepts`/
+ *   `element_tags`/`tasks`/relations) clean up every dependent row. Every
+ *   element-keyed side-table — `concepts` included (its `id` cascades to
+ *   `elements.id`) — is cleaned up, so purge leaves NO orphans and is the only hard
+ *   delete in the app — it is gated behind explicit UI confirmation.
  */
 
 import type { Element, ElementId, ElementStatus, IsoTimestamp } from "@interleave/core";

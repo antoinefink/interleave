@@ -28,7 +28,7 @@
 
 import type { Element, ElementId, ElementType } from "@interleave/core";
 import { elements, type InterleaveDatabase } from "@interleave/db";
-import { and, eq, isNull, like, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { rowToElement } from "./mappers";
 
 /** Options narrowing a search. */
@@ -232,17 +232,30 @@ export class SearchRepository {
    * Title-only substring lookup used by the command palette (fast path). Covers
    * EVERY element type (including topics, which have no FTS index), so the
    * palette can jump to anything by name. Excludes soft-deleted.
+   *
+   * LIKE wildcards (`%`, `_`) and the escape char (`\`) in user input are escaped
+   * (with `ESCAPE '\'`) so they match LITERALLY — a query like `50%` or `a_b`
+   * searches for those characters rather than silently broadening the match.
    */
   byTitle(query: string, limit = 20): Element[] {
     const trimmed = query.trim();
     if (trimmed.length === 0) return [];
-    const pattern = `%${trimmed}%`;
+    const pattern = `%${escapeLikePattern(trimmed)}%`;
     return this.db
       .select()
       .from(elements)
-      .where(and(like(elements.title, pattern), isNull(elements.deletedAt)))
+      .where(and(sql`${elements.title} LIKE ${pattern} ESCAPE '\\'`, isNull(elements.deletedAt)))
       .limit(limit)
       .all()
       .map(rowToElement);
   }
+}
+
+/**
+ * Escape the SQL LIKE wildcards (`%`, `_`) and the escape char itself (`\`) in a
+ * user-supplied substring so they are matched literally under `ESCAPE '\'`. The
+ * backslash MUST be escaped first so it does not double-escape the wildcards.
+ */
+function escapeLikePattern(input: string): string {
+  return input.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
 }

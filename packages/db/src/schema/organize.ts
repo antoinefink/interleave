@@ -27,7 +27,14 @@ import { elements } from "./elements";
 export const concepts = sqliteTable(
   "concepts",
   {
-    id: text("id").primaryKey(),
+    /**
+     * Mirrors the owning `concept` element's id (one-to-one), like every other
+     * element-keyed side-table. Cascades on element delete so a hard purge of the
+     * concept element removes this hierarchy row too — no orphan survives.
+     */
+    id: text("id")
+      .primaryKey()
+      .references((): AnySQLiteColumn => elements.id, { onDelete: "cascade" }),
     /** Parent concept for the hierarchy; `null` for a root concept. */
     parentConceptId: text("parent_concept_id").references((): AnySQLiteColumn => concepts.id, {
       onDelete: "set null",

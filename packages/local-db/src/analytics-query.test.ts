@@ -147,9 +147,12 @@ describe("AnalyticsService.computeAnalytics", () => {
       title: "Doomed",
     });
     repo.softDelete(doomed.id);
+    // Pin createdAt explicitly (like every other seeded row) so the in-window
+    // count is timezone/clock-independent — repo.create stamps the real wall
+    // clock, which can fall past `asOf` and drop this out of the window.
     handle.db
       .update(elements)
-      .set({ deletedAt: localNoon(asOf, 1) })
+      .set({ createdAt: localNoon(asOf, 1), deletedAt: localNoon(asOf, 1) })
       .where(eq(elements.id, doomed.id))
       .run();
 
@@ -171,7 +174,7 @@ describe("AnalyticsService.computeAnalytics", () => {
 
     // newCards counts: seed card (5d) + extra card (2d) + leech card (4d) = 3.
     expect(summary.newCards).toBe(3);
-    // newExtracts: the in-window extract (1d) + the doomed extract (created now) = 2.
+    // newExtracts: the in-window extract (1d) + the doomed extract (1d) = 2.
     expect(summary.newExtracts).toBe(2);
 
     expect(summary.deletions).toBe(1);
