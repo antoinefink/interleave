@@ -179,6 +179,18 @@ export class ElementRepository {
   }
 
   /**
+   * Set an element's numeric {@link Priority} + log `update_element`, atomically
+   * (T027). A thin, named alias over {@link update} for the universal raise / lower
+   * / set-priority write path: priority is first-class on EVERY element type
+   * (source/extract/card/task/topic/synthesis_note), so this works for any of them.
+   * The band math lives in `@interleave/core` (`raisePriority`/`lowerPriority`/
+   * `priorityFromLabel`); this layer just persists the resulting numeric value.
+   */
+  setPriority(id: ElementId, priority: Priority): Element {
+    return this.update(id, { priority });
+  }
+
+  /**
    * Apply a patch using an EXISTING transaction, logging `update_element` on the
    * SAME `tx`. The tx-composable seam {@link ExtractService} (T024) uses to move an
    * extract's stage AND reschedule it in ONE transaction (stage update +

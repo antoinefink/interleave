@@ -3,11 +3,13 @@ import {
   clamp01,
   DEFAULT_PRIORITY,
   isPriorityLabel,
+  lowerPriority,
   PRIORITY_LABEL_VALUE,
   PRIORITY_LABELS,
   type PriorityLabel,
   priorityFromLabel,
   priorityToLabel,
+  raisePriority,
 } from "./index";
 
 /**
@@ -68,6 +70,79 @@ describe("priority round-trip", () => {
       const roundTripped: PriorityLabel = priorityToLabel(priorityFromLabel(label));
       expect(roundTripped).toBe(label);
     }
+  });
+});
+
+describe("raisePriority (step up one band)", () => {
+  it("steps each band to the next-higher band's representative value", () => {
+    expect(raisePriority(PRIORITY_LABEL_VALUE.D)).toBe(PRIORITY_LABEL_VALUE.C);
+    expect(raisePriority(PRIORITY_LABEL_VALUE.C)).toBe(PRIORITY_LABEL_VALUE.B);
+    expect(raisePriority(PRIORITY_LABEL_VALUE.B)).toBe(PRIORITY_LABEL_VALUE.A);
+  });
+
+  it("clamps at the top — raising A is a no-op", () => {
+    expect(raisePriority(PRIORITY_LABEL_VALUE.A)).toBe(PRIORITY_LABEL_VALUE.A);
+  });
+
+  it("raises by exactly one label band for any in-band value (not just midpoints)", () => {
+    // 0.4 is in the C band; raising it lands on B's representative value.
+    expect(priorityToLabel(0.4)).toBe("C");
+    expect(priorityToLabel(raisePriority(0.4))).toBe("B");
+    // Out-of-range high clamps to A.
+    expect(priorityToLabel(raisePriority(1.5))).toBe("A");
+  });
+});
+
+describe("lowerPriority (step down one band)", () => {
+  it("steps each band to the next-lower band's representative value", () => {
+    expect(lowerPriority(PRIORITY_LABEL_VALUE.A)).toBe(PRIORITY_LABEL_VALUE.B);
+    expect(lowerPriority(PRIORITY_LABEL_VALUE.B)).toBe(PRIORITY_LABEL_VALUE.C);
+    expect(lowerPriority(PRIORITY_LABEL_VALUE.C)).toBe(PRIORITY_LABEL_VALUE.D);
+  });
+
+  it("clamps at the bottom — lowering D is a no-op", () => {
+    expect(lowerPriority(PRIORITY_LABEL_VALUE.D)).toBe(PRIORITY_LABEL_VALUE.D);
+  });
+
+  it("lowers by exactly one label band for any in-band value", () => {
+    expect(priorityToLabel(0.9)).toBe("A");
+    expect(priorityToLabel(lowerPriority(0.9))).toBe("B");
+    // Out-of-range low clamps to D.
+    expect(priorityToLabel(lowerPriority(-0.5))).toBe("D");
+  });
+});
+
+describe("raise/lower round-trip", () => {
+  it("raise then lower returns to the same band for every non-edge band", () => {
+    for (const label of ["B", "C", "D"] as const) {
+      const start = PRIORITY_LABEL_VALUE[label];
+      expect(lowerPriority(raisePriority(start))).toBe(start);
+    }
+  });
+
+  it("lower then raise returns to the same band for every non-edge band", () => {
+    for (const label of ["A", "B", "C"] as const) {
+      const start = PRIORITY_LABEL_VALUE[label];
+      expect(raisePriority(lowerPriority(start))).toBe(start);
+    }
+  });
+
+  it("walks the full A↔D ladder deterministically", () => {
+    // D → C → B → A
+    let p: number = PRIORITY_LABEL_VALUE.D;
+    p = raisePriority(p);
+    expect(priorityToLabel(p)).toBe("C");
+    p = raisePriority(p);
+    expect(priorityToLabel(p)).toBe("B");
+    p = raisePriority(p);
+    expect(priorityToLabel(p)).toBe("A");
+    // A → B → C → D
+    p = lowerPriority(p);
+    expect(priorityToLabel(p)).toBe("B");
+    p = lowerPriority(p);
+    expect(priorityToLabel(p)).toBe("C");
+    p = lowerPriority(p);
+    expect(priorityToLabel(p)).toBe("D");
   });
 });
 

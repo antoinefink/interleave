@@ -3,8 +3,9 @@
  *
  * One consistent view of ANY selected element's metadata, lineage, and scheduler
  * signals, rebuilt from the kit's inspector (design/kit + design-system.md) with
- * the shared primitives. It is read-only for M1 (editing priority/stage lands
- * with T027 and the relevant features).
+ * the shared primitives. Priority is editable here (T027) — the universal
+ * raise/lower/set write path every element type shares; the rest is read-only
+ * until the relevant features land.
  *
  * Data flows STRICTLY through the typed `window.appApi` bridge: the renderer asks
  * the Electron main process (`inspector.list()` / `inspector.get(id)`), which
@@ -26,11 +27,13 @@ import { useCallback, useEffect, useState } from "react";
 import {
   appApi,
   type ElementSummary,
+  type ElementsSetPriorityAction,
   type InspectorData,
   isDesktop,
   type LineageData,
   type LineageItem,
   type LineageNode,
+  type PriorityLabel as PriorityLabelType,
 } from "../../lib/appApi";
 import { useNavigateToLocation } from "../../reader/navigateToLocation";
 import { useSelection } from "../../shell/selection";
@@ -124,6 +127,76 @@ function ElementPicker({
   );
 }
 
+/** The four labels for the segmented priority control (high → low). */
+const PRIORITY_BANDS: readonly PriorityLabelType[] = ["A", "B", "C", "D"];
+
+/**
+ * The editable A/B/C/D priority control (T027) — the universal write path. An
+ * inline segmented chip group (`set` a label) plus raise/lower steppers (`raise`/
+ * `lower` one band). Every change goes through `elements.setPriority`
+ * (`update_element`); the parent re-reads on success so the badge updates without
+ * a reload. Disabled while a request is in flight to avoid double-submits.
+ */
+function PriorityControl({
+  priority,
+  busy,
+  onSetPriority,
+}: {
+  priority: number;
+  busy: boolean;
+  onSetPriority: (action: ElementsSetPriorityAction) => void;
+}) {
+  const current = priorityLabel(priority);
+  return (
+    <div className="prio-edit" data-testid="inspector-priority">
+      <button
+        type="button"
+        className="prio-edit__step"
+        data-testid="inspector-priority-raise"
+        title="Raise priority one band"
+        aria-label="Raise priority"
+        disabled={busy || current === "A"}
+        onClick={() => onSetPriority({ kind: "raise" })}
+      >
+        <Icon name="arrowUp" size={14} />
+      </button>
+      <fieldset className="prio-edit__seg" aria-label="Set priority">
+        {PRIORITY_BANDS.map((band) => {
+          const active = current === band;
+          return (
+            <button
+              key={band}
+              type="button"
+              className="prio-edit__btn"
+              data-testid={`inspector-priority-${band}`}
+              aria-pressed={active}
+              disabled={busy}
+              onClick={() => onSetPriority({ kind: "set", priority: band })}
+            >
+              <span
+                className="prio-edit__dot"
+                style={{ background: `var(--prio-${band.toLowerCase()})` }}
+              />
+              {band}
+            </button>
+          );
+        })}
+      </fieldset>
+      <button
+        type="button"
+        className="prio-edit__step"
+        data-testid="inspector-priority-lower"
+        title="Lower priority one band"
+        aria-label="Lower priority"
+        disabled={busy || current === "D"}
+        onClick={() => onSetPriority({ kind: "lower" })}
+      >
+        <Icon name="arrowDown" size={14} />
+      </button>
+    </div>
+  );
+}
+
 /** The full metadata view for one inspected element. */
 function InspectorBody({
   data,
@@ -131,12 +204,16 @@ function InspectorBody({
   onSelect,
   onPickLineageNode,
   onJumpToLocation,
+  onSetPriority,
+  priorityBusy,
 }: {
   data: InspectorData;
   lineage: LineageData | null;
   onSelect: (id: string) => void;
   onPickLineageNode: (node: LineageNode) => void;
   onJumpToLocation: (location: NonNullable<InspectorData["location"]>) => void;
+  onSetPriority: (action: ElementsSetPriorityAction) => void;
+  priorityBusy: boolean;
 }) {
   const { element, scheduler, parent, children, source, provenance, location, tags, review } = data;
   return (
@@ -173,6 +250,13 @@ function InspectorBody({
             <span data-testid="meta-priority">
               {priorityLabel(element.priority)} · {element.priority.toFixed(3)}
             </span>
+          </MetaRow>
+          <MetaRow k="Set priority">
+            <PriorityControl
+              priority={element.priority}
+              busy={priorityBusy}
+              onSetPriority={onSetPriority}
+            />
           </MetaRow>
           <MetaRow k="Due">
             <span data-testid="meta-due">{fmtDate(element.dueAt)}</span>
@@ -356,6 +440,7 @@ export function Inspector() {
   const [elements, setElements] = useState<readonly ElementSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [priorityBusy, setPriorityBusy] = useState(false);
   // Bumped by the `INSPECTOR_REFRESH_EVENT` so the panel re-fetches the selected
   // element + the picker list after a mutation elsewhere (e.g. T021 extraction adds
   // a child extract) — surfacing the new lineage WITHOUT a navigation/reload.
@@ -428,6 +513,29 @@ export function Inspector() {
 
   const onSelect = useCallback((id: string) => select(id), [select]);
 
+  // The universal priority write path (T027): set/raise/lower goes through the
+  // typed `elements.setPriority` command (logs `update_element` main-side). On
+  // success we re-read the inspected element so the `Prio` badge + Priority row
+  // reflect the change without a reload, and ask the picker list to refresh too.
+  const onSetPriority = useCallback(
+    async (action: ElementsSetPriorityAction) => {
+      if (!isDesktop() || !selectedId || priorityBusy) return;
+      setPriorityBusy(true);
+      try {
+        await appApi.setElementPriority({ id: selectedId, action });
+        const res = await appApi.getInspectorData({ id: selectedId });
+        setData(res.data);
+        setError(null);
+        requestInspectorRefresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setPriorityBusy(false);
+      }
+    },
+    [selectedId, priorityBusy],
+  );
+
   // Clicking a lineage node navigates BOTH directions (T023): re-select the node
   // (driving the inspector) and open its dedicated page — a source/topic opens its
   // reader at `/source/$id`, an extract opens its review view at `/extract/$id`
@@ -486,6 +594,8 @@ export function Inspector() {
             onSelect={onSelect}
             onPickLineageNode={onPickLineageNode}
             onJumpToLocation={navigateToLocation}
+            onSetPriority={onSetPriority}
+            priorityBusy={priorityBusy}
           />
         ) : selectedId && !data ? (
           <p className="insp-empty" data-testid="inspector-missing">

@@ -15,6 +15,7 @@ import {
   DocumentMarksRemoveRequestSchema,
   DocumentsGetRequestSchema,
   DocumentsSaveRequestSchema,
+  ElementsSetPriorityRequestSchema,
   ExtractionCreateRequestSchema,
   ExtractsDeleteRequestSchema,
   ExtractsMarkDoneRequestSchema,
@@ -37,7 +38,7 @@ import {
 } from "./contract";
 
 describe("IPC channels", () => {
-  it("exposes exactly the M1 commands plus the M2 inbox mutation + M3 document/read-point + M4 marks/extraction/lineage/extract-review surface and no generic SQL channel", () => {
+  it("exposes exactly the M1 commands plus the M2 inbox mutation + M3 document/read-point + M4 marks/extraction/lineage/extract-review + M5 priority surface and no generic SQL channel", () => {
     expect(Object.values(IPC_CHANNELS).sort()).toEqual(
       [
         "app:health",
@@ -48,6 +49,7 @@ describe("IPC channels", () => {
         "settings:updateMany",
         "inspector:list",
         "inspector:get",
+        "elements:setPriority",
         "lineage:get",
         "sources:importManual",
         "inbox:list",
@@ -69,6 +71,44 @@ describe("IPC channels", () => {
       ].sort(),
     );
     expect(Object.values(IPC_CHANNELS)).not.toContain("db:query");
+  });
+});
+
+describe("ElementsSetPriorityRequestSchema (T027)", () => {
+  it("accepts a set action with a valid A/B/C/D label", () => {
+    const parsed = ElementsSetPriorityRequestSchema.parse({
+      id: "el_1",
+      action: { kind: "set", priority: "A" },
+    });
+    expect(parsed.action).toEqual({ kind: "set", priority: "A" });
+  });
+
+  it("accepts raise and lower actions", () => {
+    expect(
+      ElementsSetPriorityRequestSchema.parse({ id: "el_1", action: { kind: "raise" } }).action.kind,
+    ).toBe("raise");
+    expect(
+      ElementsSetPriorityRequestSchema.parse({ id: "el_1", action: { kind: "lower" } }).action.kind,
+    ).toBe("lower");
+  });
+
+  it("rejects an unknown action kind", () => {
+    expect(() =>
+      ElementsSetPriorityRequestSchema.parse({ id: "el_1", action: { kind: "bump" } }),
+    ).toThrow();
+  });
+
+  it("rejects a set action with an invalid label", () => {
+    expect(() =>
+      ElementsSetPriorityRequestSchema.parse({
+        id: "el_1",
+        action: { kind: "set", priority: "Z" },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects a missing id", () => {
+    expect(() => ElementsSetPriorityRequestSchema.parse({ action: { kind: "raise" } })).toThrow();
   });
 });
 

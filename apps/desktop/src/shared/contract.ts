@@ -312,6 +312,15 @@ export interface InspectorData {
 
 export const ElementIdSchema = z.string().min(1).max(128);
 
+/**
+ * The four coarse priority labels the UI exposes (numeric mapping lives in core).
+ * Defined here (before the inspector/elements sections that reference it) so the
+ * universal `elements.setPriority` command (T027) and the inbox triage
+ * `setPriority` action share ONE schema.
+ */
+export const PriorityLabelSchema = z.enum(["A", "B", "C", "D"]);
+export type PriorityLabelInput = z.infer<typeof PriorityLabelSchema>;
+
 /** `inspector.list()` takes no arguments (returns all live element summaries). */
 export const InspectorListRequestSchema = z.void();
 
@@ -328,6 +337,54 @@ export type InspectorGetRequest = z.infer<typeof InspectorGetRequestSchema>;
 export interface InspectorGetResult {
   /** The inspector payload, or `null` when the id is unknown/soft-deleted. */
   readonly data: InspectorData | null;
+}
+
+// ---------------------------------------------------------------------------
+// elements.setPriority()  (T027 — the universal priority write path)
+// ---------------------------------------------------------------------------
+
+/**
+ * Priority is a first-class, editable axis on EVERY element (T027). It is stored
+ * numerically (`elements.priority`, `0.0`–`1.0`) and surfaced as A/B/C/D; this is
+ * the single typed command the renderer uses to CHANGE it — from any source,
+ * extract, card (and task/topic/synthesis note). The renderer never does priority
+ * math: it sends an intent (`set` an explicit A/B/C/D label, or `raise`/`lower`
+ * one band), and the MAIN process computes the new numeric value via the
+ * `@interleave/core` helpers (`priorityFromLabel`/`raisePriority`/`lowerPriority`)
+ * and persists it through `ElementRepository.setPriority` in ONE transaction,
+ * appending `update_element` (NO new op type — the closed op set is unchanged).
+ * The change is read by the attention scheduler (T028) and the queue sort (T029).
+ * There is still no generic `db.query`.
+ *
+ * `action` is a discriminated union so the main side rejects an unknown intent at
+ * the boundary:
+ *  - `set`   → store the label's representative numeric value.
+ *  - `raise` → step UP one band (clamped at `A`).
+ *  - `lower` → step DOWN one band (clamped at `D`).
+ */
+export const ElementsSetPriorityRequestSchema = z.object({
+  /** The element id whose priority to change (any type — priority is universal). */
+  id: ElementIdSchema,
+  action: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("set"), priority: PriorityLabelSchema }),
+    z.object({ kind: z.literal("raise") }),
+    z.object({ kind: z.literal("lower") }),
+  ]),
+});
+export type ElementsSetPriorityRequest = z.infer<typeof ElementsSetPriorityRequestSchema>;
+
+export interface ElementsSetPriorityResult {
+  /**
+   * The updated element summary carrying the NEW numeric `priority` + the derived
+   * A/B/C/D `priorityLabel`, so the renderer can update the badge without a
+   * re-fetch. `null` when the id is unknown / soft-deleted.
+   */
+  readonly element:
+    | (ElementSummary & {
+        /** Derived A/B/C/D label for the new numeric `priority`. */
+        readonly priorityLabel: PriorityLabelInput;
+      })
+    | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -389,10 +446,6 @@ export interface LineageGetResult {
  * delete them — every action validated main-side, run in ONE transaction, and
  * logged to `operation_log`. There is still no generic `db.query`.
  */
-
-/** The four coarse priority labels the UI exposes (numeric mapping lives in core). */
-export const PriorityLabelSchema = z.enum(["A", "B", "C", "D"]);
-export type PriorityLabelInput = z.infer<typeof PriorityLabelSchema>;
 
 /**
  * Create a source in the `inbox` (T012 landed title-only; T013 adds the body).
@@ -968,6 +1021,14 @@ export interface AppApi {
     list(): Promise<InspectorListResult>;
     /** The full inspector payload for one element (read-only). */
     get(request: InspectorGetRequest): Promise<InspectorGetResult>;
+  };
+  readonly elements: {
+    /**
+     * Set / raise / lower an element's priority (T027) — the universal priority
+     * write path for sources/extracts/cards/tasks/topics/synthesis notes. Updates
+     * the numeric value + logs `update_element` in one transaction.
+     */
+    setPriority(request: ElementsSetPriorityRequest): Promise<ElementsSetPriorityResult>;
   };
   readonly lineage: {
     /** The full, depth-tagged lineage tree for one element (read-only) (T023). */

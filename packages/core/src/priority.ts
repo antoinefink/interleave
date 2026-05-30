@@ -89,3 +89,36 @@ export function priorityToLabel(priority: Priority): PriorityLabel {
   // Unreachable: the `D` threshold is 0 and `v` is clamped to >= 0.
   return "D";
 }
+
+/**
+ * Labels ordered HIGH → LOW (`A`, `B`, `C`, `D`). The band-stepping helpers
+ * walk this order so {@link raisePriority}/{@link lowerPriority} always move by
+ * exactly one A/B/C/D band — the "raise/lower priority" affordance (T027) the
+ * inspector, queue, and review surfaces share.
+ */
+const PRIORITY_LABELS_HIGH_TO_LOW: readonly PriorityLabel[] = ["A", "B", "C", "D"];
+
+/**
+ * Step a numeric {@link Priority} UP one A/B/C/D band (T027), returning the
+ * representative value of the next-higher band. The current band is derived with
+ * {@link priorityToLabel}, so any stored value (not just a band midpoint) raises
+ * cleanly. Clamped at the top: raising `A` is a no-op (returns `A`'s value).
+ * Deterministic, so {@link lowerPriority} of the result round-trips back.
+ */
+export function raisePriority(priority: Priority): Priority {
+  const index = PRIORITY_LABELS_HIGH_TO_LOW.indexOf(priorityToLabel(priority));
+  const nextIndex = Math.max(0, index - 1);
+  return PRIORITY_LABEL_VALUE[PRIORITY_LABELS_HIGH_TO_LOW[nextIndex] as PriorityLabel];
+}
+
+/**
+ * Step a numeric {@link Priority} DOWN one A/B/C/D band (T027), returning the
+ * representative value of the next-lower band. Clamped at the bottom: lowering
+ * `D` is a no-op (returns `D`'s value). Deterministic, so {@link raisePriority}
+ * of the result round-trips back.
+ */
+export function lowerPriority(priority: Priority): Priority {
+  const index = PRIORITY_LABELS_HIGH_TO_LOW.indexOf(priorityToLabel(priority));
+  const nextIndex = Math.min(PRIORITY_LABELS_HIGH_TO_LOW.length - 1, index + 1);
+  return PRIORITY_LABEL_VALUE[PRIORITY_LABELS_HIGH_TO_LOW[nextIndex] as PriorityLabel];
+}

@@ -17,7 +17,13 @@
  */
 
 import type { BlockId, ElementId, MarkType, Priority, PriorityLabel } from "@interleave/core";
-import { canonicalizeUrl, priorityFromLabel } from "@interleave/core";
+import {
+  canonicalizeUrl,
+  lowerPriority,
+  priorityFromLabel,
+  priorityToLabel,
+  raisePriority,
+} from "@interleave/core";
 import { type DbHandle, migrateDatabase, openDatabase } from "@interleave/db";
 import {
   createRepositories,
@@ -43,6 +49,8 @@ import type {
   DocumentsGetResult,
   DocumentsSaveRequest,
   DocumentsSaveResult,
+  ElementsSetPriorityRequest,
+  ElementsSetPriorityResult,
   ExtractActionSummary,
   ExtractionCreateRequest,
   ExtractionCreateResult,
@@ -236,6 +244,50 @@ export class DbService {
   /** The full inspector payload for one element, or `null` if unknown/deleted. */
   getInspectorData(id: string): InspectorGetResult {
     return { data: this.inspectorQuery.get(id as ElementId) };
+  }
+
+  /**
+   * Set / raise / lower an element's priority (T027) — the universal priority
+   * write path for ANY element type (source/extract/card/task/topic/synthesis
+   * note). The renderer sends an intent only; the MAIN process computes the new
+   * numeric value with the `@interleave/core` band helpers and persists it through
+   * {@link ElementRepository.setPriority}, which mutates `elements.priority` and
+   * appends `update_element` in ONE transaction (NO new op type — priority changes
+   * stay within the closed op set). Returns the updated summary carrying the new
+   * numeric value + its derived A/B/C/D label so the renderer can update the badge
+   * without a re-fetch; `null` when the id is unknown / soft-deleted.
+   */
+  setElementPriority(request: ElementsSetPriorityRequest): ElementsSetPriorityResult {
+    const id = request.id as ElementId;
+    const element = this.repos.elements.findById(id);
+    if (!element || element.deletedAt) return { element: null };
+
+    let nextPriority: Priority;
+    switch (request.action.kind) {
+      case "set":
+        nextPriority = priorityFromLabel(request.action.priority);
+        break;
+      case "raise":
+        nextPriority = raisePriority(element.priority);
+        break;
+      case "lower":
+        nextPriority = lowerPriority(element.priority);
+        break;
+    }
+
+    const updated = this.repos.elements.setPriority(id, nextPriority);
+    return {
+      element: {
+        id: updated.id,
+        type: updated.type,
+        status: updated.status,
+        stage: updated.stage,
+        priority: updated.priority,
+        title: updated.title,
+        dueAt: updated.dueAt,
+        priorityLabel: priorityToLabel(updated.priority),
+      },
+    };
   }
 
   /** Read-only lineage query layer (T023), bound to the open database. */

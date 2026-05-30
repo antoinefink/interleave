@@ -16,6 +16,7 @@ import {
   DocumentMarksRemoveRequestSchema,
   DocumentsGetRequestSchema,
   DocumentsSaveRequestSchema,
+  ElementsSetPriorityRequestSchema,
   ExtractionCreateRequestSchema,
   ExtractsDeleteRequestSchema,
   ExtractsMarkDoneRequestSchema,
@@ -92,6 +93,11 @@ export function registerIpcHandlers(dbService: DbService): () => void {
   ipcMain.handle(IPC_CHANNELS.inspectorGet, (_event, rawRequest: unknown) => {
     const request = InspectorGetRequestSchema.parse(rawRequest);
     return dbService.getInspectorData(request.id);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.elementsSetPriority, (_event, rawRequest: unknown) => {
+    const request = ElementsSetPriorityRequestSchema.parse(rawRequest);
+    return dbService.setElementPriority(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.lineageGet, (_event, rawRequest: unknown) => {

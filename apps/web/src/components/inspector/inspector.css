@@ -86,6 +86,76 @@
   color: var(--prio-d);
 }
 
+/* ---------- Priority editor (T027) ---------- */
+/* The inline A/B/C/D segmented control + raise/lower steppers that make priority
+   a first-class editable axis in the inspector. */
+.prio-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.prio-edit__seg {
+  display: inline-flex;
+  gap: 4px;
+  /* Reset the browser's default <fieldset> chrome. */
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.prio-edit__btn {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: var(--t-2xs);
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.prio-edit__btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--border-strong, var(--border));
+}
+.prio-edit__btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.prio-edit__btn[aria-pressed="true"] {
+  border-color: var(--accent-soft-bd, var(--accent));
+  background: var(--accent-soft);
+  color: var(--accent-text, var(--accent));
+}
+.prio-edit__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-full);
+}
+.prio-edit__step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.prio-edit__step:hover:not(:disabled) {
+  color: var(--text);
+}
+.prio-edit__step:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
 /* ---------- Stage badge ---------- */
 .stage {
   font-size: var(--t-2xs);

@@ -22,6 +22,7 @@ import type {
   DocumentMarksRemoveRequest,
   DocumentsGetRequest,
   DocumentsSaveRequest,
+  ElementsSetPriorityRequest,
   ExtractionCreateRequest,
   ExtractsDeleteRequest,
   ExtractsMarkDoneRequest,
@@ -59,6 +60,10 @@ const appApi: AppApi = {
   inspector: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.inspectorList),
     get: (request: InspectorGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.inspectorGet, request),
+  },
+  elements: {
+    setPriority: (request: ElementsSetPriorityRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.elementsSetPriority, request),
   },
   lineage: {
     get: (request: LineageGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.lineageGet, request),

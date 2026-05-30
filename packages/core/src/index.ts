@@ -80,10 +80,12 @@ export type { Priority, PriorityLabel } from "./priority";
 export {
   DEFAULT_PRIORITY,
   isPriorityLabel,
+  lowerPriority,
   PRIORITY_LABEL_VALUE,
   PRIORITY_LABELS,
   priorityFromLabel,
   priorityToLabel,
+  raisePriority,
 } from "./priority";
 // Plain-text → ProseMirror converter — deterministic, editor-free (./prosemirror).
 export type {

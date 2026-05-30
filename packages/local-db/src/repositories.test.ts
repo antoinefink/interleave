@@ -75,6 +75,29 @@ describe("ElementRepository", () => {
     expect(ops.listForElement(el.id).map((e) => e.opType)).toContain("update_element");
   });
 
+  it("setPriority updates elements.priority and appends exactly one update_element op (T027)", () => {
+    const repo = new ElementRepository(handle.db);
+    const ops = new OperationLogRepository(handle.db);
+    const el = repo.create({
+      type: "extract",
+      status: "scheduled",
+      stage: "raw_extract",
+      priority: 0.375, // C
+      title: "prioritizable",
+    });
+
+    const before = ops.listForElement(el.id).filter((e) => e.opType === "update_element").length;
+
+    const updated = repo.setPriority(el.id, 0.875); // A
+    expect(updated.priority).toBe(0.875);
+    // The numeric value is actually persisted (re-read from the row).
+    expect(repo.findById(el.id)?.priority).toBe(0.875);
+
+    const updateOps = ops.listForElement(el.id).filter((e) => e.opType === "update_element");
+    // Exactly one new update_element op was appended by the priority change.
+    expect(updateOps.length).toBe(before + 1);
+  });
+
   it("soft-deletes (sets deleted_at, never removes the row) and restores", () => {
     const repo = new ElementRepository(handle.db);
     const ops = new OperationLogRepository(handle.db);

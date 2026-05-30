@@ -17,6 +17,7 @@ export const IPC_CHANNELS = {
   settingsUpdateMany: "settings:updateMany",
   inspectorList: "inspector:list",
   inspectorGet: "inspector:get",
+  elementsSetPriority: "elements:setPriority",
   lineageGet: "lineage:get",
   sourcesImportManual: "sources:importManual",
   inboxList: "inbox:list",

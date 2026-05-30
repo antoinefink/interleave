@@ -196,6 +196,36 @@ export interface InspectorGetResult {
 }
 
 // ---------------------------------------------------------------------------
+// elements.setPriority()  (T027 — the universal priority write path)
+// ---------------------------------------------------------------------------
+
+/** The four coarse priority labels the UI exposes (numeric mapping lives in core). */
+export type PriorityLabel = "A" | "B" | "C" | "D";
+
+/**
+ * One priority-change intent (discriminated by `kind`): set an explicit A/B/C/D
+ * label, or step the band up/down. The renderer never does priority math — the
+ * main process computes the new numeric value via the core band helpers.
+ */
+export type ElementsSetPriorityAction =
+  | { readonly kind: "set"; readonly priority: PriorityLabel }
+  | { readonly kind: "raise" }
+  | { readonly kind: "lower" };
+
+export interface ElementsSetPriorityRequest {
+  readonly id: string;
+  readonly action: ElementsSetPriorityAction;
+}
+
+export interface ElementsSetPriorityResult {
+  /**
+   * The updated element summary with the NEW numeric `priority` + derived A/B/C/D
+   * `priorityLabel`, or `null` when the id is unknown / soft-deleted.
+   */
+  readonly element: (ElementSummary & { readonly priorityLabel: PriorityLabel }) | null;
+}
+
+// ---------------------------------------------------------------------------
 // lineage.get()  (T023 — the full navigable element hierarchy)
 // ---------------------------------------------------------------------------
 
@@ -602,6 +632,9 @@ export interface AppApi {
     list(): Promise<InspectorListResult>;
     get(request: InspectorGetRequest): Promise<InspectorGetResult>;
   };
+  readonly elements: {
+    setPriority(request: ElementsSetPriorityRequest): Promise<ElementsSetPriorityResult>;
+  };
   readonly lineage: {
     get(request: LineageGetRequest): Promise<LineageGetResult>;
   };
@@ -696,6 +729,13 @@ export const appApi = {
   /** The full inspector payload for one element (read-only). */
   getInspectorData(request: InspectorGetRequest): Promise<InspectorGetResult> {
     return requireAppApi().inspector.get(request);
+  },
+  /**
+   * Set / raise / lower an element's priority (T027) — the universal priority
+   * write path. Logs `update_element`; returns the new numeric value + A/B/C/D label.
+   */
+  setElementPriority(request: ElementsSetPriorityRequest): Promise<ElementsSetPriorityResult> {
+    return requireAppApi().elements.setPriority(request);
   },
   /** The full, depth-tagged lineage tree for one element (read-only) (T023). */
   getLineage(request: LineageGetRequest): Promise<LineageGetResult> {

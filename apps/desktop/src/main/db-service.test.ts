@@ -347,4 +347,157 @@ describe("DbService", () => {
     });
     second.close();
   });
+
+  // -------------------------------------------------------------------------
+  // elements.setPriority (T027) — the universal priority write path.
+  // -------------------------------------------------------------------------
+
+  it("setElementPriority set/raise/lower produces the expected numeric value for a source, extract, and card (T027)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    // Priority is first-class on EVERY element type — create one of each.
+    const source = svc.repos.elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.375, // C
+      title: "A source",
+    });
+    const extract = svc.repos.elements.create({
+      type: "extract",
+      status: "scheduled",
+      stage: "raw_extract",
+      priority: 0.375, // C
+      title: "An extract",
+    });
+    const card = svc.repos.elements.create({
+      type: "card",
+      status: "active",
+      stage: "active_card",
+      priority: 0.375, // C
+      title: "A card",
+    });
+
+    // set → store the label's representative numeric value (A = 0.875).
+    const setRes = svc.setElementPriority({
+      id: source.id,
+      action: { kind: "set", priority: "A" },
+    });
+    expect(setRes.element?.priority).toBe(0.875);
+    expect(setRes.element?.priorityLabel).toBe("A");
+
+    // raise → step UP one band (C → B = 0.625) on an extract.
+    const raiseRes = svc.setElementPriority({ id: extract.id, action: { kind: "raise" } });
+    expect(raiseRes.element?.priority).toBe(0.625);
+    expect(raiseRes.element?.priorityLabel).toBe("B");
+
+    // lower → step DOWN one band (C → D = 0.125) on a card (priority is universal).
+    const lowerRes = svc.setElementPriority({ id: card.id, action: { kind: "lower" } });
+    expect(lowerRes.element?.priority).toBe(0.125);
+    expect(lowerRes.element?.priorityLabel).toBe("D");
+
+    // The numeric values are actually persisted on the elements rows.
+    expect(svc.repos.elements.findById(source.id)?.priority).toBe(0.875);
+    expect(svc.repos.elements.findById(extract.id)?.priority).toBe(0.625);
+    expect(svc.repos.elements.findById(card.id)?.priority).toBe(0.125);
+
+    svc.close();
+  });
+
+  it("setElementPriority clamps raise at A and lower at D (T027)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const top = svc.repos.elements.create({
+      type: "topic",
+      status: "active",
+      stage: "rough_topic",
+      priority: 0.875, // A
+      title: "Top",
+    });
+    const bottom = svc.repos.elements.create({
+      type: "task",
+      status: "active",
+      stage: "rough_topic",
+      priority: 0.125, // D
+      title: "Bottom",
+    });
+
+    // Raising A is a no-op; lowering D is a no-op.
+    expect(
+      svc.setElementPriority({ id: top.id, action: { kind: "raise" } }).element?.priority,
+    ).toBe(0.875);
+    expect(
+      svc.setElementPriority({ id: bottom.id, action: { kind: "lower" } }).element?.priority,
+    ).toBe(0.125);
+
+    svc.close();
+  });
+
+  it("setElementPriority appends exactly one update_element op per change (no new op type) (T027)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const el = svc.repos.elements.create({
+      type: "extract",
+      status: "scheduled",
+      stage: "raw_extract",
+      priority: 0.375,
+      title: "Op-logged",
+    });
+
+    const countUpdateOps = () =>
+      svc.repos.operationLog.listForElement(el.id).filter((o) => o.opType === "update_element")
+        .length;
+
+    const before = countUpdateOps();
+    svc.setElementPriority({ id: el.id, action: { kind: "raise" } });
+    expect(countUpdateOps()).toBe(before + 1);
+    svc.setElementPriority({ id: el.id, action: { kind: "set", priority: "D" } });
+    expect(countUpdateOps()).toBe(before + 2);
+
+    svc.close();
+  });
+
+  it("setElementPriority returns null for an unknown / soft-deleted element (T027)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    expect(
+      svc.setElementPriority({ id: "el_missing", action: { kind: "raise" } }).element,
+    ).toBeNull();
+
+    const el = svc.repos.elements.create({
+      type: "extract",
+      status: "scheduled",
+      stage: "raw_extract",
+      priority: 0.375,
+      title: "Doomed",
+    });
+    svc.repos.elements.softDelete(el.id);
+    expect(svc.setElementPriority({ id: el.id, action: { kind: "raise" } }).element).toBeNull();
+
+    svc.close();
+  });
+
+  it("persists a priority change across a full close + reopen (T027 restart analogue)", () => {
+    const first = new DbService();
+    first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const el = first.repos.elements.create({
+      type: "extract",
+      status: "scheduled",
+      stage: "raw_extract",
+      priority: 0.375, // C
+      title: "Durable priority",
+    });
+    first.setElementPriority({ id: el.id, action: { kind: "set", priority: "A" } });
+    first.close();
+
+    // A brand-new service opening the SAME file must see the raised priority.
+    const second = new DbService();
+    second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(second.repos.elements.findById(el.id)?.priority).toBe(0.875);
+    second.close();
+  });
 });
