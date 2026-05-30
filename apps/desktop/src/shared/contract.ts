@@ -157,6 +157,7 @@ export const SettingsPatchSchema = z
     defaultDesiredRetention: z.number().min(DESIRED_RETENTION_MIN).max(DESIRED_RETENTION_MAX),
     defaultTopicIntervalDays: z.number().int().positive(),
     defaultSourcePriority: z.number().min(0).max(1),
+    burySiblings: z.boolean(),
     keyboardLayout: z.enum(KEYBOARD_LAYOUTS),
     theme: z.enum(THEMES),
   })
@@ -1481,11 +1482,31 @@ export interface ReviewCardView {
   readonly lapses: number;
   /** True when the user has flagged this card as bad (T038 — a manual quality marker). */
   readonly flagged: boolean;
+  /**
+   * The card's sibling group (the same extract / cloze set), or `null` when it has
+   * none. The renderer threads this forward as opaque session state so the NEXT
+   * `session.next` call can ask the main side to bury this group (T039); the
+   * renderer never computes sibling relationships itself.
+   */
+  readonly siblingGroupId: string | null;
 }
 
 export const ReviewSessionNextRequestSchema = z.object({
-  /** Card ids already seen this session — skipped so the deck advances (T039 seam). */
+  /** Card ids already seen this session — skipped so the deck advances. */
   exclude: z.array(ElementIdSchema).max(10_000).optional(),
+  /**
+   * Sibling group(s) shown most recently this session — opaque ids the renderer
+   * carries forward from the previous card's `siblingGroupId`. When burying is on,
+   * a card in any of these groups is skipped so siblings aren't back-to-back
+   * (T039). The renderer never computes sibling relationships; the MAIN side does
+   * the sibling-aware selection from these ids.
+   */
+  recentSiblingGroups: z.array(z.string().min(1).max(128)).max(64).optional(),
+  /**
+   * When `false`, sibling burying is disabled (the natural due order is used). When
+   * omitted, the main side reads the persisted `burySiblings` setting (default on).
+   */
+  burySiblings: z.boolean().optional(),
   /** "Now" the due read compares against (ISO-8601); defaults to the server clock. */
   asOf: z.string().trim().max(64).optional(),
 });

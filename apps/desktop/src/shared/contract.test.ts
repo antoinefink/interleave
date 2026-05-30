@@ -246,6 +246,18 @@ describe("Review session schemas (T037)", () => {
     expect(parsed.exclude).toEqual(["el_1", "el_2"]);
   });
 
+  it("session.next accepts the T039 sibling-burying fields", () => {
+    const parsed = ReviewSessionNextRequestSchema.parse({
+      exclude: ["el_1"],
+      recentSiblingGroups: ["sib_1", "sib_2"],
+      burySiblings: false,
+    });
+    expect(parsed.recentSiblingGroups).toEqual(["sib_1", "sib_2"]);
+    expect(parsed.burySiblings).toBe(false);
+    // A non-boolean burySiblings is rejected at the boundary.
+    expect(() => ReviewSessionNextRequestSchema.parse({ burySiblings: "yes" })).toThrow();
+  });
+
   it("preview requires a cardId", () => {
     expect(ReviewPreviewRequestSchema.parse({ cardId: "el_1" }).cardId).toBe("el_1");
     expect(() => ReviewPreviewRequestSchema.parse({})).toThrow();
@@ -327,6 +339,12 @@ describe("SettingsPatchSchema (T011)", () => {
   it("rejects a non-integer budget / topic interval", () => {
     expect(() => SettingsPatchSchema.parse({ dailyReviewBudget: 60.5 })).toThrow();
     expect(() => SettingsPatchSchema.parse({ defaultTopicIntervalDays: 0 })).toThrow();
+  });
+
+  it("accepts a boolean burySiblings, rejects a non-boolean (T039)", () => {
+    expect(SettingsPatchSchema.parse({ burySiblings: false })).toEqual({ burySiblings: false });
+    expect(SettingsPatchSchema.parse({ burySiblings: true })).toEqual({ burySiblings: true });
+    expect(() => SettingsPatchSchema.parse({ burySiblings: "no" })).toThrow();
   });
 });
 

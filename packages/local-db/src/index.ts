@@ -111,6 +111,11 @@ export {
   type ReviewOutcome,
   ReviewRepository,
 } from "./review-repository";
+export {
+  type NextReviewCard,
+  type NextReviewCardInput,
+  ReviewSessionService,
+} from "./review-session-service";
 export { type ScheduleResult, SchedulerService } from "./scheduler-service";
 export { type SearchOptions, SearchRepository } from "./search-repository";
 export { SettingsRepository } from "./settings-repository";

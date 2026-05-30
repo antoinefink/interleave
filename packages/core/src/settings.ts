@@ -45,6 +45,9 @@ export type ThemePreference = (typeof THEMES)[number];
  *   scheduler (read by the topic/extract scheduler, T028).
  * - `defaultSourcePriority` — numeric priority assigned to newly imported
  *   sources (surfaced as A/B/C/D; read by import, T012).
+ * - `burySiblings` — when `true` (default), cards from the same extract/cloze
+ *   sibling group are not shown back-to-back in a review session (read by the
+ *   review session ordering, T039). Turning it off uses the natural due order.
  * - `keyboardLayout` — default shortcut bindings (T048).
  * - `theme` — light/dark UI preference.
  */
@@ -53,6 +56,7 @@ export interface AppSettings {
   readonly defaultDesiredRetention: Priority;
   readonly defaultTopicIntervalDays: number;
   readonly defaultSourcePriority: Priority;
+  readonly burySiblings: boolean;
   readonly keyboardLayout: KeyboardLayout;
   readonly theme: ThemePreference;
 }
@@ -66,6 +70,7 @@ export const SETTINGS_KEYS = {
   defaultDesiredRetention: "review.defaultDesiredRetention",
   defaultTopicIntervalDays: "scheduler.defaultTopicIntervalDays",
   defaultSourcePriority: "import.defaultSourcePriority",
+  burySiblings: "review.burySiblings",
   keyboardLayout: "ui.keyboardLayout",
   theme: "ui.theme",
 } as const satisfies Record<keyof AppSettings, string>;
@@ -80,6 +85,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   defaultDesiredRetention: 0.9,
   defaultTopicIntervalDays: 7,
   defaultSourcePriority: DEFAULT_PRIORITY,
+  burySiblings: true,
   keyboardLayout: "qwerty",
   theme: "dark",
 };
@@ -145,6 +151,8 @@ export function coerceSettingValue<K extends keyof AppSettings>(
       return (isFiniteNumber(raw) && raw > 0 ? Math.round(raw) : fallback) as AppSettings[K];
     case "defaultSourcePriority":
       return (isFiniteNumber(raw) ? clamp01(raw) : fallback) as AppSettings[K];
+    case "burySiblings":
+      return (typeof raw === "boolean" ? raw : fallback) as AppSettings[K];
     case "keyboardLayout":
       return (isKeyboardLayout(raw) ? raw : fallback) as AppSettings[K];
     case "theme":
@@ -177,6 +185,7 @@ export function appSettingsFromStored(stored: Readonly<Record<string, unknown>>)
       "defaultSourcePriority",
       stored[SETTINGS_KEYS.defaultSourcePriority],
     ),
+    burySiblings: coerceSettingValue("burySiblings", stored[SETTINGS_KEYS.burySiblings]),
     keyboardLayout: coerceSettingValue("keyboardLayout", stored[SETTINGS_KEYS.keyboardLayout]),
     theme: coerceSettingValue("theme", stored[SETTINGS_KEYS.theme]),
   };

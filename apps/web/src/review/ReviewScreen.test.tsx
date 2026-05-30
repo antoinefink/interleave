@@ -46,6 +46,7 @@ const h = vi.hoisted(() => {
     leech: false,
     lapses: 0,
     flagged: false,
+    siblingGroupId: null,
   };
   const clozeCard: ReviewCardView = {
     id: "card-cloze",
@@ -73,6 +74,7 @@ const h = vi.hoisted(() => {
     leech: false,
     lapses: 0,
     flagged: false,
+    siblingGroupId: null,
   };
   return {
     navigateSpy: vi.fn(),
@@ -225,6 +227,30 @@ describe("ReviewScreen", () => {
     fireEvent.click(screen.getByTestId("review-reveal"));
     const answer = await screen.findByTestId("review-answer");
     expect(answer).toHaveTextContent("skill-acquisition efficiency");
+  });
+
+  it("threads the shown card's siblingGroupId into the NEXT session.next call (T039)", async () => {
+    // The first card belongs to a sibling group; after grading it, the renderer
+    // must pass that group as `recentSiblingGroups` so the main side can bury it.
+    const grouped = { ...h.qaCard, siblingGroupId: "sib_group_1" };
+    h.reviewSessionNext
+      .mockResolvedValueOnce({ card: grouped, remaining: 1, total: 2 })
+      .mockResolvedValueOnce({ card: { ...h.clozeCard, id: "card-2" }, remaining: 0, total: 1 });
+    render(<ReviewScreen />);
+
+    await screen.findByTestId("review-card");
+    // First load: nothing shown yet → no recent sibling group passed.
+    expect(h.reviewSessionNext.mock.calls[0]?.[0]?.recentSiblingGroups).toBeUndefined();
+
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-grades");
+    fireEvent.click(screen.getByTestId("review-grade-good"));
+
+    // After grading the grouped card, the next load buries its group.
+    await waitFor(() => expect(h.reviewSessionNext).toHaveBeenCalledTimes(2));
+    expect(h.reviewSessionNext.mock.calls[1]?.[0]?.recentSiblingGroups).toEqual(["sib_group_1"]);
+    // The renderer never sets burySiblings — the main side reads the persisted setting.
+    expect(h.reviewSessionNext.mock.calls[1]?.[0]?.burySiblings).toBeUndefined();
   });
 
   it("tallies per-grade counts in the completion summary", async () => {

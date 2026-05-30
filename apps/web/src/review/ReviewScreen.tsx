@@ -146,17 +146,24 @@ export function ReviewScreen() {
   const [endMs, setEndMs] = useState<number | null>(null);
 
   // The set of card ids already reviewed this session — passed to `session.next`
-  // so the deck advances (and the T039 sibling-burying seam stays main-side).
+  // so the deck advances.
   const excludeRef = useRef<string[]>([]);
+  // The sibling group of the card shown most recently (opaque session state passed
+  // to `session.next` so the MAIN side buries siblings — T039). The renderer never
+  // computes sibling relationships; it only carries the previous card's group id
+  // forward. The MVP window is the immediately-preceding card.
+  const recentSiblingGroupRef = useRef<string | null>(null);
   // When the current card was revealed, for the reveal→grade response time.
   const revealAtRef = useRef<number | null>(null);
 
-  /** Load the next due card (excluding the already-seen set). */
+  /** Load the next due card (excluding the already-seen set; burying recent siblings). */
   const loadNext = useCallback(async () => {
     if (!isDesktop()) return;
     try {
+      const recent = recentSiblingGroupRef.current;
       const res = await appApi.reviewSessionNext({
         exclude: excludeRef.current,
+        ...(recent ? { recentSiblingGroups: [recent] } : {}),
         ...(asOf ? { asOf } : {}),
       });
       setError(null);
@@ -179,6 +186,10 @@ export function ReviewScreen() {
       setCard(res.card);
       setRemaining(res.remaining);
       setTotal((t) => (t === 0 ? res.total + excludeRef.current.length : t));
+      // Remember this card's sibling group so the NEXT load buries it (T039). The
+      // window is one card (the immediately-preceding); a card with no group clears
+      // it so an unrelated card never suppresses anything.
+      recentSiblingGroupRef.current = res.card.siblingGroupId;
       select(res.card.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -264,6 +275,7 @@ export function ReviewScreen() {
   /** Restart the session from the top (re-reads the due deck). */
   const restart = useCallback(() => {
     excludeRef.current = [];
+    recentSiblingGroupRef.current = null;
     setReviewed(0);
     setGraded([]);
     setDone(false);

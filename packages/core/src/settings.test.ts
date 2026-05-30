@@ -34,9 +34,14 @@ describe("AppSettings defaults", () => {
       defaultDesiredRetention: "review.defaultDesiredRetention",
       defaultTopicIntervalDays: "scheduler.defaultTopicIntervalDays",
       defaultSourcePriority: "import.defaultSourcePriority",
+      burySiblings: "review.burySiblings",
       keyboardLayout: "ui.keyboardLayout",
       theme: "ui.theme",
     });
+  });
+
+  it("buries siblings by default", () => {
+    expect(DEFAULT_APP_SETTINGS.burySiblings).toBe(true);
   });
 });
 
@@ -80,6 +85,16 @@ describe("coerceSettingValue", () => {
     expect(coerceSettingValue("theme", "light")).toBe("light");
     expect(coerceSettingValue("theme", "sepia")).toBe(DEFAULT_APP_SETTINGS.theme);
   });
+
+  it("keeps a real boolean for burySiblings, else falls back to the default", () => {
+    expect(coerceSettingValue("burySiblings", false)).toBe(false);
+    expect(coerceSettingValue("burySiblings", true)).toBe(true);
+    // A non-boolean (incl. truthy strings/numbers) is rejected — only a real
+    // boolean is accepted, so a corrupt/legacy value can never disable burying.
+    expect(coerceSettingValue("burySiblings", "true")).toBe(DEFAULT_APP_SETTINGS.burySiblings);
+    expect(coerceSettingValue("burySiblings", 0)).toBe(DEFAULT_APP_SETTINGS.burySiblings);
+    expect(coerceSettingValue("burySiblings", undefined)).toBe(DEFAULT_APP_SETTINGS.burySiblings);
+  });
 });
 
 describe("type guards", () => {
@@ -101,6 +116,7 @@ describe("stored ↔ model round-trip", () => {
       [SETTINGS_KEYS.defaultDesiredRetention]: 0.95,
       [SETTINGS_KEYS.defaultTopicIntervalDays]: 30,
       [SETTINGS_KEYS.defaultSourcePriority]: 0.625,
+      [SETTINGS_KEYS.burySiblings]: false,
       [SETTINGS_KEYS.keyboardLayout]: "dvorak",
       [SETTINGS_KEYS.theme]: "light",
     };
@@ -109,6 +125,7 @@ describe("stored ↔ model round-trip", () => {
       defaultDesiredRetention: 0.95,
       defaultTopicIntervalDays: 30,
       defaultSourcePriority: 0.625,
+      burySiblings: false,
       keyboardLayout: "dvorak",
       theme: "light",
     });
@@ -128,6 +145,7 @@ describe("stored ↔ model round-trip", () => {
       defaultDesiredRetention: 0.92,
       defaultTopicIntervalDays: 3,
       defaultSourcePriority: 0.375,
+      burySiblings: false,
       keyboardLayout: "vim" as const,
       theme: "light" as const,
     };
@@ -148,6 +166,11 @@ describe("coerceSettingsPatch", () => {
 
   it("ignores undefined fields", () => {
     expect(coerceSettingsPatch({ theme: undefined })).toEqual({});
+  });
+
+  it("passes a boolean burySiblings patch through", () => {
+    expect(coerceSettingsPatch({ burySiblings: false })).toEqual({ burySiblings: false });
+    expect(coerceSettingsPatch({ burySiblings: true })).toEqual({ burySiblings: true });
   });
 });
 

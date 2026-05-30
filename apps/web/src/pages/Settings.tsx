@@ -26,6 +26,7 @@ const FALLBACK_SETTINGS: AppSettings = {
   defaultDesiredRetention: 0.9,
   defaultTopicIntervalDays: 7,
   defaultSourcePriority: 0.375,
+  burySiblings: true,
   keyboardLayout: "qwerty",
   theme: "dark",
 };
@@ -113,6 +114,40 @@ function Segmented<T extends string | number>({
         );
       })}
     </fieldset>
+  );
+}
+
+/** A small on/off switch matching the kit's `Toggle`. */
+function Toggle({
+  checked,
+  onChange,
+  name,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  name: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      data-testid={name}
+      onClick={() => onChange(!checked)}
+      className={
+        checked
+          ? "relative inline-flex h-6 w-11 items-center rounded-full bg-accent transition-colors"
+          : "relative inline-flex h-6 w-11 items-center rounded-full bg-surface transition-colors ring-1 ring-border"
+      }
+    >
+      <span
+        className={
+          checked
+            ? "inline-block size-5 translate-x-[22px] rounded-full bg-text-on-accent transition-transform"
+            : "inline-block size-5 translate-x-0.5 rounded-full bg-text-3 transition-transform"
+        }
+      />
+    </button>
   );
 }
 
@@ -299,6 +334,17 @@ export function Settings() {
               );
             })}
           </div>
+        </SettingRow>
+
+        <SettingRow
+          label="Bury siblings"
+          hint="Don't show cards from the same extract or cloze group back-to-back in a review session."
+        >
+          <Toggle
+            name="setting-bury-siblings"
+            checked={s.burySiblings}
+            onChange={(value) => void patch({ burySiblings: value })}
+          />
         </SettingRow>
       </SectionPanel>
 

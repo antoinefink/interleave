@@ -328,12 +328,14 @@ describe("DbService", () => {
       defaultDesiredRetention: 0.95,
       defaultTopicIntervalDays: 30,
       defaultSourcePriority: 0.875,
+      burySiblings: false,
       keyboardLayout: "dvorak",
       theme: "light",
     });
     first.close();
 
-    // A brand-new service opening the SAME file must see every value.
+    // A brand-new service opening the SAME file must see every value (incl. the
+    // T039 burySiblings toggle).
     const second = new DbService();
     second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
     const { settings } = second.getAppSettings();
@@ -342,6 +344,7 @@ describe("DbService", () => {
       defaultDesiredRetention: 0.95,
       defaultTopicIntervalDays: 30,
       defaultSourcePriority: 0.875,
+      burySiblings: false,
       keyboardLayout: "dvorak",
       theme: "light",
     });
@@ -991,6 +994,130 @@ describe("DbService — review session (T037)", () => {
     expect(exhausted.card).toBeNull();
     expect(exhausted.total).toBe(0);
     expect(exhausted.remaining).toBe(0);
+
+    svc.close();
+  });
+
+  // --- T039: sibling burying in the review session ---
+
+  /**
+   * Create a due Q&A card and return its id. Cards are created un-due; we set
+   * `review_states.due_at` to a past date so it enters the FSRS deck at `ASOF`.
+   */
+  function seedDueCard(svc: DbService, title: string, dueAt: string): string {
+    const { element } = svc.repos.review.createCard({
+      kind: "qa",
+      title,
+      priority: 0.625,
+      prompt: `${title}?`,
+      answer: `${title}.`,
+      stage: "active_card",
+    });
+    svc.raw.sqlite
+      .prepare("UPDATE review_states SET due_at = ? WHERE element_id = ?")
+      .run(dueAt, element.id);
+    return element.id;
+  }
+
+  it("buries siblings: two cards from one group are never returned back-to-back", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    // Fresh DB (no seed) so the deck is exactly these three cards.
+    const sib1 = seedDueCard(svc, "Sibling 1", "2027-05-01T00:00:00.000Z");
+    const sib2 = seedDueCard(svc, "Sibling 2", "2027-05-01T00:00:01.000Z");
+    const other = seedDueCard(svc, "Unrelated", "2027-05-01T00:00:02.000Z");
+    svc.repos.elements.addRelation({
+      fromElementId: sib1 as never,
+      toElementId: sib2 as never,
+      relationType: "sibling_group",
+      siblingGroupId: "sib_group_test" as never,
+    });
+    svc.repos.elements.addRelation({
+      fromElementId: sib2 as never,
+      toElementId: sib1 as never,
+      relationType: "sibling_group",
+      siblingGroupId: "sib_group_test" as never,
+    });
+
+    // First card: the soonest-due sibling (and it carries its group id forward).
+    const first = svc.reviewSessionNext({ asOf: ASOF });
+    expect(first.card?.id).toBe(sib1);
+    expect(first.card?.siblingGroupId).toBe("sib_group_test");
+
+    // Next: sib1's group is "recent" → sib2 is buried; the unrelated card surfaces
+    // even though sib2 is due sooner.
+    const second = svc.reviewSessionNext({
+      asOf: ASOF,
+      exclude: [sib1],
+      recentSiblingGroups: [first.card?.siblingGroupId ?? ""],
+    });
+    expect(second.card?.id).toBe(other);
+    expect(second.card?.siblingGroupId).toBeNull();
+
+    svc.close();
+  });
+
+  it("disabling burySiblings restores adjacency (natural due order)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const sib1 = seedDueCard(svc, "Sibling 1", "2027-05-01T00:00:00.000Z");
+    const sib2 = seedDueCard(svc, "Sibling 2", "2027-05-01T00:00:01.000Z");
+    seedDueCard(svc, "Unrelated", "2027-05-01T00:00:02.000Z");
+    for (const [from, to] of [
+      [sib1, sib2],
+      [sib2, sib1],
+    ] as const) {
+      svc.repos.elements.addRelation({
+        fromElementId: from as never,
+        toElementId: to as never,
+        relationType: "sibling_group",
+        siblingGroupId: "sib_group_test" as never,
+      });
+    }
+
+    // Persist the setting OFF — the session reads it when the request omits the flag.
+    svc.updateAppSettings({ burySiblings: false });
+    expect(svc.getAppSettings().settings.burySiblings).toBe(false);
+
+    const first = svc.reviewSessionNext({ asOf: ASOF });
+    expect(first.card?.id).toBe(sib1);
+    // Burying OFF → sib2 (next soonest) is adjacent to sib1 despite the recent group.
+    const second = svc.reviewSessionNext({
+      asOf: ASOF,
+      exclude: [sib1],
+      recentSiblingGroups: [first.card?.siblingGroupId ?? ""],
+    });
+    expect(second.card?.id).toBe(sib2);
+
+    svc.close();
+  });
+
+  it("the persisted burySiblings setting drives the default (no per-request flag)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const sib1 = seedDueCard(svc, "Sibling 1", "2027-05-01T00:00:00.000Z");
+    const sib2 = seedDueCard(svc, "Sibling 2", "2027-05-01T00:00:01.000Z");
+    const other = seedDueCard(svc, "Unrelated", "2027-05-01T00:00:02.000Z");
+    for (const [from, to] of [
+      [sib1, sib2],
+      [sib2, sib1],
+    ] as const) {
+      svc.repos.elements.addRelation({
+        fromElementId: from as never,
+        toElementId: to as never,
+        relationType: "sibling_group",
+        siblingGroupId: "sib_group_test" as never,
+      });
+    }
+
+    // Setting defaults ON: with no per-request flag, sib2 is buried after sib1.
+    const first = svc.reviewSessionNext({ asOf: ASOF });
+    const buriedSecond = svc.reviewSessionNext({
+      asOf: ASOF,
+      exclude: [sib1],
+      recentSiblingGroups: [first.card?.siblingGroupId ?? ""],
+    });
+    expect(buriedSecond.card?.id).toBe(other);
 
     svc.close();
   });

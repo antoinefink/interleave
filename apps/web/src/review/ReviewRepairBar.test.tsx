@@ -68,6 +68,7 @@ const QA_CARD: ReviewCardView = {
   leech: false,
   lapses: 0,
   flagged: false,
+  siblingGroupId: null,
 };
 
 function summary(overrides: Partial<CardEditSummary> = {}): CardEditSummary {

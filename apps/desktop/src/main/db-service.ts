@@ -53,6 +53,7 @@ import {
   QueueQuery,
   type Repositories,
   type ReviewOutcome,
+  ReviewSessionService,
 } from "@interleave/local-db";
 import { type IntervalPreview, SchedulerService } from "@interleave/scheduler";
 import { seedDemoCollection } from "@interleave/testing";
@@ -141,6 +142,7 @@ export class DbService {
   private extractReview: ExtractService | null = null;
   private cardService: CardService | null = null;
   private cardEditService: CardEditService | null = null;
+  private reviewSession: ReviewSessionService | null = null;
   private scheduler: SchedulerService | null = null;
   private migrated = false;
 
@@ -180,6 +182,9 @@ export class DbService {
     this.extractReview = new ExtractService(this.handle.db);
     this.cardService = new CardService(this.handle.db);
     this.cardEditService = new CardEditService(this.handle.db);
+    // The sibling-aware review-session ordering seam (T039): chooses the next due
+    // card and buries siblings (session-ordering ONLY — it writes nothing).
+    this.reviewSession = new ReviewSessionService(this.handle.db);
     // The FSRS card scheduler (T036) — one instance per open DB, reading the
     // `defaultDesiredRetention` setting (T011) as its first-class retention input.
     // FSRS schedules CARDS ONLY; sources/topics/extracts stay on the separate
@@ -205,6 +210,7 @@ export class DbService {
     this.extractReview = null;
     this.cardService = null;
     this.cardEditService = null;
+    this.reviewSession = null;
     this.scheduler = null;
     this.migrated = false;
   }
@@ -1104,6 +1110,9 @@ export class DbService {
       // Flag-as-bad (T038) — derived from the card's op-log (no column); the review
       // face shows the flag so the user sees a previously-flagged card resurface.
       flagged: this.cardEdit.isFlagged(element.id),
+      // The card's sibling group (T039) — the renderer threads it forward so the
+      // next `session.next` can bury it. `null` when the card has no siblings.
+      siblingGroupId: this.reviewSessionService.siblingGroupOf(element.id),
     };
   }
 
@@ -1118,39 +1127,60 @@ export class DbService {
   }
 
   /**
-   * The next due card in the active-recall session (T037). Reads the FSRS due deck
-   * (`QueueRepository.dueCards` — cards due by `review_states.due_at`, soonest
-   * first), skips the `exclude` set (the seam T039 sibling-burying drives), caps the
-   * session at the `dailyReviewBudget` setting (the soft cap on items surfaced per
-   * day, default 60 — read from {@link SettingsRepository}), and returns the FULL
-   * {@link ReviewCardView} for the first remaining card + the budget-bounded deck
-   * counts. The budget bounds the WHOLE session: cards already reviewed (the
-   * `exclude` set) count against it, so the surfaceable remainder is `budget −
-   * exclude.length`. **Cards only** (the two-scheduler split — attention items are
-   * not in the review session). Read-only: no mutation, no `operation_log`.
+   * The next due card in the active-recall session (T037 + T039 sibling burying).
+   * Reads the FSRS due deck (`QueueRepository.dueCards` — cards due by
+   * `review_states.due_at`, soonest first), skips the `exclude` set (already-seen
+   * cards), and caps the session at the `dailyReviewBudget` setting (the soft cap
+   * on items surfaced per day, default 60 — read from {@link SettingsRepository}).
+   * The budget bounds the WHOLE session: cards already reviewed (the `exclude` set)
+   * count against it, so the surfaceable remainder is `budget − exclude.length`.
+   *
+   * **Sibling burying (T039):** within the budget-bounded deck, the next card is
+   * chosen by {@link ReviewSessionService} — when burying is on (the persisted
+   * `burySiblings` setting, overridable per-request), a card whose sibling group is
+   * in `recentSiblingGroups` is skipped so siblings aren't shown back-to-back; if
+   * every remaining card is a recent sibling, the soonest-due card is returned
+   * anyway (never starve). The chosen card's `siblingGroupId` rides back on the
+   * view so the renderer threads it into the next call. Burying is session-ordering
+   * ONLY — it never mutates `review_states`/`due_at`/logs.
+   *
+   * **Cards only** (the two-scheduler split — attention items are not in the review
+   * session). Read-only: no mutation, no `operation_log`.
    */
   reviewSessionNext(request: ReviewSessionNextRequest): ReviewSessionNextResult {
     const asOf = (request.asOf ?? new Date().toISOString()) as IsoTimestamp;
     const asOfMs = Date.parse(asOf);
-    const exclude = new Set<string>(request.exclude ?? []);
+    const exclude = (request.exclude ?? []) as ElementId[];
+    const settings = this.repos.settings.getAppSettings();
     // The daily review budget is the deck cap (soft cap on items surfaced per day).
     // It bounds the entire session, so cards already seen this session (the `exclude`
     // set) consume it — only `budget − seen` further cards may be surfaced.
-    const budget = this.repos.settings.getAppSettings().dailyReviewBudget;
-    const surfaceableCap = Math.max(0, budget - exclude.size);
-    const due = this.queueRepo.dueCards(asOf);
-    const remainingDeck = due.filter((c) => !exclude.has(c.id)).slice(0, surfaceableCap);
-    const total = remainingDeck.length;
-    const next = remainingDeck[0];
-    if (!next) return { card: null, remaining: 0, total };
-    const card = this.toReviewCardView(next.id, asOfMs);
+    const surfaceableCap = Math.max(0, settings.dailyReviewBudget - exclude.length);
+    // Burying defaults to the persisted setting; the request may override it (the
+    // /settings toggle drives the setting, but a session can pass an explicit value).
+    const burySiblings = request.burySiblings ?? settings.burySiblings;
+    const next = this.reviewSessionService.nextReviewCard({
+      asOf,
+      exclude,
+      burySiblings,
+      limit: surfaceableCap,
+      recentSiblingGroups: (request.recentSiblingGroups ?? []) as SiblingGroupId[],
+    });
+    const total = next.deckSize;
+    if (!next.cardId) return { card: null, remaining: 0, total };
+    // `toReviewCardView` resolves the card's `siblingGroupId` itself (it equals
+    // `next.siblingGroupId`), so the renderer gets the group to bury on the next call.
+    const card = this.toReviewCardView(next.cardId, asOfMs);
     if (!card) return { card: null, remaining: Math.max(0, total - 1), total };
     return { card, remaining: Math.max(0, total - 1), total };
   }
 
-  /** The {@link QueueRepository} (via the repository bundle) for the FSRS due deck. */
-  private get queueRepo() {
-    return this.repos.queue;
+  /** The {@link ReviewSessionService} (sibling-aware deck ordering, T039). */
+  private get reviewSessionService(): ReviewSessionService {
+    if (!this.reviewSession) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.reviewSession;
   }
 
   /**

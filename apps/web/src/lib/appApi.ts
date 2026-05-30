@@ -79,6 +79,8 @@ export interface AppSettings {
   readonly defaultDesiredRetention: number;
   readonly defaultTopicIntervalDays: number;
   readonly defaultSourcePriority: number;
+  /** When `true` (default), sibling cards aren't shown back-to-back in review (T039). */
+  readonly burySiblings: boolean;
   readonly keyboardLayout: KeyboardLayout;
   readonly theme: ThemePreference;
 }
@@ -900,11 +902,26 @@ export interface ReviewCardView {
   readonly lapses: number;
   /** True when the user has flagged this card as bad (T038). */
   readonly flagged: boolean;
+  /**
+   * The card's sibling group (the same extract / cloze set), or `null`. The
+   * renderer threads this forward as opaque session state so the next
+   * `session.next` can bury the group (T039); it never computes sibling links.
+   */
+  readonly siblingGroupId: string | null;
 }
 
 export interface ReviewSessionNextRequest {
-  /** Card ids already seen this session — skipped so the deck advances (T039 seam). */
+  /** Card ids already seen this session — skipped so the deck advances. */
   readonly exclude?: readonly string[];
+  /**
+   * Sibling group(s) shown most recently this session — opaque ids carried forward
+   * from the previous card's `siblingGroupId`. When burying is on, a card in any of
+   * these groups is skipped so siblings aren't back-to-back (T039). The main side
+   * does the sibling-aware selection; the renderer never computes sibling links.
+   */
+  readonly recentSiblingGroups?: readonly string[];
+  /** When `false`, sibling burying is off. When omitted, the persisted setting wins. */
+  readonly burySiblings?: boolean;
   /** "Now" the due read compares against (ISO-8601); defaults to the server clock. */
   readonly asOf?: string;
 }
