@@ -131,6 +131,52 @@ test("the window is locked down and the renderer has no raw Node/fs/SQLite acces
   await app.close();
 });
 
+test("navigation is locked down: popups are denied, http(s) links go to the OS browser", async () => {
+  const app = await launchApp(dataDir);
+  const page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+
+  // The window MUST have a window-open handler installed (modern Electron denies
+  // renderer-initiated windows unless one is set), so external provenance links
+  // ("Open original" / RefBlock) actually open. Stub `shell.openExternal` in the
+  // main process, then simulate a renderer popup and assert it is denied + routed.
+  const result = await app.evaluate(async ({ BrowserWindow, shell }) => {
+    const [win] = BrowserWindow.getAllWindows();
+    const opened: string[] = [];
+    // Replace openExternal with a recorder for the duration of this assertion.
+    const original = shell.openExternal;
+    // biome-ignore lint/suspicious/noExplicitAny: test-only monkeypatch
+    (shell as any).openExternal = async (url: string) => {
+      opened.push(url);
+    };
+    try {
+      // Open an http(s) URL the way the renderer would; the handler denies the
+      // new window and forwards to shell.openExternal.
+      await win?.webContents.executeJavaScript(
+        `window.open('https://example.com/provenance', '_blank'); true;`,
+      );
+      // A non-http scheme must be denied with NO external open.
+      await win?.webContents.executeJavaScript(
+        `window.open('file:///etc/passwd', '_blank'); true;`,
+      );
+      // Give the synchronous handler a tick to record.
+      await new Promise((r) => setTimeout(r, 50));
+      return { opened, windowCount: BrowserWindow.getAllWindows().length };
+    } finally {
+      // biome-ignore lint/suspicious/noExplicitAny: restore the real impl
+      (shell as any).openExternal = original;
+    }
+  });
+
+  // The http(s) URL was routed to the OS browser; the file:// URL was not.
+  expect(result.opened).toContain("https://example.com/provenance");
+  expect(result.opened).not.toContain("file:///etc/passwd");
+  // No second BrowserWindow was created — every popup is denied.
+  expect(result.windowCount).toBe(1);
+
+  await app.close();
+});
+
 test("a value written through window.appApi survives a full app restart", async () => {
   const marker = `e2e-${Date.now()}`;
 
