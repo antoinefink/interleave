@@ -42,6 +42,9 @@ export const PRIMARY_NAV: readonly NavItem[] = [
 export const SECONDARY_NAV: readonly NavItem[] = [
   { id: "concepts", label: "Concepts", icon: "concepts", to: "/search" },
   { id: "analytics", label: "Analytics", icon: "analytics", to: "/search" },
+  // The leech cleanup view (T040) — maintenance for repeatedly-failing cards. Lives
+  // under the "Organize" group until the full M9 analytics/maintenance screen lands.
+  { id: "leeches", label: "Leeches", icon: "leech", to: "/maintenance/leeches" },
   { id: "settings", label: "Settings", icon: "settings", to: "/settings" },
 ];
 

@@ -29,7 +29,7 @@ import { appApi, type CardEditSummary, type ReviewCardView } from "../lib/appApi
 /** A patch applied to the in-flight card after an edit/flag (body + flag fields). */
 export type ReviewCardPatch = Pick<
   ReviewCardView,
-  "id" | "prompt" | "answer" | "cloze" | "flagged"
+  "id" | "prompt" | "answer" | "cloze" | "flagged" | "leech"
 >;
 
 interface ReviewRepairBarProps {
@@ -53,6 +53,7 @@ function patchFromSummary(card: CardEditSummary): ReviewCardPatch {
     answer: card.answer,
     cloze: card.cloze,
     flagged: card.flagged,
+    leech: card.leech,
   };
 }
 
@@ -137,6 +138,20 @@ export function ReviewRepairBar({
       setSaving(false);
     }
   }, [busy, saving, card.id, card.flagged, onCardUpdated]);
+
+  const toggleLeech = useCallback(async () => {
+    if (busy || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await appApi.markLeechCard({ cardId: card.id, leech: !card.leech });
+      onCardUpdated(patchFromSummary(res.card));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }, [busy, saving, card.id, card.leech, onCardUpdated]);
 
   const disabled = busy || saving;
 
@@ -258,6 +273,17 @@ export function ReviewRepairBar({
         >
           <Icon name="flag" size={14} />
           {card.flagged ? "Flagged" : "Flag as bad"}
+        </button>
+        <button
+          type="button"
+          className={`rv-repair__btn${card.leech ? " rv-repair__btn--active" : ""}`}
+          data-testid="review-repair-leech"
+          aria-pressed={card.leech}
+          disabled={disabled}
+          onClick={() => void toggleLeech()}
+        >
+          <Icon name="leech" size={14} />
+          {card.leech ? "Leech" : "Mark leech"}
         </button>
         <button
           type="button"

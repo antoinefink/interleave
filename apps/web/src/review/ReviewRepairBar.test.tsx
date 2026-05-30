@@ -23,6 +23,7 @@ const h = vi.hoisted(() => ({
   suspendCard: vi.fn(),
   deleteCard: vi.fn(),
   flagCard: vi.fn(),
+  markLeechCard: vi.fn(),
   onOpenSource: vi.fn(),
   onCardUpdated: vi.fn(),
   onCardRemoved: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock("../lib/appApi", async () => {
       suspendCard: h.suspendCard,
       deleteCard: h.deleteCard,
       flagCard: h.flagCard,
+      markLeechCard: h.markLeechCard,
     },
   };
 });
@@ -86,6 +88,7 @@ function summary(overrides: Partial<CardEditSummary> = {}): CardEditSummary {
     parentId: "ex-1",
     sourceId: "src-1",
     flagged: false,
+    leech: false,
     deleted: false,
     ...overrides,
   };
@@ -109,6 +112,7 @@ beforeEach(() => {
   h.suspendCard.mockResolvedValue({ card: summary({ status: "suspended" }) });
   h.deleteCard.mockResolvedValue({ card: summary({ status: "deleted", deleted: true }) });
   h.flagCard.mockResolvedValue({ card: summary({ flagged: true }) });
+  h.markLeechCard.mockResolvedValue({ card: summary({ leech: false }) });
 });
 
 describe("ReviewRepairBar", () => {

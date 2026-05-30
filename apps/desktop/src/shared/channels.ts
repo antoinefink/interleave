@@ -37,6 +37,7 @@ export const IPC_CHANNELS = {
   cardsSuspend: "cards:suspend",
   cardsDelete: "cards:delete",
   cardsFlag: "cards:flag",
+  cardsMarkLeech: "cards:markLeech",
   extractsUpdateStage: "extracts:updateStage",
   extractsRewrite: "extracts:rewrite",
   extractsPostpone: "extracts:postpone",
@@ -45,6 +46,7 @@ export const IPC_CHANNELS = {
   reviewSessionNext: "review:session:next",
   reviewPreview: "review:preview",
   reviewGrade: "review:grade",
+  reviewLeeches: "review:leeches",
   readPointGet: "readPoint:get",
   readPointSet: "readPoint:set",
 } as const;

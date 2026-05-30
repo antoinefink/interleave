@@ -1,0 +1,109 @@
+/**
+ * Leech cleanup view styles (T040).
+ *
+ * The maintenance surface for repeatedly-failing cards. Reuses the review
+ * session's shell + edit/repair primitives (`.rv-shell`, `.rv-edit`,
+ * `.rv-repair__btn`, `.rv-btn`, the `.banner`/`.refblock`/`.badge` tokens) and
+ * adds only the list-specific layout here, driven by the design tokens. UI only.
+ */
+
+.lc-shell {
+  overflow-y: auto;
+}
+
+.lc-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-4, 16px);
+  padding: var(--s-5, 20px) var(--s-6, 24px) var(--s-3, 12px);
+  border-bottom: 1px solid var(--border);
+}
+.lc-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--t-lg, 18px);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.lc-sub {
+  margin-top: 4px;
+  font-size: var(--t-sm, 13px);
+  color: var(--text-2);
+  max-width: 60ch;
+}
+.lc-count {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  color: var(--text-2);
+  padding: 4px 10px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.lc-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3, 12px);
+  padding: var(--s-5, 20px) var(--s-6, 24px);
+  max-width: 880px;
+  width: 100%;
+  margin: 0 auto;
+}
+.lc-loading {
+  font-size: var(--t-sm, 13px);
+  color: var(--text-3);
+}
+
+.lc-card {
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg, 12px);
+  background: var(--surface);
+  padding: var(--s-4, 16px);
+}
+.lc-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.lc-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lc-card__prompt {
+  font-size: var(--t-md, 15px);
+  font-weight: 550;
+  color: var(--text-1);
+  line-height: 1.4;
+}
+.lc-card__answer {
+  font-size: var(--t-sm, 13px);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.lc-card__src {
+  margin-top: 4px;
+  font-size: var(--t-2xs);
+}
+
+.lc-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.lc-edit {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}

@@ -795,13 +795,17 @@ describe("DbService — review session (T037)", () => {
   /** A future clock so the seeded Q&A card (dueAt 2026-06-03) reads as due. */
   const ASOF = "2027-06-01T12:00:00.000Z";
 
-  /** The seeded due Q&A card id (it has two reviews → a real future dueAt). */
+  /**
+   * The seeded due Q&A card id (it has two reviews → a real future dueAt). Excludes
+   * the seeded LEECH card (also a Q&A) so this is deterministic — the leech is the
+   * cleanup view's fixture (T040), not the plain review fixture.
+   */
   function seededDueCardId(svc: DbService): string {
     const row = svc.raw.sqlite
       .prepare(
         `SELECT e.id AS id FROM elements e
          JOIN cards c ON c.element_id = e.id
-         WHERE c.kind = 'qa' AND e.deleted_at IS NULL LIMIT 1`,
+         WHERE c.kind = 'qa' AND c.is_leech = 0 AND e.deleted_at IS NULL LIMIT 1`,
       )
       .get() as { id: string } | undefined;
     if (!row) throw new Error("seeded Q&A card not found");
@@ -1297,5 +1301,132 @@ describe("DbService — review session (T037)", () => {
     expect(() => svc.deleteCard({ cardId: id })).toThrow();
     expect(() => svc.flagCard({ cardId: "el_missing", flagged: true })).toThrow();
     svc.close();
+  });
+
+  // --- T040: leech detection + cleanup view ---
+
+  /** The seeded leech card id (the demo collection ships one with 4 lapses). */
+  function seededLeechCardId(svc: DbService): string {
+    const row = svc.raw.sqlite
+      .prepare(
+        `SELECT e.id AS id FROM elements e
+         JOIN cards c ON c.element_id = e.id
+         WHERE c.is_leech = 1 AND e.deleted_at IS NULL LIMIT 1`,
+      )
+      .get() as { id: string } | undefined;
+    if (!row) throw new Error("seeded leech card not found");
+    return row.id;
+  }
+
+  it("grading a card to its 4th lapse flags it a leech in the same transaction", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    // Fresh DB so the deck is exactly this card.
+    const cardId = seedDueCard(svc, "Lapsing fact", "2027-05-01T00:00:00.000Z");
+
+    expect(svc.repos.review.isCardLeech(cardId as never)).toBe(false);
+    expect(svc.reviewSessionNext({ asOf: ASOF }).card?.leech).toBe(false);
+
+    // Graduate to `review`, then lapse it four times (FSRS counts a lapse only on a
+    // `review`-state fail), recovering with `good` between fails.
+    let at = "2027-05-02T00:00:00.000Z";
+    const grade = (rating: "again" | "good" | "easy") => {
+      const { reviewState } = svc.reviewGrade({ cardId, rating, responseMs: 4000, asOf: at });
+      at = reviewState.dueAt
+        ? new Date(Date.parse(reviewState.dueAt) + 86_400_000).toISOString()
+        : at;
+    };
+    grade("easy"); // new → review
+    for (let i = 0; i < 4; i++) {
+      grade("again"); // lapse
+      if (i < 3) grade("good"); // recover so it can lapse again
+    }
+
+    const state = svc.repos.review.findReviewState(cardId as never);
+    expect(state?.lapses).toBeGreaterThanOrEqual(4);
+    expect(svc.repos.review.isCardLeech(cardId as never)).toBe(true);
+    // The leech rides back on the review card view (the banner/badge become real).
+    const view = svc.reviewSessionNext({ asOf: ASOF }).card;
+    expect(view?.leech).toBe(true);
+    expect(view?.lapses).toBeGreaterThanOrEqual(4);
+
+    svc.close();
+  });
+
+  it("reviewLeeches lists only leech cards (with lapse count + source)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    const leechId = seededLeechCardId(svc);
+    const { cards } = svc.reviewLeeches();
+    expect(cards.length).toBeGreaterThanOrEqual(1);
+    const found = cards.find((c) => c.id === leechId);
+    expect(found).toBeDefined();
+    expect(found?.lapses).toBeGreaterThanOrEqual(4);
+    // Lineage source title rides along for the cleanup view.
+    expect(found?.sourceTitle).toBe("On the Measure of Intelligence");
+    // Every listed card is actually a leech.
+    for (const c of cards) {
+      expect(svc.repos.review.isCardLeech(c.id as never)).toBe(true);
+    }
+    // The non-leech seeded Q&A card is NOT listed.
+    expect(cards.some((c) => c.id === seededDueCardId(svc))).toBe(false);
+
+    svc.close();
+  });
+
+  it("markLeech toggles the durable flag via update_element (manual mark / un-leech)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+    const cardId = seededDueCardId(svc);
+    expect(svc.repos.review.isCardLeech(cardId as never)).toBe(false);
+
+    const beforeOps = (
+      svc.raw.sqlite
+        .prepare("SELECT COUNT(*) AS n FROM operation_log WHERE op_type = 'update_element'")
+        .get() as { n: number }
+    ).n;
+
+    const marked = svc.markLeechCard({ cardId, leech: true });
+    expect(marked.card.leech).toBe(true);
+    expect(svc.repos.review.isCardLeech(cardId as never)).toBe(true);
+    expect(svc.reviewLeeches().cards.some((c) => c.id === cardId)).toBe(true);
+
+    const cleared = svc.markLeechCard({ cardId, leech: false });
+    expect(cleared.card.leech).toBe(false);
+    expect(svc.reviewLeeches().cards.some((c) => c.id === cardId)).toBe(false);
+
+    const afterOps = (
+      svc.raw.sqlite
+        .prepare("SELECT COUNT(*) AS n FROM operation_log WHERE op_type = 'update_element'")
+        .get() as { n: number }
+    ).n;
+    // Two toggles → two update_element ops; no new op type.
+    expect(afterOps).toBe(beforeOps + 2);
+
+    svc.close();
+  });
+
+  it("a leech flag + remediation survive a close + reopen (T040 restart analogue)", () => {
+    const first = new DbService();
+    first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(first.seedIfEmpty()).toBe(true);
+    const leechId = seededLeechCardId(first);
+    expect(first.reviewLeeches().cards.some((c) => c.id === leechId)).toBe(true);
+    // Remediate: suspend it from the cleanup view.
+    first.suspendCard({ cardId: leechId });
+    first.close();
+
+    const second = new DbService();
+    second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    // The leech flag persisted (still listed — the cleanup view keeps suspended
+    // cards) and the suspension persisted.
+    const still = second.reviewLeeches().cards.find((c) => c.id === leechId);
+    expect(still).toBeDefined();
+    expect(still?.status).toBe("suspended");
+    expect(second.repos.review.isCardLeech(leechId as never)).toBe(true);
+    second.close();
   });
 });

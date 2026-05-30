@@ -24,6 +24,7 @@
  */
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { DesktopStatusPanel } from "./components/DesktopStatusPanel";
+import { LeechCleanup } from "./maintenance/LeechCleanup";
 import { InboxScreen } from "./pages/inbox/InboxScreen";
 import { Placeholder } from "./pages/Placeholder";
 import { ProcessQueue } from "./pages/queue/ProcessQueue";
@@ -101,6 +102,18 @@ const reviewRoute = createRoute({
   component: ReviewScreen,
 });
 
+/**
+ * Leech cleanup view (T040) — the maintenance surface listing every card flagged a
+ * leech (auto after ≥4 lapses, or manual) with rewrite / suspend / delete / un-leech.
+ * Reads `appApi.reviewLeeches()` (read-only) and drives remediation through the
+ * existing `cards.*` surface; the renderer holds no leech threshold logic or SQL.
+ */
+const leechCleanupRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/maintenance/leeches",
+  component: LeechCleanup,
+});
+
 const searchRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/search",
@@ -147,6 +160,7 @@ const routeTree = rootRoute.addChildren([
   sourceRoute,
   extractRoute,
   reviewRoute,
+  leechCleanupRoute,
   searchRoute,
   settingsRoute,
 ]);

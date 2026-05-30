@@ -20,6 +20,7 @@ import type {
   CardsCreateRequest,
   CardsDeleteRequest,
   CardsFlagRequest,
+  CardsMarkLeechRequest,
   CardsSuspendRequest,
   CardsUpdateRequest,
   DocumentMarksAddRequest,
@@ -46,6 +47,7 @@ import type {
   ReviewGradeRequest,
   ReviewPreviewRequest,
   ReviewSessionNextRequest,
+  // review.leeches() takes no request payload.
   SettingsGetRequest,
   SettingsUpdateManyRequest,
   SettingsUpdateRequest,
@@ -117,6 +119,8 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.cardsSuspend, request),
     delete: (request: CardsDeleteRequest) => ipcRenderer.invoke(IPC_CHANNELS.cardsDelete, request),
     flag: (request: CardsFlagRequest) => ipcRenderer.invoke(IPC_CHANNELS.cardsFlag, request),
+    markLeech: (request: CardsMarkLeechRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.cardsMarkLeech, request),
   },
   extracts: {
     updateStage: (request: ExtractsUpdateStageRequest) =>
@@ -136,6 +140,7 @@ const appApi: AppApi = {
     preview: (request: ReviewPreviewRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.reviewPreview, request),
     grade: (request: ReviewGradeRequest) => ipcRenderer.invoke(IPC_CHANNELS.reviewGrade, request),
+    leeches: () => ipcRenderer.invoke(IPC_CHANNELS.reviewLeeches),
   },
   readPoints: {
     get: (request: ReadPointGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.readPointGet, request),

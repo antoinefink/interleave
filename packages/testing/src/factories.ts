@@ -103,6 +103,83 @@ export const DEMO_FIXTURES = {
       "Intelligence is a measure of {{c1::skill-acquisition efficiency}} over a scope of {{c2::tasks}}.",
     priority: PRIORITY_LABEL_VALUE.B,
   },
+  /**
+   * A leech card (T040): a Q&A card the user keeps failing. Seeded with four
+   * `again` lapses so `review_states.lapses >= LEECH_LAPSE_THRESHOLD` (4) and the
+   * durable `cards.is_leech` flag is set — so the cleanup view + the in-review leech
+   * banner have realistic data in dev/E2E without grading it live.
+   */
+  leechCard: {
+    title: "Generalization difficulty (leech)",
+    prompt: "What does a measure of intelligence reward, rather than single-task skill?",
+    answer: "Generalization power — skill-acquisition efficiency across a scope of tasks.",
+    priority: PRIORITY_LABEL_VALUE.B,
+  },
+  /** Four failing (`again`) reviews on the leech card → lapses cross the threshold. */
+  leechReviews: [
+    {
+      rating: "again" as const,
+      reviewedAt: "2026-05-21T08:00:00.000Z" as IsoTimestamp,
+      responseMs: 9000,
+      prevState: "new" as const,
+      nextState: "learning" as const,
+      nextStability: 0.4,
+      nextDifficulty: 8.1,
+      nextDueAt: "2026-05-21T08:10:00.000Z" as IsoTimestamp,
+      elapsedDays: 0,
+      scheduledDays: 0,
+      reps: 1,
+      lapses: 1,
+    },
+    {
+      rating: "again" as const,
+      reviewedAt: "2026-05-22T08:00:00.000Z" as IsoTimestamp,
+      responseMs: 9500,
+      prevState: "learning" as const,
+      nextState: "relearning" as const,
+      nextStability: 0.4,
+      nextDifficulty: 8.5,
+      nextDueAt: "2026-05-22T08:10:00.000Z" as IsoTimestamp,
+      elapsedDays: 1,
+      scheduledDays: 0,
+      reps: 2,
+      lapses: 2,
+    },
+    {
+      rating: "again" as const,
+      reviewedAt: "2026-05-23T08:00:00.000Z" as IsoTimestamp,
+      responseMs: 10000,
+      prevState: "relearning" as const,
+      nextState: "relearning" as const,
+      nextStability: 0.4,
+      nextDifficulty: 8.9,
+      nextDueAt: "2026-05-23T08:10:00.000Z" as IsoTimestamp,
+      elapsedDays: 1,
+      scheduledDays: 0,
+      reps: 3,
+      lapses: 3,
+    },
+    {
+      rating: "again" as const,
+      reviewedAt: "2026-05-24T08:00:00.000Z" as IsoTimestamp,
+      responseMs: 11000,
+      prevState: "relearning" as const,
+      nextState: "relearning" as const,
+      nextStability: 0.4,
+      nextDifficulty: 9.2,
+      // Parked far in the future so the seeded leech NEVER competes in the FSRS due
+      // deck (it would otherwise displace the seeded Q&A card as the soonest-due
+      // head and break the plain review fixtures). The leech is the CLEANUP VIEW's
+      // fixture — `review.leeches()` reads by the durable `is_leech` flag, not by
+      // due date, so a non-due card still surfaces there. Live leech DETECTION is
+      // proven by grading a fresh card in the E2E, not by this seeded one being due.
+      nextDueAt: "2099-01-01T08:10:00.000Z" as IsoTimestamp,
+      elapsedDays: 1,
+      scheduledDays: 0,
+      reps: 4,
+      lapses: 4,
+    },
+  ],
   /** Two reviews recorded against the Q&A card (so review_logs is non-empty). */
   reviews: [
     {
@@ -209,6 +286,8 @@ export interface DemoCollection {
   readonly subExtract: ExtractWithLocation;
   readonly qaCard: CardWithElement;
   readonly clozeCard: CardWithElement;
+  /** A Q&A card flagged a leech (≥4 lapses) — the cleanup view's seeded data (T040). */
+  readonly leechCard: CardWithElement;
   readonly concepts: SeededConcepts;
   readonly siblingGroupId: SiblingGroupId;
 }
@@ -366,6 +445,24 @@ export function seedDemoCollection(repos: Repositories, db: InterleaveDatabase):
     repos.review.recordReview(qaCard.element.id, review);
   }
 
+  // 7b) A leech card (T040): a Q&A card distilled from the same extract, failed
+  //     four times so `lapses >= 4` → `recordReview` auto-sets the durable
+  //     `cards.is_leech` flag. It surfaces in the cleanup view + the review banner.
+  const leechCard = repos.review.createCard({
+    kind: "qa",
+    title: f.leechCard.title,
+    priority: f.leechCard.priority,
+    prompt: f.leechCard.prompt,
+    answer: f.leechCard.answer,
+    parentId: extractId,
+    sourceId,
+    sourceLocationId: extract.location.id,
+    stage: "active_card",
+  });
+  for (const review of f.leechReviews) {
+    repos.review.recordReview(leechCard.element.id, review);
+  }
+
   // 8) Concepts (hierarchical) + membership edges, and tags on the extract.
   const parentConceptId = createConcept(repos, db, f.concepts.parent.name, null);
   const childConceptId = createConcept(repos, db, f.concepts.child.name, parentConceptId);
@@ -423,6 +520,7 @@ export function seedDemoCollection(repos: Repositories, db: InterleaveDatabase):
     subExtract,
     qaCard,
     clozeCard,
+    leechCard,
     concepts: { parentConceptId, childConceptId },
     siblingGroupId,
   };

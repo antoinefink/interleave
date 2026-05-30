@@ -65,6 +65,8 @@ import type {
   CardsDeleteResult,
   CardsFlagRequest,
   CardsFlagResult,
+  CardsMarkLeechRequest,
+  CardsMarkLeechResult,
   CardsSuspendRequest,
   CardsSuspendResult,
   CardsUpdateRequest,
@@ -103,6 +105,7 @@ import type {
   InboxTriageResult,
   InspectorGetResult,
   InspectorListResult,
+  LeechSummary,
   LineageGetResult,
   QueueActRequest,
   QueueActResult,
@@ -117,6 +120,7 @@ import type {
   ReviewCardView,
   ReviewGradeRequest,
   ReviewGradeResult,
+  ReviewLeechesResult,
   ReviewPreviewRequest,
   ReviewPreviewResult,
   ReviewSessionNextRequest,
@@ -885,7 +889,13 @@ export class DbService {
       sourceId: ElementId | null;
       deletedAt: string | null;
     };
-    card: { kind: string; prompt: string | null; answer: string | null; cloze: string | null };
+    card: {
+      kind: string;
+      prompt: string | null;
+      answer: string | null;
+      cloze: string | null;
+      isLeech: boolean;
+    };
   }): CardEditSummary {
     const { element, card } = result;
     return {
@@ -902,6 +912,8 @@ export class DbService {
       parentId: element.parentId,
       sourceId: element.sourceId,
       flagged: this.cardEdit.isFlagged(element.id),
+      // The durable leech flag (T040) lives on the `cards` row.
+      leech: card.isLeech,
       deleted: element.deletedAt != null,
     };
   }
@@ -957,6 +969,56 @@ export class DbService {
       request.reason ?? null,
     );
     return { card: this.toCardEditSummary(result) };
+  }
+
+  /**
+   * Set / clear a card's durable leech flag (T040) via
+   * {@link ReviewRepository.setCardLeech}: writes `cards.is_leech` + logs
+   * `update_element` in ONE transaction (no new op type). Backs the manual "Mark
+   * leech" button and un-leeching a remediated card after a rewrite. Flagging never
+   * destroys the card or its `review_logs`; the card stays in the deck (leech is
+   * flag + warn, not auto-suspend).
+   */
+  markLeechCard(request: CardsMarkLeechRequest): CardsMarkLeechResult {
+    const result = this.repos.review.setCardLeech(request.cardId as ElementId, request.leech);
+    return { card: this.toCardEditSummary(result) };
+  }
+
+  /**
+   * The leech cleanup view's read (T040) — every card flagged a leech (auto after
+   * ≥4 lapses, or manual) with its lapse count + source. Composes
+   * {@link ReviewRepository.listLeechCards} (the durable `cards.is_leech` query,
+   * most-lapsed first) with each card's lineage source title + location label.
+   * Read-only — no mutation, no `operation_log`. Soft-deleted cards are excluded;
+   * suspended cards are kept (the cleanup view is where they are repaired).
+   */
+  reviewLeeches(): ReviewLeechesResult {
+    const leeches = this.repos.review.listLeechCards();
+    const cards: LeechSummary[] = leeches.map((leech) => {
+      const { element, card } = leech;
+      const sourceLocationId = card.sourceLocationId as SourceLocationId | null;
+      const location = sourceLocationId
+        ? this.repos.sources.findLocationById(sourceLocationId)
+        : null;
+      const sourceEl = element.sourceId ? this.repos.elements.findById(element.sourceId) : null;
+      const sourceTitle = sourceEl && !sourceEl.deletedAt ? sourceEl.title : null;
+      return {
+        id: element.id,
+        kind: card.kind,
+        status: element.status,
+        stage: element.stage,
+        priority: element.priority,
+        title: element.title,
+        prompt: card.prompt,
+        answer: card.answer,
+        cloze: card.cloze,
+        lapses: leech.lapses,
+        reps: leech.reps,
+        sourceTitle,
+        sourceLocationLabel: location?.label ?? null,
+      };
+    });
+    return { cards };
   }
 
   /** The FSRS card scheduler (T036), bound to the open database. */
@@ -1103,9 +1165,10 @@ export class DbService {
         lapses: state?.lapses ?? null,
         fsrsState: state?.fsrsState ?? null,
       },
-      // Leech surfacing is T040 (no leech flag column yet); the field is wired now
-      // so the surface is stable. `lapses` is real today.
-      leech: false,
+      // Leech surfacing (T040): the durable `cards.is_leech` flag set automatically
+      // once `lapses` crosses the threshold (or manually). The review face shows the
+      // leech banner + badge from this. `lapses` is the running lapse count.
+      leech: card.card.isLeech,
       lapses: state?.lapses ?? 0,
       // Flag-as-bad (T038) — derived from the card's op-log (no column); the review
       // face shows the flag so the user sees a previously-flagged card resurface.

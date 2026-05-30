@@ -8,6 +8,13 @@
       "when": 1780072160466,
       "tag": "0000_unique_squadron_supreme",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1780130802483,
+      "tag": "0001_clever_rictor",
+      "breakpoints": true
     }
   ]
 }

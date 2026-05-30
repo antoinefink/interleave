@@ -12,6 +12,7 @@ import {
   CardsCreateRequestSchema,
   CardsDeleteRequestSchema,
   CardsFlagRequestSchema,
+  CardsMarkLeechRequestSchema,
   CardsSuspendRequestSchema,
   CardsUpdateRequestSchema,
   DocumentBlockInputSchema,
@@ -77,6 +78,7 @@ describe("IPC channels", () => {
         "cards:suspend",
         "cards:delete",
         "cards:flag",
+        "cards:markLeech",
         "extracts:updateStage",
         "extracts:rewrite",
         "extracts:postpone",
@@ -85,6 +87,7 @@ describe("IPC channels", () => {
         "review:session:next",
         "review:preview",
         "review:grade",
+        "review:leeches",
         "readPoint:get",
         "readPoint:set",
       ].sort(),
@@ -233,6 +236,15 @@ describe("Card repair schemas (T038)", () => {
     // A non-boolean flag / missing id → rejected.
     expect(() => CardsFlagRequestSchema.parse({ cardId: "el_1", flagged: "yes" })).toThrow();
     expect(() => CardsFlagRequestSchema.parse({ flagged: true })).toThrow();
+  });
+});
+
+describe("CardsMarkLeechRequestSchema (T040)", () => {
+  it("requires a cardId + boolean leech", () => {
+    expect(CardsMarkLeechRequestSchema.parse({ cardId: "el_1", leech: true }).leech).toBe(true);
+    expect(CardsMarkLeechRequestSchema.parse({ cardId: "el_1", leech: false }).leech).toBe(false);
+    expect(() => CardsMarkLeechRequestSchema.parse({ cardId: "el_1", leech: "yes" })).toThrow();
+    expect(() => CardsMarkLeechRequestSchema.parse({ leech: true })).toThrow();
   });
 });
 

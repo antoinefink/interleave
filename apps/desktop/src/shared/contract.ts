@@ -1350,6 +1350,8 @@ export interface CardEditSummary {
   readonly sourceId: string | null;
   /** Whether the card is currently flagged-as-bad (a manual quality marker). */
   readonly flagged: boolean;
+  /** Whether the card is currently flagged a leech (auto after ≥4 lapses, or manual) (T040). */
+  readonly leech: boolean;
   /** True after a soft delete. */
   readonly deleted: boolean;
 }
@@ -1405,6 +1407,31 @@ export const CardsFlagRequestSchema = z.object({
 export type CardsFlagRequest = z.infer<typeof CardsFlagRequestSchema>;
 
 export interface CardsFlagResult {
+  readonly card: CardEditSummary;
+}
+
+// ---------------------------------------------------------------------------
+// cards.markLeech()  (T040 — manual leech flag toggle / un-leech after rewrite)
+// ---------------------------------------------------------------------------
+
+/**
+ * Set / clear a card's durable leech flag (T040). Leech detection is AUTOMATIC
+ * (the failing-grade path sets `cards.is_leech` once `lapses` crosses the
+ * threshold — `@interleave/scheduler` `LEECH_LAPSE_THRESHOLD`, 4), but this command
+ * backs the kit's manual "Mark leech" button AND lets a remediated card be
+ * UN-leeched after a rewrite. The MAIN process runs
+ * {@link ReviewRepository.setCardLeech} in ONE transaction, logging `update_element`
+ * (NO new op type). Flagging never destroys the card or its `review_logs`.
+ */
+export const CardsMarkLeechRequestSchema = z.object({
+  /** The card element id to (un)flag as a leech. */
+  cardId: ElementIdSchema,
+  /** Set the leech flag (`true`) or clear it (`false` — un-leech after remediation). */
+  leech: z.boolean(),
+});
+export type CardsMarkLeechRequest = z.infer<typeof CardsMarkLeechRequestSchema>;
+
+export interface CardsMarkLeechResult {
   readonly card: CardEditSummary;
 }
 
@@ -1585,6 +1612,52 @@ export interface ReviewGradeResult {
 }
 
 // ---------------------------------------------------------------------------
+// review.leeches()  (T040 — the leech cleanup view read)
+// ---------------------------------------------------------------------------
+
+/**
+ * The leech cleanup view's read (T040). Lists every card flagged a leech (auto
+ * after ≥4 lapses, or manually) with its lapse count + source, so the user can
+ * rewrite / suspend / delete it. Read-only — no mutation, no `operation_log`. The
+ * remediation ACTIONS reuse the existing `cards.update` (rewrite) / `cards.suspend`
+ * / `cards.delete` / `cards.markLeech` (un-leech) commands. Soft-deleted cards are
+ * excluded; suspended cards are kept (the cleanup view is where they are repaired).
+ */
+
+/** One leech card row for the cleanup view. */
+export interface LeechSummary {
+  readonly id: string;
+  /** Card kind (`qa`/`cloze`). */
+  readonly kind: string;
+  readonly status: string;
+  readonly stage: string;
+  /** Numeric priority `0.0`–`1.0`; the UI derives the A/B/C/D label. */
+  readonly priority: number;
+  readonly title: string;
+  /** The Q&A prompt, or the cloze `{{cN::…}}` text. */
+  readonly prompt: string | null;
+  /** The Q&A answer; `null` for cloze cards. */
+  readonly answer: string | null;
+  /** The canonical cloze text; `null` for Q&A cards. */
+  readonly cloze: string | null;
+  /** Cumulative FSRS lapses (failed reviews) — the leech's severity. */
+  readonly lapses: number;
+  /** Total reps recorded. */
+  readonly reps: number;
+  /** The owning source's title (provenance), or `null`. */
+  readonly sourceTitle: string | null;
+  /** The human-readable source location label ("¶ 4" / "p. 12"), or `null`. */
+  readonly sourceLocationLabel: string | null;
+}
+
+/** `review.leeches()` takes no arguments. */
+export const ReviewLeechesRequestSchema = z.void();
+
+export interface ReviewLeechesResult {
+  readonly cards: readonly LeechSummary[];
+}
+
+// ---------------------------------------------------------------------------
 // The typed surface the renderer sees as `window.appApi`.
 // ---------------------------------------------------------------------------
 
@@ -1705,6 +1778,12 @@ export interface AppApi {
     delete(request: CardsDeleteRequest): Promise<CardsDeleteResult>;
     /** Flag/un-flag a card as bad (T038) — a non-destructive marker; logs `update_element`. */
     flag(request: CardsFlagRequest): Promise<CardsFlagResult>;
+    /**
+     * Set/clear a card's durable leech flag (T040) — the manual "Mark leech" button +
+     * un-leeching a remediated card; logs `update_element`. Detection is automatic
+     * after ≥4 lapses; this is the manual override.
+     */
+    markLeech(request: CardsMarkLeechRequest): Promise<CardsMarkLeechResult>;
   };
   readonly extracts: {
     /**
@@ -1740,6 +1819,12 @@ export interface AppApi {
      * logging `add_review_log`. Records the response time. Cards only.
      */
     grade(request: ReviewGradeRequest): Promise<ReviewGradeResult>;
+    /**
+     * The leech cleanup view's read (T040) — every card flagged a leech (auto after
+     * ≥4 lapses, or manual) with its lapse count + source. Read-only. Remediation
+     * reuses `cards.update`/`suspend`/`delete`/`markLeech`.
+     */
+    leeches(): Promise<ReviewLeechesResult>;
   };
   readonly readPoints: {
     /** Load an element's read-point (resume position), or `null` (T017). */

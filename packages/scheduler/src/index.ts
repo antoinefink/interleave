@@ -50,3 +50,4 @@ export {
   type SchedulerServiceOptions,
 } from "./card-scheduler";
 export { addDays, MS_PER_DAY } from "./date-util";
+export { isLeech, LEECH_LAPSE_THRESHOLD } from "./leech";

@@ -108,6 +108,7 @@ export { QueueRepository } from "./queue-repository";
 export {
   type CardWithElement,
   type CreateCardInput,
+  type LeechCard,
   type ReviewOutcome,
   ReviewRepository,
 } from "./review-repository";

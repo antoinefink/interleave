@@ -709,6 +709,8 @@ export interface CardEditSummary {
   readonly sourceId: string | null;
   /** Whether the card is currently flagged-as-bad. */
   readonly flagged: boolean;
+  /** Whether the card is currently flagged a leech (auto after ≥4 lapses, or manual) (T040). */
+  readonly leech: boolean;
   /** True after a soft delete. */
   readonly deleted: boolean;
 }
@@ -750,6 +752,16 @@ export interface CardsFlagRequest {
 }
 
 export interface CardsFlagResult {
+  readonly card: CardEditSummary;
+}
+
+export interface CardsMarkLeechRequest {
+  readonly cardId: string;
+  /** Set the leech flag (`true`) or clear it (`false` — un-leech after remediation). */
+  readonly leech: boolean;
+}
+
+export interface CardsMarkLeechResult {
   readonly card: CardEditSummary;
 }
 
@@ -986,6 +998,28 @@ export interface ReviewGradeResult {
   readonly reviewState: ReviewStateSummary;
 }
 
+/** One leech card row for the cleanup view (T040). */
+export interface LeechSummary {
+  readonly id: string;
+  readonly kind: string;
+  readonly status: string;
+  readonly stage: string;
+  readonly priority: number;
+  readonly title: string;
+  readonly prompt: string | null;
+  readonly answer: string | null;
+  readonly cloze: string | null;
+  /** Cumulative FSRS lapses (failed reviews) — the leech's severity. */
+  readonly lapses: number;
+  readonly reps: number;
+  readonly sourceTitle: string | null;
+  readonly sourceLocationLabel: string | null;
+}
+
+export interface ReviewLeechesResult {
+  readonly cards: readonly LeechSummary[];
+}
+
 /** The exact shape the preload exposes as `window.appApi`. */
 export interface AppApi {
   readonly app: {
@@ -1041,6 +1075,7 @@ export interface AppApi {
     suspend(request: CardsSuspendRequest): Promise<CardsSuspendResult>;
     delete(request: CardsDeleteRequest): Promise<CardsDeleteResult>;
     flag(request: CardsFlagRequest): Promise<CardsFlagResult>;
+    markLeech(request: CardsMarkLeechRequest): Promise<CardsMarkLeechResult>;
   };
   readonly extracts: {
     updateStage(request: ExtractsUpdateStageRequest): Promise<ExtractsUpdateStageResult>;
@@ -1053,6 +1088,7 @@ export interface AppApi {
     sessionNext(request?: ReviewSessionNextRequest): Promise<ReviewSessionNextResult>;
     preview(request: ReviewPreviewRequest): Promise<ReviewPreviewResult>;
     grade(request: ReviewGradeRequest): Promise<ReviewGradeResult>;
+    leeches(): Promise<ReviewLeechesResult>;
   };
   readonly readPoints: {
     get(request: ReadPointGetRequest): Promise<ReadPointGetResult>;
@@ -1221,6 +1257,14 @@ export const appApi = {
   flagCard(request: CardsFlagRequest): Promise<CardsFlagResult> {
     return requireAppApi().cards.flag(request);
   },
+  /**
+   * Set/clear a card's durable leech flag (T040) — the manual "Mark leech" button +
+   * un-leeching a remediated card. Logs `update_element`. Detection is automatic
+   * after ≥4 lapses; this is the manual override.
+   */
+  markLeechCard(request: CardsMarkLeechRequest): Promise<CardsMarkLeechResult> {
+    return requireAppApi().cards.markLeech(request);
+  },
   /** Advance an extract `raw → clean → atomic` (or set a stage); reschedules it (T024). */
   updateExtractStage(request: ExtractsUpdateStageRequest): Promise<ExtractsUpdateStageResult> {
     return requireAppApi().extracts.updateStage(request);
@@ -1262,6 +1306,14 @@ export const appApi = {
    */
   reviewGrade(request: ReviewGradeRequest): Promise<ReviewGradeResult> {
     return requireAppApi().review.grade(request);
+  },
+  /**
+   * The leech cleanup view's read (T040) — every card flagged a leech (auto after
+   * ≥4 lapses, or manual) with its lapse count + source. Read-only. Remediation
+   * reuses `updateCard` (rewrite) / `suspendCard` / `deleteCard` / `markLeechCard`.
+   */
+  reviewLeeches(): Promise<ReviewLeechesResult> {
+    return requireAppApi().review.leeches();
   },
   /** Load an element's read-point (resume position), or `null` (T017). */
   getReadPoint(request: ReadPointGetRequest): Promise<ReadPointGetResult> {

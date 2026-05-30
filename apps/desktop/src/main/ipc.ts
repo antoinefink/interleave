@@ -13,6 +13,7 @@ import {
   CardsCreateRequestSchema,
   CardsDeleteRequestSchema,
   CardsFlagRequestSchema,
+  CardsMarkLeechRequestSchema,
   CardsSuspendRequestSchema,
   CardsUpdateRequestSchema,
   DbStatusRequestSchema,
@@ -43,6 +44,7 @@ import {
   ReadPointGetRequestSchema,
   ReadPointSetRequestSchema,
   ReviewGradeRequestSchema,
+  ReviewLeechesRequestSchema,
   ReviewPreviewRequestSchema,
   ReviewSessionNextRequestSchema,
   SettingsGetAllRequestSchema,
@@ -206,6 +208,11 @@ export function registerIpcHandlers(dbService: DbService): () => void {
     return dbService.flagCard(request);
   });
 
+  ipcMain.handle(IPC_CHANNELS.cardsMarkLeech, (_event, rawRequest: unknown) => {
+    const request = CardsMarkLeechRequestSchema.parse(rawRequest);
+    return dbService.markLeechCard(request);
+  });
+
   ipcMain.handle(IPC_CHANNELS.extractsUpdateStage, (_event, rawRequest: unknown) => {
     const request = ExtractsUpdateStageRequestSchema.parse(rawRequest);
     return dbService.updateExtractStage(request);
@@ -244,6 +251,11 @@ export function registerIpcHandlers(dbService: DbService): () => void {
   ipcMain.handle(IPC_CHANNELS.reviewGrade, (_event, rawRequest: unknown) => {
     const request = ReviewGradeRequestSchema.parse(rawRequest);
     return dbService.reviewGrade(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.reviewLeeches, () => {
+    ReviewLeechesRequestSchema.parse(undefined);
+    return dbService.reviewLeeches();
   });
 
   ipcMain.handle(IPC_CHANNELS.readPointGet, (_event, rawRequest: unknown) => {

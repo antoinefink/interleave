@@ -11,11 +11,19 @@ import { CHEAT_SHEET, COMMAND_ITEMS, GOTO_MAP, PRIMARY_NAV, SECONDARY_NAV } from
 
 const ALL_NAV = [...PRIMARY_NAV, ...SECONDARY_NAV];
 
-/** The seven routes registered in router.tsx (the only valid destinations). */
-const VALID_ROUTES = new Set(["/", "/inbox", "/queue", "/review", "/search", "/settings"]);
+/** The nav-reachable routes registered in router.tsx (the only valid destinations). */
+const VALID_ROUTES = new Set([
+  "/",
+  "/inbox",
+  "/queue",
+  "/review",
+  "/maintenance/leeches",
+  "/search",
+  "/settings",
+]);
 
 describe("shell nav config", () => {
-  it("matches the kit's five primary + three Organize entries", () => {
+  it("matches the kit's five primary + the Organize entries", () => {
     expect(PRIMARY_NAV.map((n) => n.label)).toEqual([
       "Queue",
       "Inbox",
@@ -23,7 +31,12 @@ describe("shell nav config", () => {
       "Review",
       "Search",
     ]);
-    expect(SECONDARY_NAV.map((n) => n.label)).toEqual(["Concepts", "Analytics", "Settings"]);
+    expect(SECONDARY_NAV.map((n) => n.label)).toEqual([
+      "Concepts",
+      "Analytics",
+      "Leeches",
+      "Settings",
+    ]);
   });
 
   it("uses only icons mapped in the Icon component", () => {

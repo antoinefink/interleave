@@ -35,9 +35,10 @@ import {
   reviewLogs,
   reviewStates,
 } from "@interleave/db";
+import { isLeech } from "@interleave/scheduler";
 import { desc, eq } from "drizzle-orm";
 import { ElementRepository } from "./element-repository";
-import { newReviewLogId } from "./ids";
+import { newReviewLogId, nowIso } from "./ids";
 import { rowToElement, rowToReviewLog, rowToReviewState } from "./mappers";
 import { OperationLogRepository } from "./operation-log-repository";
 import type { DbClient } from "./types";
@@ -185,6 +186,16 @@ export class ReviewRepository {
    * Record one review: append an immutable `review_logs` row AND update the
    * card's `review_states`, atomically, logging `add_review_log`. The element's
    * `dueAt` is also advanced to the next due time so the queue picks it up.
+   *
+   * **Leech detection (T040):** after advancing the FSRS state, the new cumulative
+   * `lapses` is consulted via the single leech rule (`@interleave/scheduler`'s
+   * {@link isLeech} — "warn at 4 lapses"). When the card CROSSES the threshold and
+   * is not already flagged, the durable `cards.is_leech` flag is set in the SAME
+   * transaction and the leech-flag change is logged as `update_element` (no new op
+   * type — the closed 15-op set is unchanged). Leech is flag + warn only — it never
+   * suspends or reschedules here (the two-scheduler split: FSRS owns the schedule,
+   * the leech flag is a quality attribute). Once flagged, the flag persists until a
+   * user un-leeches it after remediation.
    */
   recordReview(cardElementId: ElementId, outcome: ReviewOutcome): ReviewLog {
     return this.db.transaction((tx) => {
@@ -230,9 +241,113 @@ export class ReviewRepository {
         payload: { reviewLogId: id, rating: outcome.rating, nextDueAt: outcome.nextDueAt },
       });
 
+      // Leech detection (T040): if this grade pushed the card over the lapse
+      // threshold and it is not already flagged, set the durable leech flag + log
+      // `update_element` — all inside this same review transaction.
+      if (isLeech({ lapses: outcome.lapses })) {
+        const cardRow = tx
+          .select({ isLeech: cards.isLeech })
+          .from(cards)
+          .where(eq(cards.elementId, cardElementId))
+          .get();
+        if (cardRow && !cardRow.isLeech) {
+          tx.update(cards).set({ isLeech: true }).where(eq(cards.elementId, cardElementId)).run();
+          new OperationLogRepository(tx).append(tx, {
+            opType: "update_element",
+            elementId: cardElementId,
+            payload: { id: cardElementId, isLeech: true, lapses: outcome.lapses },
+          });
+        }
+      }
+
       const log = tx.select().from(reviewLogs).where(eq(reviewLogs.id, id)).get();
       if (!log) throw new Error("ReviewRepository.recordReview: log row missing after insert");
       return rowToReviewLog(log);
     });
   }
+
+  /**
+   * Whether a card is currently flagged a leech (T040) — reads the durable
+   * `cards.is_leech` flag. Read-only; the cleanup view + the review face use it.
+   */
+  isCardLeech(cardElementId: ElementId): boolean {
+    const row = this.db
+      .select({ isLeech: cards.isLeech })
+      .from(cards)
+      .where(eq(cards.elementId, cardElementId))
+      .get();
+    return row?.isLeech ?? false;
+  }
+
+  /**
+   * All live leech cards (T040) — the cleanup view's read. Joins `cards`
+   * (`is_leech = 1`) to live (non-deleted) `card` elements + their `review_states`
+   * lapse count, most-lapsed first. Suspended cards are INCLUDED (the cleanup view
+   * is where a user un-suspends/rewrites them); soft-deleted cards are excluded.
+   * Read-only — no mutation, no `operation_log`.
+   */
+  listLeechCards(): LeechCard[] {
+    const rows = this.db
+      .select({
+        element: elements,
+        card: cards,
+        lapses: reviewStates.lapses,
+        reps: reviewStates.reps,
+        lastReviewedAt: reviewStates.lastReviewedAt,
+      })
+      .from(cards)
+      .innerJoin(elements, eq(elements.id, cards.elementId))
+      .leftJoin(reviewStates, eq(reviewStates.elementId, cards.elementId))
+      .where(eq(cards.isLeech, true))
+      .all()
+      .filter((r) => r.element.deletedAt == null)
+      .map((r) => ({
+        element: rowToElement(r.element),
+        card: r.card,
+        lapses: r.lapses ?? 0,
+        reps: r.reps ?? 0,
+        lastReviewedAt: r.lastReviewedAt ?? null,
+      }));
+    // Most-lapsed first (then most-recently reviewed) so the worst offenders lead.
+    rows.sort((a, b) => b.lapses - a.lapses);
+    return rows;
+  }
+
+  /**
+   * Set / clear a card's durable leech flag (T040) in ONE transaction, logging
+   * `update_element` (no new op type). Used by the manual "Mark leech" button and
+   * to UN-leech a remediated card. Idempotent: setting the flag to its current
+   * value is still logged (the op-log records the user's intent). Returns the card
+   * element + its `cards` row after the change.
+   */
+  setCardLeech(cardElementId: ElementId, leech: boolean): CardWithElement {
+    return this.db.transaction((tx) => {
+      tx.update(cards).set({ isLeech: leech }).where(eq(cards.elementId, cardElementId)).run();
+      const updatedAt = nowIso();
+      tx.update(elements).set({ updatedAt }).where(eq(elements.id, cardElementId)).run();
+      new OperationLogRepository(tx).append(tx, {
+        opType: "update_element",
+        elementId: cardElementId,
+        payload: { id: cardElementId, isLeech: leech },
+      });
+      const card = tx.select().from(cards).where(eq(cards.elementId, cardElementId)).get();
+      const elementRow = tx.select().from(elements).where(eq(elements.id, cardElementId)).get();
+      if (!card || !elementRow) {
+        throw new Error(
+          `ReviewRepository.setCardLeech: card ${cardElementId} missing after update`,
+        );
+      }
+      return { element: rowToElement(elementRow), card };
+    });
+  }
+}
+
+/** A leech card row for the cleanup view: the element, its body, + lapse signals. */
+export interface LeechCard {
+  readonly element: Element;
+  readonly card: CardRow;
+  /** Cumulative FSRS lapses (failed reviews) — the leech's severity. */
+  readonly lapses: number;
+  readonly reps: number;
+  readonly lastReviewedAt: IsoTimestamp | null;
 }

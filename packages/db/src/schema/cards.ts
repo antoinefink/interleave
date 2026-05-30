@@ -38,10 +38,22 @@ export const cards = sqliteTable(
     sourceLocationId: text("source_location_id").references(() => sourceLocations.id, {
       onDelete: "set null",
     }),
+    /**
+     * Durable leech flag (T040). A card is automatically flagged a leech once its
+     * cumulative `review_states.lapses` reaches the leech threshold (4 — see
+     * `@interleave/scheduler` `isLeech`); the flag is set in the SAME transaction as
+     * the failing grade so the cleanup view + analytics can query it cheaply
+     * (`WHERE is_leech = 1`) without recomputing from the lapse history. Stored on
+     * the CARD side (a quality attribute), not `review_states` (the FSRS memory
+     * state). A remediated card can be un-leeched. `0`/`1` (SQLite boolean).
+     */
+    isLeech: integer("is_leech", { mode: "boolean" }).notNull().default(false),
   },
   (table) => [
     check("cards_kind_check", inList(table.kind, CARD_KINDS)),
     index("cards_source_location_idx").on(table.sourceLocationId),
+    // The leech cleanup view + analytics filter on the leech flag (T040).
+    index("cards_is_leech_idx").on(table.isLeech),
   ],
 );
 
