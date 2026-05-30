@@ -39,6 +39,7 @@ import {
 import { useNavigateToLocation } from "../../reader/navigateToLocation";
 import { useSelection } from "../../shell/selection";
 import { Icon } from "../Icon";
+import { RefBlock } from "../RefBlock";
 import "./inspector.css";
 import { LineageTree } from "./LineageTree";
 import {
@@ -414,6 +415,7 @@ function InspectorBody({
     source,
     provenance,
     location,
+    sourceRef,
     tags,
     concepts,
     review,
@@ -528,6 +530,24 @@ function InspectorBody({
           <div className="tree">
             <LineageRow item={source} onSelect={onSelect} />
           </div>
+        </div>
+      )}
+
+      {/* Source reference (T043) — the originating refblock for an extract/card, so
+          opening the inspector on a card never feels orphaned. Sources show their
+          provenance above; extracts/cards show the shared RefBlock resolved from
+          lineage (title/URL/author/date/location + snippet), with the jump-to-source
+          affordance. A missing/soft-deleted source degrades to a calm placeholder. */}
+      {element.type !== "source" && sourceRef && (
+        <div className="insp-sec" data-testid="source-ref-section">
+          <div className="insp-sec__title">Source reference</div>
+          <RefBlock
+            ref={sourceRef}
+            testId="inspector-refblock"
+            {...(location && location.blockIds.length > 0
+              ? { onOpenSource: () => onJumpToLocation(location) }
+              : {})}
+          />
         </div>
       )}
 

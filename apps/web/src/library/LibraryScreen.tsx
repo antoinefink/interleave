@@ -18,6 +18,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { ConceptTag, Prio, TypeIcon, typeLabel } from "../components/inspector/primitives";
+import { RefBlock } from "../components/RefBlock";
 import "../components/inspector/inspector.css";
 import {
   appApi,
@@ -494,11 +495,26 @@ export function LibraryScreen() {
                     {selected.snippet}
                   </div>
                 ) : null}
+                {/* Source reference (T043) — the shared RefBlock so the library
+                    reads a source reference the same way the inspector/review do.
+                    A `source` hit references itself (just its title); an extract/card
+                    shows its originating source title + location. The search payload
+                    carries title + location (T042); URL/author/date are resolved in
+                    the inspector when the element is opened. */}
                 {selected.sourceTitle ? (
-                  <div className="refblock" data-testid="library-detail-ref">
-                    {selected.sourceTitle}
-                    {selected.sourceLocationLabel ? ` · ${selected.sourceLocationLabel}` : ""}
-                  </div>
+                  <RefBlock
+                    ref={{
+                      sourceElementId: null,
+                      sourceTitle: selected.sourceTitle,
+                      url: null,
+                      author: null,
+                      publishedAt: null,
+                      locationLabel: selected.sourceLocationLabel,
+                      snippet: null,
+                    }}
+                    showSnippet={false}
+                    testId="library-detail-ref"
+                  />
                 ) : (
                   <div className="lib-detail__type" data-testid="library-detail-nosrc">
                     No source

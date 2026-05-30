@@ -47,6 +47,7 @@ import { Icon } from "../components/Icon";
 import { requestInspectorRefresh } from "../components/inspector/Inspector";
 import { LineageTree } from "../components/inspector/LineageTree";
 import { Prio, SchedulerChip, Stage, Status, stageLabel } from "../components/inspector/primitives";
+import { RefBlock } from "../components/RefBlock";
 import type { CardKind } from "../lib/appApi";
 import {
   appApi,
@@ -481,7 +482,18 @@ export function ExtractView() {
         {/* LEFT — source context + lineage */}
         <aside className="extract-context" data-testid="extract-context">
           <div className="insp-sec__title">Source context</div>
-          {location ? (
+          {/* Source reference (T043) — the always-visible refblock: source
+              title/URL/author/date + location + verbatim snippet, resolved from
+              this extract's lineage. The jump-to-source button (T022) opens the
+              originating paragraph; a source-less extract degrades to a calm
+              placeholder. Reuses the shared RefBlock + formatSourceRef. */}
+          {inspector?.sourceRef ? (
+            <RefBlock
+              ref={inspector.sourceRef}
+              testId="extract-refblock"
+              {...(location ? { onOpenSource: () => navigateToLocation(location) } : {})}
+            />
+          ) : location ? (
             <blockquote className="extract-passage reader" data-testid="extract-passage">
               {location.selectedText}
               <button

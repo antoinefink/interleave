@@ -27,6 +27,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { FsrsStats, Prio, SchedulerChip, Stage } from "../components/inspector/primitives";
+import { RefBlock } from "../components/RefBlock";
 import "../components/inspector/inspector.css";
 import {
   appApi,
@@ -456,22 +457,17 @@ export function ReviewScreen() {
                         (card.answer ?? "")
                       )}
                     </div>
-                    {card.ref || card.sourceTitle ? (
-                      <div className="refblock" style={{ marginTop: 16 }}>
-                        {card.ref}
-                        {card.sourceLocationLabel ? (
-                          <button
-                            type="button"
-                            className="refblock__src"
-                            data-testid="review-open-source"
-                            onClick={openSource}
-                          >
-                            <Icon name="external" size={12} />
-                            Open source at this location · {card.sourceTitle ?? "source"}{" "}
-                            {card.sourceLocationLabel}
-                          </button>
-                        ) : null}
-                      </div>
+                    {/* Source reference (T043) — the enriched refblock, shown ONLY
+                        after reveal so it can't leak the answer. Reuses the shared
+                        RefBlock + formatSourceRef; the jump-to-source button is wired
+                        when the card carries a location (T022). */}
+                    {card.sourceRef ? (
+                      <RefBlock
+                        ref={card.sourceRef}
+                        testId="review-refblock"
+                        style={{ marginTop: 16 }}
+                        {...(card.sourceLocationLabel ? { onOpenSource: openSource } : {})}
+                      />
                     ) : null}
                   </div>
                 ) : null}

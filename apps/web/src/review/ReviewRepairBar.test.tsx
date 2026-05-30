@@ -58,6 +58,15 @@ const QA_CARD: ReviewCardView = {
   sourceTitle: "On the Measure of Intelligence",
   sourceLocationLabel: "¶ 4",
   ref: "Intelligence is a measure of skill-acquisition efficiency…",
+  sourceRef: {
+    sourceElementId: "src-1",
+    sourceTitle: "On the Measure of Intelligence",
+    url: "https://arxiv.org/abs/1911.01547",
+    author: "François Chollet",
+    publishedAt: "2019-11-05T00:00:00.000Z",
+    locationLabel: "¶ 4",
+    snippet: "Intelligence is a measure of skill-acquisition efficiency…",
+  },
   schedulerSignals: {
     kind: "fsrs",
     retrievability: 0.82,

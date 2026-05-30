@@ -1633,3 +1633,104 @@ describe("DbService — review session (T037)", () => {
     second.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Source/reference display (T043) — the enriched refblock on cards/extracts.
+// ---------------------------------------------------------------------------
+
+describe("DbService — source reference (T043)", () => {
+  /** A future clock so the seeded Q&A card reads as due (mirrors the review tests). */
+  const ASOF = "2027-06-01T12:00:00.000Z";
+
+  function seededExtractId(svc: DbService): string {
+    const row = svc.raw.sqlite
+      .prepare(`SELECT id FROM elements WHERE type = 'extract' AND deleted_at IS NULL LIMIT 1`)
+      .get() as { id: string } | undefined;
+    if (!row) throw new Error("seeded extract not found");
+    return row.id;
+  }
+
+  it("resolves the enriched sourceRef (title/url/author/date/location) for a seeded card", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    const res = svc.reviewSessionNext({ asOf: ASOF });
+    expect(res.card).not.toBeNull();
+    const ref = res.card?.sourceRef;
+    expect(ref).not.toBeNull();
+    // Provenance resolved from the `sources` row (the seed's Chollet paper).
+    expect(ref?.sourceTitle).toBe("On the Measure of Intelligence");
+    expect(ref?.url).toBe("https://arxiv.org/abs/1911.01547");
+    expect(ref?.author).toBe("François Chollet");
+    expect(ref?.publishedAt).toBe("2019-11-05T00:00:00.000Z");
+    // Location resolved from the card's `source_locations` anchor (the extract's loc).
+    expect(ref?.locationLabel).toBe("Definition · ¶1");
+    expect(ref?.snippet).toBeTruthy();
+    // Lineage points back at the owning source element.
+    expect(ref?.sourceElementId).toBeTruthy();
+
+    svc.close();
+  });
+
+  it("resolves the enriched sourceRef for a seeded extract via the inspector payload", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    const extractId = seededExtractId(svc);
+    const data = svc.getInspectorData(extractId).data;
+    expect(data).not.toBeNull();
+    const ref = data?.sourceRef;
+    expect(ref?.sourceTitle).toBe("On the Measure of Intelligence");
+    expect(ref?.author).toBe("François Chollet");
+    expect(ref?.url).toBe("https://arxiv.org/abs/1911.01547");
+    expect(ref?.locationLabel).toBe("Definition · ¶1");
+    expect(ref?.snippet).toContain("skill-acquisition efficiency");
+
+    svc.close();
+  });
+
+  it("a source's own inspector sourceRef points at itself (its own provenance)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    const source = svc.raw.sqlite
+      .prepare("SELECT id FROM elements WHERE type = 'source' AND parent_id IS NULL LIMIT 1")
+      .get() as { id: string };
+    const ref = svc.getInspectorData(source.id).data?.sourceRef;
+    expect(ref?.sourceElementId).toBe(source.id);
+    expect(ref?.sourceTitle).toBe("On the Measure of Intelligence");
+    expect(ref?.author).toBe("François Chollet");
+    // A source has no location of its own.
+    expect(ref?.locationLabel).toBeNull();
+
+    svc.close();
+  });
+
+  it("degrades to a placeholder ref when an extract's source is soft-deleted (no throw)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    const extractId = seededExtractId(svc);
+    const before = svc.getInspectorData(extractId).data?.sourceRef;
+    const sourceId = before?.sourceElementId;
+    expect(sourceId).toBeTruthy();
+
+    // Soft-delete the owning source → the extract's ref must degrade calmly, not throw.
+    svc.repos.elements.softDelete(sourceId as never);
+    const ref = svc.getInspectorData(extractId).data?.sourceRef;
+    expect(ref).not.toBeNull();
+    // The source title/provenance drop to null (a calm "source unavailable"); the
+    // location snippet remains (it is the element's own anchor, not the source).
+    expect(ref?.sourceTitle).toBeNull();
+    expect(ref?.author).toBeNull();
+    expect(ref?.url).toBeNull();
+    expect(ref?.sourceElementId).toBeNull();
+    expect(ref?.snippet).toBeTruthy();
+
+    svc.close();
+  });
+});

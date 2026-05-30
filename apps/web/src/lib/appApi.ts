@@ -146,6 +146,23 @@ export interface ReviewSummary {
   readonly logCount: number;
 }
 
+/**
+ * The originating source reference (T043 — the refblock). Mirrors
+ * `@interleave/core`'s `SourceRef`; the renderer's `RefBlock` renders it via the
+ * shared `formatSourceRef` so review / extract view / inspector / library agree on
+ * how a reference reads. Every field is nullable (manual imports may omit
+ * provenance; a source-less element degrades to a calm placeholder).
+ */
+export interface SourceRef {
+  readonly sourceElementId: string | null;
+  readonly sourceTitle: string | null;
+  readonly url: string | null;
+  readonly author: string | null;
+  readonly publishedAt: string | null;
+  readonly locationLabel: string | null;
+  readonly snippet: string | null;
+}
+
 export interface SourceProvenance {
   readonly elementId: string;
   readonly url: string | null;
@@ -187,6 +204,8 @@ export interface InspectorData {
   readonly source: LineageItem | null;
   readonly provenance: SourceProvenance | null;
   readonly location: LocationSummary | null;
+  /** The originating source reference (T043 — the refblock), resolved from lineage. */
+  readonly sourceRef: SourceRef | null;
   readonly tags: readonly string[];
   /** Concepts this element is a member of (T041 — `concept_membership` edges). */
   readonly concepts: readonly ConceptInspectorSummary[];
@@ -919,6 +938,13 @@ export interface ReviewCardView {
   readonly sourceLocationLabel: string | null;
   /** A verbatim snapshot of the originating text (the refblock quote), or `null`. */
   readonly ref: string | null;
+  /**
+   * The full originating source reference (T043 — title/URL/author/date/location +
+   * snippet), resolved from the card's lineage. Ships with the card but the
+   * renderer keeps it HIDDEN until reveal (it must not leak the answer), rendered
+   * with the shared `formatSourceRef`/`RefBlock`. `null` for a source-less card.
+   */
+  readonly sourceRef: SourceRef | null;
   readonly schedulerSignals: ReviewSchedulerSignals;
   readonly leech: boolean;
   readonly lapses: number;

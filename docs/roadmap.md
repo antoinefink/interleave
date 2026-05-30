@@ -152,7 +152,7 @@ Detailed specs: [`tasks/M1-foundations.md`](./tasks/M1-foundations.md)
   Done when: concepts (hierarchical) and tags (flat) can be created/assigned; elements filter by concept and tags.
 - [x] **T042 — Search** · done · _deps: T008_
   Done when: local full-text search over source title/body, extract body, card prompt/answer, and tags returns sources/extracts/cards quickly with simple ranking.
-- [ ] **T043 — Source/reference display** · _deps: T022, T032_
+- [x] **T043 — Source/reference display** · done · _deps: T022, T032_
   Done when: every extract and card shows source title/URL/author/date/location (review hides it until answer reveal); nothing feels orphaned.
 
 ## M9 — Safety, analytics & backup (T044–T047)
@@ -318,6 +318,7 @@ overload management, semantic search, AI, media, reliability, scale.
 
 Record notable completions / decisions here as tasks land (newest first).
 
+- 2026-05-30 - T043 Source/reference display - done. Every extract and card now surfaces its source reference (title/URL/author/date/location) via a shared refblock so nothing feels orphaned; review hides the reference until the answer is revealed.
 - 2026-05-30 - T042 Search - done. Local full-text search over sources/extracts/cards is now backed by SQLite FTS5 (`source_fts`, `extract_fts`, `card_fts`), kept in sync by repository writes and exposed through the typed `window.appApi` search surface so the renderer never touches the DB directly.
 - 2026-05-30 - T041 Concepts & tags - done. Hierarchical concepts and flat tags can now be created and assigned to elements, and elements can be filtered by concept and tags.
 - 2026-05-30 - T040 Basic leech detection - done. Cards that repeatedly fail are now detected as leeches (warn at 4 lapses) and surfaced in a dedicated cleanup view with rewrite/suspend/delete actions. The leech-detection heuristic lives in `packages/scheduler` (`leech.ts`) with unit tests (`leech.test.ts`); leech state persists on `review_states`/`cards` (Drizzle migration `0001_clever_rictor.sql`) via `ReviewRepository` in `packages/local-db`, and the cleanup view (`apps/web/src/maintenance/`) plus the review repair bar drive everything through the typed `window.appApi` surface (channels + contract + ipc + db-service + preload + appApi) so the renderer never touches the DB directly. Covered by Vitest (`packages/scheduler/src/leech.test.ts`, `packages/local-db/src/leech.test.ts`, `db-service.test.ts`, `contract.test.ts`, `ReviewRepairBar.test.tsx`, `nav.test.ts`) and the Playwright spec (`tests/electron/leech.spec.ts`).

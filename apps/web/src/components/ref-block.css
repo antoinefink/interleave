@@ -1,0 +1,46 @@
+/**
+ * RefBlock (T043) — the shared source-reference block styles.
+ *
+ * The base `.refblock` / `.refblock__src` classes are defined in `review.css`
+ * (the kit's `.refblock`); these add the enriched pieces the shared component
+ * draws — the snippet quote, the citation line, the URL link, and the calm
+ * "source unavailable" placeholder — using only design tokens (no hard-coded
+ * colors/spacing). They are scoped so they don't disturb the existing refblocks.
+ */
+
+.refblock__quote {
+  display: block;
+}
+
+.refblock__cite {
+  margin-top: var(--s-3, 10px);
+  font-family: var(--font-ui);
+  font-size: var(--t-xs);
+  color: var(--text-2);
+}
+
+.refblock__loc {
+  color: var(--text-3);
+}
+
+.refblock__url {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--s-2, 6px);
+  font-family: var(--font-ui);
+  font-size: var(--t-xs);
+  color: var(--accent-text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.refblock__url:hover {
+  text-decoration: underline;
+}
+
+/* The calm orphan placeholder — never a broken link. */
+.refblock--empty {
+  font-family: var(--font-ui);
+  font-size: var(--t-xs);
+  font-style: normal;
+}

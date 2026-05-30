@@ -54,6 +54,7 @@ import {
   type Repositories,
   type ReviewOutcome,
   ReviewSessionService,
+  resolveSourceRef,
 } from "@interleave/local-db";
 import { type IntervalPreview, SchedulerService } from "@interleave/scheduler";
 import { seedDemoCollection } from "@interleave/testing";
@@ -1173,6 +1174,10 @@ export class DbService {
       sourceTitle,
       sourceLocationLabel: location?.label ?? null,
       ref: location?.selectedText ?? null,
+      // The enriched refblock (T043): title + URL + author + date + location +
+      // snippet, resolved from the card's lineage with the SAME resolver the
+      // inspector uses. Ships with the card but the renderer hides it until reveal.
+      sourceRef: resolveSourceRef(this.repos, element.id),
       schedulerSignals: {
         kind: "fsrs",
         retrievability,

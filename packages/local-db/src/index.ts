@@ -134,6 +134,7 @@ export {
 } from "./search-repository";
 export { SettingsRepository } from "./settings-repository";
 export { deriveSourceLocationLabel, type LabelBlock } from "./source-location-label";
+export { resolveSourceRef } from "./source-ref-query";
 export {
   type CreateExtractInput,
   type CreateSourceInput,

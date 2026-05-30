@@ -18,9 +18,10 @@
  * value; until then this gives the inspector a faithful preview from seeded data.
  */
 
-import type { Element, ElementId, SourceLocationId } from "@interleave/core";
+import type { Element, ElementId, SourceLocationId, SourceRef } from "@interleave/core";
 import { priorityToLabel } from "@interleave/core";
 import type { Repositories } from "./index";
+import { resolveSourceRef } from "./source-ref-query";
 
 /** Which scheduler an element type is governed by (the FSRS vs attention split). */
 export function schedulerKindForType(type: Element["type"]): "fsrs" | "attention" {
@@ -104,6 +105,13 @@ export interface InspectorData {
   readonly source: LineageItem | null;
   readonly provenance: SourceProvenance | null;
   readonly location: LocationSummary | null;
+  /**
+   * The originating source reference (T043 — the refblock): title/url/author/date
+   * + location label + verbatim snippet, resolved from the element's lineage for a
+   * source/extract/card so an extract or card selected here never feels orphaned.
+   * `null` only when the element has no resolvable source.
+   */
+  readonly sourceRef: SourceRef | null;
   readonly tags: readonly string[];
   /** Concepts this element is a member of (T041 — `concept_membership` edges). */
   readonly concepts: readonly ConceptInspectorSummary[];
@@ -304,6 +312,12 @@ export class InspectorQuery {
       source: source && !source.deletedAt ? toLineageItem(source) : null,
       provenance,
       location,
+      // The originating source reference (T043): one resolver shared with review /
+      // extract view / library so the refblock reads consistently everywhere. For a
+      // source this is its own provenance; for an extract/card it's the owning
+      // source + this element's location anchor (a soft-deleted source degrades to
+      // null fields, never a throw).
+      sourceRef: resolveSourceRef(this.repos, id),
       tags,
       concepts,
       review: reviewSummary,

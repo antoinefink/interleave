@@ -27,11 +27,15 @@ import {
   KEYBOARD_LAYOUTS,
   MARK_TYPES,
   REVIEW_RATINGS,
+  type SourceRef,
   THEMES,
 } from "@interleave/core";
 import { z } from "zod";
 
-export type { AppSettings } from "@interleave/core";
+// The source-reference (refblock) shape (T043) crosses IPC verbatim; the citation
+// formatter (`formatSourceRef`) lives in `@interleave/core` and the renderer's
+// `RefBlock` reuses it. No new lineage model — this is derived display data.
+export type { AppSettings, SourceRef } from "@interleave/core";
 
 // Channel names live in their own dependency-free module so the preload can
 // import them without pulling Zod into the sandboxed bundle.
@@ -309,6 +313,15 @@ export interface InspectorData {
   readonly provenance: SourceProvenance | null;
   /** The source location anchoring this element (extract/card), if any. */
   readonly location: LocationSummary | null;
+  /**
+   * The originating source reference (T043 — the refblock): title/url/author/date
+   * + location label + verbatim snippet, resolved from this element's lineage for a
+   * source/extract/card. Built main-side via `resolveSourceRef` (the SAME resolver
+   * the review payload uses) so the inspector, review, extract view, and library
+   * agree; rendered with the shared `formatSourceRef`/`RefBlock`. `null` only when
+   * the element has no resolvable source — the renderer shows a calm placeholder.
+   */
+  readonly sourceRef: SourceRef | null;
   /** Flat tag names attached to the element. */
   readonly tags: readonly string[];
   /** Concepts this element is a member of (T041 — `concept_membership` edges). */
@@ -1512,6 +1525,17 @@ export interface ReviewCardView {
   readonly sourceLocationLabel: string | null;
   /** A verbatim snapshot of the originating text (the `refblock` quote), or `null`. */
   readonly ref: string | null;
+  /**
+   * The full originating source reference (T043 — the enriched refblock): title +
+   * URL + author + published date + location + snippet, resolved from the card's
+   * lineage (card → source location → source). It travels with the card but the
+   * renderer keeps it HIDDEN until reveal (it must not leak the answer) — exactly
+   * like `answer`/`ref`. Built via the SAME `resolveSourceRef` the inspector uses,
+   * rendered with the shared `formatSourceRef`/`RefBlock`. `null` for a source-less
+   * card (a calm placeholder, never a broken link). The loose `sourceTitle`/
+   * `sourceLocationLabel`/`ref` fields above are kept for back-compat.
+   */
+  readonly sourceRef: SourceRef | null;
   /** The FSRS signals for the chip + stat readout. */
   readonly schedulerSignals: ReviewSchedulerSignals;
   /** True when the card has crossed the leech lapse threshold (T040 makes this real). */

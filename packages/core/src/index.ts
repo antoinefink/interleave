@@ -153,6 +153,9 @@ export {
 } from "./settings";
 // Source provenance + editable document body (./source).
 export type { Document, DocumentSchemaVersion, Source } from "./source";
+// Source reference (the refblock) — citation formatter, one source of truth (./source-ref).
+export type { FormattedSourceRef, SourceRef } from "./source-ref";
+export { EMPTY_SOURCE_REF, formatSourceRef } from "./source-ref";
 // URL canonicalization for provenance/duplicate detection — pure, fetch-free (./url).
 export { canonicalizeUrl } from "./url";
 // Desktop pivot: filesystem asset vault vocabulary (./vault).

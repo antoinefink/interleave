@@ -34,6 +34,15 @@ const h = vi.hoisted(() => {
     sourceTitle: "On the Measure of Intelligence",
     sourceLocationLabel: "¶ 4",
     ref: "Intelligence is a measure of skill-acquisition efficiency…",
+    sourceRef: {
+      sourceElementId: "src-1",
+      sourceTitle: "On the Measure of Intelligence",
+      url: "https://arxiv.org/abs/1911.01547",
+      author: "François Chollet",
+      publishedAt: "2019-11-05T00:00:00.000Z",
+      locationLabel: "¶ 4",
+      snippet: "Intelligence is a measure of skill-acquisition efficiency…",
+    },
     schedulerSignals: {
       kind: "fsrs",
       retrievability: 0.82,
@@ -62,6 +71,15 @@ const h = vi.hoisted(() => {
     sourceTitle: "On the Measure of Intelligence",
     sourceLocationLabel: "¶ 4",
     ref: null,
+    sourceRef: {
+      sourceElementId: "src-1",
+      sourceTitle: "On the Measure of Intelligence",
+      url: "https://arxiv.org/abs/1911.01547",
+      author: "François Chollet",
+      publishedAt: "2019-11-05T00:00:00.000Z",
+      locationLabel: "¶ 4",
+      snippet: null,
+    },
     schedulerSignals: {
       kind: "fsrs",
       retrievability: null,
@@ -185,6 +203,27 @@ describe("ReviewScreen", () => {
     expect(screen.getByTestId("review-interval-hard")).toHaveTextContent("2d");
     expect(screen.getByTestId("review-interval-good")).toHaveTextContent("10d");
     expect(screen.getByTestId("review-interval-easy")).toHaveTextContent("1mo");
+  });
+
+  it("hides the source refblock until reveal, then shows it (T043 reveal gate)", async () => {
+    h.reviewSessionNext.mockResolvedValue(singleDeck(h.qaCard));
+    render(<ReviewScreen />);
+
+    await screen.findByTestId("review-card");
+    // The refblock must NOT be in the DOM before reveal — it could leak the answer.
+    expect(screen.queryByTestId("review-refblock")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-answer");
+
+    // After reveal the enriched refblock appears with the citation + open-source.
+    const ref = await screen.findByTestId("review-refblock");
+    expect(ref).toBeInTheDocument();
+    expect(screen.getByTestId("review-refblock-citation")).toHaveTextContent("François Chollet");
+    expect(screen.getByTestId("review-refblock-citation")).toHaveTextContent(
+      "On the Measure of Intelligence (2019)",
+    );
+    expect(screen.getByTestId("review-refblock-open-source")).toBeInTheDocument();
   });
 
   it("grading calls reviewGrade with the rating + a plausible responseMs, then advances", async () => {

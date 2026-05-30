@@ -50,6 +50,17 @@ const h = vi.hoisted(() => {
     children: [],
     source: { id: "src_1", type: "source", title: "On Sleep", stage: "raw_source" },
     provenance: null,
+    // The originating source reference (T043) — the refblock the source-context
+    // pane renders, resolved main-side from this extract's lineage.
+    sourceRef: {
+      sourceElementId: "src_1",
+      sourceTitle: "On Sleep",
+      url: "https://example.com/sleep",
+      author: "M. Walker",
+      publishedAt: "2017-10-03T00:00:00.000Z",
+      locationLabel: "¶2",
+      snippet: "The definition paragraph two.",
+    },
     location: {
       label: "¶2",
       selectedText: "The definition paragraph two.",
@@ -217,6 +228,30 @@ describe("ExtractView — stage stepper", () => {
     fireEvent.click(step);
     await waitFor(() => expect(h.updateStage).toHaveBeenCalledTimes(1));
     expect(h.updateStage).toHaveBeenCalledWith({ id: "ex_1", stage: "atomic_statement" });
+  });
+});
+
+describe("ExtractView — source reference (T043)", () => {
+  it("renders the source refblock with title/author/year + URL + location + snippet", async () => {
+    render(<ExtractView />);
+    const ref = await screen.findByTestId("extract-refblock");
+    expect(ref).toBeInTheDocument();
+    // The verbatim snippet (quote).
+    expect(screen.getByTestId("extract-refblock-quote")).toHaveTextContent(
+      "The definition paragraph two.",
+    );
+    // The assembled citation (author. title (year) · location).
+    const cite = screen.getByTestId("extract-refblock-citation");
+    expect(cite).toHaveTextContent("M. Walker");
+    expect(cite).toHaveTextContent("On Sleep (2017)");
+    expect(cite).toHaveTextContent("¶2");
+    // The external URL link.
+    expect(screen.getByTestId("extract-refblock-url")).toHaveAttribute(
+      "href",
+      "https://example.com/sleep",
+    );
+    // The jump-to-source affordance is wired (T022 reuse).
+    expect(screen.getByTestId("extract-refblock-open-source")).toBeInTheDocument();
   });
 });
 
