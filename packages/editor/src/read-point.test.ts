@@ -19,8 +19,10 @@ import { blockIdsOf } from "./blocks";
 import {
   clampOffsetToBlock,
   firstUnreadBlockId,
+  isBlockAtOrAfterReadPoint,
   type ResolvedReadPoint,
   readPointProgress,
+  readPointProgressFraction,
   readThroughBlock,
   resolveReadPointFromState,
 } from "./read-point";
@@ -411,6 +413,58 @@ describe("readPointProgress — the reading progress bar", () => {
   it("degrades to index 0 with no read-point or a stale block", () => {
     expect(readPointProgress(DOC, null)).toEqual({ index: 0, total: 3 });
     expect(readPointProgress(DOC, { blockId: "gone", offset: 0 })).toEqual({ index: 0, total: 3 });
+  });
+});
+
+describe("readPointProgressFraction — the 1-based progress fill (reaches 100%)", () => {
+  it("reaches a FULL 1.0 when the read-point is on the LAST block", () => {
+    // The bug this guards: 0-based `index/total` maxed at (total-1)/total (e.g.
+    // 2/3 ≈ 0.67) so a fully-read source never hit 100%. The 1-based fraction does.
+    expect(readPointProgressFraction(DOC, { blockId: "blk_b", offset: 0 })).toBe(1);
+  });
+
+  it("is (index + 1) / total for a mid-document read-point", () => {
+    // blk_h = index 0 of 3 → 1/3; blk_a = index 1 of 3 → 2/3.
+    expect(readPointProgressFraction(DOC, { blockId: "blk_h", offset: 0 })).toBeCloseTo(1 / 3);
+    expect(readPointProgressFraction(DOC, { blockId: "blk_a", offset: 0 })).toBeCloseTo(2 / 3);
+  });
+
+  it("is 0 with no read-point, an empty doc, or no blocks", () => {
+    expect(readPointProgressFraction(DOC, null)).toBe(0);
+    expect(readPointProgressFraction({ type: "doc", content: [] }, null)).toBe(0);
+  });
+
+  it("never exceeds 1 even for a stale (deleted-block) read-point", () => {
+    // A stale block degrades to index 0 → 1/total, still within [0, 1].
+    const f = readPointProgressFraction(DOC, { blockId: "gone", offset: 0 });
+    expect(f).toBeGreaterThanOrEqual(0);
+    expect(f).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("isBlockAtOrAfterReadPoint — the forward-only auto-advance guard (T021)", () => {
+  it("is true for a block AT or AFTER the read-point (advance allowed)", () => {
+    const rp: ResolvedReadPoint = { blockId: "blk_a", offset: 0 }; // index 1
+    expect(isBlockAtOrAfterReadPoint(DOC, rp, "blk_a")).toBe(true); // same block
+    expect(isBlockAtOrAfterReadPoint(DOC, rp, "blk_b")).toBe(true); // after
+  });
+
+  it("is false for a block strictly BEFORE the read-point (no rewind)", () => {
+    const rp: ResolvedReadPoint = { blockId: "blk_b", offset: 0 }; // last block
+    expect(isBlockAtOrAfterReadPoint(DOC, rp, "blk_h")).toBe(false);
+    expect(isBlockAtOrAfterReadPoint(DOC, rp, "blk_a")).toBe(false);
+  });
+
+  it("is true when there is no read-point yet (the first extract establishes one)", () => {
+    expect(isBlockAtOrAfterReadPoint(DOC, null, "blk_a")).toBe(true);
+  });
+
+  it("is true when the read-point block was deleted (degrades to index 0)", () => {
+    expect(isBlockAtOrAfterReadPoint(DOC, { blockId: "gone", offset: 0 }, "blk_a")).toBe(true);
+  });
+
+  it("is false when the target block is not in the doc (nothing to advance to)", () => {
+    expect(isBlockAtOrAfterReadPoint(DOC, { blockId: "blk_a", offset: 0 }, "missing")).toBe(false);
   });
 });
 

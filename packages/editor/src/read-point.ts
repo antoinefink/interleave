@@ -187,6 +187,47 @@ export function readPointProgress(
   return { index: idx < 0 ? 0 : idx, total };
 }
 
+/**
+ * The reading-progress fraction in `[0, 1]` for the progress bar + percentage
+ * label, measured as "how much of the document has been read THROUGH the
+ * read-point's block" — i.e. `(index + 1) / total` (1-based), so a read-point on
+ * the LAST block reads a full `1.0` (100%) rather than maxing at `(total-1)/total`.
+ * This keeps the bar consistent with the 1-based "block N of N" label the reader
+ * renders. Returns `0` when there is no read-point or the doc has no blocks; a
+ * stale (deleted-block) read-point degrades to `index: 0` via {@link readPointProgress}.
+ */
+export function readPointProgressFraction(
+  doc: unknown,
+  readPoint: ResolvedReadPoint | null,
+): number {
+  const { index, total } = readPointProgress(doc, readPoint);
+  if (total <= 0 || !readPoint) return 0;
+  return Math.min(1, (index + 1) / total);
+}
+
+/**
+ * Whether `blockId` is at or AFTER the read-point's block in document order — the
+ * guard the auto-advance-on-extract path (T021) uses so extracting a passage the
+ * user already read past never rewinds their read-point. Returns `true` when there
+ * is no read-point yet (the first extract should establish one), or when the
+ * read-point's block was deleted (treated as index 0). Returns `false` only when
+ * `blockId` is not in the doc (nothing to advance to) or sits strictly BEFORE the
+ * current read-point.
+ */
+export function isBlockAtOrAfterReadPoint(
+  doc: unknown,
+  readPoint: ResolvedReadPoint | null,
+  blockId: string,
+): boolean {
+  const blocks = orderedBlocks(doc);
+  const blockIdx = blocks.findIndex((b) => b.id === blockId);
+  if (blockIdx < 0) return false;
+  if (!readPoint) return true;
+  const rpIdx = blocks.findIndex((b) => b.id === readPoint.blockId);
+  if (rpIdx < 0) return true;
+  return blockIdx >= rpIdx;
+}
+
 /** Options for {@link jumpToReadPoint}. */
 export interface JumpToReadPointOptions {
   /** Whether to scroll the matching DOM block into view. Defaults to `true`. */

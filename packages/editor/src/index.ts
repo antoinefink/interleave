@@ -82,11 +82,13 @@ export {
 export {
   clampOffsetToBlock,
   firstUnreadBlockId,
+  isBlockAtOrAfterReadPoint,
   type JumpResult,
   type JumpToReadPointOptions,
   jumpToReadPoint,
   type ResolvedReadPoint,
   readPointProgress,
+  readPointProgressFraction,
   readThroughBlock,
   resolveReadPointFromSelection,
   resolveReadPointFromState,

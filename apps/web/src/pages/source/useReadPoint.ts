@@ -29,10 +29,12 @@
 import {
   firstUnreadBlockId as computeFirstUnread,
   type Editor,
+  isBlockAtOrAfterReadPoint,
   type JumpResult,
   jumpToReadPoint,
   type ResolvedReadPoint,
   readPointProgress,
+  readPointProgressFraction,
   readThroughBlock,
   resolveReadPointFromSelection,
 } from "@interleave/editor";
@@ -73,6 +75,19 @@ export interface UseReadPointResult {
   readonly firstUnreadBlockId: (doc: unknown) => string | null;
   /** The `{ index, total }` reading progress for the given doc + current point. */
   readonly progress: (doc: unknown) => { readonly index: number; readonly total: number };
+  /**
+   * The reading-progress fraction in `[0, 1]` for the progress bar + percentage —
+   * 1-based (`(index + 1) / total`), so a read-point on the LAST block reads a full
+   * 100% (rather than maxing at `(total-1)/total`). Consistent with the 1-based
+   * "block N of N" label.
+   */
+  readonly progressFraction: (doc: unknown) => number;
+  /**
+   * Whether `blockId` is at or AFTER the current read-point in document order — the
+   * forward-only guard the auto-advance-on-extract path uses so extracting above the
+   * read-point never rewinds it. `true` when there is no read-point yet.
+   */
+  readonly isAtOrAfterReadPoint: (doc: unknown, blockId: string) => boolean;
 }
 
 function toResolved(payload: ReadPointPayload | null): ResolvedReadPoint | null {
@@ -182,6 +197,16 @@ export function useReadPoint(elementId: string | null | undefined): UseReadPoint
     [readPoint],
   );
 
+  const progressFraction = useCallback(
+    (doc: unknown): number => readPointProgressFraction(doc, readPoint),
+    [readPoint],
+  );
+
+  const isAtOrAfterReadPoint = useCallback(
+    (doc: unknown, blockId: string): boolean => isBlockAtOrAfterReadPoint(doc, readPoint, blockId),
+    [readPoint],
+  );
+
   return {
     status,
     readPoint,
@@ -192,5 +217,7 @@ export function useReadPoint(elementId: string | null | undefined): UseReadPoint
     jump,
     firstUnreadBlockId,
     progress,
+    progressFraction,
+    isAtOrAfterReadPoint,
   };
 }

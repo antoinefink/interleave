@@ -274,13 +274,24 @@ export function SourceReader() {
         endOffset: loc.endOffset,
       });
       doc.markExtracted(loc.blockIds);
+      // AUTO-ADVANCE-ON-EXTRACT (the T017 `markReadThrough` seam, wired here in T021
+      // per the roadmap's "auto-advances when they extract"): move the read-point to
+      // the END of the LAST extracted block, but only forward — extracting a passage
+      // above where the user has already read must never rewind their progress. The
+      // hook owns the persistence (`readPoints.set`); the read-point math lives in
+      // `@interleave/editor`. Best-effort: a failure here never blocks the extract.
+      const editor = editorRef.current;
+      const lastBlockId = loc.blockIds.at(-1);
+      if (editor && lastBlockId && rp.isAtOrAfterReadPoint(doc.currentDoc, lastBlockId)) {
+        void rp.markReadThrough(editor, lastBlockId);
+      }
       requestInspectorRefresh();
       toast("Extracted");
     } catch {
       toast("Could not extract");
     }
     selection.dismiss();
-  }, [id, selection, doc, toast]);
+  }, [id, selection, doc, rp, toast]);
 
   const onSelectionAction = useCallback(
     (action: SelectionToolbarAction) => {
@@ -520,7 +531,9 @@ export function SourceReader() {
 
   const openOriginalUrl = inspector?.provenance?.url ?? null;
   const progress = rp.progress(doc.currentDoc);
-  const progressPct = progress.total > 0 ? (progress.index / Math.max(1, progress.total)) * 100 : 0;
+  // 1-based fraction (matches the "block N of N" label) so a read-point on the LAST
+  // block reads a full 100% rather than maxing at (total-1)/total.
+  const progressPct = rp.progressFraction(doc.currentDoc) * 100;
 
   return (
     <div className="reader-screen" data-testid="route-source">

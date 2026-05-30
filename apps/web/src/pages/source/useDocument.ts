@@ -80,17 +80,31 @@ export function useDocument(elementId: string | null | undefined): UseDocumentRe
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Pending debounced change + timer, kept in refs so the save callback is stable.
-  const pending = useRef<SourceEditorChange | null>(null);
+  // Pending debounced change + the element id it was enqueued FOR + timer, kept in
+  // refs so the save callback is stable. The id is snapshotted at enqueue time (not
+  // read late at execution) so a save queued for source A can never be written into
+  // source B's row when the user navigates between sources within the debounce
+  // window — the route reuses this hook across `/source/$id` param changes.
+  const pending = useRef<{ change: SourceEditorChange; id: string } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idRef = useRef<string | null | undefined>(elementId);
-  idRef.current = elementId;
 
   // Load on mount / when the element changes.
   useEffect(() => {
     if (!isDesktop()) {
       setStatus("no-desktop");
       return;
+    }
+    // Before switching to a new element, FLUSH any save still pending for the
+    // PREVIOUS element so its trailing edit lands on ITS OWN row (the only flush
+    // otherwise runs on unmount, which never fires on an in-place id swap). The
+    // pending entry carries the previous id, so the flushed write targets the
+    // correct source. We point `idRef` at the NEW element FIRST so the flushed
+    // save sees `forCurrent = false` — it writes A's body to A's row but never
+    // touches the now-current (B) source's `currentDoc`/`saving`/`error` state.
+    if (idRef.current !== elementId) {
+      idRef.current = elementId;
+      flushRef.current();
     }
     if (!elementId) {
       setStatus("loading");
@@ -121,31 +135,55 @@ export function useDocument(elementId: string | null | undefined): UseDocumentRe
     };
   }, [elementId]);
 
-  const persist = useCallback(async (change: SourceEditorChange) => {
-    const id = idRef.current;
-    if (!id || !isDesktop()) return;
+  // Persist a change AGAINST THE ELEMENT ID IT WAS ENQUEUED FOR (`targetId`), not
+  // whatever the hook is now pointed at. The guard early-returns if the hook has
+  // since switched elements without the pending change having been flushed for its
+  // own id — so source A's body can never overwrite source B's row (the
+  // load-bearing fix). `setCurrentDoc`/`setPlainText` only run when the save is
+  // still for the CURRENT element, so a late-resolving save for a navigated-away
+  // source never disturbs the now-visible source's UI state.
+  const persist = useCallback(async (change: SourceEditorChange, targetId: string) => {
+    if (!isDesktop()) return;
+    // Whether this save is for the element the hook is CURRENTLY pointed at. The
+    // common path (debounce/unmount-flush for the live element) is `true`; a flush
+    // triggered by an element switch persists the PREVIOUS element (`false`) — it
+    // must still write to `targetId` (A's body → A's row, correct) but must NOT
+    // touch the now-visible source's UI state (`currentDoc`/`plainText`/`error`).
+    const forCurrent = idRef.current === targetId;
     // Track the latest body so the reader's progress bar / read-point divider
-    // reflect edits without a reload.
-    setCurrentDoc(change.prosemirrorJson);
-    setSaving(true);
+    // reflect edits without a reload — only for the element on screen.
+    if (forCurrent) {
+      setCurrentDoc(change.prosemirrorJson);
+      setSaving(true);
+    }
     try {
       // Derive the stable block list from the document's `blockId` attributes
       // (T016) so every save refreshes `document_blocks` while preserving the
       // stable ids extracts/read-points anchor to. Ids are read, never minted,
-      // here — the editor's additive filler already assigned them.
+      // here — the editor's additive filler already assigned them. The write goes
+      // to `targetId` (the id snapshotted at enqueue time), NEVER to a source the
+      // hook later navigated to — so A's body can never clobber B's row.
       const blocks = toBlockInputs(change.prosemirrorJson);
       const result = await appApi.saveDocument({
-        elementId: id,
+        elementId: targetId,
         prosemirrorJson: change.prosemirrorJson,
         plainText: change.plainText,
         blocks,
       });
-      setPlainText(result.document.plainText);
-      setError(null);
+      // Only reflect the saved plain-text mirror if the editor is still on this
+      // element; a late-resolving save for a navigated-away source never disturbs
+      // the now-visible source's state.
+      if (idRef.current === targetId) {
+        setPlainText(result.document.plainText);
+        setError(null);
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (idRef.current === targetId) setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      // Clear the in-flight flag only if this save started it (`forCurrent`) and
+      // the hook is still on this element, so we never leave a stale `saving:true`
+      // nor stomp a save the new element kicked off.
+      if (forCurrent && idRef.current === targetId) setSaving(false);
     }
   }, []);
 
@@ -154,20 +192,33 @@ export function useDocument(elementId: string | null | undefined): UseDocumentRe
       clearTimeout(timer.current);
       timer.current = null;
     }
-    const change = pending.current;
+    const entry = pending.current;
     pending.current = null;
-    if (change) void persist(change);
+    // Flush ALWAYS writes against the id the change was ENQUEUED for, so a flush
+    // triggered by an element switch lands the trailing edit on its own source.
+    if (entry) void persist(entry.change, entry.id);
   }, [persist]);
+
+  // Keep a stable ref to the latest `flush` so the load effect can flush the
+  // PREVIOUS element's pending save on an in-place id swap without depending on
+  // `flush` (which would re-run the loader on every `persist` identity change).
+  const flushRef = useRef(flush);
+  flushRef.current = flush;
 
   const save = useCallback(
     (change: SourceEditorChange) => {
-      pending.current = change;
+      const id = idRef.current;
+      // No element in scope (or not desktop): nothing to persist this against.
+      if (!id || !isDesktop()) return;
+      // Snapshot the id AT ENQUEUE TIME so a later navigation cannot redirect this
+      // change to a different source's row.
+      pending.current = { change, id };
       if (timer.current) clearTimeout(timer.current);
       timer.current = setTimeout(() => {
         timer.current = null;
         const next = pending.current;
         pending.current = null;
-        if (next) void persist(next);
+        if (next) void persist(next.change, next.id);
       }, SAVE_DEBOUNCE_MS);
     },
     [persist],
