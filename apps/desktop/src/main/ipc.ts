@@ -10,6 +10,7 @@
 
 import { app, ipcMain } from "electron";
 import {
+  AnalyticsGetRequestSchema,
   CardsCreateRequestSchema,
   CardsDeleteRequestSchema,
   CardsFlagRequestSchema,
@@ -344,6 +345,11 @@ export function registerIpcHandlers(dbService: DbService): () => void {
   ipcMain.handle(IPC_CHANNELS.undoLast, () => {
     UndoLastRequestSchema.parse(undefined);
     return dbService.undoLastOperation();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.analyticsGet, (_event, rawRequest: unknown) => {
+    const request = AnalyticsGetRequestSchema.parse(rawRequest);
+    return dbService.getAnalytics(request);
   });
 
   return () => {

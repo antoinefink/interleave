@@ -16,6 +16,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { IPC_CHANNELS } from "../shared/channels";
 import type {
+  AnalyticsGetRequest,
   AppApi,
   CardsCreateRequest,
   CardsDeleteRequest,
@@ -180,6 +181,9 @@ const appApi: AppApi = {
   },
   undo: {
     last: () => ipcRenderer.invoke(IPC_CHANNELS.undoLast),
+  },
+  analytics: {
+    get: (request?: AnalyticsGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.analyticsGet, request),
   },
 };
 

@@ -1,0 +1,219 @@
+/**
+ * Analytics view styles (T045).
+ *
+ * Rebuilt from the design kit's `AnalyticsScreen` (`design/kit/app/screen-analytics.jsx`):
+ * a centered ~940px column with a 4-up `Metric` row, a "Reviews per day" `Spark`
+ * panel, and a "System health" `Banner` list. Driven entirely by the design tokens
+ * (no hard-coded colors). UI only.
+ */
+
+.an-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 100%;
+  overflow-y: auto;
+}
+
+.an-head {
+  width: 100%;
+  max-width: 940px;
+  margin: 0 auto;
+  padding: var(--s-6, 24px) var(--s-6, 24px) var(--s-3, 12px);
+}
+.an-title {
+  font-size: var(--t-xl, 22px);
+  font-weight: 650;
+  color: var(--text-1);
+}
+.an-sub {
+  margin-top: 4px;
+  font-size: var(--t-sm, 13px);
+  color: var(--text-2);
+}
+
+.an-error {
+  width: 100%;
+  max-width: 940px;
+  margin: 0 auto;
+  padding: 4px var(--s-6, 24px);
+  font-size: var(--t-sm, 13px);
+  color: var(--danger, #e5484d);
+}
+.an-loading {
+  width: 100%;
+  max-width: 940px;
+  margin: 0 auto;
+  padding: var(--s-4, 16px) var(--s-6, 24px);
+  font-size: var(--t-sm, 13px);
+  color: var(--text-3);
+}
+
+.an-body {
+  width: 100%;
+  max-width: 940px;
+  margin: 0 auto;
+  padding: var(--s-3, 12px) var(--s-6, 24px) var(--s-8, 48px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-4, 16px);
+}
+
+.an-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--s-3, 12px);
+}
+.an-metrics--sm {
+  gap: var(--s-3, 12px);
+}
+
+.an-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s-4, 16px);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg, 12px);
+  background: var(--surface);
+}
+.an-metric--sm {
+  padding: var(--s-3, 12px) var(--s-4, 16px);
+}
+.an-metric__val {
+  font-size: var(--t-2xl, 28px);
+  font-weight: 680;
+  line-height: 1.05;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+.an-metric--sm .an-metric__val {
+  font-size: var(--t-xl, 22px);
+}
+.an-metric__suffix {
+  font-size: var(--t-md, 15px);
+  font-weight: 600;
+  color: var(--text-2);
+  margin-left: 1px;
+}
+.an-metric__label {
+  font-size: var(--t-xs, 12px);
+  font-weight: 550;
+  color: var(--text-2);
+  margin-top: 4px;
+}
+.an-metric__sub {
+  font-size: var(--t-2xs, 11px);
+  color: var(--text-3);
+}
+.an-metric--danger .an-metric__val {
+  color: var(--danger, #e5484d);
+}
+
+.an-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg, 12px);
+  background: var(--surface);
+  padding: var(--s-4, 16px);
+}
+.an-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.an-panel__title {
+  font-size: var(--t-xs, 12px);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.an-panel__meta {
+  font-size: var(--t-2xs, 11px);
+  font-family: var(--font-mono, monospace);
+  color: var(--text-3);
+}
+
+.an-spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 90px;
+}
+.an-spark__bar {
+  flex: 1;
+  min-height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: color-mix(in oklch, var(--accent, #3b82f6) 45%, var(--surface-2, var(--surface)));
+}
+.an-spark__bar--hot {
+  background: var(--accent, #3b82f6);
+}
+
+.an-banners {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.an-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: var(--r-md, 8px);
+  border: 1px solid var(--border);
+  background: var(--surface-2, var(--surface));
+  color: var(--text-1);
+  font-size: var(--t-sm, 13px);
+  cursor: pointer;
+}
+.an-banner:hover {
+  border-color: var(--border-strong, var(--border));
+}
+.an-banner__title {
+  flex: 1;
+  font-weight: 500;
+}
+.an-banner--ok {
+  cursor: default;
+  color: var(--text-2);
+}
+.an-banner--ok:hover {
+  border-color: var(--border);
+}
+
+.an-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  max-width: 480px;
+  margin: auto;
+  padding: var(--s-8, 48px) var(--s-6, 24px);
+}
+.an-empty__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  color: var(--text-3);
+  background: var(--surface);
+  margin-bottom: 6px;
+}
+.an-empty__title {
+  font-size: var(--t-lg, 18px);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.an-empty__body {
+  font-size: var(--t-sm, 13px);
+  color: var(--text-2);
+  line-height: 1.5;
+}

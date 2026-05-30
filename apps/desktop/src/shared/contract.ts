@@ -1980,6 +1980,80 @@ export interface UndoLastResult {
 }
 
 // ---------------------------------------------------------------------------
+// analytics.get()  (T045 — the system-wide learning-health snapshot)
+// ---------------------------------------------------------------------------
+
+/**
+ * The Analytics surface (T045) — ONE read-only aggregation over the durable
+ * tables (`review_logs` / `elements` / `review_states`) the Analytics screen
+ * renders as `Metric`s + a `Spark`. The MAIN process runs
+ * `AnalyticsService.computeAnalytics`:
+ *
+ *  - `reviewsByDay`  → reviews grouped by LOCAL calendar day over the window (the
+ *    spark), one bucket per day (0-filled).
+ *  - `retention30d`  → fraction of window reviews graded NOT-`again`
+ *    (`hard`/`good`/`easy`), in `[0,1]`; `null` when there are no reviews.
+ *  - `dueCards` / `dueTopics` → the two-scheduler split: FSRS cards vs attention
+ *    items due at/before `asOf`.
+ *  - `newCards` / `newExtracts` → created in the window (throughput).
+ *  - `deletions` → soft-deleted in the window. `leeches` → live leech-flag count.
+ *
+ * Read-only: NO mutation, NO `operation_log`. There is still no generic
+ * `db.query`. Source-yield (per-source) analytics + FSRS-true retrievability are
+ * deferred to M17/T083.
+ */
+
+/**
+ * `analytics.get({ asOf?, windowDays? })`. `asOf` defaults to "now" on the main
+ * side; `windowDays` defaults to 30. Both optional so the screen can call it bare.
+ */
+export const AnalyticsGetRequestSchema = z
+  .object({
+    /** The instant to compute the snapshot for (ISO-8601); defaults to now. */
+    asOf: z.string().min(1).optional(),
+    /** Window length in calendar days (1–365); defaults to 30. */
+    windowDays: z.number().int().min(1).max(365).optional(),
+  })
+  .optional();
+export type AnalyticsGetRequest = z.infer<typeof AnalyticsGetRequestSchema>;
+
+/** One calendar day's review count for the spark. `date` is `YYYY-MM-DD` (local). */
+export interface AnalyticsReviewsByDay {
+  readonly date: string;
+  readonly count: number;
+}
+
+/** The flat, JSON-serializable analytics snapshot the renderer reads. */
+export interface AnalyticsGetResult {
+  /** The instant the snapshot was computed for (ISO-8601). */
+  readonly asOf: string;
+  /** The window length in calendar days. */
+  readonly windowDays: number;
+  /** Reviews per local calendar day over the window, oldest day first. */
+  readonly reviewsByDay: readonly AnalyticsReviewsByDay[];
+  /** Total reviews graded in the window. */
+  readonly reviewsTotal: number;
+  /** Mean reviews per day over the window. */
+  readonly reviewsPerDayAvg: number;
+  /** Fraction of window reviews graded not-`again` (`[0,1]`), or `null` if none. */
+  readonly retention30d: number | null;
+  /** Cards due for FSRS review at/before `asOf`. */
+  readonly dueCards: number;
+  /** Sources/topics/extracts due for re-processing at/before `asOf`. */
+  readonly dueTopics: number;
+  /** `card` elements created in the window. */
+  readonly newCards: number;
+  /** `extract` elements created in the window. */
+  readonly newExtracts: number;
+  /** Elements soft-deleted in the window. */
+  readonly deletions: number;
+  /** Cards currently flagged a leech. */
+  readonly leeches: number;
+  /** Consecutive days (ending today) with ≥1 review. */
+  readonly dayStreak: number;
+}
+
+// ---------------------------------------------------------------------------
 // The typed surface the renderer sees as `window.appApi`.
 // ---------------------------------------------------------------------------
 
@@ -2205,5 +2279,13 @@ export interface AppApi {
      * paths. The inverse is one of the closed 15 ops and is itself logged.
      */
     last(): Promise<UndoLastResult>;
+  };
+  readonly analytics: {
+    /**
+     * The system-wide learning-health snapshot (T045) — daily reviews, retention,
+     * due cards/topics, new cards/extracts, deletions, leeches — aggregated over
+     * the durable tables. Read-only (no mutation, no `operation_log`).
+     */
+    get(request?: AnalyticsGetRequest): Promise<AnalyticsGetResult>;
   };
 }

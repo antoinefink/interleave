@@ -159,7 +159,7 @@ Detailed specs: [`tasks/M1-foundations.md`](./tasks/M1-foundations.md)
 
 - [x] **T044 — Deletion, trash & undo** · done · _deps: T008_
   Done when: soft delete + trash view + restore exist; command-level undo covers delete/mark-done/suspend/bulk-postpone; accidental deletion is recoverable.
-- [ ] **T045 — Basic analytics** · _deps: T037, T028_
+- [x] **T045 — Basic analytics** · done · _deps: T037, T028_
   Done when: a view shows daily reviews, due cards/topics, new cards/extracts, deletions, leeches, and 30-day retention.
 - [ ] **T046 — Import/process balance warnings** · _deps: T045_
   Done when: the app warns when imports outpace processing, showing sources imported / extracts created / cards created / reviews due this week.
@@ -318,6 +318,7 @@ overload management, semantic search, AI, media, reliability, scale.
 
 Record notable completions / decisions here as tasks land (newest first).
 
+- 2026-05-30 - T045 Basic analytics - done. A new analytics view surfaces daily reviews, due cards/topics, new cards/extracts, deletions, leeches, and 30-day retention, computed behind the Electron/IPC boundary and read through the typed `window.appApi` surface so the renderer never touches the DB directly.
 - 2026-05-30 - T044 Deletion, trash & undo - done. Soft delete now has a recoverable path: a `/trash` view lists soft-deleted elements and supports restore, backed by a `trash-query` in `packages/local-db`; command-level undo covers delete/mark-done/suspend/bulk-postpone via a transactional `UndoService` (`packages/local-db/src/undo-service.ts`). Everything is exposed through the typed `window.appApi` surface (channels + contract + ipc + db-service + preload + appApi) so the renderer never touches the DB directly; mutations append `operation_log` entries (`soft_delete_element`/`restore_element`/`update_element`/`reschedule_element`) and survive app restart. Covered by Vitest (`trash-query.test.ts`, `undo-service.test.ts`, `contract.test.ts`, `db-service.test.ts`, `nav.test.ts`, `settings.test.ts`) and the Playwright spec (`tests/electron/trash-undo.spec.ts`).
 - 2026-05-30 - T043 Source/reference display - done. Every extract and card now surfaces its source reference (title/URL/author/date/location) via a shared refblock so nothing feels orphaned; review hides the reference until the answer is revealed.
 - 2026-05-30 - T042 Search - done. Local full-text search over sources/extracts/cards is now backed by SQLite FTS5 (`source_fts`, `extract_fts`, `card_fts`), kept in sync by repository writes and exposed through the typed `window.appApi` search surface so the renderer never touches the DB directly.

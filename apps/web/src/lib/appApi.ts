@@ -1230,6 +1230,40 @@ export interface UndoLastResult {
   readonly count: number;
 }
 
+// ---------------------------------------------------------------------------
+// analytics.*  (T045 — the system-wide learning-health snapshot)
+// ---------------------------------------------------------------------------
+
+/** `analytics.get()` request — both fields optional (defaults applied main-side). */
+export interface AnalyticsGetRequest {
+  readonly asOf?: string;
+  readonly windowDays?: number;
+}
+
+/** One calendar day's review count for the spark. `date` is `YYYY-MM-DD` (local). */
+export interface AnalyticsReviewsByDay {
+  readonly date: string;
+  readonly count: number;
+}
+
+/** The flat analytics snapshot the Analytics screen renders. */
+export interface AnalyticsGetResult {
+  readonly asOf: string;
+  readonly windowDays: number;
+  readonly reviewsByDay: readonly AnalyticsReviewsByDay[];
+  readonly reviewsTotal: number;
+  readonly reviewsPerDayAvg: number;
+  /** Fraction of window reviews graded not-`again` (`[0,1]`), or `null` if none. */
+  readonly retention30d: number | null;
+  readonly dueCards: number;
+  readonly dueTopics: number;
+  readonly newCards: number;
+  readonly newExtracts: number;
+  readonly deletions: number;
+  readonly leeches: number;
+  readonly dayStreak: number;
+}
+
 /** The exact shape the preload exposes as `window.appApi`. */
 export interface AppApi {
   readonly app: {
@@ -1326,6 +1360,9 @@ export interface AppApi {
   };
   readonly undo: {
     last(): Promise<UndoLastResult>;
+  };
+  readonly analytics: {
+    get(request?: AnalyticsGetRequest): Promise<AnalyticsGetResult>;
   };
 }
 
@@ -1621,5 +1658,13 @@ export const appApi = {
    */
   undoLast(): Promise<UndoLastResult> {
     return requireAppApi().undo.last();
+  },
+  /**
+   * The system-wide learning-health snapshot (T045) — daily reviews, retention,
+   * due cards/topics, new cards/extracts, deletions, leeches — aggregated over the
+   * durable tables. Read-only.
+   */
+  getAnalytics(request?: AnalyticsGetRequest): Promise<AnalyticsGetResult> {
+    return requireAppApi().analytics.get(request);
   },
 } as const;

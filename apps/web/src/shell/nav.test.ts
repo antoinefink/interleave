@@ -20,6 +20,7 @@ const VALID_ROUTES = new Set([
   "/maintenance/leeches",
   "/search",
   "/trash",
+  "/analytics",
   "/settings",
 ]);
 

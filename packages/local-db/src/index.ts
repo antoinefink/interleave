@@ -18,6 +18,13 @@
  * (`SchedulerService`, `ExtractionService`, …) compose them in later milestones.
  */
 
+export {
+  type AnalyticsOptions,
+  AnalyticsService,
+  type AnalyticsSummary,
+  DEFAULT_ANALYTICS_WINDOW_DAYS,
+  type ReviewsByDay,
+} from "./analytics-query";
 export { AssetRepository, type CreateAssetInput } from "./asset-repository";
 export {
   type CardEditResult,
@@ -166,9 +173,12 @@ export interface Repositories {
   readonly operationLog: import("./operation-log-repository").OperationLogRepository;
   /** The Trash view's read + terminal hard-delete (T044). */
   readonly trash: import("./trash-query").TrashRepository;
+  /** The system-wide analytics aggregation (T045) — read-only. */
+  readonly analytics: import("./analytics-query").AnalyticsService;
 }
 
 import type { InterleaveDatabase } from "@interleave/db";
+import { AnalyticsService } from "./analytics-query";
 import { AssetRepository } from "./asset-repository";
 import { ConceptRepository } from "./concept-repository";
 import { DocumentRepository } from "./document-repository";
@@ -198,5 +208,6 @@ export function createRepositories(db: InterleaveDatabase): Repositories {
     settings: new SettingsRepository(db),
     operationLog: new OperationLogRepository(db),
     trash: new TrashRepository(db),
+    analytics: new AnalyticsService(db),
   };
 }

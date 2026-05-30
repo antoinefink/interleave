@@ -49,6 +49,7 @@ import {
   InboxQuery,
   InspectorQuery,
   LineageQuery,
+  nowIso,
   QueueActionService,
   QueueQuery,
   type Repositories,
@@ -60,6 +61,8 @@ import {
 import { type IntervalPreview, SchedulerService } from "@interleave/scheduler";
 import { seedDemoCollection } from "@interleave/testing";
 import type {
+  AnalyticsGetRequest,
+  AnalyticsGetResult,
   CardEditSummary,
   CardsCreateRequest,
   CardsCreateResult,
@@ -1730,6 +1733,36 @@ export class DbService {
       label: result.label,
       ...(result.reason ? { reason: result.reason } : {}),
       count: result.count,
+    };
+  }
+
+  /**
+   * The system-wide learning-health snapshot (T045) via
+   * {@link AnalyticsService.computeAnalytics} (in `packages/local-db`): daily
+   * reviews + retention from `review_logs`, due cards/topics from the two
+   * schedulers, new cards/extracts + deletions from `elements`, and the live leech
+   * count. Read-only — no mutation, no `operation_log`. `asOf` defaults to "now"
+   * and `windowDays` to 30.
+   */
+  getAnalytics(request?: AnalyticsGetRequest): AnalyticsGetResult {
+    const asOf = (request?.asOf ?? nowIso()) as IsoTimestamp;
+    const summary = this.repos.analytics.computeAnalytics(asOf, {
+      ...(request?.windowDays !== undefined ? { windowDays: request.windowDays } : {}),
+    });
+    return {
+      asOf: summary.asOf,
+      windowDays: summary.windowDays,
+      reviewsByDay: summary.reviewsByDay,
+      reviewsTotal: summary.reviewsTotal,
+      reviewsPerDayAvg: summary.reviewsPerDayAvg,
+      retention30d: summary.retention30d,
+      dueCards: summary.dueCards,
+      dueTopics: summary.dueTopics,
+      newCards: summary.newCards,
+      newExtracts: summary.newExtracts,
+      deletions: summary.deletions,
+      leeches: summary.leeches,
+      dayStreak: summary.dayStreak,
     };
   }
 

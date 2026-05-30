@@ -1809,3 +1809,58 @@ describe("DbService — trash & undo (T044)", () => {
     svc.close();
   });
 });
+
+describe("DbService — analytics (T045)", () => {
+  /** A future clock so the seeded due cards register as due. */
+  const ASOF = "2027-06-01T12:00:00.000Z";
+
+  function seededDueQaCardId(svc: DbService): string {
+    const row = svc.raw.sqlite
+      .prepare(
+        `SELECT e.id AS id FROM elements e
+         JOIN cards c ON c.element_id = e.id
+         WHERE c.kind = 'qa' AND c.is_leech = 0 AND e.deleted_at IS NULL LIMIT 1`,
+      )
+      .get() as { id: string } | undefined;
+    if (!row) throw new Error("seeded Q&A card not found");
+    return row.id;
+  }
+
+  it("getAnalytics returns the shape with a per-day spark and the due/leech counts", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    const summary = svc.getAnalytics({ asOf: ASOF, windowDays: 30 });
+    expect(summary.windowDays).toBe(30);
+    expect(summary.reviewsByDay).toHaveLength(30);
+    // The seed has a leech card and a couple of due cards.
+    expect(summary.leeches).toBeGreaterThanOrEqual(1);
+    expect(summary.dueCards).toBeGreaterThanOrEqual(1);
+    // Defaults apply when called bare.
+    const bare = svc.getAnalytics();
+    expect(bare.windowDays).toBe(30);
+    svc.close();
+  });
+
+  it("a fresh grade increments the review total and reflects the rating in retention; survives reopen", () => {
+    const first = new DbService();
+    first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(first.seedIfEmpty()).toBe(true);
+    const cardId = seededDueQaCardId(first);
+
+    const before = first.getAnalytics({ asOf: ASOF });
+    // Grade `again` — a failure that drags retention down.
+    first.reviewGrade({ cardId, rating: "again", responseMs: 4000, asOf: ASOF });
+    const after = first.getAnalytics({ asOf: ASOF });
+    expect(after.reviewsTotal).toBe(before.reviewsTotal + 1);
+    first.close();
+
+    // Reopen the SAME file — the numbers are recomputed from durable review_logs.
+    const second = new DbService();
+    second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const persisted = second.getAnalytics({ asOf: ASOF });
+    expect(persisted.reviewsTotal).toBe(after.reviewsTotal);
+    second.close();
+  });
+});

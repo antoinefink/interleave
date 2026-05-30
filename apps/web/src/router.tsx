@@ -23,6 +23,7 @@
  * through the typed `window.appApi` bridge.
  */
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import { AnalyticsScreen } from "./analytics/AnalyticsScreen";
 import { DesktopStatusPanel } from "./components/DesktopStatusPanel";
 import { LibraryScreen } from "./library/LibraryScreen";
 import { LeechCleanup } from "./maintenance/LeechCleanup";
@@ -142,6 +143,20 @@ const trashRoute = createRoute({
   component: TrashScreen,
 });
 
+/**
+ * Analytics view (T045) — the read-only system-wide learning-health snapshot:
+ * daily reviews, retention, due cards/topics, new cards/extracts, deletions, and
+ * leeches. The whole snapshot comes from `appApi.getAnalytics()` (the domain
+ * `AnalyticsService` aggregates over `review_logs`/`elements`/`review_states`); the
+ * renderer holds no aggregation or SQL. The system-health banners link to the
+ * leech cleanup + trash maintenance surfaces.
+ */
+const analyticsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/analytics",
+  component: AnalyticsScreen,
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
@@ -178,6 +193,7 @@ const routeTree = rootRoute.addChildren([
   leechCleanupRoute,
   searchRoute,
   trashRoute,
+  analyticsRoute,
   settingsRoute,
 ]);
 
