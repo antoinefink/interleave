@@ -40,7 +40,8 @@ directory, native modules, and a real window, so it cannot live in a container. 
 
 | Command | Purpose |
 |---------|---------|
-| `pnpm dev` | Start the Electron app + Vite renderer with hot reload |
+| `pnpm dev` | Start the full Electron desktop app + Vite renderer with hot reload (drives `@interleave/desktop`'s `dev.mjs`: Vite + main/preload bundle + Electron). This is the canonical dev loop — the renderer only has `window.appApi`/live data inside Electron. |
+| `pnpm dev:renderer` | Start the **bare** Vite renderer only (`@interleave/web`), no Electron/`window.appApi` — for isolated UI work that does not need live data |
 | `pnpm typecheck` | Typecheck the workspace |
 | `pnpm test` | Vitest unit/domain/repository tests |
 | `pnpm e2e` | Playwright E2E against the Electron app |

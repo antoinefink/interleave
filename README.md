@@ -20,7 +20,8 @@ directory, and a real window, so it runs natively with **pnpm**, not in Docker.
 
 | Command | What it does |
 |---------|--------------|
-| `pnpm dev` | Start the Electron app + Vite renderer with hot reload |
+| `pnpm dev` | Start the full Electron desktop app + Vite renderer with hot reload (drives `apps/desktop/scripts/dev.mjs`: Vite renderer + main/preload bundle + Electron). Canonical dev loop — live data + `window.appApi` only exist inside Electron. |
+| `pnpm dev:renderer` | Start the **bare** Vite renderer only (no Electron, no `window.appApi`) — for isolated UI work that does not need live data |
 | `pnpm typecheck` | Typecheck the whole workspace (strict TypeScript) |
 | `pnpm test` | Run Vitest unit/domain/repository tests |
 | `pnpm e2e` | Run Playwright (chromium smoke + the Electron desktop E2E) |

@@ -9,7 +9,8 @@
     "pnpm": ">=9.12.1 <10"
   },
   "scripts": {
-    "dev": "pnpm --filter @interleave/web dev",
+    "dev": "pnpm --filter @interleave/desktop dev",
+    "dev:renderer": "pnpm --filter @interleave/web dev",
     "build": "turbo run build",
     "test": "vitest run",
     "test:watch": "vitest",

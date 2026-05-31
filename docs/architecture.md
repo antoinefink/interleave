@@ -199,7 +199,8 @@ on the host, not in a container. The Definition of Done uses:
 
 | Command | What it does |
 |---------|--------------|
-| `pnpm dev` | Start the Electron app with the Vite dev server (hot reload) |
+| `pnpm dev` | Start the full Electron desktop app with the Vite dev server (hot reload) — drives `apps/desktop/scripts/dev.mjs` (Vite + main/preload bundle + Electron). Canonical dev loop; `window.appApi`/live data exist only inside Electron. |
+| `pnpm dev:renderer` | Start the **bare** Vite renderer only (no Electron, no `window.appApi`) — isolated UI work that needs no live data |
 | `pnpm typecheck` | TypeScript across the workspace |
 | `pnpm test` | Vitest unit/domain tests |
 | `pnpm e2e` | Playwright (drives the Electron app where feasible) |
