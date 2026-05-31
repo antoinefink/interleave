@@ -18,6 +18,26 @@ read and want to retain the small subset that truly matters.
 
 ---
 
+## Screenshots
+
+**The incremental reading workspace** — read a source, drop a read-point, and lift passages
+into independent *scheduled* extracts; the scheduler-aware inspector (priority, stage, last-seen,
+source provenance) sits on the right.
+
+![Source reader](docs/screenshots/reader.png)
+
+**The library** — browse every element (sources, extracts, cards) with faceted filters by type,
+concept, priority, and status; everything traces back to its source.
+
+![Library](docs/screenshots/library.png)
+
+**The Home command center** (your daily landing dashboard) and **the Concepts knowledge map**:
+
+![Home command center](docs/screenshots/home.png)
+![Concepts knowledge map](docs/screenshots/concepts.png)
+
+---
+
 ## What it does
 
 A single, coherent loop — the whole pipeline above, implemented end to end:
