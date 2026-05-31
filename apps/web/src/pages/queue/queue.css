@@ -5,7 +5,7 @@
  * `design/kit/styles/app.css` for the surfaces the queue introduces that are NOT
  * already in `inspector.css`: the `qitem` row (+ `--protected` accent bar), the
  * `BudgetMeter`, the filter `chip`s, the `next-action` pill, the `dot-sep`, the
- * `concept-tag`, the leech/stagnant badges, and the page/panel/session chrome.
+ * `concept-tag`, and the page/panel/session chrome.
  * The shared primitives (`badge`, `prio`, `tico`, `sched`, `stage`, `tag`) live in
  * `inspector.css`, which this screen also imports.
  */
@@ -326,13 +326,6 @@
   height: 5px;
   border-radius: var(--r-full);
   background: currentColor;
-}
-
-/* extra status badge the queue uses (`badge--leech` is a shared primitive in
-   inspector.css). */
-.badge--stagnant {
-  background: var(--warn-soft);
-  color: var(--warn);
 }
 
 /* ---------- Empty / filtered-empty states ---------- */

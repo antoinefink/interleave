@@ -26,7 +26,7 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../../components/Icon";
-import { Prio, SchedulerChip, Stage, TypeIcon } from "../../components/inspector/primitives";
+import { Prio, SchedulerChip, TypeIcon } from "../../components/inspector/primitives";
 import { BudgetMeter } from "../../components/queue/BudgetMeter";
 import "../../components/inspector/inspector.css";
 import {
@@ -40,7 +40,7 @@ import {
 import { UNDO_EVENT } from "../../shell/nav";
 import "../../analytics/analytics.css";
 import "../queue/queue.css";
-import { actionFor, DueBadge, titleFor } from "../queue/queueRow";
+import { actionFor, DueBadge, metaFor, titleFor } from "../queue/queueRow";
 import "./home.css";
 
 /** Format a `[0,1]` retention fraction as a whole-percent string, or `null` if none. */
@@ -108,6 +108,9 @@ function PreviewRow({
   onOpen: (item: QueueItemSummary) => void;
 }) {
   const action = actionFor(item);
+  // The per-type meta sub-line (shared with the Daily Queue list so the two
+  // surfaces never drift); `null` for a type with no sub-line content.
+  const meta = metaFor(item);
   const chip: SchedulerSignals = {
     kind: item.schedulerSignals.kind,
     retrievability: item.schedulerSignals.retrievability,
@@ -133,7 +136,7 @@ function PreviewRow({
       <span className="home-prow__main">
         <span className="home-prow__title truncate">{titleFor(item)}</span>
         <span className="home-prow__meta">
-          {item.type === "extract" ? <Stage stage={item.stage} /> : null}
+          {meta}
           {item.concept ? <span className="concept-tag">{item.concept}</span> : null}
           <SchedulerChip scheduler={chip} />
         </span>

@@ -26,7 +26,7 @@
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Icon, type IconName } from "../../components/Icon";
-import { Prio, SchedulerChip, Stage, TypeIcon } from "../../components/inspector/primitives";
+import { Prio, SchedulerChip, TypeIcon } from "../../components/inspector/primitives";
 import { BudgetMeter } from "../../components/queue/BudgetMeter";
 import { QueueSnackbar } from "../../components/queue/QueueSnackbar";
 import { ScheduleMenu } from "../../components/queue/ScheduleMenu";
@@ -43,7 +43,7 @@ import {
 import { useSelection } from "../../shell/selection";
 import "./queue.css";
 import { jitterOrder } from "./jitter";
-import { actionFor, DueBadge, titleFor } from "./queueRow";
+import { actionFor, DueBadge, metaFor, titleFor } from "./queueRow";
 
 /** The non-open queue actions a row exposes, with their icon + label (T030). */
 type RowActionKind = QueueActAction["kind"];
@@ -71,6 +71,19 @@ const FILTERS: readonly { id: FilterId; label: string }[] = [
   { id: "task", label: "Tasks" },
   { id: "high", label: "High priority" },
 ];
+
+/**
+ * The plural noun used in the filtered-empty heading ("No cards" / "No sources"…),
+ * matching the (plural) filter chip labels rather than the raw singular FilterId so
+ * the empty state never reads "No card items" / "No source items".
+ */
+const FILTER_EMPTY_NOUN: Record<Exclude<FilterId, "all">, string> = {
+  card: "cards",
+  source: "sources",
+  extract: "extracts",
+  task: "tasks",
+  high: "high-priority items",
+};
 
 /**
  * The lifecycle-status filter (T029 Notes — "status filters are fully functional in
@@ -103,7 +116,7 @@ function QueueItem({
 }: {
   item: QueueItemSummary;
   active: boolean;
-  /** Whether an action on this row is in flight (its buttons are disabled). */
+  /** Whether ANY queue action is in flight (every row's action buttons disable). */
   busy: boolean;
   onSelect: (item: QueueItemSummary) => void;
   onOpen: (item: QueueItemSummary) => void;
@@ -112,6 +125,12 @@ function QueueItem({
   onSchedule: (item: QueueItemSummary, choice: QueueScheduleChoice) => void;
 }) {
   const action = actionFor(item);
+  // The per-type meta sub-line, matching the kit's `QueueItem` (one branch per
+  // type so every row reads with real content before the SchedulerChip). `concept`
+  // is null until T041; when there's NO preceding meta content the leading dot
+  // separator is suppressed so we never render an orphan dot before the chip.
+  const meta = metaFor(item);
+  const hasLeadingMeta = meta !== null || item.concept !== null;
   // The chip reads the queue's trimmed signals as the inspector's wider shape.
   const chip: SchedulerSignals = {
     kind: item.schedulerSignals.kind,
@@ -153,24 +172,14 @@ function QueueItem({
         <span className="qitem__main">
           <span className="qitem__title truncate">{titleFor(item)}</span>
           <span className="qitem__meta">
-            {item.type === "source" && item.author ? (
-              <span className="qitem__sub">
-                <Icon name="globe" size={13} /> {item.author}
-              </span>
-            ) : null}
-            {item.type === "card" && item.sourceTitle ? (
-              <span className="qitem__sub">
-                from <i>{item.sourceTitle}</i>
-              </span>
-            ) : null}
-            {item.type === "extract" ? <Stage stage={item.stage} /> : null}
+            {meta}
             {item.concept ? (
               <>
-                <span className="dot-sep" />
+                {meta !== null ? <span className="dot-sep" /> : null}
                 <span className="concept-tag">{item.concept}</span>
               </>
             ) : null}
-            <span className="dot-sep" />
+            {hasLeadingMeta ? <span className="dot-sep" /> : null}
             <SchedulerChip scheduler={chip} />
           </span>
         </span>
@@ -211,12 +220,17 @@ function QueueItem({
 export function QueueScreen() {
   const desktop = isDesktop();
   const navigate = useNavigate();
-  const { select } = useSelection();
+  const { selectedId, select } = useSelection();
   // The queue route declares no `validateSearch`, so search is loosely typed. An
   // optional `asOf` date-scopes the due reads (used by the E2E to drive a fixed
-  // clock; in normal use the read defaults to the server's "now").
-  const search = useSearch({ strict: false }) as { asOf?: string };
+  // clock; in normal use the read defaults to the server's "now"). An optional
+  // `concept` narrows the read by concept NAME — the T029 deliverable wires this
+  // param now so the documented filter surface is genuinely stable; the concept
+  // filter CONTROL lands with T041 (the narrowing already runs main-side in
+  // `QueueQuery.matchesFilters`, never in React).
+  const search = useSearch({ strict: false }) as { asOf?: string; concept?: string };
   const asOf = typeof search.asOf === "string" ? search.asOf : undefined;
+  const concept = typeof search.concept === "string" ? search.concept : undefined;
   const [data, setData] = useState<QueueListResult | null>(null);
   const [filter, setFilter] = useState<FilterId>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilterId>("all");
@@ -235,18 +249,20 @@ export function QueueScreen() {
     try {
       // The active status filter is passed THROUGH to the read so the narrowing
       // happens main-side (`QueueQuery.matchesFilters`), never in React. `all` sends
-      // no `statuses` (the full due set).
+      // no `statuses` (the full due set). The `concept` param is forwarded too (when
+      // present) so the documented T041 filter surface is genuinely wired end-to-end.
       const statuses = STATUS_FILTERS.find((s) => s.id === statusFilter)?.statuses;
       const next = await appApi.listQueue({
         ...(asOf ? { asOf } : {}),
         ...(statuses ? { statuses } : {}),
+        ...(concept ? { concept } : {}),
       });
       setData(next);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [asOf, statusFilter]);
+  }, [asOf, statusFilter, concept]);
 
   useEffect(() => {
     void refresh();
@@ -503,8 +519,12 @@ export function QueueScreen() {
               <QueueItem
                 key={item.id}
                 item={item}
-                active={false}
-                busy={busyId === item.id}
+                active={selectedId === item.id}
+                // While ANY row's action is in flight the queue is mid-mutation and
+                // about to be re-read + re-sorted, so EVERY row's action buttons
+                // disable — visual honesty (the guard below also drops clicks while
+                // busyId is set, so leaving other rows enabled would silently no-op).
+                busy={busyId !== null}
                 onSelect={onSelect}
                 onOpen={onOpen}
                 onAction={onAction}
@@ -532,7 +552,7 @@ export function QueueScreen() {
                 <Icon name="filter" size={24} />
               </div>
               <h2 className="q-empty__title">
-                No {filter === "high" ? "high-priority" : filter} items
+                No {filter === "all" ? "items" : FILTER_EMPTY_NOUN[filter]}
               </h2>
               <p className="q-empty__body">
                 Nothing matches this filter right now. Try another filter or clear it.

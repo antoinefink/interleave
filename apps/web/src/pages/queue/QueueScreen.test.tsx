@@ -91,28 +91,57 @@ const h = vi.hoisted(() => {
     due: "overdue",
     dueLabel: "Overdue",
   };
+  const topicRow: QueueItemSummary = {
+    id: "topic-1",
+    type: "topic",
+    status: "scheduled",
+    stage: "rough_topic",
+    priority: 0.375, // C
+    title: "Measuring intelligence",
+    dueAt: "2026-05-30T06:00:00.000Z",
+    scheduler: "attention",
+    schedulerSignals: {
+      kind: "attention",
+      retrievability: null,
+      stability: null,
+      stage: "rough_topic",
+      postponed: 0,
+    },
+    sourceTitle: null,
+    author: null,
+    concept: null,
+    cardType: null,
+    protected: false,
+    due: "today",
+    dueLabel: "Due today",
+  };
   const result: QueueListResult = {
-    items: [cardRow, sourceRow, extractRow],
+    items: [cardRow, sourceRow, extractRow, topicRow],
     counts: {
-      all: 3,
+      all: 4,
       card: 1,
       source: 1,
       extract: 1,
-      topic: 0,
+      topic: 1,
       task: 0,
       highPriority: 2,
       overdue: 2,
       protected: 2,
     },
-    budget: { used: 3, target: 30 },
+    budget: { used: 4, target: 30 },
   };
   return {
     navigateSpy: vi.fn(),
     selectSpy: vi.fn(),
+    // A mock so a test can drive the route search (e.g. the `concept` filter param).
+    useSearch: vi.fn(() => ({}) as Record<string, unknown>),
+    // A mutable holder so a test can drive the shell's selected id into the rows.
+    selectedId: { current: null as string | null },
     listQueue: vi.fn().mockResolvedValue(result),
     actOnQueueItem: vi.fn(),
     undoQueueAction: vi.fn().mockResolvedValue({ item: extractRow }),
     extractRow,
+    topicRow,
   };
 });
 
@@ -131,23 +160,24 @@ vi.mock("../../lib/appApi", async () => {
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => h.navigateSpy,
-  useSearch: () => ({}),
+  useSearch: () => h.useSearch(),
 }));
 
 vi.mock("../../shell/selection", () => ({
-  useSelection: () => ({ selectedId: null, select: h.selectSpy }),
+  useSelection: () => ({ selectedId: h.selectedId.current, select: h.selectSpy }),
 }));
 
 import { QueueScreen } from "./QueueScreen";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.selectedId.current = null;
 });
 
 describe("QueueScreen", () => {
   it("renders one qitem per due row", async () => {
     render(<QueueScreen />);
-    await waitFor(() => expect(screen.getAllByTestId("queue-item")).toHaveLength(3));
+    await waitFor(() => expect(screen.getAllByTestId("queue-item")).toHaveLength(4));
   });
 
   it("renders the correct SchedulerChip side for a card (FSRS) vs an extract (attention)", async () => {
@@ -180,7 +210,7 @@ describe("QueueScreen", () => {
 
   it("narrows the list when a filter chip is clicked", async () => {
     render(<QueueScreen />);
-    await waitFor(() => expect(screen.getAllByTestId("queue-item")).toHaveLength(3));
+    await waitFor(() => expect(screen.getAllByTestId("queue-item")).toHaveLength(4));
 
     fireEvent.click(screen.getByTestId("queue-filter-card"));
     await waitFor(() => expect(screen.getAllByTestId("queue-item")).toHaveLength(1));
@@ -192,6 +222,17 @@ describe("QueueScreen", () => {
     await screen.findAllByTestId("queue-item");
     fireEvent.click(screen.getByTestId("queue-filter-task"));
     await screen.findByTestId("queue-empty-filtered");
+  });
+
+  it("labels the filtered-empty heading with the plural chip noun (No tasks, not No task items)", async () => {
+    render(<QueueScreen />);
+    await screen.findAllByTestId("queue-item");
+    // The Tasks filter matches nothing (no task rows in the fixture).
+    fireEvent.click(screen.getByTestId("queue-filter-task"));
+    const empty = await screen.findByTestId("queue-empty-filtered");
+    const title = empty.querySelector(".q-empty__title");
+    // Plural noun matching the chip label — never the raw singular "No task items".
+    expect(title?.textContent).toBe("No tasks");
   });
 
   it("selects a row in the shell inspector when its open zone is clicked", async () => {
@@ -224,8 +265,81 @@ describe("QueueScreen", () => {
   it("renders the BudgetMeter with the items-due / target gauge", async () => {
     render(<QueueScreen />);
     await screen.findByTestId("budget-meter");
-    expect(screen.getByTestId("budget-meter")).toHaveTextContent("3");
+    expect(screen.getByTestId("budget-meter")).toHaveTextContent("4");
     expect(screen.getByTestId("budget-meter")).toHaveTextContent("30 today");
+  });
+
+  it("marks the row matching the shell selection with the active highlight (aria-current + qitem--active)", async () => {
+    // Drive the shell's selected id into the rows; only that row goes active.
+    h.selectedId.current = "extract-1";
+    render(<QueueScreen />);
+    await screen.findAllByTestId("queue-item");
+    const extract = screen
+      .getAllByTestId("queue-item")
+      .find((el) => el.getAttribute("data-element-id") === "extract-1");
+    const card = screen
+      .getAllByTestId("queue-item")
+      .find((el) => el.getAttribute("data-element-id") === "card-1");
+    expect(extract?.className).toContain("qitem--active");
+    expect(extract?.getAttribute("aria-current")).toBe("true");
+    // Every other row stays inactive (no stray accent ring).
+    expect(card?.className).not.toContain("qitem--active");
+    expect(card?.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("renders a topic meta sub-line and no orphan separator dot before its chip", async () => {
+    render(<QueueScreen />);
+    await screen.findAllByTestId("queue-item");
+    const topic = screen
+      .getAllByTestId("queue-item")
+      .find((el) => el.getAttribute("data-element-id") === "topic-1");
+    // The topic row carries a real meta sub-line (the kit renders one per type)…
+    const meta = topic?.querySelector(".qitem__meta");
+    expect(meta?.querySelector(".qitem__sub")).not.toBeNull();
+    expect(meta?.textContent).toContain("Topic");
+    // …and exactly ONE separator dot (between the sub-line and the chip) — never a
+    // leading orphan dot. (concept is null until T041, so no concept separator.)
+    expect(meta?.querySelectorAll(".dot-sep")).toHaveLength(1);
+    expect(meta?.querySelector('[data-scheduler="attention"]')).not.toBeNull();
+  });
+
+  it("forwards the concept filter param to the read when present in search", async () => {
+    h.useSearch.mockReturnValueOnce({ concept: "Intelligence" });
+    render(<QueueScreen />);
+    await waitFor(() =>
+      expect(h.listQueue).toHaveBeenCalledWith(
+        expect.objectContaining({ concept: "Intelligence" }),
+      ),
+    );
+  });
+
+  it("forwards the lifecycle status filter to the read when a status chip is active", async () => {
+    render(<QueueScreen />);
+    await screen.findAllByTestId("queue-item");
+
+    // Default ("Any status") sends NO statuses — the full due set.
+    expect(h.listQueue).toHaveBeenCalledWith(
+      expect.not.objectContaining({ statuses: expect.anything() }),
+    );
+
+    // Selecting "Scheduled" forwards exactly its statuses array to the read so the
+    // narrowing happens main-side (QueueQuery.matchesFilters), never in React.
+    h.listQueue.mockClear();
+    fireEvent.click(screen.getByTestId("queue-status-scheduled"));
+    await waitFor(() =>
+      expect(h.listQueue).toHaveBeenCalledWith(
+        expect.objectContaining({ statuses: ["scheduled"] }),
+      ),
+    );
+
+    // "Active" forwards its (freshly-pulled-in) statuses set.
+    h.listQueue.mockClear();
+    fireEvent.click(screen.getByTestId("queue-status-active"));
+    await waitFor(() =>
+      expect(h.listQueue).toHaveBeenCalledWith(
+        expect.objectContaining({ statuses: ["active", "pending", "inbox"] }),
+      ),
+    );
   });
 
   // -------------------------------------------------------------------------

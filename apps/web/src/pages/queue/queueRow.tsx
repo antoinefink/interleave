@@ -13,7 +13,9 @@
  * SQL, no scheduling math, no data fetching.
  */
 
-import type { IconName } from "../../components/Icon";
+import type { ReactElement } from "react";
+import { Icon, type IconName } from "../../components/Icon";
+import { Stage } from "../../components/inspector/primitives";
 import type { QueueItemSummary } from "../../lib/appApi";
 
 /** The per-row title with the kit's type prefix ("Extract · …", "Q&A · …"). */
@@ -25,6 +27,58 @@ export function titleFor(item: QueueItemSummary): string {
   if (item.type === "extract") return `Extract · ${item.title}`;
   if (item.type === "topic") return `Topic · ${item.title}`;
   return item.title;
+}
+
+/**
+ * The per-type meta sub-line for a queue row (the kit's `QueueItem` meta), or
+ * `null` when the type carries no sub-line content. One branch per element type so
+ * EVERY type — source (author), card (from sourceTitle), extract (Stage), topic
+ * ("N sources · M cards" is later; the stage stands in for now), synthesis_note
+ * ("N words" is later; the type label stands in), task ("<kind> task") — reads
+ * with real content before the SchedulerChip, matching the kit. Returning `null`
+ * lets the caller suppress the otherwise-orphan leading dot separator.
+ *
+ * Pure presentation, shared by the Daily Queue list + the Home top-due preview so
+ * the two surfaces can never drift.
+ */
+export function metaFor(item: QueueItemSummary): ReactElement | null {
+  if (item.type === "source") {
+    return item.author ? (
+      <span className="qitem__sub">
+        <Icon name="globe" size={13} /> {item.author}
+      </span>
+    ) : null;
+  }
+  if (item.type === "card") {
+    return item.sourceTitle ? (
+      <span className="qitem__sub">
+        from <i>{item.sourceTitle}</i>
+      </span>
+    ) : null;
+  }
+  if (item.type === "extract") return <Stage stage={item.stage} />;
+  if (item.type === "topic") {
+    return (
+      <span className="qitem__sub">
+        <Icon name="layers" size={13} /> Topic
+      </span>
+    );
+  }
+  if (item.type === "synthesis_note") {
+    return (
+      <span className="qitem__sub">
+        <Icon name="synthesis" size={13} /> Synthesis note
+      </span>
+    );
+  }
+  if (item.type === "task") {
+    return (
+      <span className="qitem__sub">
+        <Icon name="task" size={13} /> Task
+      </span>
+    );
+  }
+  return null;
 }
 
 /** The open-action icon + label per type (the `next-action` affordance). */
