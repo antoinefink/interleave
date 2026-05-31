@@ -52,6 +52,7 @@ import type {
   QueueUndoRequest,
   ReadPointGetRequest,
   ReadPointSetRequest,
+  ReviewCardRequest,
   ReviewGradeRequest,
   ReviewPreviewRequest,
   ReviewSessionNextRequest,
@@ -152,6 +153,7 @@ const appApi: AppApi = {
   review: {
     sessionNext: (request?: ReviewSessionNextRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.reviewSessionNext, request ?? {}),
+    card: (request: ReviewCardRequest) => ipcRenderer.invoke(IPC_CHANNELS.reviewCard, request),
     preview: (request: ReviewPreviewRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.reviewPreview, request),
     grade: (request: ReviewGradeRequest) => ipcRenderer.invoke(IPC_CHANNELS.reviewGrade, request),

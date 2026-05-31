@@ -53,6 +53,7 @@ import {
   QueueUndoRequestSchema,
   ReadPointGetRequestSchema,
   ReadPointSetRequestSchema,
+  ReviewCardRequestSchema,
   ReviewGradeRequestSchema,
   ReviewLeechesRequestSchema,
   ReviewPreviewRequestSchema,
@@ -277,6 +278,11 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.reviewSessionNext, (_event, rawRequest: unknown) => {
     const request = ReviewSessionNextRequestSchema.parse(rawRequest ?? {});
     return dbService.reviewSessionNext(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.reviewCard, (_event, rawRequest: unknown) => {
+    const request = ReviewCardRequestSchema.parse(rawRequest);
+    return dbService.reviewCard(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.reviewPreview, (_event, rawRequest: unknown) => {

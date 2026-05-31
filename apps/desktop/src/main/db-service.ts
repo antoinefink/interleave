@@ -143,6 +143,8 @@ import type {
   ReadPointGetResult,
   ReadPointSetRequest,
   ReadPointSetResult,
+  ReviewCardRequest,
+  ReviewCardResult,
   ReviewCardView,
   ReviewGradeRequest,
   ReviewGradeResult,
@@ -1347,6 +1349,23 @@ export class DbService {
       throw new Error("DbService: database is not open");
     }
     return this.reviewSession;
+  }
+
+  /**
+   * Fetch ONE card's full reveal-ready {@link ReviewCardView} by id (T037/T031) —
+   * the SAME view {@link reviewSessionNext} ships, but TARGETED by id instead of
+   * soonest-due. The process loop (T031) walks a FROZEN queue order with a cursor;
+   * to reveal a card inline it needs that specific card's full view (answer / cloze
+   * / source ref / FSRS signals), which the soonest-due session read cannot return.
+   * Read-only: it wraps the private {@link toReviewCardView} (no mutation, no
+   * `operation_log`). `card` is `null` for a non-card / deleted id. Cards only —
+   * the two-scheduler split holds (this never touches the attention seam).
+   */
+  reviewCard(request: ReviewCardRequest): ReviewCardResult {
+    const asOf = (request.asOf ?? new Date().toISOString()) as IsoTimestamp;
+    const asOfMs = Date.parse(asOf);
+    const card = this.toReviewCardView(request.cardId as ElementId, asOfMs);
+    return { card };
   }
 
   /**

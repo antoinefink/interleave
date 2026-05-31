@@ -4,31 +4,45 @@
  * Takes the T029 due queue (`queue.list`, honoring the active filters/clock) and
  * presents it ONE ELEMENT AT A TIME, rendering the right surface for each type —
  * a compact read/process panel for attention items (source / topic / extract /
- * task) and a card prompt/reveal STUB for cards (full FSRS grading is M7/T037) —
- * with the T030 actions (open-in-full / postpone / raise / lower / done / dismiss /
- * delete / skip) available inline. After EVERY action it advances the cursor to the
- * next due item automatically, so a user can process ten mixed sources/extracts/
- * cards end to end WITHOUT ever returning to the list. A progress readout
- * ("3 / 12 · est. N min") and a presentational budget/mode `Segmented` header frame
- * the session; finishing shows the "Queue clear" done state.
+ * task) and the FULL inline FSRS card surface for cards (reveal → grade
+ * Again/Hard/Good/Easy with next-interval previews, exactly as the review session)
+ * — with the T030 actions (open-in-full / postpone / raise / lower / done /
+ * dismiss / delete / skip) available inline. After EVERY action it advances the
+ * cursor to the next due item automatically, so a user can process ten mixed
+ * sources/extracts/cards end to end WITHOUT ever returning to the list — including
+ * grading a due card inline, never detouring to /review. A progress readout
+ * ("3 / 12 · N left") and a presentational mode `Segmented` header frame the
+ * session; finishing shows the "Queue clear" done state.
  *
- * Architecture (non-negotiable): the loop introduces NO new mutation path — every
- * action calls the SAME typed `appApi.actOnQueueItem` (`queue.act`) /
- * `appApi.setElementPriority` (`elements.setPriority`) commands the queue list uses,
- * so the keyboard shortcuts (T048) and the list (T030) stay in sync behind one
- * validated IPC surface. The renderer never touches SQLite/Node/fs. Cards stay on
- * FSRS, attention items on the attention scheduler — the chip + scheduling never
- * cross. Sibling-card burying (T039) and "due cards first" ordering refinements are
- * M7-side: the loop consumes the order `queue.list` gives it and leaves that seam.
+ * Architecture (non-negotiable): the loop introduces NO new mutation path — the
+ * T030 actions call the SAME typed `appApi.actOnQueueItem` (`queue.act`) /
+ * `appApi.setElementPriority` the list uses, and a card grade calls the SAME
+ * `appApi.reviewGrade` (`review.grade`) the review session uses, with previews from
+ * `appApi.reviewPreview` and the full reveal-ready card from `appApi.reviewCard`
+ * (a TARGETED, read-only `review.card` fetch — the loop walks a frozen order, so it
+ * cannot use the soonest-due `review.session.next`). The renderer never touches
+ * SQLite/Node/fs and never does FSRS math — it only carries opaque ids + measures
+ * the reveal→grade response time. Cards stay on FSRS, attention items on the
+ * attention scheduler — the chip + scheduling never cross (a card never sees the
+ * `ScheduleMenu`). The card grade advances the FROZEN-order cursor (consistent with
+ * the other loop actions), it does NOT re-read the review deck.
  *
  * Pure UI orchestration — no SQL, no scheduling math, no priority math.
  */
 
+import { renderClozePrompt } from "@interleave/core";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "../../components/Icon";
-import { Prio, SchedulerChip, Stage, TypeIcon } from "../../components/inspector/primitives";
+import {
+  FsrsStats,
+  Prio,
+  SchedulerChip,
+  Stage,
+  TypeIcon,
+} from "../../components/inspector/primitives";
 import { ScheduleMenu } from "../../components/queue/ScheduleMenu";
+import { RefBlock } from "../../components/RefBlock";
 import "../../components/inspector/inspector.css";
 import {
   appApi,
@@ -37,9 +51,15 @@ import {
   type QueueItemSummary,
   type QueueListResult,
   type QueueScheduleChoice,
+  type ReviewCardView,
+  type ReviewIntervalPreview,
+  type ReviewRating,
   type SchedulerSignals,
 } from "../../lib/appApi";
+import { CardFront } from "../../review/CardFront";
+import "../../review/review.css";
 import { useActiveScope } from "../../shell/activeScope";
+import { Kbd } from "../../shell/Kbd";
 import { useSelection } from "../../shell/selection";
 import { jitterOrder } from "./jitter";
 import "./queue.css";
@@ -52,6 +72,14 @@ const MODES: readonly { id: SessionMode; label: string; icon: IconName }[] = [
   { id: "full", label: "Full", icon: "layers" },
   { id: "review", label: "Review-only", icon: "review" },
   { id: "read", label: "Reading-only", icon: "bookmark" },
+];
+
+/** The four FSRS ratings in display + keyboard order (1–4), matching the review session. */
+const GRADES: readonly { rating: ReviewRating; label: string; key: string }[] = [
+  { rating: "again", label: "Again", key: "1" },
+  { rating: "hard", label: "Hard", key: "2" },
+  { rating: "good", label: "Good", key: "3" },
+  { rating: "easy", label: "Easy", key: "4" },
 ];
 
 /** The inline non-open actions a loop item exposes (the T030 set + skip). */
@@ -68,11 +96,22 @@ interface ItemBody {
 function titleFor(item: QueueItemSummary): string {
   if (item.type === "card") {
     const prefix = item.cardType === "cloze" ? "Cloze · " : "Q&A · ";
-    return prefix + item.title.replace(/\{\{(.+?)\}\}/, "[…]");
+    return prefix + maskCloze(item.title);
   }
   if (item.type === "extract") return `Extract · ${item.title}`;
   if (item.type === "topic") return `Topic · ${item.title}`;
   return item.title;
+}
+
+/**
+ * Mask EVERY `{{cN::…}}` cloze deletion in a prompt (for the header title, where the
+ * answer must never leak). Uses the core `renderClozePrompt` helper so all deletions
+ * are masked — a non-global regex would leak the 2nd+ deletion.
+ */
+function maskCloze(text: string): string {
+  return renderClozePrompt(text, { revealAll: false })
+    .map((span) => (span.kind === "deletion" ? "[…]" : span.content))
+    .join("");
 }
 
 /** The chip shape the SchedulerChip expects, from the queue's trimmed signals. */
@@ -87,6 +126,22 @@ function chipSignals(item: QueueItemSummary): SchedulerSignals {
     fsrsState: null,
     stage: item.schedulerSignals.stage,
     postponed: item.schedulerSignals.postponed,
+    lastProcessedAt: null,
+  };
+}
+
+/** Adapt a loaded review card's FSRS signals to the shared chip/stat shape. */
+function cardChipSignals(card: ReviewCardView): SchedulerSignals {
+  return {
+    kind: "fsrs",
+    retrievability: card.schedulerSignals.retrievability,
+    stability: card.schedulerSignals.stability,
+    difficulty: card.schedulerSignals.difficulty,
+    reps: card.schedulerSignals.reps,
+    lapses: card.schedulerSignals.lapses,
+    fsrsState: card.schedulerSignals.fsrsState,
+    stage: card.stage,
+    postponed: 0,
     lastProcessedAt: null,
   };
 }
@@ -115,11 +170,24 @@ export function ProcessQueue() {
   );
   /** Index into the ordered, mode-filtered session list. */
   const [cursor, setCursor] = useState(0);
-  /** How many items the user has acted on this session (for the progress readout). */
+  /** How many items the user has processed this session (acted/scheduled/graded). */
   const [processed, setProcessed] = useState(0);
   const [body, setBody] = useState<ItemBody | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // --- The inline card-review surface state (lifted here so the keyboard can drive
+  // reveal/grade while a card is the current item, exactly like the review session).
+  /** The full reveal-ready view for the current CARD item (fetched by id), or null. */
+  const [cardView, setCardView] = useState<ReviewCardView | null>(null);
+  const [revealed, setRevealed] = useState(false);
+  const [previews, setPreviews] = useState<Record<ReviewRating, ReviewIntervalPreview> | null>(
+    null,
+  );
+  /** When the current card was revealed (for the reveal→grade response time). */
+  const revealAtRef = useRef<number | null>(null);
+  /** Card ids already graded this session — the hard guard against a double grade. */
+  const gradedRef = useRef<Set<string>>(new Set());
 
   // The ordered session list: the read's deterministic priority-then-due sort, the
   // stable seeded jitter (so the user isn't trapped in one topic), then the mode
@@ -131,7 +199,9 @@ export function ProcessQueue() {
   const total = order.length;
   const current = cursor < total ? order[cursor] : null;
   const done = total === 0 || cursor >= total;
-  const estMin = Math.max(8, total * 2);
+  const isCard = current?.type === "card";
+  /** Items left to look at (this one + everything after). */
+  const remaining = Math.max(0, total - cursor);
 
   // Read the latest mode without making `load` depend on it: switching mode
   // re-slices the already-loaded items via `onModeChange` (no re-fetch), so a load
@@ -151,6 +221,7 @@ export function ProcessQueue() {
       setOrder(jittered.filter((i) => modeIncludes(modeRef.current, i)));
       setCursor(0);
       setProcessed(0);
+      gradedRef.current = new Set();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -160,14 +231,40 @@ export function ProcessQueue() {
     void load();
   }, [load]);
 
-  // Load the current item's body preview (attention items show their text; cards
-  // show their prompt from the summary). Read-only, through the typed bridge.
+  // Load the current item's body preview (attention items show their text) OR the
+  // current card's full reveal-ready view (so reveal can unmask cloze / show the
+  // Q&A answer + source ref). Read-only, through the typed bridge.
   useEffect(() => {
     let cancelled = false;
-    if (!current || current.type === "card") {
+    // Reset the per-item reveal/grade surface whenever the item changes.
+    setRevealed(false);
+    setPreviews(null);
+    revealAtRef.current = null;
+    if (!current) {
       setBody(null);
+      setCardView(null);
       return;
     }
+    if (current.type === "card") {
+      setBody(null);
+      void (async () => {
+        try {
+          const res = await appApi.reviewCard({
+            cardId: current.id,
+            ...(asOf ? { asOf } : {}),
+          });
+          if (cancelled) return;
+          setCardView(res.card);
+        } catch {
+          if (cancelled) return;
+          setCardView(null);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+    setCardView(null);
     void (async () => {
       try {
         const [doc, insp] = await Promise.all([
@@ -188,7 +285,7 @@ export function ProcessQueue() {
     return () => {
       cancelled = true;
     };
-  }, [current]);
+  }, [current, asOf]);
 
   // Selecting the current item drives the shell inspector to its context.
   useEffect(() => {
@@ -208,6 +305,7 @@ export function ProcessQueue() {
       setOrder(jittered.filter((i) => modeIncludes(next, i)));
       setCursor(0);
       setProcessed(0);
+      gradedRef.current = new Set();
     },
     [data],
   );
@@ -265,6 +363,63 @@ export function ProcessQueue() {
     advance();
   }, [current, advance]);
 
+  /**
+   * Reveal the current card's answer + lazily fetch the four interval previews
+   * (PURE — no mutation). Captures the reveal timestamp for the response time.
+   * Mirrors the review session's reveal exactly. Keyed off the cursor's `current.id`
+   * (always present for a card) rather than the async-loaded `cardView`, so a fast
+   * Space press never no-ops while the full view is still in flight — the answer
+   * block renders the moment `cardView` arrives.
+   */
+  const reveal = useCallback(async () => {
+    if (!isCard || !current || revealed) return;
+    setRevealed(true);
+    revealAtRef.current = Date.now();
+    try {
+      const res = await appApi.reviewPreview({
+        cardId: current.id,
+        ...(asOf ? { asOf } : {}),
+      });
+      setPreviews(res.intervals);
+    } catch {
+      // Previews are a nicety; grading still works without them.
+      setPreviews(null);
+    }
+  }, [isCard, current, revealed, asOf]);
+
+  /**
+   * Grade the current card INLINE through the SAME `review.grade` the review session
+   * uses (FSRS reschedule + a durable `review_logs` row, ALL main-side), measuring
+   * the reveal→grade response time, then ADVANCE the FROZEN-order cursor (consistent
+   * with `act` — the loop's deck is the queue order, not the review deck). Guards
+   * against double-grading the same card. Cards stay FSRS-only.
+   */
+  const grade = useCallback(
+    async (rating: ReviewRating) => {
+      if (!isCard || !cardView || !revealed || busy || !isDesktop()) return;
+      if (gradedRef.current.has(cardView.id)) return;
+      setBusy(true);
+      const responseMs = revealAtRef.current ? Math.max(0, Date.now() - revealAtRef.current) : 0;
+      try {
+        await appApi.reviewGrade({
+          cardId: cardView.id,
+          rating,
+          responseMs,
+          ...(asOf ? { asOf } : {}),
+        });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        setBusy(false);
+        return;
+      }
+      gradedRef.current.add(cardView.id);
+      setProcessed((p) => p + 1);
+      advance();
+      setBusy(false);
+    },
+    [isCard, cardView, revealed, busy, asOf, advance],
+  );
+
   /** Open the current item in its full surface — the ONLY navigation in the loop. */
   const open = useCallback(() => {
     if (!current) return;
@@ -274,15 +429,18 @@ export function ProcessQueue() {
     } else if (current.type === "extract") {
       void navigate({ to: "/extract/$id", params: { id: current.id } });
     } else {
-      // Cards open the review surface (full grading lands with M7/T037).
-      void navigate({ to: "/review" });
+      // Cards open the review surface; carry the session clock so the date-scoped
+      // session (the E2E drives a fixed future clock) reads the same deck.
+      void navigate({ to: "/review", search: asOf ? { asOf } : {} });
     }
-  }, [current, navigate, select]);
+  }, [current, navigate, select, asOf]);
 
   // Keyboard-first controls — the loop's core keys, registered in the single
   // shortcut registry (T048) and bound here through the SAME `appApi` path as the
   // buttons. While the loop is live it owns the keys it shares with the global
-  // shell handler (`o`/`+`/`-`), so the shell DEFERS them (see `activeScope`).
+  // shell handler (`o`/`+`/`-`), so the shell DEFERS them (see `activeScope`). On a
+  // CARD, Space reveals and 1–4 grade (after reveal) — exactly like the review
+  // session — and these win over next/skip; on a non-card, Space is next/skip.
   const loopActive = desktop && !done;
   useActiveScope("queue", loopActive);
   useProcessShortcuts(
@@ -295,6 +453,10 @@ export function ProcessQueue() {
       raise: () => void act("raise"),
       lower: () => void act("lower"),
       open,
+      isCard: !!isCard,
+      revealed,
+      reveal: () => void reveal(),
+      grade: (rating) => void grade(rating),
     },
     loopActive,
   );
@@ -320,7 +482,7 @@ export function ProcessQueue() {
 
   return (
     <div className="pq-shell" data-testid="route-process">
-      {/* session header — progress + presentational budget/mode steering */}
+      {/* session header — progress + presentational mode steering */}
       <div className="pq-head">
         <button
           type="button"
@@ -336,12 +498,12 @@ export function ProcessQueue() {
             <span>
               {Math.min(cursor + (done ? 0 : 1), total)} / {total}
             </span>
-            <span className="pq-progress__est">est. {estMin} min</span>
+            <span className="pq-progress__est">{done ? "all done" : `${remaining} left`}</span>
           </div>
           <div className="pq-progress__bar">
             <span
               className="pq-progress__fill"
-              style={{ width: `${total === 0 ? 0 : (processed / total) * 100}%` }}
+              style={{ width: `${total === 0 ? 0 : (Math.min(cursor, total) / total) * 100}%` }}
             />
           </div>
         </div>
@@ -408,11 +570,16 @@ export function ProcessQueue() {
           <ProcessCard
             item={current}
             body={body}
+            cardView={cardView}
+            revealed={revealed}
+            previews={previews}
             busy={busy}
             onAction={act}
             onSchedule={schedule}
             onSkip={skip}
             onOpen={open}
+            onReveal={() => void reveal()}
+            onGrade={(rating) => void grade(rating)}
           />
         ) : null}
       </div>
@@ -424,29 +591,33 @@ export function ProcessQueue() {
 function ProcessCard({
   item,
   body,
+  cardView,
+  revealed,
+  previews,
   busy,
   onAction,
   onSchedule,
   onSkip,
   onOpen,
+  onReveal,
+  onGrade,
 }: {
   item: QueueItemSummary;
   body: ItemBody | null;
+  /** The full reveal-ready view for a CARD item (fetched by id), or null. */
+  cardView: ReviewCardView | null;
+  revealed: boolean;
+  previews: Record<ReviewRating, ReviewIntervalPreview> | null;
   busy: boolean;
   onAction: (kind: LoopActionKind) => void;
   /** Explicit (tomorrow/next-week/next-month/manual) scheduling — attention items only. */
   onSchedule: (choice: QueueScheduleChoice) => void;
   onSkip: () => void;
   onOpen: () => void;
+  onReveal: () => void;
+  onGrade: (rating: ReviewRating) => void;
 }) {
   const isCard = item.type === "card";
-  const [revealed, setRevealed] = useState(false);
-  // Reset the card reveal whenever the item changes.
-  const lastId = useRef(item.id);
-  if (lastId.current !== item.id) {
-    lastId.current = item.id;
-    if (revealed) setRevealed(false);
-  }
 
   return (
     <div
@@ -462,24 +633,76 @@ function ProcessCard({
           <TypeIcon type={item.type} lg />
           <Prio priority={item.priority} />
           {item.type === "extract" ? <Stage stage={item.stage} /> : null}
+          {isCard && cardView?.leech ? (
+            <span className="badge badge--leech" data-testid="process-card-leech">
+              Leech · {cardView.lapses} lapses
+            </span>
+          ) : null}
         </div>
-        <SchedulerChip scheduler={chipSignals(item)} />
+        {/* Cards carry the FSRS chip; attention items the attention chip. The
+            two-scheduler split holds in the loop. */}
+        <SchedulerChip
+          scheduler={isCard && cardView ? cardChipSignals(cardView) : chipSignals(item)}
+        />
       </div>
 
       <h1 className="pq-card__title">{titleFor(item)}</h1>
 
       {isCard ? (
         <div className="pq-cardface" data-testid="process-card-face">
-          <p className="pq-card__prompt">{item.title.replace(/\{\{(.+?)\}\}/, "[ … ]")}</p>
-          {revealed ? (
+          {/* The card front — the prompt (cloze masked until reveal). */}
+          <p className="pq-card__prompt" data-testid="process-card-prompt">
+            {cardView ? <CardFront card={cardView} revealed={false} /> : maskCloze(item.title)}
+          </p>
+
+          {revealed && cardView ? (
             <div className="pq-card__answer" data-testid="process-card-answer">
-              <p className="pq-card__note">
-                Full reveal &amp; FSRS grading land with the review session (M7). For now this card
-                appears in the loop alongside attention items — process it or grade it in review.
-              </p>
+              <div className="pq-card__answertext">
+                {cardView.kind === "cloze" ? (
+                  <CardFront card={cardView} revealed={true} />
+                ) : (
+                  (cardView.answer ?? "")
+                )}
+              </div>
+              {/* Source reference (T043) — shown ONLY after reveal so it can't leak
+                  the answer. Reuses the shared RefBlock + formatSourceRef. */}
+              {cardView.sourceRef ? (
+                <RefBlock
+                  ref={cardView.sourceRef}
+                  testId="process-card-refblock"
+                  style={{ marginTop: "var(--space-3)" }}
+                />
+              ) : null}
+
+              {/* The four FSRS grades with next-interval previews (1–4), exactly as
+                  the review session. Grading records the durable review log + advances. */}
+              <div className="grades" data-testid="process-card-grades">
+                {GRADES.map((g) => (
+                  <button
+                    type="button"
+                    key={g.rating}
+                    className={`grade grade--${g.rating}`}
+                    data-testid={`process-grade-${g.rating}`}
+                    disabled={busy}
+                    onClick={() => onGrade(g.rating)}
+                  >
+                    <span className="grade__label">{g.label}</span>
+                    <span className="grade__int" data-testid={`process-interval-${g.rating}`}>
+                      {previews ? previews[g.rating].label : "…"}
+                    </span>
+                    <Kbd keys={g.key} />
+                  </button>
+                ))}
+              </div>
+              <div style={{ marginTop: "var(--space-3)" }}>
+                <FsrsStats scheduler={cardChipSignals(cardView)} />
+              </div>
+
+              {/* "Open in review" stays a SECONDARY affordance — grading inline is
+                  the primary path; this is no longer the only way to grade. */}
               <button
                 type="button"
-                className="pq-btn"
+                className="pq-btn pq-cardface__review"
                 data-testid="process-card-review"
                 onClick={onOpen}
               >
@@ -492,10 +715,10 @@ function ProcessCard({
               type="button"
               className="sessionbar__start pq-reveal"
               data-testid="process-card-reveal"
-              onClick={() => setRevealed(true)}
+              onClick={onReveal}
             >
               <Icon name="eye" size={14} />
-              Reveal
+              Reveal answer <Kbd keys="␣" />
             </button>
           )}
         </div>
@@ -603,8 +826,17 @@ function ProcessCard({
       </div>
 
       <p className="pq-keys">
-        <kbd>d</kbd> done · <kbd>p</kbd> postpone · <kbd>x</kbd> dismiss · <kbd>+</kbd>/<kbd>-</kbd>{" "}
-        priority · <kbd>o</kbd> open · <kbd>n</kbd> next
+        {isCard ? (
+          <>
+            <kbd>␣</kbd> reveal · <kbd>1</kbd>–<kbd>4</kbd> grade · <kbd>d</kbd> done · <kbd>x</kbd>{" "}
+            dismiss · <kbd>o</kbd> open · <kbd>n</kbd> next
+          </>
+        ) : (
+          <>
+            <kbd>d</kbd> done · <kbd>p</kbd> postpone · <kbd>x</kbd> dismiss · <kbd>+</kbd>/
+            <kbd>-</kbd> priority · <kbd>o</kbd> open · <kbd>n</kbd> next
+          </>
+        )}
       </p>
     </div>
   );

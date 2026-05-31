@@ -2,11 +2,14 @@
  * "Process queue" learning loop styles (T031).
  *
  * The one-at-a-time session surface — a centered process card with a metadata row,
- * the item body (attention items) or a card prompt/reveal stub (cards), and the
- * inline action bar. Chrome (the progress bar, the budget/mode segmented controls,
- * the done state) is framed at the top. Token-only (no hard-coded colors); reuses
- * the `q-panel` / `q-empty` / `sessionbar__start` / `snackbar` classes from
- * `queue.css` + the shared `badge`/`prio`/`sched`/`stage`/`tico` from `inspector.css`.
+ * the item body (attention items) or the FULL inline FSRS card surface (cards:
+ * reveal → answer + source ref + the four grades with interval previews, reusing
+ * the review session's `.grades`/`.grade`/`.cloze`/`.refblock`/`.fsrs-stats` from
+ * `review.css` + `inspector.css`), and the inline action bar. Chrome (the progress
+ * bar, the mode segmented controls, the done state) is framed at the top. Token-only
+ * (no hard-coded colors); reuses the `q-panel` / `q-empty` / `sessionbar__start`
+ * classes from `queue.css` + the shared `badge`/`prio`/`sched`/`stage`/`tico` from
+ * `inspector.css`.
  */
 
 .pq-shell {
@@ -163,7 +166,7 @@
   line-height: 1.25;
 }
 
-/* ---------- Card prompt / reveal stub ---------- */
+/* ---------- Card prompt / inline reveal + grade surface ---------- */
 .pq-cardface {
   display: flex;
   flex-direction: column;
@@ -188,11 +191,11 @@
   border-top: 1px solid var(--border);
   width: 100%;
 }
-.pq-card__note {
-  font-size: var(--t-sm);
-  color: var(--text-2);
-  max-width: 420px;
-  margin: 0;
+.pq-card__answertext {
+  font-family: var(--font-read);
+  font-size: var(--t-lg);
+  line-height: var(--lh-normal);
+  color: var(--text);
 }
 .pq-reveal {
   align-self: center;

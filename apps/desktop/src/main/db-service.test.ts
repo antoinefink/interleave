@@ -1001,6 +1001,36 @@ describe("DbService — review session (T037)", () => {
     svc.close();
   });
 
+  it("reviewCard fetches ONE card's full reveal-ready view by id (T031 inline reveal)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+    const cardId = seededDueCardId(svc);
+
+    // Fetch the SAME reveal-ready view by id (not soonest-due) — what the process
+    // loop needs to reveal the card under its frozen-order cursor.
+    const { card } = svc.reviewCard({ cardId, asOf: ASOF });
+    expect(card).not.toBeNull();
+    if (!card) throw new Error("no card");
+    expect(card.id).toBe(cardId);
+    expect(card.schedulerSignals.kind).toBe("fsrs");
+    expect(typeof card.prompt).toBe("string");
+    expect(card.prompt.length).toBeGreaterThan(0);
+    // It carries the full reveal payload (a Q&A card ships a non-empty answer).
+    expect(typeof card.answer).toBe("string");
+    expect((card.answer ?? "").length).toBeGreaterThan(0);
+
+    // PURE: no review log was written by the fetch (it is read-only).
+    const before = svc.repos.review.listReviewLogs(cardId as never).length;
+    svc.reviewCard({ cardId, asOf: ASOF });
+    expect(svc.repos.review.listReviewLogs(cardId as never).length).toBe(before);
+
+    // A non-card / unknown id yields `null` (never an attention element).
+    expect(svc.reviewCard({ cardId: "elem_does_not_exist", asOf: ASOF }).card).toBeNull();
+
+    svc.close();
+  });
+
   it("reviewPreview returns four ordered intervals and mutates nothing", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });

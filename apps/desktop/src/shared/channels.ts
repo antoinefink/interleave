@@ -45,6 +45,7 @@ export const IPC_CHANNELS = {
   extractsMarkDone: "extracts:markDone",
   extractsDelete: "extracts:delete",
   reviewSessionNext: "review:session:next",
+  reviewCard: "review:card",
   reviewPreview: "review:preview",
   reviewGrade: "review:grade",
   reviewLeeches: "review:leeches",

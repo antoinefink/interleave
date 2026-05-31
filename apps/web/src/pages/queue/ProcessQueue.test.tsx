@@ -1,5 +1,5 @@
 /**
- * ProcessQueue loop component tests (T031).
+ * ProcessQueue loop component tests (T031 + T037 inline card review).
  *
  * The queue read (sorting/filtering/budget) lives in `packages/local-db`; this
  * asserts the RENDERER seam of the one-at-a-time loop:
@@ -7,17 +7,26 @@
  *  - acting on an item calls the SAME typed `queue.act` mutation path as the list
  *    (no new channel) and ADVANCES the cursor to the next item;
  *  - reaching the end shows the "Queue clear" done state;
- *  - the card surface shows its prompt + a reveal (full FSRS grading is M7).
+ *  - a CARD reveals its answer INLINE (cloze unmasked / Q&A answer), renders the
+ *    four interval previews from `review.preview`, and grading it calls the SAME
+ *    `review.grade` the review session uses (with a plausible responseMs + rating)
+ *    then advances the cursor — NO detour to /review.
  *
  * Collaborators are mocked so the test exercises ONLY this component's wiring:
- * `window.appApi.queue.list` returns a fixed payload, `queue.act` is a spy, and the
- * router + selection seams are stubbed. No SQLite/IPC — the renderer is a pure UI
- * consumer.
+ * `window.appApi.queue.list` returns a fixed payload, `queue.act` / `review.*` are
+ * spies, and the router + selection seams are stubbed. No SQLite/IPC — the renderer
+ * is a pure UI consumer.
  */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { QueueItemSummary, QueueListResult } from "../../lib/appApi";
+import type {
+  QueueItemSummary,
+  QueueListResult,
+  ReviewCardView,
+  ReviewIntervalPreview,
+  ReviewRating,
+} from "../../lib/appApi";
 
 const h = vi.hoisted(() => {
   const mk = (over: Partial<QueueItemSummary> & { id: string }): QueueItemSummary => ({
@@ -83,6 +92,49 @@ const h = vi.hoisted(() => {
     },
     budget: { used: 3, target: 30 },
   };
+  // The full reveal-ready view for card-1 (the answer + source ref ship with the
+  // card; the renderer hides them until reveal — exactly like the review session).
+  const cardView: ReviewCardView = {
+    id: "card-1",
+    kind: "qa",
+    prompt: "What does Chollet define intelligence as?",
+    answer: "Skill-acquisition efficiency.",
+    cloze: null,
+    priority: 0.875,
+    stage: "active_card",
+    concept: null,
+    sourceTitle: "On the Measure of Intelligence",
+    sourceLocationLabel: "¶ 4",
+    ref: "intelligence is skill-acquisition efficiency",
+    sourceRef: {
+      sourceElementId: "source-9",
+      sourceTitle: "On the Measure of Intelligence",
+      url: null,
+      author: "François Chollet",
+      publishedAt: null,
+      locationLabel: "¶ 4",
+      snippet: "intelligence is skill-acquisition efficiency",
+    },
+    schedulerSignals: {
+      kind: "fsrs",
+      retrievability: 0.82,
+      stability: 9.4,
+      difficulty: 5.1,
+      reps: 3,
+      lapses: 0,
+      fsrsState: "review",
+    },
+    leech: false,
+    lapses: 0,
+    flagged: false,
+    siblingGroupId: null,
+  };
+  const previews: Record<ReviewRating, ReviewIntervalPreview> = {
+    again: { dueAt: "2026-05-30T08:10:00.000Z", scheduledDays: 0.007, label: "10m" },
+    hard: { dueAt: "2026-05-31T08:00:00.000Z", scheduledDays: 1, label: "1d" },
+    good: { dueAt: "2026-06-03T08:00:00.000Z", scheduledDays: 4, label: "4d" },
+    easy: { dueAt: "2026-06-09T08:00:00.000Z", scheduledDays: 10, label: "10d" },
+  };
   return {
     navigateSpy: vi.fn(),
     selectSpy: vi.fn(),
@@ -92,6 +144,27 @@ const h = vi.hoisted(() => {
       .fn()
       .mockResolvedValue({ document: { plainText: "Body preview text." }, extractedBlockIds: [] }),
     getInspectorData: vi.fn().mockResolvedValue({ data: null }),
+    reviewCard: vi.fn().mockResolvedValue({ card: cardView }),
+    reviewPreview: vi.fn().mockResolvedValue({ intervals: previews }),
+    reviewGrade: vi.fn().mockResolvedValue({
+      reviewLog: {
+        id: "log-1",
+        elementId: "card-1",
+        rating: "good",
+        reviewedAt: "2026-05-30T08:00:05.000Z",
+        responseMs: 1234,
+        nextDueAt: "2026-06-03T08:00:00.000Z",
+      },
+      reviewState: {
+        dueAt: "2026-06-03T08:00:00.000Z",
+        stability: 12.1,
+        difficulty: 5.0,
+        reps: 4,
+        lapses: 0,
+        fsrsState: "review",
+        lastReviewedAt: "2026-05-30T08:00:05.000Z",
+      },
+    }),
   };
 });
 
@@ -105,6 +178,9 @@ vi.mock("../../lib/appApi", async () => {
       actOnQueueItem: h.actOnQueueItem,
       getDocument: h.getDocument,
       getInspectorData: h.getInspectorData,
+      reviewCard: h.reviewCard,
+      reviewPreview: h.reviewPreview,
+      reviewGrade: h.reviewGrade,
     },
   };
 });
@@ -193,7 +269,7 @@ describe("ProcessQueue", () => {
     expect(h.actOnQueueItem).not.toHaveBeenCalled();
   });
 
-  it("renders the card surface with a prompt + reveal for a card item", async () => {
+  it("renders the card surface with the FSRS chip + a reveal for a card item", async () => {
     render(<ProcessQueue />);
     await screen.findByTestId("process-item");
     // The first item is the FSRS card.
@@ -204,6 +280,65 @@ describe("ProcessQueue", () => {
     expect(
       screen.getByTestId("process-item").querySelector('[data-scheduler="fsrs"]'),
     ).not.toBeNull();
+    // The answer is hidden until reveal — no detour-to-review placeholder note.
+    expect(screen.queryByTestId("process-card-answer")).toBeNull();
+  });
+
+  it("reveals a card's answer INLINE with the four interval previews (no navigation)", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    expect(currentItemId()).toBe("card-1");
+    // The full reveal-ready view is fetched by id (the architectural seam closing
+    // the original stub) before the answer can show.
+    await waitFor(() => expect(h.reviewCard).toHaveBeenCalledWith({ cardId: "card-1" }));
+
+    fireEvent.click(screen.getByTestId("process-card-reveal"));
+
+    // The answer reveals inline (Q&A answer), with the four previews from review.preview.
+    const answer = await screen.findByTestId("process-card-answer");
+    expect(answer).toHaveTextContent("Skill-acquisition efficiency.");
+    await waitFor(() =>
+      expect(screen.getByTestId("process-interval-good")).toHaveTextContent("4d"),
+    );
+    expect(h.reviewPreview).toHaveBeenCalledWith(expect.objectContaining({ cardId: "card-1" }));
+    // No detour to /review — still on the loop.
+    expect(h.navigateSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId("route-process")).toBeInTheDocument();
+  });
+
+  it("grades a revealed card via review.grade and advances the cursor (no navigation)", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    expect(currentItemId()).toBe("card-1");
+    await waitFor(() => expect(h.reviewCard).toHaveBeenCalledWith({ cardId: "card-1" }));
+
+    fireEvent.click(screen.getByTestId("process-card-reveal"));
+    await screen.findByTestId("process-card-answer");
+
+    fireEvent.click(screen.getByTestId("process-grade-good"));
+
+    await waitFor(() => expect(h.reviewGrade).toHaveBeenCalledTimes(1));
+    const arg = h.reviewGrade.mock.calls[0]?.[0] as {
+      cardId: string;
+      rating: string;
+      responseMs: number;
+    };
+    expect(arg.cardId).toBe("card-1");
+    expect(arg.rating).toBe("good");
+    expect(typeof arg.responseMs).toBe("number");
+    expect(arg.responseMs).toBeGreaterThanOrEqual(0);
+    // The grade does NOT go through the attention queue.act path (FSRS only).
+    expect(h.actOnQueueItem).not.toHaveBeenCalled();
+    // The cursor advanced to the next item; no detour to /review.
+    await waitFor(() => expect(currentItemId()).not.toBe("card-1"));
+    expect(h.navigateSpy).not.toHaveBeenCalled();
+  });
+
+  it("does NOT offer the attention ScheduleMenu on a card (FSRS only)", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    expect(currentItemId()).toBe("card-1");
+    expect(screen.queryByTestId("schedule-menu")).toBeNull();
   });
 
   it("opens the current item in full via the open action (the only navigation)", async () => {

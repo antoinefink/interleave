@@ -1663,6 +1663,27 @@ export interface ReviewSessionNextResult {
   readonly total: number;
 }
 
+/**
+ * Fetch ONE card's full {@link ReviewCardView} by id (T037/T031) — the same
+ * reveal-ready view `review.session.next` ships, but TARGETED (not soonest-due).
+ * The process loop (T031) walks a FROZEN queue order with a cursor, so to reveal
+ * the answer inline for the card under the cursor it needs that specific card's
+ * full view, which the soonest-due `session.next` cannot return. Read-only: no
+ * mutation, no `operation_log`. Returns `null` for a non-card / deleted id.
+ */
+export const ReviewCardRequestSchema = z.object({
+  /** The card element id to load the full reveal-ready view for. */
+  cardId: ElementIdSchema,
+  /** "Now" the FSRS signals are computed against (ISO-8601); defaults to the server clock. */
+  asOf: IsoTimestampInputSchema.optional(),
+});
+export type ReviewCardRequest = z.infer<typeof ReviewCardRequestSchema>;
+
+export interface ReviewCardResult {
+  /** The full reveal-ready card view, or `null` for a non-card / deleted id. */
+  readonly card: ReviewCardView | null;
+}
+
 /** One previewed grade outcome: the resulting due time + interval (days) + a label. */
 export interface ReviewIntervalPreview {
   readonly dueAt: string;
@@ -2522,6 +2543,12 @@ export interface AppApi {
      * Carries the full card so reveal needs no round-trip. Read-only.
      */
     sessionNext(request?: ReviewSessionNextRequest): Promise<ReviewSessionNextResult>;
+    /**
+     * Fetch ONE card's full reveal-ready view by id (T037/T031) — the same view
+     * `sessionNext` ships, but TARGETED. The process loop (T031) uses it to reveal
+     * the answer inline for the card under its frozen-order cursor. Read-only.
+     */
+    card(request: ReviewCardRequest): Promise<ReviewCardResult>;
     /**
      * Preview the four next intervals for a card's grade buttons (T037) — calls
      * `CardSchedulerService.previewIntervals`. PURE: mutates nothing.

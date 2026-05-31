@@ -1021,6 +1021,21 @@ export interface ReviewSessionNextResult {
   readonly total: number;
 }
 
+/**
+ * Fetch ONE card's full reveal-ready view by id (T037/T031) — the same view
+ * `reviewSessionNext` ships, but TARGETED (not soonest-due). The process loop
+ * (T031) walks a frozen queue order with a cursor, so to reveal the answer inline
+ * for the card under the cursor it needs THAT card's full view. Read-only.
+ */
+export interface ReviewCardRequest {
+  readonly cardId: string;
+  readonly asOf?: string;
+}
+
+export interface ReviewCardResult {
+  readonly card: ReviewCardView | null;
+}
+
 /** One previewed grade outcome: the resulting due time + interval (days) + a label. */
 export interface ReviewIntervalPreview {
   readonly dueAt: string;
@@ -1499,6 +1514,7 @@ export interface AppApi {
   };
   readonly review: {
     sessionNext(request?: ReviewSessionNextRequest): Promise<ReviewSessionNextResult>;
+    card(request: ReviewCardRequest): Promise<ReviewCardResult>;
     preview(request: ReviewPreviewRequest): Promise<ReviewPreviewResult>;
     grade(request: ReviewGradeRequest): Promise<ReviewGradeResult>;
     leeches(): Promise<ReviewLeechesResult>;
@@ -1756,6 +1772,14 @@ export const appApi = {
    */
   reviewSessionNext(request?: ReviewSessionNextRequest): Promise<ReviewSessionNextResult> {
     return requireAppApi().review.sessionNext(request);
+  },
+  /**
+   * Fetch ONE card's full reveal-ready view by id (T037/T031) — the same view
+   * `reviewSessionNext` ships, TARGETED. The process loop reveals the card under its
+   * frozen-order cursor with this. Read-only: no mutation, no `operation_log`.
+   */
+  reviewCard(request: ReviewCardRequest): Promise<ReviewCardResult> {
+    return requireAppApi().review.card(request);
   },
   /**
    * Preview the four next intervals for a card's grade buttons (T037) — PURE, no

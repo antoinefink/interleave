@@ -249,6 +249,20 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   },
   // ---- Queue / process loop (queue scope) ----------------------------------
   {
+    id: "process-reveal",
+    label: "Reveal card answer (on a card)",
+    keys: ["␣"],
+    group: "Triage",
+    scope: "queue",
+  },
+  {
+    id: "process-grade",
+    label: "Grade Again → Easy (on a card)",
+    keys: ["1", "4"],
+    group: "Triage",
+    scope: "queue",
+  },
+  {
     id: "next-item",
     label: "Next / skip",
     keys: ["N"],

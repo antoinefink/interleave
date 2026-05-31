@@ -242,8 +242,8 @@ test("keyboard controls drive the loop (mark done with `d` advances the cursor)"
 
   await openProcess(page, AS_OF);
   const item = page.getByTestId("process-item");
-  // Skip past any leading card (its prompt area would swallow Space) to an attention
-  // item, then mark it done with the keyboard.
+  // `d` marks the current item done and advances the cursor, whatever type it is
+  // (on a card `d` is still done; Space/1–4 are the card-specific keys, tested below).
   await expect(item).toHaveCount(1);
   const before = await item.getAttribute("data-element-id");
   await page.keyboard.press("d");
@@ -254,6 +254,104 @@ test("keyboard controls drive the loop (mark done with `d` advances the cursor)"
     })
     .not.toBe(before);
   expect(new URL(page.url()).pathname).toBe("/process");
+
+  await app.close();
+});
+
+/** A card's durable review-log count via the inspector (recomputed from `review_logs`). */
+async function cardLogCount(page: Page, cardId: string): Promise<number> {
+  return page.evaluate(async (id) => {
+    const api = window.appApi as unknown as {
+      inspector: {
+        get(req: { id: string }): Promise<{ data: { review: { logCount: number } | null } | null }>;
+      };
+    };
+    const res = await api.inspector.get({ id });
+    return res.data?.review?.logCount ?? 0;
+  }, cardId);
+}
+
+test("reveals + grades a due card INLINE inside /process (no detour to /review), and the review log persists across restart", async () => {
+  // Fresh data dir so this test owns its deck: the loop must grade a real seeded due
+  // card inline (Space reveal → 3 = Good), the cursor must advance, the URL must stay
+  // /process, and a durable review_logs row must survive an app restart.
+  const freshDir = makeDataDir();
+  let app = await launchApp(freshDir, { seedOnEmpty: true });
+  let page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+  const url = new URL(page.url());
+  baseUrl = `${url.protocol}//${url.host}`;
+
+  // There is at least one due CARD (FSRS) in the seeded set at the future clock.
+  const due = await dueIds(page);
+  expect(due.some((d) => d.type === "card")).toBe(true);
+
+  await openProcess(page, AS_OF);
+  const item = page.getByTestId("process-item");
+  await expect(item).toHaveCount(1);
+
+  // Walk the cursor (Skip) until the CARD surface is the current item. Bounded.
+  let cardId: string | null = null;
+  for (let i = 0; i < 40; i++) {
+    if (
+      await page
+        .getByTestId("process-done")
+        .isVisible()
+        .catch(() => false)
+    )
+      break;
+    const type = await item.getAttribute("data-element-type");
+    if (type === "card") {
+      cardId = await item.getAttribute("data-element-id");
+      break;
+    }
+    await item.getByTestId("process-action-skip").click();
+    await page.waitForTimeout(40);
+  }
+  expect(cardId).not.toBeNull();
+  if (!cardId) throw new Error("no card surfaced in the process loop");
+
+  const before = await cardLogCount(page, cardId);
+
+  // The card's answer is hidden until reveal; the FSRS grades are not shown yet.
+  await expect(page.getByTestId("process-card-reveal")).toBeVisible();
+  await expect(page.getByTestId("process-card-grades")).toHaveCount(0);
+
+  // Reveal with Space (the card-specific key), then grade Good with `3` — entirely
+  // INSIDE /process, never navigating to /review.
+  await page.keyboard.press("Space");
+  await expect(page.getByTestId("process-card-answer")).toBeVisible();
+  await expect(page.getByTestId("process-card-grades")).toBeVisible();
+  for (const r of ["again", "hard", "good", "easy"]) {
+    await expect(page.getByTestId(`process-interval-${r}`)).toBeVisible();
+  }
+  await page.keyboard.press("3");
+
+  // The cursor advanced (a new item or the done state) — and we never left /process.
+  await expect
+    .poll(async () => {
+      if (
+        await page
+          .getByTestId("process-done")
+          .isVisible()
+          .catch(() => false)
+      )
+        return "done";
+      return (await page.getByTestId("process-item").getAttribute("data-element-id")) ?? "";
+    })
+    .not.toBe(cardId);
+  expect(new URL(page.url()).pathname).toBe("/process");
+
+  // A durable review_logs row was written by the inline grade.
+  expect(await cardLogCount(page, cardId)).toBe(before + 1);
+
+  await app.close();
+
+  // RESTART against the same data dir — the inline grade's review log is in SQLite.
+  app = await launchApp(freshDir);
+  page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+  expect(await cardLogCount(page, cardId)).toBe(before + 1);
 
   await app.close();
 });

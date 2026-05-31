@@ -22,7 +22,6 @@
  * T038/T040; T037 ships the reveal → grade → advance loop + jump-to-source.
  */
 
-import { renderClozePrompt } from "@interleave/core";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
@@ -41,6 +40,7 @@ import { useNavigateToLocation } from "../reader/navigateToLocation";
 import { useActiveScope } from "../shell/activeScope";
 import { Kbd } from "../shell/Kbd";
 import { useSelection } from "../shell/selection";
+import { CardFront } from "./CardFront";
 import { ReviewRepairBar } from "./ReviewRepairBar";
 import "./review.css";
 
@@ -88,37 +88,6 @@ function SessionClock({ startMs }: { startMs: number }) {
       {clockLabel(now - startMs)}
     </span>
   );
-}
-
-/**
- * Render a cloze prompt's spans, masking each `{{cN::…}}` until reveal. Uses the
- * core `renderClozePrompt` helper so the masking logic stays out of the component
- * (no ad-hoc regex). Q&A cards render their `prompt` verbatim.
- */
-function CardFront({ card, revealed }: { card: ReviewCardView; revealed: boolean }) {
-  if (card.kind === "cloze") {
-    const spans = renderClozePrompt(card.prompt, { revealAll: revealed });
-    return (
-      <>
-        {spans.map((span, i) =>
-          span.kind === "deletion" ? (
-            <span
-              // Spans are positional + never reordered within a single render.
-              // biome-ignore lint/suspicious/noArrayIndexKey: stable positional cloze spans
-              key={i}
-              className={`cloze${span.revealed ? " cloze--revealed" : ""}`}
-            >
-              {span.revealed ? span.content : "[ … ]"}
-            </span>
-          ) : (
-            // biome-ignore lint/suspicious/noArrayIndexKey: stable positional literal spans
-            <span key={i}>{span.content}</span>
-          ),
-        )}
-      </>
-    );
-  }
-  return <>{card.prompt}</>;
 }
 
 export function ReviewScreen() {

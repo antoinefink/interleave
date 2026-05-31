@@ -102,6 +102,7 @@ describe("IPC channels", () => {
         "extracts:markDone",
         "extracts:delete",
         "review:session:next",
+        "review:card",
         "review:preview",
         "review:grade",
         "review:leeches",
