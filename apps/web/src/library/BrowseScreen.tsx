@@ -20,6 +20,7 @@
 
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ConceptGraph } from "../components/ConceptGraph";
 import { Icon } from "../components/Icon";
 import {
   ConceptTag,
@@ -38,7 +39,6 @@ import {
   type LibraryBrowseType,
   type LibraryItem,
 } from "../lib/appApi";
-import { ConceptGraph } from "./components/ConceptGraph";
 import "./library.css";
 
 type Tab = "results" | "map";

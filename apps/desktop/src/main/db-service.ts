@@ -81,11 +81,14 @@ import type {
   CardsSuspendResult,
   CardsUpdateRequest,
   CardsUpdateResult,
+  ConceptMemberSummary,
   ConceptsAssignRequest,
   ConceptsAssignResult,
   ConceptsCreateRequest,
   ConceptsCreateResult,
   ConceptsListResult,
+  ConceptsMembersRequest,
+  ConceptsMembersResult,
   ConceptsUnassignRequest,
   ConceptsUnassignResult,
   DbStatus,
@@ -1560,6 +1563,65 @@ export class DbService {
       request.conceptId as ElementId,
     );
     return { element: this.organizeState(request.elementId as ElementId) };
+  }
+
+  /**
+   * The LIVE member elements of one concept (the `/concepts` knowledge-map
+   * drill-in). Reads the member ids through the EXISTING
+   * {@link ConceptRepository.elementsForConcept} (already excludes soft-deleted
+   * members), then enriches each with the SAME fields a search/library row carries
+   * — priority + label, owning-source title, the FSRS-vs-attention
+   * {@link SchedulerSignals}, and the due state/label — by reusing the inspector +
+   * queue builders, so a member row reads identically to a search/queue/library
+   * row (no duplicated scheduling math). Read-only (appends no op).
+   */
+  conceptMembers(request: ConceptsMembersRequest): ConceptsMembersResult {
+    const memberIds = this.repos.concepts.elementsForConcept(request.conceptId as ElementId);
+
+    const members: ConceptMemberSummary[] = [];
+    for (const id of memberIds) {
+      const element = this.repos.elements.findById(id);
+      if (!element || element.deletedAt) continue;
+
+      // The owning-source title for the row's meta line (shared T043 resolver — a
+      // source references itself; extract/card reference their owning source).
+      const { sourceTitle } = this.refMetaForElement(element.id);
+
+      // The load-bearing scheduler chip + due badge — reuse the SAME builders the
+      // inspector + queue use so the chip/due read identically across surfaces. Both
+      // are best-effort: an element that vanished mid-read degrades to a calm
+      // attention "Scheduled" default rather than dropping out of the list.
+      const inspectorData = this.inspectorQuery.get(element.id);
+      const summary = this.queueQuery.summaryFor(element.id);
+      const scheduler = inspectorData?.scheduler ?? {
+        kind: "attention" as const,
+        retrievability: null,
+        stability: null,
+        difficulty: null,
+        reps: null,
+        lapses: null,
+        fsrsState: null,
+        stage: element.stage,
+        postponed: 0,
+        lastProcessedAt: element.updatedAt ?? null,
+      };
+
+      members.push({
+        id: element.id,
+        type: element.type,
+        title: element.title,
+        priority: element.priority,
+        priorityLabel: priorityToLabel(element.priority),
+        status: element.status,
+        stage: element.stage,
+        sourceTitle,
+        dueAt: summary?.dueAt ?? element.dueAt ?? null,
+        scheduler,
+        due: summary?.due ?? "soon",
+        dueLabel: summary?.dueLabel ?? "Scheduled",
+      });
+    }
+    return { members };
   }
 
   /** All tags with their live usage count (T041) — the library filterbar. Read-only. */

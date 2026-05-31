@@ -1850,6 +1850,50 @@ export interface ConceptsUnassignResult {
   readonly element: ElementOrganizeState | null;
 }
 
+/**
+ * `concepts.members(conceptId)` — the live elements assigned to one concept (the
+ * `/concepts` knowledge-map drill-in). Read-only; backed by the EXISTING
+ * `ConceptRepository.elementsForConcept` (returns non-deleted member ids), each
+ * enriched main-side like a search/library row.
+ */
+export const ConceptsMembersRequestSchema = z.object({
+  /** The concept whose member elements to list. */
+  conceptId: ElementIdSchema,
+});
+export type ConceptsMembersRequest = z.infer<typeof ConceptsMembersRequestSchema>;
+
+/**
+ * One member-element summary for the drill-in list. Carries the SAME enrichment a
+ * {@link LibraryItem} does (type/title/priority + label, the FSRS-vs-attention
+ * {@link SchedulerSignals}, the due state/label, owning-source title) so a member
+ * row reads identically to a search/queue/library row — and enough to open the
+ * element (source → reader, extract → extract view, card → review).
+ */
+export interface ConceptMemberSummary {
+  readonly id: string;
+  readonly type: string;
+  readonly title: string;
+  /** Numeric priority (0..1) + its A/B/C/D label, for the row badge. */
+  readonly priority: number;
+  readonly priorityLabel: PriorityLabelInput;
+  readonly status: string;
+  readonly stage: string;
+  /** Owning source title (provenance) for the row's meta line; `null` when none. */
+  readonly sourceTitle: string | null;
+  /** Next-attention/review time (ISO); `null` when none. */
+  readonly dueAt: string | null;
+  /** The load-bearing FSRS-vs-attention scheduler signals for the row's chip. */
+  readonly scheduler: SchedulerSignals;
+  /** How due the element is now (overdue / today / soon), for the row's badge. */
+  readonly due: QueueDueState;
+  /** A short human due label ("Overdue", "Due today", "in 3d", "Scheduled"). */
+  readonly dueLabel: string;
+}
+
+export interface ConceptsMembersResult {
+  readonly members: readonly ConceptMemberSummary[];
+}
+
 /** `tags.list()` takes no arguments. */
 export const TagsListRequestSchema = z.void();
 
@@ -2491,6 +2535,11 @@ export interface AppApi {
     assign(request: ConceptsAssignRequest): Promise<ConceptsAssignResult>;
     /** Unassign an element from a concept (T041) — remove the edge; logs `remove_relation`. */
     unassign(request: ConceptsUnassignRequest): Promise<ConceptsUnassignResult>;
+    /**
+     * The live elements assigned to one concept (the `/concepts` drill-in) — backed
+     * by `ConceptRepository.elementsForConcept`, enriched per element. Read-only.
+     */
+    members(request: ConceptsMembersRequest): Promise<ConceptsMembersResult>;
   };
   readonly tags: {
     /** All tags with their live usage count (T041) — the library filterbar. Read-only. */

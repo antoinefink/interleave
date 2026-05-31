@@ -26,6 +26,7 @@ const VALID_ROUTES = new Set([
   "/maintenance/leeches",
   "/search",
   "/library",
+  "/concepts",
   "/trash",
   "/analytics",
   "/settings",
@@ -85,12 +86,21 @@ describe("shell nav config", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("covers the load-bearing goto shortcuts (h/q/r/l)", () => {
+  it("covers the load-bearing goto shortcuts (h/q/r/l/c)", () => {
     expect(GOTO_MAP.h).toBe("/");
     expect(GOTO_MAP.q).toBe("/queue");
     expect(GOTO_MAP.r).toBe("/review");
     // Library now has its own dedicated browse route.
     expect(GOTO_MAP.l).toBe("/library");
+    // Concepts now has its own dedicated knowledge-map route (re-pointed off /search).
+    expect(GOTO_MAP.c).toBe("/concepts");
+  });
+
+  it("points the 'Concept map' command at /concepts (re-pointed off /search), keeping G,C", () => {
+    const conceptMap = COMMAND_ITEMS.find((c) => c.label === "Concept map");
+    expect(conceptMap).toBeDefined();
+    expect(conceptMap?.to).toBe("/concepts");
+    expect(conceptMap?.kbd).toEqual(["G", "C"]);
   });
 
   it("exposes a 'Go to Home command center' command pointing at `/`", () => {
@@ -125,14 +135,21 @@ describe("nav active-state exclusivity (resolveActiveNavId)", () => {
     }
   });
 
-  it("activates exactly one nav item on each entry's own route (except shared ones)", () => {
-    // Routes uniquely owned by a single entry must light up exactly that entry.
-    const sharedRoutes = new Set(["/search"]);
+  it("activates exactly one nav item on each entry's own route", () => {
+    // Every nav route is now uniquely owned by a single entry (Library → /library,
+    // Concepts → /concepts, Search → /search), so each lights up exactly itself.
     for (const item of ALL_NAV) {
-      if (sharedRoutes.has(item.to)) continue;
       expect(resolveActiveNavId(item.to)).toBe(item.id);
       expect(activeCount(item.to)).toBe(1);
     }
+  });
+
+  it("on /concepts highlights ONLY Concepts — never Search or Library (canonical owner)", () => {
+    // Concepts owns its OWN dedicated route now; it must light up exclusively there.
+    expect(resolveActiveNavId("/concepts")).toBe("concepts");
+    expect(activeCount("/concepts")).toBe(1);
+    expect(resolveActiveNavId("/concepts")).not.toBe("search");
+    expect(resolveActiveNavId("/concepts")).not.toBe("library");
   });
 
   it("on /library highlights ONLY Library — never Search or Concepts", () => {
@@ -144,9 +161,9 @@ describe("nav active-state exclusivity (resolveActiveNavId)", () => {
   });
 
   it("on /search highlights ONLY Search — not Library or Concepts (the reported bug)", () => {
-    // Search (/search, canonical) and Concepts (/search) share the route; Library
-    // no longer does. Exactly one — the canonical owner, Search — must be active,
-    // and it must NOT resolve to Library (which now owns /library).
+    // Search owns /search alone now — Concepts moved to its own /concepts route and
+    // Library to /library. Exactly one entry (Search) is active on /search, and it
+    // must NOT resolve to Library or Concepts (guards the ac73484 triple-highlight).
     expect(resolveActiveNavId("/search")).toBe("search");
     expect(activeCount("/search")).toBe(1);
     expect(resolveActiveNavId("/search")).not.toBe("library");

@@ -2,7 +2,7 @@
  * Application router (T003, shell wired in T004) — code-based, fully typed
  * TanStack Router.
  *
- * Thirteen routes are defined here, each rendered inside the persistent app shell:
+ * Fourteen routes are defined here, each rendered inside the persistent app shell:
  *   /                    home (daily queue / command center landing)
  *   /inbox               import & triage
  *   /queue               due queue
@@ -13,6 +13,7 @@
  *   /maintenance/leeches leech cleanup (T040)
  *   /search              library / search (keyword FTS5)
  *   /library             browse-everything facet surface
+ *   /concepts            concept knowledge-map + member drill-in
  *   /trash               soft-deleted elements (T044)
  *   /analytics           learning-health snapshot (T045)
  *   /settings            local settings
@@ -30,6 +31,7 @@
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { AnalyticsScreen } from "./analytics/AnalyticsScreen";
 import { DesktopStatusPanel } from "./components/DesktopStatusPanel";
+import { ConceptsScreen } from "./concepts/ConceptsScreen";
 import { BrowseScreen } from "./library/BrowseScreen";
 import { LibraryScreen } from "./library/LibraryScreen";
 import { LeechCleanup } from "./maintenance/LeechCleanup";
@@ -153,6 +155,21 @@ const libraryRoute = createRoute({
 });
 
 /**
+ * Concepts knowledge-map (`/concepts`) — the dedicated concept-graph browse
+ * surface. Renders the shared `ConceptGraph` radial SVG (the kit's `graph`/`gnode`
+ * Map view) plus a concept-hierarchy filterbar and a "by volume" rail; selecting a
+ * node/pill/row DRILLS INTO that concept's members — the live elements assigned to
+ * it — each openable in its reader. Composes the typed reads `concepts.list` +
+ * the narrow new `concepts.members` (backed by `ConceptRepository.elementsForConcept`,
+ * enriched main-side); the renderer holds no SQL, scheduling, or membership logic.
+ */
+const conceptsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/concepts",
+  component: ConceptsScreen,
+});
+
+/**
  * Trash view (T044) — soft-deleted elements collect here and can be restored (to
  * their prior lifecycle status, lineage intact) or permanently deleted with
  * confirmation. Reads `appApi.listTrash()` (read-only) and drives Restore / Purge /
@@ -215,6 +232,7 @@ const routeTree = rootRoute.addChildren([
   leechCleanupRoute,
   searchRoute,
   libraryRoute,
+  conceptsRoute,
   trashRoute,
   analyticsRoute,
   settingsRoute,

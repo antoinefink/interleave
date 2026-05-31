@@ -20,6 +20,7 @@ import {
   CardsUpdateRequestSchema,
   ConceptsAssignRequestSchema,
   ConceptsCreateRequestSchema,
+  ConceptsMembersRequestSchema,
   ConceptsUnassignRequestSchema,
   DocumentBlockInputSchema,
   DocumentMarksAddRequestSchema,
@@ -106,6 +107,7 @@ describe("IPC channels", () => {
         "concepts:list",
         "concepts:assign",
         "concepts:unassign",
+        "concepts:members",
         "tags:list",
         "tags:add",
         "tags:remove",
@@ -1092,6 +1094,15 @@ describe("Concept request schemas (T041)", () => {
       expect(() => schema.parse({ conceptId: "el_c" })).toThrow();
       expect(() => schema.parse({ elementId: "", conceptId: "el_c" })).toThrow();
     }
+  });
+
+  it("ConceptsMembersRequestSchema accepts a valid conceptId and rejects a missing/empty one (/concepts drill-in)", () => {
+    expect(ConceptsMembersRequestSchema.parse({ conceptId: "el_c" })).toEqual({
+      conceptId: "el_c",
+    });
+    expect(() => ConceptsMembersRequestSchema.parse({})).toThrow();
+    expect(() => ConceptsMembersRequestSchema.parse({ conceptId: "" })).toThrow();
+    expect(() => ConceptsMembersRequestSchema.parse({ conceptId: 42 })).toThrow();
   });
 });
 

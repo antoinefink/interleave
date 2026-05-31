@@ -1,24 +1,31 @@
 /**
- * ConceptGraph — the read-only concept Map shared by `/search` (LibraryScreen)
- * and `/library` (BrowseScreen).
+ * ConceptGraph — the read-only concept Map shared by `/search` (LibraryScreen),
+ * `/library` (BrowseScreen), and the dedicated `/concepts` knowledge-map screen.
  *
- * Lifted verbatim from `LibraryScreen.tsx` (T042) so both surfaces render the
- * SAME map (kit `.graph`/`.gnode`): concepts laid out on a deterministic radial
- * ring around the most-connected root (no persisted layout — the MVP map is
- * read-only). Clicking/keying a node calls `onPick(conceptId)`; the caller sets
- * its concept facet and switches to Results. UI only — the concept list comes
+ * Lifted verbatim from `LibraryScreen.tsx` (T042) into this top-level shared
+ * module so every surface renders the SAME map (kit `.graph`/`.gnode`): concepts
+ * laid out on a deterministic radial ring around the most-connected root (no
+ * persisted layout — the MVP map is read-only). Clicking/keying a node calls
+ * `onPick(conceptId)`; the caller decides what selecting a concept does (filter
+ * results, or drill into the concept's members). UI only — the concept list comes
  * from the typed `appApi.listConcepts()` bridge; no domain logic here.
  */
 
 import { useMemo } from "react";
-import type { ConceptNode } from "../../lib/appApi";
+import type { ConceptNode } from "../lib/appApi";
 
 export function ConceptGraph({
   concepts,
   onPick,
+  selectedId = null,
+  pickVerb = "Filter by",
 }: {
   concepts: readonly ConceptNode[];
   onPick: (conceptId: string) => void;
+  /** The currently-selected concept id — its node renders highlighted. Optional. */
+  selectedId?: string | null;
+  /** The verb in each node's aria-label ("Filter by" on search/library, "Explore" on /concepts). */
+  pickVerb?: string;
 }) {
   const W = 620;
   const H = 420;
@@ -78,16 +85,19 @@ export function ConceptGraph({
         {concepts.map((c) => {
           const p = placed.get(c.id);
           if (!p) return null;
+          const selected = selectedId === c.id;
           return (
             // biome-ignore lint/a11y/useSemanticElements: an SVG <g> cannot be a <button>; it is keyboard-accessible via role/tabIndex, and the side panel offers a real-button equivalent
             <g
               key={c.id}
-              className="gnode"
+              className={`gnode${selected ? " gnode--on" : ""}`}
               role="button"
               tabIndex={0}
-              aria-label={`Filter by ${c.name}`}
+              aria-label={`${pickVerb} ${c.name}`}
+              aria-pressed={selected}
               data-testid="concept-node"
               data-concept-id={c.id}
+              data-selected={selected ? "true" : undefined}
               onClick={() => onPick(c.id)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
@@ -100,14 +110,26 @@ export function ConceptGraph({
                 cx={p.x}
                 cy={p.y}
                 r={p.r}
-                fill="var(--accent-soft)"
+                fill={selected ? "var(--accent)" : "var(--accent-soft)"}
                 stroke="var(--accent)"
-                strokeWidth="1.5"
+                strokeWidth={selected ? 2.5 : 1.5}
               />
-              <text x={p.x} y={p.y - 2} textAnchor="middle" fontWeight="600">
+              <text
+                x={p.x}
+                y={p.y - 2}
+                textAnchor="middle"
+                fontWeight="600"
+                fill={selected ? "var(--text-on-accent)" : "var(--text)"}
+              >
                 {c.name}
               </text>
-              <text x={p.x} y={p.y + 12} textAnchor="middle" fontSize="9" fill="var(--text-3)">
+              <text
+                x={p.x}
+                y={p.y + 12}
+                textAnchor="middle"
+                fontSize="9"
+                fill={selected ? "var(--text-on-accent)" : "var(--text-3)"}
+              >
                 {c.memberCount} member{c.memberCount === 1 ? "" : "s"}
               </text>
             </g>

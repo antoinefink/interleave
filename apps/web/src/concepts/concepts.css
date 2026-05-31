@@ -1,0 +1,90 @@
+/*
+ * Concepts knowledge-map screen styles (`/concepts`).
+ *
+ * The map canvas + the radial `graph`/`gnode` SVG, the `filterbar`/`filter-group`
+ * hierarchy rail, the `lib-map__side` by-volume rail, and the `result` member rows
+ * are all REUSED from the library stylesheet (`../library/library.css`, imported
+ * by the screen). This file adds only the concepts-specific layout: the center
+ * column that stacks the map over the member drill-in panel, the screen title, and
+ * the member-row icon alignment. All colors/spacing are design tokens — never
+ * hard-coded.
+ */
+
+/* screen title in the top bar */
+.cm-title {
+  font-size: var(--t-lg);
+  font-weight: 600;
+  margin: 0 0 2px;
+  color: var(--text);
+}
+
+/* center column: the map canvas above, the member drill-in panel below */
+.cm-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* the map canvas takes the available space; the member panel is a fixed-ish rail */
+.cm-main .lib-map__canvas {
+  flex: 1 1 55%;
+  min-height: 0;
+}
+
+/* member drill-in panel (below the map) */
+.cm-members {
+  flex: 1 1 45%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+.cm-members__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.cm-members__count {
+  font-size: var(--t-sm);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.cm-members__list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 8px;
+}
+
+/* member row leading layout (type icon + title/meta) */
+.cm-member__main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* selectable by-volume rail cards (reuse .lib-map__concept; add button affordances) */
+.cm-rail__card {
+  cursor: pointer;
+  background: none;
+  text-align: left;
+  width: 100%;
+}
+.cm-rail__card:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+.cm-rail__card--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* the selected node already inverts its fill in ConceptGraph; nudge hover affordance */
+.gnode--on circle {
+  stroke-width: 2.5;
+}

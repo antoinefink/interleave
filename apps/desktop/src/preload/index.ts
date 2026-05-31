@@ -27,6 +27,7 @@ import type {
   CardsUpdateRequest,
   ConceptsAssignRequest,
   ConceptsCreateRequest,
+  ConceptsMembersRequest,
   ConceptsUnassignRequest,
   DocumentMarksAddRequest,
   DocumentMarksListRequest,
@@ -164,6 +165,8 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.conceptsAssign, request),
     unassign: (request: ConceptsUnassignRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.conceptsUnassign, request),
+    members: (request: ConceptsMembersRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.conceptsMembers, request),
   },
   tags: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.tagsList),

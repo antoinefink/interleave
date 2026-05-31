@@ -1123,6 +1123,36 @@ export interface TagSummary {
   readonly count: number;
 }
 
+/** Request for the live members of one concept (the `/concepts` drill-in). */
+export interface ConceptsMembersRequest {
+  readonly conceptId: string;
+}
+
+/**
+ * One member-element summary for the `/concepts` drill-in list. Carries the same
+ * enrichment a search/library row does (type/title/priority + label, the
+ * FSRS-vs-attention scheduler signals, the due state/label, owning-source title)
+ * so a member row reads identically — and enough to open the element.
+ */
+export interface ConceptMemberSummary {
+  readonly id: string;
+  readonly type: string;
+  readonly title: string;
+  readonly priority: number;
+  readonly priorityLabel: PriorityLabel;
+  readonly status: string;
+  readonly stage: string;
+  readonly sourceTitle: string | null;
+  readonly dueAt: string | null;
+  readonly scheduler: SchedulerSignals;
+  readonly due: QueueDueState;
+  readonly dueLabel: string;
+}
+
+export interface ConceptsMembersResult {
+  readonly members: readonly ConceptMemberSummary[];
+}
+
 /** The element's organize state after an assign/unassign/tag mutation. */
 export interface ElementOrganizeState {
   readonly elementId: string;
@@ -1478,6 +1508,7 @@ export interface AppApi {
     list(): Promise<ConceptsListResult>;
     assign(request: ConceptsAssignRequest): Promise<ConceptsAssignResult>;
     unassign(request: ConceptsUnassignRequest): Promise<ConceptsUnassignResult>;
+    members(request: ConceptsMembersRequest): Promise<ConceptsMembersResult>;
   };
   readonly tags: {
     list(): Promise<TagsListResult>;
@@ -1769,6 +1800,14 @@ export const appApi = {
   /** Unassign an element from a concept (T041) — remove the edge; logs `remove_relation`. */
   unassignConcept(request: ConceptsUnassignRequest): Promise<ConceptsUnassignResult> {
     return requireAppApi().concepts.unassign(request);
+  },
+  /**
+   * The LIVE elements assigned to one concept — the `/concepts` knowledge-map
+   * drill-in. Backed by the existing `ConceptRepository.elementsForConcept`,
+   * enriched main-side (type/title/priority/scheduler/due/source). Read-only.
+   */
+  conceptMembers(request: ConceptsMembersRequest): Promise<ConceptsMembersResult> {
+    return requireAppApi().concepts.members(request);
   },
   /** All tags with their live usage count (T041) — the library filterbar. */
   listTags(): Promise<TagsListResult> {

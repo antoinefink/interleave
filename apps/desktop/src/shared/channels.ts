@@ -52,6 +52,7 @@ export const IPC_CHANNELS = {
   conceptsList: "concepts:list",
   conceptsAssign: "concepts:assign",
   conceptsUnassign: "concepts:unassign",
+  conceptsMembers: "concepts:members",
   tagsList: "tags:list",
   tagsAdd: "tags:add",
   tagsRemove: "tags:remove",

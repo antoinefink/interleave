@@ -22,6 +22,7 @@ import {
   ConceptsAssignRequestSchema,
   ConceptsCreateRequestSchema,
   ConceptsListRequestSchema,
+  ConceptsMembersRequestSchema,
   ConceptsUnassignRequestSchema,
   DbStatusRequestSchema,
   DocumentMarksAddRequestSchema,
@@ -311,6 +312,11 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.conceptsUnassign, (_event, rawRequest: unknown) => {
     const request = ConceptsUnassignRequestSchema.parse(rawRequest);
     return dbService.unassignConcept(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.conceptsMembers, (_event, rawRequest: unknown) => {
+    const request = ConceptsMembersRequestSchema.parse(rawRequest);
+    return dbService.conceptMembers(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.tagsList, () => {
