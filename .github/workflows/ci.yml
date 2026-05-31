@@ -1,9 +1,18 @@
-# Interleave CI — the gate the Definition of Done refers to.
+# Interleave CI — typecheck, lint, unit/repository tests, and a renderer build on
+# the native pnpm toolchain.
 #
-# Everything runs in Docker via the same `make` targets developers use locally,
-# so there is no reliance on a host Node/pnpm toolchain (CLAUDE.md: "All checks
-# run inside Docker"). The job fails on a type error, a lint error, a unit-test
-# failure, or a smoke-E2E failure — verified by temporarily introducing each.
+# The architecture pivoted to an Electron desktop app on native SQLite, and Docker
+# was re-scoped to the future server phase — so CI no longer uses Docker/make. It
+# runs the same `pnpm` checks the Definition of Done refers to.
+#
+# The Electron-ABI `better-sqlite3` rebuild (the desktop postinstall) is skipped
+# here via `INTERLEAVE_SKIP_ELECTRON_REBUILD`: it is only needed to RUN the Electron
+# app (`pnpm dev` / `pnpm e2e` / `pnpm --filter @interleave/desktop dist`), not for
+# these checks. The Node-ABI binary the unit tests use is built by better-sqlite3's
+# own install script, so Vitest still exercises the real SQLite layer.
+#
+# The Playwright/Electron E2E runs locally today; running it in CI needs a virtual
+# display (xvfb) + the Electron-ABI rebuild and is a planned follow-up.
 name: CI
 
 on:
@@ -18,47 +27,38 @@ concurrency:
 
 jobs:
   checks:
-    name: typecheck · lint · test · e2e (Docker)
+    name: typecheck · lint · test · build
     runs-on: ubuntu-latest
-    # CI=true tightens config (Playwright forbidOnly + retries, no reuse of an
-    # existing dev server). Compose forwards it into the containers.
     env:
       CI: "true"
+      # The Electron app is not launched in CI, so skip its native rebuild (see header).
+      INTERLEAVE_SKIP_ELECTRON_REBUILD: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # The runner already has Docker + Compose v2 + GNU Make; no host Node setup.
-      - name: Show toolchain
-        run: |
-          docker --version
-          docker compose version
-          make --version | head -1
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.1
 
-      - name: Build toolchain image (app)
-        run: docker compose build app
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.1
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        run: make typecheck
+        run: pnpm typecheck
 
       - name: Lint
-        run: make lint
+        run: pnpm lint
 
-      - name: Unit tests
-        run: make test
+      - name: Unit + repository tests
+        run: pnpm test
 
-      # First run pulls the ~2GB official Playwright image — expected.
-      - name: Build E2E image
-        run: docker compose build e2e
-
-      - name: Smoke E2E
-        run: make e2e
-
-      - name: Upload Playwright report on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: playwright-report/
-          if-no-files-found: ignore
-          retention-days: 7
+      - name: Build renderer
+        run: pnpm --filter @interleave/web build

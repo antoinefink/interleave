@@ -55,6 +55,19 @@ function resolveElectronVersion() {
 }
 
 function main() {
+  // Escape hatch for environments that don't run the Electron app (CI typecheck/
+  // lint/test/build, or machines without a node-gyp toolchain): skip the
+  // Electron-ABI rebuild. better-sqlite3's own Node-ABI binary (built by its own
+  // install script) is untouched, so Vitest + the db scripts still work — only
+  // `pnpm dev` / `pnpm e2e` / `pnpm --filter @interleave/desktop dist` need this
+  // addon, and they run where the toolchain is available.
+  if (process.env.INTERLEAVE_SKIP_ELECTRON_REBUILD === "1") {
+    console.log(
+      "[desktop] skipping Electron-ABI better-sqlite3 rebuild (INTERLEAVE_SKIP_ELECTRON_REBUILD=1)",
+    );
+    return;
+  }
+
   const storeDir = resolveStorePkgDir();
   const electronVersion = resolveElectronVersion();
 
