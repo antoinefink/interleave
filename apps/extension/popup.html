@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Interleave Capture</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <style>
+      body {
+        width: 260px;
+        padding: 14px;
+      }
+      .actions {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .actions button {
+        width: 100%;
+        text-align: left;
+      }
+      #result {
+        margin-top: 12px;
+      }
+      .link {
+        background: none;
+        border: none;
+        color: var(--accent-text);
+        padding: 0;
+        font-size: 12px;
+        cursor: pointer;
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Save to Interleave</h1>
+    <p class="muted" id="page-title">…</p>
+    <div class="actions">
+      <button id="save-page" class="primary" type="button">Save page</button>
+      <button id="save-selection" type="button">Save selection</button>
+      <button id="save-inbox" type="button">Save to inbox</button>
+    </div>
+    <div id="result"></div>
+    <p style="margin-top: 12px">
+      <button id="open-options" class="link" type="button">Open options / pairing</button>
+    </p>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

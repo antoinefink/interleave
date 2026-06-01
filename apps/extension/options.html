@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Interleave Capture — Options</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <style>
+      body {
+        padding: 24px;
+        max-width: 520px;
+        margin: 0 auto;
+      }
+      .field {
+        margin-bottom: 16px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      .help {
+        font-size: 12px;
+        color: var(--text-3);
+        margin-top: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Interleave Capture</h1>
+    <p class="muted">
+      Pair this extension with the Interleave desktop app. In the app, open
+      <strong>Settings → Browser capture</strong>, enable it, and copy the token.
+    </p>
+
+    <div class="card" style="margin-top: 16px">
+      <div class="field">
+        <label for="token">Pairing token</label>
+        <input id="token" type="password" placeholder="Paste the token from Settings" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="port">Port</label>
+        <input id="port" type="number" min="1" max="65535" />
+        <div class="help">Leave as-is unless Settings shows a different port.</div>
+      </div>
+      <div class="row">
+        <button id="save" class="primary" type="button">Save & test connection</button>
+        <span id="status" class="status warn" hidden></span>
+      </div>
+    </div>
+
+    <p class="help" style="margin-top: 16px">
+      Captures travel only to <code>http://127.0.0.1</code> on this machine — never the cloud. The
+      desktop app validates the token + this extension's origin on every request.
+    </p>
+
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

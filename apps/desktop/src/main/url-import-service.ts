@@ -138,6 +138,21 @@ export interface ImportFromHtmlInput {
   readonly forceNewVersion?: boolean;
 }
 
+/**
+ * Arguments to {@link UrlImportService.importSelection} (the M13 extension "save
+ * selection" entry point — M13 owns this method).
+ */
+export interface ImportSelectionInput {
+  readonly url: string;
+  readonly title?: string | null;
+  readonly selection: string;
+  readonly priority?: PriorityLabel;
+  readonly reasonAdded?: string | null;
+  /** Surrounding-text anchor for selection lineage; folded into `reasonAdded`. */
+  readonly blockContext?: string | null;
+  readonly accessedAt?: string | null;
+}
+
 /** Fetch tuning. Conservative defaults; not configurable at the surface. */
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_BODY_BYTES = 8 * 1024 * 1024; // 8 MB cap on the fetched body.
@@ -223,6 +238,69 @@ export class UrlImportService {
       accessedAt: input.accessedAt ?? null,
       forceNewVersion: input.forceNewVersion ?? false,
     });
+  }
+
+  /**
+   * Import a TEXT SELECTION captured by the M13 browser extension as a fresh
+   * inbox `source` (M13 owns + defines this; M12 owns `importFromUrl`/
+   * `importFromHtml`). Unlike a page capture, a selection is NOT a page snapshot:
+   *
+   *   - it reuses `SourceRepository.createWithDocument`'s EXISTING raw-`body` path
+   *     (which runs `plainTextToProseMirrorDoc(body)` → constrained-schema doc +
+   *     stable block ids — no pre-built `conversion` needed),
+   *   - it writes NO vault snapshot (the selection IS the document, not a page),
+   *   - it writes NO `source_locations` row (a clean lineage root pointing at no
+   *     existing source document — there is nothing to anchor a location into),
+   *   - it does NOT run T061 dedup (distinct selections from the same page are
+   *     intentionally separate captures; there is no page-snapshot hash to compare),
+   *     so it ALWAYS returns the `"imported"` arm.
+   *
+   * The `blockContext` surrounding-text anchor is preserved WITHOUT a schema
+   * change by folding it into `reasonAdded` (there is no `blockContext` column and
+   * no `source_locations` row for a selection). This keeps the anchor durable,
+   * searchable, and visible in the inspector's "why added" provenance. It is anchor
+   * text for a future jump-to-source, NOT a block-level mapping into a page we
+   * never snapshotted.
+   */
+  importSelection(input: ImportSelectionInput): Promise<UrlImportResult> {
+    const url = input.url.trim();
+    // Defense in depth: the supplied URL still passes the scheme/SSRF guard. A
+    // selection never fetches, but a garbage URL should not become provenance.
+    this.assertImportableUrl(url);
+
+    const sourceId = newElementId();
+    const host = safeHost(url);
+    const title = nonEmpty(input.title) ?? host ?? "Captured selection";
+    const accessedAt = input.accessedAt ?? new Date().toISOString();
+    const canonicalUrl = canonicalizeUrl(url);
+    const reasonAdded = composeSelectionReason(input.reasonAdded, input.blockContext);
+    const priority = input.priority ?? "C";
+
+    const detail = this.db.transaction((tx) => {
+      this.sources.createWithDocumentWithin(tx, {
+        id: sourceId as ElementId,
+        title,
+        priority: priorityFromLabel(priority),
+        status: "inbox",
+        stage: "raw_source",
+        url,
+        canonicalUrl,
+        originalUrl: url,
+        accessedAt,
+        // No snapshot — a selection is a fresh document, not a page capture.
+        snapshotKey: null,
+        reasonAdded,
+        // The raw selection text → plainTextToProseMirrorDoc (stable block ids).
+        body: input.selection,
+      });
+      return this.inbox.get(sourceId as ElementId);
+    });
+
+    const item = detail?.summary ?? this.inbox.list().find((i) => i.id === sourceId) ?? null;
+    if (!item) {
+      throw new Error("UrlImportService: created selection source not found in inbox");
+    }
+    return Promise.resolve({ status: "imported", id: sourceId, item });
   }
 
   /** Parse + validate a URL against the scheme + SSRF guard; throws on rejection. */
@@ -497,6 +575,23 @@ function toDuplicateMatch(match: SourceDuplicateMatch): UrlImportDuplicateMatch 
     accessedAt: match.accessedAt,
     matchedBy: match.matchedBy,
   };
+}
+
+/**
+ * Compose the stored `reasonAdded` for a selection capture (T062): the user's
+ * reason, plus — when present — the surrounding-text `blockContext` anchor on a
+ * readable "Context:" line. Either, both, or neither may be present.
+ */
+function composeSelectionReason(
+  reason: string | null | undefined,
+  blockContext: string | null | undefined,
+): string | null {
+  const userReason = nonEmpty(reason);
+  const context = nonEmpty(blockContext);
+  if (userReason && context) return `${userReason}\n\nContext: ${context}`;
+  if (userReason) return userReason;
+  if (context) return `Context: ${context}`;
+  return null;
 }
 
 /** Trim a string to a non-empty value, or `null`. */

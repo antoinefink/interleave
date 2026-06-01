@@ -1,0 +1,25 @@
+{
+  "name": "@interleave/capture-contract",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "dev": "echo \"@interleave/capture-contract: no dev step\"",
+    "build": "echo \"@interleave/capture-contract: no build step\"",
+    "test": "vitest run",
+    "lint": "echo \"@interleave/capture-contract: linted from repo root via biome\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  }
+}

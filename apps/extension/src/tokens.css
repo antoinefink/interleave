@@ -1,0 +1,220 @@
+/*
+ * Interleave extension design tokens (T062).
+ *
+ * DESIGN-LANGUAGE REUSE, NOT renderer-component reuse: the options/popup/side
+ * panel run in the BROWSER, not the Electron renderer, so they cannot import
+ * `apps/web` React components or its Tailwind theme. Instead they re-declare the
+ * canonical OKLCH tokens from `design/tokens.css` (IBM Plex, light + dark surfaces
+ * + text) as local CSS variables. The A/B/C/D priority color tokens (and the
+ * `.prio` chip styles below) are declared here but not yet referenced by any
+ * T062 page — they are staged for the T063 side-panel priority chips that will
+ * consume them. Keep these in sync with `design/tokens.css`; do not invent new
+ * colors here.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --bg: oklch(0.99 0.002 250);
+  --surface: oklch(1 0 0);
+  --surface-2: oklch(0.97 0.003 250);
+  --border: oklch(0.9 0.004 250);
+  --border-strong: oklch(0.83 0.006 250);
+  --text: oklch(0.25 0.01 260);
+  --text-2: oklch(0.42 0.01 260);
+  --text-3: oklch(0.58 0.01 260);
+  --accent: oklch(0.55 0.13 250);
+  --accent-text: oklch(0.45 0.14 250);
+  --accent-soft: oklch(0.95 0.03 250);
+  --ok: oklch(0.52 0.12 150);
+  --ok-soft: oklch(0.95 0.04 150);
+  --danger: oklch(0.55 0.18 25);
+  --danger-soft: oklch(0.95 0.05 25);
+
+  --prio-a: oklch(0.56 0.16 25);
+  --prio-a-soft: oklch(0.95 0.03 25);
+  --prio-b: oklch(0.64 0.13 62);
+  --prio-b-soft: oklch(0.95 0.04 70);
+  --prio-c: oklch(0.55 0.1 230);
+  --prio-c-soft: oklch(0.95 0.025 240);
+  --prio-d: oklch(0.6 0.008 262);
+  --prio-d-soft: oklch(0.95 0.003 262);
+
+  --radius: 8px;
+  --font: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: oklch(0.21 0.006 260);
+    --surface: oklch(0.25 0.006 260);
+    --surface-2: oklch(0.28 0.006 260);
+    --border: oklch(0.34 0.007 260);
+    --border-strong: oklch(0.42 0.008 260);
+    --text: oklch(0.93 0.004 260);
+    --text-2: oklch(0.78 0.006 260);
+    --text-3: oklch(0.62 0.008 260);
+    --accent: oklch(0.7 0.12 250);
+    --accent-text: oklch(0.78 0.11 250);
+    --accent-soft: oklch(0.32 0.06 250);
+    --ok: oklch(0.7 0.12 150);
+    --ok-soft: oklch(0.32 0.06 150);
+    --danger: oklch(0.7 0.16 25);
+    --danger-soft: oklch(0.32 0.07 25);
+
+    --prio-a: oklch(0.66 0.16 28);
+    --prio-a-soft: oklch(0.33 0.07 28);
+    --prio-b: oklch(0.74 0.12 68);
+    --prio-b-soft: oklch(0.34 0.06 65);
+    --prio-c: oklch(0.68 0.1 235);
+    --prio-c-soft: oklch(0.32 0.05 240);
+    --prio-d: oklch(0.6 0.008 264);
+    --prio-d-soft: oklch(0.3 0.005 264);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+h1 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.muted {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+label {
+  display: block;
+  font-weight: 500;
+  margin-bottom: 4px;
+  color: var(--text-2);
+}
+
+input[type="text"],
+input[type="number"],
+input[type="password"],
+textarea {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+}
+
+input:focus,
+textarea:focus,
+button:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button {
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+button.primary {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+button:hover {
+  border-color: var(--border-strong);
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status.ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.status.warn {
+  background: var(--prio-b-soft);
+  color: var(--prio-b);
+}
+
+.status.err {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.token {
+  font-family: var(--mono);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.prio-group {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.prio {
+  width: 30px;
+  text-align: center;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.prio[data-prio="A"][aria-pressed="true"] {
+  background: var(--prio-a-soft);
+  border-color: var(--prio-a);
+  color: var(--prio-a);
+}
+.prio[data-prio="B"][aria-pressed="true"] {
+  background: var(--prio-b-soft);
+  border-color: var(--prio-b);
+  color: var(--prio-b);
+}
+.prio[data-prio="C"][aria-pressed="true"] {
+  background: var(--prio-c-soft);
+  border-color: var(--prio-c);
+  color: var(--prio-c);
+}
+.prio[data-prio="D"][aria-pressed="true"] {
+  background: var(--prio-d-soft);
+  border-color: var(--prio-d);
+  color: var(--text-2);
+}

@@ -324,7 +324,11 @@ the server's enabled/running state, which the user pastes into the extension's o
     - `permissions: ["activeTab", "scripting", "contextMenus", "sidePanel", "storage"]`,
       `host_permissions: ["http://127.0.0.1/*"]` (the loopback server origin; **only** loopback —
       no broad host access, no `<all_urls>` host permission beyond what `activeTab`/`scripting`
-      grant on the focused tab).
+      grant on the focused tab). **As built (T062):** the manifest also declares `notifications`,
+      the smallest reasonable permission for the capture-outcome surfacing this same spec
+      anticipates below (`background.ts` calls `chrome.notifications.create` for the
+      success ✓ / failure ✕ / "not running" / "not paired" result). It is benign (no host or
+      network reach) and still avoids any broad host access.
     - `background: { service_worker: "background.js", type: "module" }`.
     - `action: { default_popup: "popup.html" }` (a tiny popup with Save page / Save selection /
       Save to inbox buttons + status).
@@ -351,9 +355,13 @@ the server's enabled/running state, which the user pastes into the extension's o
     `chrome.action.setBadgeText` / a notification (success ✓ / failure ✕ / "not running" / "not
     paired"). It must handle a refused connection (app not running) and a `401`/`403` (bad/absent
     token → prompt to re-pair via the options page).
-  - `apps/extension/src/content.ts` — the **content script**: on demand (message from the worker)
-    returns `window.getSelection().toString()` + a short surrounding-text `blockContext` for
-    selection lineage. It is the only code that runs in the page; it does **no** network I/O.
+  - The in-page selection reader: on demand returns `window.getSelection().toString()` + a short
+    surrounding-text `blockContext` for selection lineage. It runs in the page and does **no**
+    network I/O. **As built (T062):** rather than a standing `content.ts` content script declared
+    in the manifest, the worker injects this reader on demand via `chrome.scripting.executeScript`
+    (`requestSelectionFromContentScript` in `background.ts`) — functionally equivalent, needs only
+    `activeTab` + `scripting` (no broad host permission, no `content_scripts` block), and leaves no
+    persistent in-page code. A static `content.ts` is an acceptable equivalent if reintroduced.
   - `apps/extension/src/options.ts` + `options.html` — the **pairing page**: a token input
     (paste the desktop's token), an optional port field (default the canonical port), a "Test
     connection" button that hits `GET /ping` then a token-authenticated probe, and clear paired /
@@ -365,8 +373,9 @@ the server's enabled/running state, which the user pastes into the extension's o
     it in).
   - `apps/extension/build.mjs` — an **esbuild** build (match the desktop's tooling) that bundles
     `background.ts` → `background.js` (ESM, `format: "esm"`, `platform: "browser"`),
-    `content.ts` → `content.js`, `options.ts`/`popup.ts`/`sidepanel.ts`, copies the `.html` +
-    `manifest.json` + icons into `apps/extension/dist/`. `pnpm --filter @interleave/extension build`
+    `options.ts`/`popup.ts`/`sidepanel.ts` (and `content.ts` → `content.js` only if a static content
+    script is reintroduced — T062 injects the selection reader on demand instead, see above), copies
+    the `.html` + `manifest.json` + icons into `apps/extension/dist/`. `pnpm --filter @interleave/extension build`
     produces a **load-unpacked-ready `apps/extension/dist/`**. Document the dev flow (below).
   - `apps/extension/tsconfig.json` with `@types/chrome` (dev dependency) for the WebExtension API.
 - [ ] **Loopback capture server** `apps/desktop/src/main/capture-server.ts` — a Node `http` server

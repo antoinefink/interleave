@@ -129,6 +129,35 @@ describe("DbService", () => {
     svc.close();
   });
 
+  it("never surfaces capture.* pairing secrets through getSettings (T062)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    // The capture server persists these through the raw settings repo. They are
+    // pairing plumbing — the renderer must only ever receive them via the
+    // explicit capture.getPairing() path, never the generic settings dump.
+    svc.updateSetting("capture.token", "super-secret-token");
+    svc.updateSetting("capture.allowedOrigin", "chrome-extension://abc");
+    svc.updateSetting("capture.port", 7777);
+    svc.updateSetting("capture.enabled", true);
+    // A normal user setting lives in the same table and MUST still be visible.
+    svc.updateSetting("theme", "dark");
+
+    // No-key dump: capture keys dropped, ordinary keys intact.
+    const all = svc.getSettings().settings;
+    expect(all["capture.token"]).toBeUndefined();
+    expect(all["capture.allowedOrigin"]).toBeUndefined();
+    expect(all["capture.port"]).toBeUndefined();
+    expect(all["capture.enabled"]).toBeUndefined();
+    expect(all.theme).toBe("dark");
+
+    // Single-key read of a capture key resolves to an empty result, not the secret.
+    expect(svc.getSettings("capture.token").settings["capture.token"]).toBeUndefined();
+    expect(svc.getSettings("capture.token").settings).toEqual({});
+
+    svc.close();
+  });
+
   it("reads the typed AppSettings with defaults on a fresh DB (T011)", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });

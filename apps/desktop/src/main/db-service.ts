@@ -179,7 +179,29 @@ import type {
   UndoLastResult,
 } from "../shared/contract";
 import { type BackupCounts, resolveSchemaVersion } from "./backup-manifest";
+import {
+  CAPTURE_ALLOWED_ORIGIN_KEY,
+  CAPTURE_ENABLED_KEY,
+  CAPTURE_PORT_KEY,
+  CAPTURE_TOKEN_KEY,
+} from "./capture-pairing";
 import { UrlImportService } from "./url-import-service";
+
+/**
+ * Capture-server pairing keys ({@link CAPTURE_TOKEN_KEY} et al.) are
+ * capture-internal plumbing, NOT user-facing app settings. They reach the
+ * trusted renderer ONLY via the explicit `capture.getPairing()` path, so the
+ * generic no-key `settings.get()` dump must NOT surface them — otherwise the
+ * raw settings table would leak the pairing secret. The typed `settings.getAll()`
+ * surface already drops them (unknown keys); this set keeps the raw key/value
+ * read consistent with that isolation.
+ */
+const CAPTURE_SETTING_KEYS: ReadonlySet<string> = new Set([
+  CAPTURE_TOKEN_KEY,
+  CAPTURE_ENABLED_KEY,
+  CAPTURE_PORT_KEY,
+  CAPTURE_ALLOWED_ORIGIN_KEY,
+]);
 
 export class DbService {
   private handle: DbHandle | null = null;
@@ -361,14 +383,32 @@ export class DbService {
     };
   }
 
-  /** Read one setting (by key) or all settings, parsing JSON values. */
+  /**
+   * Read one setting (by key) or all settings, parsing JSON values.
+   *
+   * Capture-server pairing keys ({@link CAPTURE_SETTING_KEYS}) are NEVER surfaced
+   * here: the single-key read returns `{}` for them, and the no-key dump drops
+   * them. The token + allowed origin + bound port reach the trusted renderer
+   * exclusively through the explicit `capture.getPairing()` path.
+   */
   getSettings(key?: string): SettingsGetResult {
     const repo = this.repos.settings;
     if (key) {
+      if (CAPTURE_SETTING_KEYS.has(key)) {
+        return { settings: {} };
+      }
       const value = repo.get<SettingValue>(key);
       return { settings: value === null ? {} : { [key]: value } };
     }
-    return { settings: repo.getAll() as Record<string, SettingValue> };
+    const all = repo.getAll() as Record<string, SettingValue>;
+    const filtered: Record<string, SettingValue> = {};
+    for (const [storedKey, storedValue] of Object.entries(all)) {
+      if (CAPTURE_SETTING_KEYS.has(storedKey)) {
+        continue;
+      }
+      filtered[storedKey] = storedValue;
+    }
+    return { settings: filtered };
   }
 
   /**

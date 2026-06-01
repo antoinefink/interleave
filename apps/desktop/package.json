@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
+    "@interleave/capture-contract": "workspace:*",
     "@interleave/core": "workspace:*",
     "@interleave/db": "workspace:*",
     "@interleave/importers": "workspace:*",

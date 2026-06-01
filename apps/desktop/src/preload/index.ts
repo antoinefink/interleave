@@ -19,6 +19,7 @@ import type {
   AnalyticsGetRequest,
   AppApi,
   BalanceGetRequest,
+  CaptureSetEnabledRequest,
   CardsCreateRequest,
   CardsDeleteRequest,
   CardsFlagRequest,
@@ -108,6 +109,12 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.sourcesImportManual, request),
     importUrl: (request: SourcesImportUrlRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.sourcesImportUrl, request),
+  },
+  capture: {
+    getPairing: () => ipcRenderer.invoke(IPC_CHANNELS.captureGetPairing),
+    regenerateToken: () => ipcRenderer.invoke(IPC_CHANNELS.captureRegenerateToken),
+    setEnabled: (request: CaptureSetEnabledRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.captureSetEnabled, request),
   },
   inbox: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.inboxList),

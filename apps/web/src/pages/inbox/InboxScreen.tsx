@@ -18,6 +18,7 @@
  * Scheduling ("Read soon"), dedup/Merge, and the concept field are deferred.
  */
 
+import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { BalanceBanner } from "../../components/BalanceBanner";
 import { Icon, type IconName } from "../../components/Icon";
@@ -61,13 +62,13 @@ const IMPORT_OPTS: {
   icon: IconName;
   label: string;
   hint: string;
-  /** When set, clicking opens the matching modal; otherwise the chip is disabled. */
-  action?: "manual" | "url";
+  /** When set, clicking opens the matching modal (or routes to Settings for capture). */
+  action?: "manual" | "url" | "capture";
 }[] = [
   { icon: "link", label: "Paste URL", hint: "Fetch & clean the page", action: "url" },
   { icon: "paste", label: "Paste text", hint: "Plain text", action: "manual" },
   { icon: "upload", label: "Upload PDF / EPUB", hint: "Books & papers — coming soon" },
-  { icon: "globe", label: "Browser capture", hint: "From the extension — coming soon" },
+  { icon: "globe", label: "Browser capture", hint: "Pair the extension", action: "capture" },
   { icon: "text", label: "Manual note", hint: "Your own idea", action: "manual" },
 ];
 
@@ -321,6 +322,7 @@ function PreviewPane({
 
 export function InboxScreen() {
   const desktop = isDesktop();
+  const navigate = useNavigate();
   const { selectedId, select } = useSelection();
   const [items, setItems] = useState<readonly InboxItemSummary[]>([]);
   const [selId, setSelId] = useState<string | null>(null);
@@ -473,13 +475,16 @@ export function InboxScreen() {
         </div>
         <div className="flex flex-wrap gap-2.5">
           {IMPORT_OPTS.map((o) => {
-            const enabled = o.action === "manual" || o.action === "url";
+            const enabled = o.action === "manual" || o.action === "url" || o.action === "capture";
             const onClick =
               o.action === "url"
                 ? () => setUrlModalOpen(true)
                 : o.action === "manual"
                   ? () => setModalOpen(true)
-                  : undefined;
+                  : o.action === "capture"
+                    ? // Route to the Settings "Browser capture" pairing card (T062).
+                      () => void navigate({ to: "/settings", hash: "browser-capture" })
+                    : undefined;
             return (
               <button
                 key={o.label}

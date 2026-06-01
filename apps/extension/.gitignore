@@ -1,0 +1,3 @@
+dist/
+.tsbuild/
+*.tsbuildinfo

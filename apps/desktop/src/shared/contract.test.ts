@@ -12,6 +12,9 @@ import {
   AnalyticsGetRequestSchema,
   BackupsCreateRequestSchema,
   BalanceGetRequestSchema,
+  CaptureGetPairingRequestSchema,
+  CaptureRegenerateTokenRequestSchema,
+  CaptureSetEnabledRequestSchema,
   CardsCreateRequestSchema,
   CardsDeleteRequestSchema,
   CardsFlagRequestSchema,
@@ -85,6 +88,9 @@ describe("IPC channels", () => {
         "lineage:get",
         "sources:importManual",
         "sources:importUrl",
+        "capture:getPairing",
+        "capture:regenerateToken",
+        "capture:setEnabled",
         "inbox:list",
         "inbox:get",
         "inbox:triage",
@@ -135,6 +141,24 @@ describe("IPC channels", () => {
       ].sort(),
     );
     expect(Object.values(IPC_CHANNELS)).not.toContain("db:query");
+  });
+});
+
+describe("Capture pairing schemas (T062)", () => {
+  it("CaptureGetPairing / CaptureRegenerateToken accept a void (undefined) payload", () => {
+    expect(() => CaptureGetPairingRequestSchema.parse(undefined)).not.toThrow();
+    expect(() => CaptureRegenerateTokenRequestSchema.parse(undefined)).not.toThrow();
+  });
+
+  it("CaptureSetEnabled accepts a boolean `enabled`", () => {
+    expect(CaptureSetEnabledRequestSchema.parse({ enabled: true })).toEqual({ enabled: true });
+    expect(CaptureSetEnabledRequestSchema.parse({ enabled: false })).toEqual({ enabled: false });
+  });
+
+  it("CaptureSetEnabled rejects a missing / non-boolean `enabled`", () => {
+    expect(() => CaptureSetEnabledRequestSchema.parse({})).toThrow();
+    expect(() => CaptureSetEnabledRequestSchema.parse({ enabled: "yes" })).toThrow();
+    expect(() => CaptureSetEnabledRequestSchema.parse({ enabled: 1 })).toThrow();
   });
 });
 

@@ -114,6 +114,13 @@ export interface LaunchOptions {
    * unpackaged E2E build) so the test can reach it. Defaults off.
    */
   readonly allowLoopbackImport?: boolean;
+  /**
+   * Enable the loopback capture server (T062) at launch. The server is OFF by
+   * default (it is a network surface); this sets `INTERLEAVE_CAPTURE_ENABLED=1`
+   * so the capture-server E2E can POST to it without first toggling it through the
+   * UI. Mirrors the `seedOnEmpty` → `INTERLEAVE_SEED_ON_EMPTY` mapping.
+   */
+  readonly captureEnabled?: boolean;
 }
 
 /**
@@ -137,6 +144,7 @@ export async function launchApp(
       INTERLEAVE_DATA_DIR: dataDir,
       ...(options.seedOnEmpty ? { INTERLEAVE_SEED_ON_EMPTY: "1" } : {}),
       ...(options.allowLoopbackImport ? { INTERLEAVE_ALLOW_LOOPBACK_IMPORT: "1" } : {}),
+      ...(options.captureEnabled ? { INTERLEAVE_CAPTURE_ENABLED: "1" } : {}),
       // Suppress the first-run onboarding overlay unless a spec opts in, so it
       // never covers the UI in the feature specs (all start empty). See main/index.ts.
       ...(options.showOnboarding ? {} : { INTERLEAVE_SUPPRESS_ONBOARDING: "1" }),

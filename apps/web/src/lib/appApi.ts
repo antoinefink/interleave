@@ -544,6 +544,37 @@ export type SourcesImportUrlResult =
       readonly matches: readonly SourceDuplicateSummary[];
     };
 
+// ---------------------------------------------------------------------------
+// capture.* — browser-extension pairing (T062). The TRUSTED desktop renderer
+// reads/regenerates the pairing token + toggles the loopback capture server.
+// The token is displayed for the user to paste into the extension; it is never
+// handed to a web page (no IPC path does so).
+// ---------------------------------------------------------------------------
+
+/** The full pairing state shown in the Settings "Browser capture" card. */
+export interface CapturePairingResult {
+  readonly enabled: boolean;
+  readonly running: boolean;
+  readonly port: number | null;
+  readonly token: string;
+  /** The paired extension origin, or null until an extension has paired. */
+  readonly extensionOriginHint: string | null;
+}
+
+export interface CaptureRegenerateTokenResult {
+  readonly token: string;
+}
+
+export interface CaptureSetEnabledRequest {
+  readonly enabled: boolean;
+}
+
+export interface CaptureSetEnabledResult {
+  readonly enabled: boolean;
+  readonly running: boolean;
+  readonly port: number | null;
+}
+
 export interface InboxListResult {
   readonly items: readonly InboxItemSummary[];
 }
@@ -1544,6 +1575,11 @@ export interface AppApi {
     importManual(request: SourcesImportManualRequest): Promise<SourcesImportManualResult>;
     importUrl(request: SourcesImportUrlRequest): Promise<SourcesImportUrlResult>;
   };
+  readonly capture: {
+    getPairing(): Promise<CapturePairingResult>;
+    regenerateToken(): Promise<CaptureRegenerateTokenResult>;
+    setEnabled(request: CaptureSetEnabledRequest): Promise<CaptureSetEnabledResult>;
+  };
   readonly inbox: {
     list(): Promise<InboxListResult>;
     get(request: InboxGetRequest): Promise<InboxGetResult>;
@@ -1740,6 +1776,18 @@ export const appApi = {
   /** Fetch + clean + snapshot a live URL into an inbox source (T060). */
   importUrlSource(request: SourcesImportUrlRequest): Promise<SourcesImportUrlResult> {
     return requireAppApi().sources.importUrl(request);
+  },
+  /** Read the browser-capture pairing state (token + enabled/running/port) (T062). */
+  getCapturePairing(): Promise<CapturePairingResult> {
+    return requireAppApi().capture.getPairing();
+  },
+  /** Mint a fresh pairing token — UNPAIRS the current extension (T062). */
+  regenerateCaptureToken(): Promise<CaptureRegenerateTokenResult> {
+    return requireAppApi().capture.regenerateToken();
+  },
+  /** Enable/disable the loopback capture server (starts/stops it live) (T062). */
+  setCaptureEnabled(request: CaptureSetEnabledRequest): Promise<CaptureSetEnabledResult> {
+    return requireAppApi().capture.setEnabled(request);
   },
   /** Live inbox-status source summaries (T012). */
   listInbox(): Promise<InboxListResult> {

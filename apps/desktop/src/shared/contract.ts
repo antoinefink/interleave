@@ -871,6 +871,63 @@ export type SourcesImportUrlResult =
       readonly matches: readonly SourceDuplicateSummary[];
     };
 
+// ---------------------------------------------------------------------------
+// capture.getPairing() / capture.regenerateToken() / capture.setEnabled()  (T062)
+// ---------------------------------------------------------------------------
+
+/**
+ * The browser-extension pairing surface (T062). The TRUSTED desktop renderer
+ * reads the per-install pairing token (to display it for the user to paste into
+ * the extension), regenerates it, and toggles the loopback capture server on/off.
+ * The token is NEVER handed to a web page — only the desktop renderer displays it;
+ * the extension obtains it by the user pasting it. There is no `db.query` and no
+ * generic command surface; these three commands route to the `capture-pairing`
+ * helpers + the live capture-server start/stop.
+ */
+
+/** No payload — read the current pairing state. */
+export const CaptureGetPairingRequestSchema = z.void();
+export type CaptureGetPairingRequest = z.infer<typeof CaptureGetPairingRequestSchema>;
+
+/** No payload — mint a fresh token (unpairs the current extension). */
+export const CaptureRegenerateTokenRequestSchema = z.void();
+export type CaptureRegenerateTokenRequest = z.infer<typeof CaptureRegenerateTokenRequestSchema>;
+
+/** Enable/disable the capture server (starts/stops it live). */
+export const CaptureSetEnabledRequestSchema = z.object({
+  enabled: z.boolean(),
+});
+export type CaptureSetEnabledRequest = z.infer<typeof CaptureSetEnabledRequestSchema>;
+
+/** The full pairing state surfaced in the Settings "Browser capture" card. */
+export interface CapturePairingResult {
+  /** Whether the user has enabled the capture server (default false). */
+  readonly enabled: boolean;
+  /** Whether the server socket is actually bound + running right now. */
+  readonly running: boolean;
+  /** The actually-bound loopback port, or `null` when not running. */
+  readonly port: number | null;
+  /** The per-install pairing token (shown for the user to paste into the extension). */
+  readonly token: string;
+  /**
+   * The paired extension origin (`chrome-extension://<id>`) learned via the
+   * pairing handshake, or `null` until an extension has paired.
+   */
+  readonly extensionOriginHint: string | null;
+}
+
+/** The result of regenerating the token (the NEW token; the old one is now invalid). */
+export interface CaptureRegenerateTokenResult {
+  readonly token: string;
+}
+
+/** The result of toggling the server — the resulting running state + port. */
+export interface CaptureSetEnabledResult {
+  readonly enabled: boolean;
+  readonly running: boolean;
+  readonly port: number | null;
+}
+
 /** `inbox.list()` takes no arguments. */
 export const InboxListRequestSchema = z.void();
 
@@ -2560,6 +2617,14 @@ export interface AppApi {
     importManual(request: SourcesImportManualRequest): Promise<SourcesImportManualResult>;
     /** Fetch + clean + snapshot a live URL into an `inbox` source (T060). */
     importUrl(request: SourcesImportUrlRequest): Promise<SourcesImportUrlResult>;
+  };
+  readonly capture: {
+    /** Read the browser-capture pairing state (token + enabled/running/port) (T062). */
+    getPairing(): Promise<CapturePairingResult>;
+    /** Mint a fresh pairing token — UNPAIRS the current extension (T062). */
+    regenerateToken(): Promise<CaptureRegenerateTokenResult>;
+    /** Enable/disable the loopback capture server (starts/stops it live) (T062). */
+    setEnabled(request: CaptureSetEnabledRequest): Promise<CaptureSetEnabledResult>;
   };
   readonly inbox: {
     /** Inbox-status source summaries (T012). */

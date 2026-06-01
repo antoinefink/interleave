@@ -13,6 +13,9 @@ import {
   AnalyticsGetRequestSchema,
   BackupsCreateRequestSchema,
   BalanceGetRequestSchema,
+  CaptureGetPairingRequestSchema,
+  CaptureRegenerateTokenRequestSchema,
+  CaptureSetEnabledRequestSchema,
   CardsCreateRequestSchema,
   CardsDeleteRequestSchema,
   CardsFlagRequestSchema,
@@ -75,6 +78,7 @@ import {
   UndoLastRequestSchema,
 } from "../shared/contract";
 import { BackupService } from "./backup-service";
+import type { CaptureController } from "./capture-controller";
 import type { DbService } from "./db-service";
 import type { AppPaths } from "./paths";
 
@@ -84,6 +88,13 @@ export interface IpcHandlerContext {
   readonly paths: AppPaths;
   /** The Drizzle migrations folder (its journal maps idx → schema-version tag). */
   readonly migrationsDir: string;
+  /**
+   * The live capture-server controller (T062) — the `capture.*` pairing commands
+   * route here so the IPC layer never touches the raw HTTP server or the
+   * `capture.*` settings keys directly. Optional so contract/round-trip tests can
+   * register the non-capture handlers alone.
+   */
+  readonly captureController?: CaptureController;
 }
 
 /**
@@ -184,6 +195,36 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.sourcesImportUrl, async (_event, rawRequest: unknown) => {
     const request = SourcesImportUrlRequestSchema.parse(rawRequest);
     return dbService.importFromUrl(request);
+  });
+
+  // Browser-capture pairing (T062). The TRUSTED desktop renderer reads the
+  // per-install pairing token (to display it), regenerates it, and toggles the
+  // loopback capture server. These route to the CaptureController (single source
+  // of truth for the live server + the `capture.*` settings). The token is never
+  // handed to a web page — only displayed in the desktop renderer. A handler
+  // registered without the controller (contract-only tests) throws a clear error.
+  function requireCaptureController(): CaptureController {
+    if (!context?.captureController) {
+      throw new Error("capture: handler registered without a capture controller");
+    }
+    return context.captureController;
+  }
+
+  ipcMain.handle(IPC_CHANNELS.captureGetPairing, () => {
+    CaptureGetPairingRequestSchema.parse(undefined);
+    return requireCaptureController().getPairing();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.captureRegenerateToken, () => {
+    CaptureRegenerateTokenRequestSchema.parse(undefined);
+    const token = requireCaptureController().regenerateToken();
+    return { token };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.captureSetEnabled, async (_event, rawRequest: unknown) => {
+    const request = CaptureSetEnabledRequestSchema.parse(rawRequest);
+    const pairing = await requireCaptureController().setEnabled(request.enabled);
+    return { enabled: pairing.enabled, running: pairing.running, port: pairing.port };
   });
 
   ipcMain.handle(IPC_CHANNELS.inboxList, () => {

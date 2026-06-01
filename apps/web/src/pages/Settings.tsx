@@ -21,6 +21,7 @@ import {
   type AppSettings,
   appApi,
   type BackupsCreateResult,
+  type CapturePairingResult,
   isDesktop,
   type ThemePreference,
 } from "../lib/appApi";
@@ -186,6 +187,11 @@ export function Settings() {
   const [backingUp, setBackingUp] = useState(false);
   const [backup, setBackup] = useState<BackupsCreateResult | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
+  // Browser-capture pairing (T062) — the loopback server's token + running state.
+  const [pairing, setPairing] = useState<CapturePairingResult | null>(null);
+  const [pairingError, setPairingError] = useState<string | null>(null);
+  const [tokenCopied, setTokenCopied] = useState(false);
+  const [tokenRevealed, setTokenRevealed] = useState(false);
 
   /**
    * Trigger a full backup through the typed bridge (the main process does ALL the
@@ -224,6 +230,69 @@ export function Settings() {
       cancelled = true;
     };
   }, []);
+
+  // Load the browser-capture pairing state (token + enabled/running/port) (T062).
+  useEffect(() => {
+    if (!isDesktop()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await appApi.getCapturePairing();
+        if (!cancelled) setPairing(result);
+      } catch (e) {
+        if (!cancelled) setPairingError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /** Enable/disable the loopback capture server (starts/stops it live). */
+  const toggleCapture = useCallback(async (enabled: boolean) => {
+    setPairingError(null);
+    try {
+      const next = await appApi.setCaptureEnabled({ enabled });
+      // setEnabled returns enabled/running/port; re-read for the token + origin hint.
+      const full = await appApi.getCapturePairing();
+      setPairing({ ...full, ...next });
+    } catch (e) {
+      setPairingError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  /** Regenerate the pairing token (UNPAIRS the current extension). */
+  const regenerateToken = useCallback(async () => {
+    if (
+      !window.confirm(
+        "Regenerate the pairing token? The currently paired extension will stop working until you paste the new token into its options.",
+      )
+    ) {
+      return;
+    }
+    setPairingError(null);
+    try {
+      await appApi.regenerateCaptureToken();
+      const full = await appApi.getCapturePairing();
+      setPairing(full);
+      setTokenCopied(false);
+    } catch (e) {
+      setPairingError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  /** Copy the token to the clipboard for the user to paste into the extension. */
+  const copyToken = useCallback(async () => {
+    if (!pairing?.token) return;
+    try {
+      await navigator.clipboard.writeText(pairing.token);
+      setTokenCopied(true);
+      window.setTimeout(() => setTokenCopied(false), 2000);
+    } catch {
+      // Clipboard may be unavailable; reveal the token so the user can copy manually.
+      setTokenRevealed(true);
+    }
+  }, [pairing?.token]);
 
   /**
    * Optimistically apply a patch in the UI, persist it through the bridge, and
@@ -488,6 +557,110 @@ export function Settings() {
           </SettingRow>
         ) : null}
       </SectionPanel>
+
+      {/* Browser capture (T062) — the loopback-server pairing card. */}
+      <section className="mb-6 scroll-mt-6" id="browser-capture" data-testid="settings-capture">
+        <div className="mb-1.5 font-medium text-text-2 text-xs uppercase tracking-wide">
+          Browser capture
+        </div>
+        <div className="rounded-lg border border-border bg-surface-2 px-4">
+          <SettingRow
+            label="Capture server"
+            hint="Let the Interleave browser extension save pages & selections into your inbox — over a local 127.0.0.1 connection only, never the cloud."
+          >
+            <button
+              type="button"
+              data-testid="settings-capture-toggle"
+              role="switch"
+              aria-checked={pairing?.enabled ?? false}
+              onClick={() => void toggleCapture(!(pairing?.enabled ?? false))}
+              className={
+                pairing?.enabled
+                  ? "inline-flex items-center gap-2 rounded-md border border-accent-soft-bd bg-accent-soft px-3 py-1.5 font-medium text-accent-text text-sm"
+                  : "inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 font-medium text-sm text-text-2 hover:border-border-strong"
+              }
+            >
+              <Icon name={pairing?.enabled ? "check" : "globe"} size={14} />
+              {pairing?.enabled ? "Enabled" : "Disabled"}
+            </button>
+          </SettingRow>
+
+          {pairing?.enabled ? (
+            <>
+              <SettingRow
+                label="Status"
+                hint={
+                  pairing.running ? `Listening on 127.0.0.1:${pairing.port ?? "—"}` : "Starting…"
+                }
+              >
+                <span
+                  data-testid="settings-capture-status"
+                  className={
+                    pairing.running
+                      ? "inline-flex items-center gap-1.5 rounded-md bg-ok-soft px-2.5 py-1 text-ok text-xs"
+                      : "inline-flex items-center gap-1.5 rounded-md bg-surface px-2.5 py-1 text-text-3 text-xs"
+                  }
+                >
+                  <Icon name={pairing.running ? "check" : "clock"} size={13} />
+                  {pairing.running ? "Running" : "Stopped"}
+                </span>
+              </SettingRow>
+
+              <SettingRow
+                label="Pairing token"
+                hint="Open the extension's Options and paste this token to pair."
+              >
+                <div className="flex items-center gap-2">
+                  <code
+                    data-testid="settings-capture-token"
+                    className="max-w-[15rem] truncate rounded bg-surface px-2 py-1 font-mono text-text-2 text-xs"
+                    title={tokenRevealed ? pairing.token : "Hidden — use Copy"}
+                  >
+                    {tokenRevealed ? pairing.token : "•".repeat(24)}
+                  </code>
+                  <button
+                    type="button"
+                    data-testid="settings-capture-copy"
+                    onClick={() => void copyToken()}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1.5 font-medium text-sm text-text-2 hover:border-border-strong"
+                  >
+                    <Icon name={tokenCopied ? "check" : "copy"} size={13} />
+                    {tokenCopied ? "Copied" : "Copy"}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="settings-capture-regenerate"
+                    onClick={() => void regenerateToken()}
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1.5 font-medium text-sm text-text-3 hover:border-border-strong"
+                  >
+                    <Icon name="review" size={13} />
+                    Regenerate
+                  </button>
+                </div>
+              </SettingRow>
+
+              {pairing.extensionOriginHint ? (
+                <SettingRow label="Paired with" hint="The extension that completed pairing.">
+                  <span
+                    data-testid="settings-capture-origin"
+                    className="font-mono text-text-3 text-xs"
+                  >
+                    {pairing.extensionOriginHint}
+                  </span>
+                </SettingRow>
+              ) : null}
+            </>
+          ) : null}
+
+          {pairingError ? (
+            <SettingRow label="Capture error" hint="See the error below.">
+              <span data-testid="settings-capture-error" className="text-danger text-sm">
+                {pairingError}
+              </span>
+            </SettingRow>
+          ) : null}
+        </div>
+      </section>
 
       {error ? (
         <p data-testid="settings-error" className="mt-2 text-danger text-sm">
