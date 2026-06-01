@@ -49,6 +49,16 @@ const SEARCHABLE_TYPES = new Set<ElementType>(["source", "extract", "card"]);
 const DEFAULT_LIMIT = 50;
 
 /**
+ * Safety cap for the un-narrowed concept-count scan ({@link
+ * SearchRepository.matchedIdsForConceptCounts}). The drill-down chip counts want
+ * the FULL keyword+type+tag match set (pre-display-cap), but a pathological query
+ * must still not pull an unbounded list into memory; this bound is far above any
+ * realistic single-keyword result set, so counts stay exact in practice while the
+ * scan can never run away.
+ */
+const MAX_COUNT_SCAN = 10_000;
+
+/**
  * A ranked search hit: enough for the library `result` row + selection detail.
  * `score` is the (lower-is-better) `bm25` rank, exposed so callers can sort/merge;
  * `snippet` is a short matched excerpt for the row preview.
@@ -249,6 +259,31 @@ export class SearchRepository {
       if (hits.length >= limit) break;
     }
     return hits;
+  }
+
+  /**
+   * The DISTINCT live element ids matching a query under the keyword + type + tag
+   * filters but with NO concept narrowing and NO result cap — the universe the
+   * library `/search` concept chips count over (DRILL-DOWN semantics: the concept
+   * dimension's own predicate is dropped so a chip count equals the rows you'd get
+   * if that concept were selected alongside the SAME keyword/type/tag). It reuses
+   * the SAME ranked {@link search} (so the matched set is identical to what the
+   * results list draws from) with the concept filter omitted and the cap lifted to
+   * the safety {@link MAX_COUNT_SCAN}, then returns just the ids. Excludes
+   * soft-deleted (the FTS join already does). The CALLER folds these through the
+   * canonical `concept_membership` map to produce per-concept counts — keeping the
+   * single-pass, no-N+1 rule (no `elementsForConcept` per concept).
+   */
+  matchedIdsForConceptCounts(
+    query: string,
+    options: { readonly type?: ElementType; readonly tag?: string } = {},
+  ): ElementId[] {
+    const hits = this.search(query, {
+      ...(options.type ? { type: options.type } : {}),
+      ...(options.tag ? { tag: options.tag } : {}),
+      limit: MAX_COUNT_SCAN,
+    });
+    return hits.map((h) => h.id);
   }
 
   /**

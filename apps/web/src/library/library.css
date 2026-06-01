@@ -83,7 +83,7 @@
 .lib-seg__btn--on {
   background: var(--surface);
   color: var(--text);
-  box-shadow: var(--shadow-sm, 0 1px 2px rgb(0 0 0 / 0.06));
+  box-shadow: var(--shadow-sm);
 }
 
 .lib-body {
@@ -225,6 +225,11 @@
   font-size: var(--t-base);
   font-weight: 500;
   color: var(--text);
+  /* Match the kit's `result__title truncate`: a long title stays one calm row
+     (ellipsis) instead of wrapping. The grid cell carries `min-width: 0`. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .result__title em {
   font-style: normal;
@@ -265,6 +270,11 @@
   font-weight: 600;
   font-size: var(--t-sm);
   color: var(--text);
+  /* Match the kit's truncated detail title: a long title stays one line inside
+     the fixed-width detail panel (its head wrapper carries `min-width: 0`). */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .lib-detail__type {
   font-size: var(--t-2xs);
@@ -357,7 +367,7 @@
   cursor: pointer;
 }
 .gnode circle {
-  transition: stroke-width var(--fast, 0.12s) ease;
+  transition: stroke-width var(--fast) ease;
 }
 .gnode:hover circle {
   stroke-width: 2.5;
@@ -367,6 +377,18 @@
   font-size: 11px;
   fill: var(--text);
   pointer-events: none;
+}
+/* The member-count sub-text reads as a muted caption (kit JSX intent). */
+.gnode__count {
+  fill: var(--text-3);
+}
+/* A SELECTED node's circle is filled with --accent, so its label and sub-text must
+   flip to --text-on-accent for contrast. These class-scoped rules outweigh the
+   `.gnode text` / `.gnode__count` rules above (and override the SVG fill attribute,
+   which a stylesheet fill always wins against). */
+.gnode--on .gnode__label,
+.gnode--on .gnode__count {
+  fill: var(--text-on-accent);
 }
 .lib-map__side {
   width: 300px;

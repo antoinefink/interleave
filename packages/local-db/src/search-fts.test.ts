@@ -277,6 +277,80 @@ describe("SearchRepository (FTS5, T042)", () => {
       return { concept, src };
     }
 
+    it("matchedIdsForConceptCounts returns the keyword+type match set WITHOUT concept narrowing", () => {
+      // Two matching sources; only one is a member of the concept. The count-scan
+      // method must return BOTH (it drops the concept predicate — drill-down), so a
+      // chip count taken over its result can show the concept's keyword-matched share.
+      const { concept, src } = seedSourceInConcept("Attention");
+      const { element: other } = sources.create({ title: "Neuron map", priority: 0.5 });
+      documents.upsert({
+        elementId: other.id,
+        prosemirrorJson: { type: "doc", content: [] },
+        plainText: "another neuron",
+      });
+
+      const ids = search.matchedIdsForConceptCounts("neuron");
+      expect(ids).toEqual(expect.arrayContaining([src.id, other.id]));
+      // And the concept-narrowed search is a SUBSET of the count scan.
+      const filtered = search.search("neuron", { conceptId: concept.id }).map((h) => h.id);
+      expect(ids).toEqual(expect.arrayContaining(filtered));
+    });
+
+    it("matchedIdsForConceptCounts honours the type filter (drops only the concept predicate)", () => {
+      const { src } = seedSourceInConcept("Attention");
+      const card = review.createCard({
+        sourceId: src.id,
+        title: "card",
+        kind: "qa",
+        prompt: "neuron question?",
+        answer: "answer",
+        priority: 0.5,
+      });
+      // type=source excludes the matching card from the count scan.
+      const sourceIds = search.matchedIdsForConceptCounts("neuron", { type: "source" });
+      expect(sourceIds).toContain(src.id);
+      expect(sourceIds).not.toContain(card.element.id);
+    });
+
+    it("matchedIdsForConceptCounts excludes soft-deleted elements", () => {
+      const { src } = seedSourceInConcept("Attention");
+      expect(search.matchedIdsForConceptCounts("neuron")).toContain(src.id);
+      elementsRepo.softDelete(src.id);
+      expect(search.matchedIdsForConceptCounts("neuron")).not.toContain(src.id);
+    });
+
+    it("a count fold over matchedIds dedups duplicate edges and drops dead concept endpoints", () => {
+      // Mirror the db-service fold: matchedIds × liveMembershipMap → per-concept count.
+      const concept = conceptsRepo.createConcept({ name: "Attention" });
+      const { element: src } = sources.create({ title: "Neuron firing", priority: 0.5 });
+      documents.upsert({
+        elementId: src.id,
+        prosemirrorJson: { type: "doc", content: [] },
+        plainText: "the neuron body",
+      });
+      // DUPLICATE raw edges (not assignConcept) — the Set in liveMembershipMap dedups.
+      for (let i = 0; i < 3; i++) {
+        elementsRepo.addRelation({
+          fromElementId: src.id,
+          toElementId: concept.id,
+          relationType: "concept_membership",
+        });
+      }
+      const fold = () => {
+        const membership = conceptsRepo.liveMembershipMap();
+        const byConcept: Record<string, number> = {};
+        for (const id of search.matchedIdsForConceptCounts("neuron")) {
+          for (const c of membership.get(id) ?? []) byConcept[c] = (byConcept[c] ?? 0) + 1;
+        }
+        return byConcept;
+      };
+      // Despite 3 edges, the member counts once.
+      expect(fold()[concept.id]).toBe(1);
+      // After soft-deleting the concept, it contributes no count (dead endpoint).
+      elementsRepo.softDelete(concept.id);
+      expect(fold()[concept.id] ?? 0).toBe(0);
+    });
+
     it("restricts a search to members of a live concept", () => {
       const { concept, src } = seedSourceInConcept("Attention");
       // A second matching source NOT in the concept must be excluded by the filter.

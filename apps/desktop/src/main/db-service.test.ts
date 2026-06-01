@@ -1821,6 +1821,41 @@ describe("DbService — review session (T037)", () => {
     svc.close();
   });
 
+  it("search.query returns DRILL-DOWN per-concept counts that match the keyword/type-narrowed list", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    // The seeded "Intelligence" concept has the source + extract as members (the
+    // matching card is NOT a member — memberCount is 2). The drill-down chip count
+    // must equal the rows you'd get if that concept were selected alongside the SAME
+    // keyword/type — NOT the global memberCount.
+    const intelligence = svc.listConcepts().concepts.find((c) => c.name === "Intelligence");
+    expect(intelligence).toBeDefined();
+    const conceptId = intelligence?.id ?? "";
+
+    // No type filter: 2 of the keyword matches are members of Intelligence.
+    const all = svc.search({ q: "intelligence" });
+    expect(all.counts.byConcept[conceptId]).toBe(2);
+    // And selecting that concept yields exactly those 2 rows (the HARD INVARIANT).
+    expect(svc.search({ q: "intelligence", conceptId }).results.length).toBe(2);
+
+    // TYPE=extract: the chip drops to 1 (only the extract member), matching the list.
+    const onlyExtracts = svc.search({ q: "intelligence", type: "extract" });
+    expect(onlyExtracts.counts.byConcept[conceptId]).toBe(1);
+    expect(svc.search({ q: "intelligence", type: "extract", conceptId }).results.length).toBe(1);
+
+    // TYPE=card: the chip is 0 (the card is not a member) — no surprise-empty list.
+    const onlyCards = svc.search({ q: "intelligence", type: "card" });
+    expect(onlyCards.counts.byConcept[conceptId] ?? 0).toBe(0);
+    expect(svc.search({ q: "intelligence", type: "card", conceptId }).results.length).toBe(0);
+
+    // An empty query yields no counts (search returns [] for an empty keyword).
+    expect(svc.search({ q: "" }).counts.byConcept).toEqual({});
+
+    svc.close();
+  });
+
   it("search.query validates the payload, filters by tag, and returns [] for an empty query (T042)", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });

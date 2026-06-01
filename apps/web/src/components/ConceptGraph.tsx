@@ -114,22 +114,21 @@ export function ConceptGraph({
                 stroke="var(--accent)"
                 strokeWidth={selected ? 2.5 : 1.5}
               />
+              {/* Fill is set in CSS (`.gnode text` and the `.gnode--on` overrides),
+                  NOT via the SVG `fill` presentation attribute: a stylesheet `fill`
+                  always wins over a presentation attribute (lowest cascade priority),
+                  so an inline `fill` would be silently overridden. The class hooks let
+                  the selected node use `--text-on-accent` on its accent-filled circle. */}
               <text
+                className="gnode__label"
                 x={p.x}
                 y={p.y - 2}
                 textAnchor="middle"
                 fontWeight="600"
-                fill={selected ? "var(--text-on-accent)" : "var(--text)"}
               >
                 {c.name}
               </text>
-              <text
-                x={p.x}
-                y={p.y + 12}
-                textAnchor="middle"
-                fontSize="9"
-                fill={selected ? "var(--text-on-accent)" : "var(--text-3)"}
-              >
+              <text className="gnode__count" x={p.x} y={p.y + 12} textAnchor="middle" fontSize="9">
                 {c.memberCount} member{c.memberCount === 1 ? "" : "s"}
               </text>
             </g>

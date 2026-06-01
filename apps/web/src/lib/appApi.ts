@@ -1265,8 +1265,21 @@ export interface SearchQueryRequest {
   readonly limit?: number;
 }
 
+/**
+ * DRILL-DOWN faceted counts for the `/search` filterbar concept chips. `byConcept`
+ * is keyed by concept element id: the count of result rows you'd get if that concept
+ * were selected alongside the SAME keyword + type (the concept's own predicate is
+ * dropped), so the chip number matches the narrowed list. The chip MUST use this,
+ * NOT the global `ConceptNode.memberCount`.
+ */
+export interface SearchCounts {
+  readonly byConcept: Readonly<Record<string, number>>;
+}
+
 export interface SearchQueryResult {
   readonly results: readonly SearchResult[];
+  /** Drill-down per-concept counts for the filterbar concept chips. */
+  readonly counts: SearchCounts;
 }
 
 // ---------------------------------------------------------------------------

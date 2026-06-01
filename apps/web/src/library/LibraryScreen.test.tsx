@@ -110,7 +110,13 @@ import { LibraryScreen } from "./LibraryScreen";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  h.searchQuery.mockResolvedValue({ results: [h.sourceHit, h.cardHit] });
+  // The backend now returns DRILL-DOWN per-concept counts alongside the rows; the
+  // chip renders these (NOT the global ConceptNode.memberCount). Default world: 2
+  // matched members of concept-1 (a source + a card).
+  h.searchQuery.mockResolvedValue({
+    results: [h.sourceHit, h.cardHit],
+    counts: { byConcept: { "concept-1": 2 } },
+  });
   h.listConcepts.mockResolvedValue({ concepts: [h.concept] });
 });
 
@@ -151,7 +157,10 @@ describe("LibraryScreen", () => {
     await waitFor(() => expect(h.searchQuery).toHaveBeenCalled());
 
     h.searchQuery.mockClear();
-    h.searchQuery.mockResolvedValue({ results: [h.cardHit] });
+    h.searchQuery.mockResolvedValue({
+      results: [h.cardHit],
+      counts: { byConcept: { "concept-1": 1 } },
+    });
     fireEvent.click(screen.getByTestId("library-filter-type-card"));
 
     await waitFor(() =>
@@ -178,8 +187,31 @@ describe("LibraryScreen", () => {
     );
   });
 
+  it("renders the DRILL-DOWN byConcept count on the chip, NOT the global memberCount", async () => {
+    // The concept's GLOBAL memberCount is 2 (the Map volume), but under the active
+    // keyword the drill-down count is 1 — the chip must show the drill-down value so
+    // it matches the narrowed result list (the reported chip/list mismatch fix).
+    h.searchQuery.mockResolvedValue({
+      results: [h.cardHit],
+      counts: { byConcept: { "concept-1": 1 } },
+    });
+    render(<LibraryScreen />);
+    await waitFor(() => expect(h.listConcepts).toHaveBeenCalled());
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+    await waitFor(() => expect(h.searchQuery).toHaveBeenCalled());
+
+    const chip = await screen.findByTestId("library-filter-concept-concept-1");
+    await waitFor(() =>
+      expect(within(chip).getByText("1", { selector: ".filter-opt__count" })).toBeTruthy(),
+    );
+    // The global memberCount (2) must NOT be what the chip shows.
+    expect(within(chip).queryByText("2", { selector: ".filter-opt__count" })).toBeNull();
+  });
+
   it("shows the empty state when there are no matches", async () => {
-    h.searchQuery.mockResolvedValue({ results: [] });
+    h.searchQuery.mockResolvedValue({ results: [], counts: { byConcept: {} } });
     render(<LibraryScreen />);
     fireEvent.change(screen.getByTestId("library-search-input"), {
       target: { value: "zzzznope" },

@@ -154,6 +154,12 @@ export function BrowseScreen() {
 
   const selected = useMemo(() => visible.find((r) => r.id === selId) ?? null, [visible, selId]);
 
+  // Whether an inline title filter is actively narrowing the fetched payload. Both
+  // the top count summary and the empty-state copy switch to a title-aware mode
+  // when this is true, so the header, the sections, the list, and the empty
+  // remediation copy all agree about WHY the visible set is what it is.
+  const titleActive = titleFilter.trim().length > 0;
+
   // Keep a valid selection as the list changes.
   useEffect(() => {
     if (selId && !visible.some((r) => r.id === selId)) setSelId(null);
@@ -209,7 +215,19 @@ export function BrowseScreen() {
           />
         </div>
         <span className="lib-count" data-testid="library-count">
-          {counts.all} element{counts.all === 1 ? "" : "s"}
+          {titleActive ? (
+            // While a title filter is active the rendered sections are narrowed
+            // client-side to `visible`; show "{visible} of {all}" so the header
+            // agrees with the section counts and the list (counts.all stays the
+            // pre-title-narrow facet total, per the backend SPEC).
+            <>
+              {visible.length} of {counts.all} element{counts.all === 1 ? "" : "s"}
+            </>
+          ) : (
+            <>
+              {counts.all} element{counts.all === 1 ? "" : "s"}
+            </>
+          )}
         </span>
         <div className="lib-grow" />
         <div className="lib-seg" role="tablist">
@@ -347,6 +365,20 @@ export function BrowseScreen() {
                   <p className="lib-loading" data-testid="library-loading">
                     Loading…
                   </p>
+                ) : visible.length === 0 && titleActive && items.length > 0 ? (
+                  // The facets matched rows but the inline title filter excluded them
+                  // all — blame the title (mirroring /search's "No matches for …"),
+                  // NOT the facets the user may not even have set.
+                  <div className="lib-empty" data-testid="library-empty-title">
+                    <div className="lib-empty__icon">
+                      <Icon name="filter" size={26} />
+                    </div>
+                    <h2 className="lib-empty__title">No matches for “{titleFilter.trim()}”</h2>
+                    <p className="lib-empty__body">
+                      No titles match your filter. Clear the title filter to see all {counts.all}{" "}
+                      matching element{counts.all === 1 ? "" : "s"}.
+                    </p>
+                  </div>
                 ) : visible.length === 0 ? (
                   <div className="lib-empty" data-testid="library-empty">
                     <div className="lib-empty__icon">

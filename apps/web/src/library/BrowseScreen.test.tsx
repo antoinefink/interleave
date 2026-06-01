@@ -228,6 +228,64 @@ describe("BrowseScreen", () => {
     expect(h.libraryBrowse).not.toHaveBeenCalled();
   });
 
+  it("top count agrees with the visible sections while a title filter is active", async () => {
+    render(<BrowseScreen />);
+    await screen.findByTestId("library-group-topic");
+    // Before any title filter: the calm total reads the backend facet total.
+    expect(screen.getByTestId("library-count").textContent).toContain("3 elements");
+
+    fireEvent.change(screen.getByTestId("library-title-filter"), {
+      target: { value: "machine" },
+    });
+    // Only the topic matches -> exactly one section, one row visible. The top count
+    // must agree ("1 of 3"), not keep reporting the pre-title facet total ("3").
+    await waitFor(() => expect(screen.queryByTestId("library-group-source")).toBeNull());
+    expect(screen.getByTestId("library-group-topic")).toBeTruthy();
+    const count = screen.getByTestId("library-count").textContent ?? "";
+    expect(count).toContain("1 of 3 elements");
+  });
+
+  it("title-driven empty state distinguishes itself from the facet-driven one", async () => {
+    render(<BrowseScreen />);
+    await screen.findByTestId("library-group-topic");
+
+    // Type a title that matches NOTHING in the fetched payload. Facets matched 3
+    // rows, so the title filter — not the facets — is what empties the list.
+    fireEvent.change(screen.getByTestId("library-title-filter"), {
+      target: { value: "zzzz-no-such-title" },
+    });
+    // The title-aware empty state appears...
+    const empty = await screen.findByTestId("library-empty-title");
+    expect(empty.textContent).toContain("No matches for");
+    expect(empty.textContent).toContain("zzzz-no-such-title");
+    // ...and the facet-remediation copy is NOT shown (it would wrongly tell the
+    // user to clear filters they never set).
+    expect(screen.queryByTestId("library-empty")).toBeNull();
+  });
+
+  it("shows the FACET empty state (not the title one) when facets exclude everything even with a title typed", async () => {
+    // Facets return zero items; a title filter is also typed. The cause is the
+    // facets (items.length === 0), so the facet-remediation copy must win.
+    h.libraryBrowse.mockResolvedValue({
+      items: [],
+      counts: {
+        all: 0,
+        byType: { source: 0, extract: 0, card: 0, topic: 0, synthesis_note: 0, task: 0 },
+        byConcept: { "concept-1": 0 },
+        byPriority: { A: 0, B: 0, C: 0, D: 0 },
+        byStatus: { active: 0, scheduled: 0, inbox: 0, pending: 0, done: 0, suspended: 0 },
+      },
+    });
+    render(<BrowseScreen />);
+    await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalled());
+    fireEvent.change(screen.getByTestId("library-title-filter"), {
+      target: { value: "anything" },
+    });
+    // Facet empty state wins (items.length === 0), not the title-aware one.
+    expect(await screen.findByTestId("library-empty")).toBeTruthy();
+    expect(screen.queryByTestId("library-empty-title")).toBeNull();
+  });
+
   it("selecting a row shows the detail panel, the RefBlock, and the scheduler chip", async () => {
     render(<BrowseScreen />);
     const cardGroup = await screen.findByTestId("library-group-card");
@@ -282,6 +340,80 @@ describe("BrowseScreen", () => {
     fireEvent.click(screen.getByTestId("library-tab-map"));
     expect(await screen.findByTestId("concept-graph")).toBeTruthy();
     expect(screen.getByTestId("library-map")).toBeTruthy();
+  });
+
+  it("ignores a stale (out-of-order) browse response when facets switch rapidly", async () => {
+    // Simulate a slow FIRST response (the initial no-facet browse) that only
+    // resolves AFTER a faster SECOND response (a type facet). The renderer's
+    // cancelled-flag closure must keep the LATEST result and never let the stale
+    // first response overwrite it — and must not get stuck on "Loading…".
+    const cardOnly = {
+      items: [h.cardRow],
+      counts: {
+        all: 1,
+        byType: { source: 0, extract: 0, card: 1, topic: 0, synthesis_note: 0, task: 0 },
+        byConcept: { "concept-1": 1 },
+        byPriority: { A: 1, B: 0, C: 0, D: 0 },
+        byStatus: { active: 0, scheduled: 1, inbox: 0, pending: 0, done: 0, suspended: 0 },
+      },
+    };
+    const resolvers: ((v: unknown) => void)[] = [];
+    h.libraryBrowse
+      // First (no-facet) call: stays pending until we resolve it by hand.
+      .mockImplementationOnce(
+        () =>
+          new Promise((res) => {
+            resolvers.push(res);
+          }),
+      )
+      // Second (type=card) call: resolves immediately with the card-only payload.
+      .mockResolvedValueOnce(cardOnly);
+
+    render(<BrowseScreen />);
+    await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalledTimes(1));
+
+    // Switch the type facet before the first response lands -> a second browse.
+    fireEvent.click(screen.getByTestId("library-filter-type-card"));
+    await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalledTimes(2));
+
+    // The newer (card-only) response is rendered.
+    await screen.findByTestId("library-group-card");
+    expect(screen.getByTestId("library-count").textContent).toContain("1 element");
+    expect(screen.queryByTestId("library-group-topic")).toBeNull();
+
+    // Now the STALE first response finally resolves — it must NOT overwrite the list.
+    resolvers[0]?.({ items: [h.sourceRow, h.topicRow, h.cardRow], counts: h.counts });
+    await waitFor(() => {
+      // Still the card-only view (no topic group, count still 1) — no stale overwrite.
+      expect(screen.queryByTestId("library-group-topic")).toBeNull();
+    });
+    expect(screen.getByTestId("library-count").textContent).toContain("1 element");
+    // And never stuck on "Loading…".
+    expect(screen.queryByTestId("library-loading")).toBeNull();
+  });
+
+  it("resets the row selection when the active facets exclude the selected row", async () => {
+    // Select a row, then change a facet so the new payload no longer contains it.
+    // The detail panel must close (selId is reset) rather than dangling on a gone row.
+    render(<BrowseScreen />);
+    const cardGroup = await screen.findByTestId("library-group-card");
+    fireEvent.click(within(cardGroup).getByTestId("library-result"));
+    await screen.findByTestId("library-detail");
+
+    // The next browse returns only the source row (the selected card is gone).
+    h.libraryBrowse.mockResolvedValueOnce({
+      items: [h.sourceRow],
+      counts: {
+        all: 1,
+        byType: { source: 1, extract: 0, card: 0, topic: 0, synthesis_note: 0, task: 0 },
+        byConcept: { "concept-1": 1 },
+        byPriority: { A: 1, B: 0, C: 0, D: 0 },
+        byStatus: { active: 1, scheduled: 0, inbox: 0, pending: 0, done: 0, suspended: 0 },
+      },
+    });
+    fireEvent.click(screen.getByTestId("library-filter-type-source"));
+    // The detail panel closes because the previously-selected card is no longer present.
+    await waitFor(() => expect(screen.queryByTestId("library-detail")).toBeNull());
   });
 
   it("shows the empty state when facets exclude everything", async () => {

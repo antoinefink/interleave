@@ -100,4 +100,31 @@ describe("ConceptGraph", () => {
     rerender(<ConceptGraph concepts={CONCEPTS} onPick={vi.fn()} pickVerb="Explore" />);
     expect(screen.getByLabelText("Explore Intelligence")).toBeTruthy();
   });
+
+  it("scopes node text with stable classes and gates the on-accent fill via .gnode--on", () => {
+    // The selected-node text colour is set in CSS (a stylesheet `fill` always wins over
+    // an SVG presentation attribute), so the fix hinges on these class hooks rather than
+    // inline `fill` attributes. JSDOM can't resolve the SVG-attr-vs-CSS cascade, so we
+    // pin the structural contract the `.gnode--on .gnode__label/.gnode__count` rules need.
+    const { container } = render(
+      <ConceptGraph concepts={CONCEPTS} onPick={vi.fn()} selectedId="c-child" />,
+    );
+    const labels = container.querySelectorAll("text.gnode__label");
+    const counts = container.querySelectorAll("text.gnode__count");
+    expect(labels).toHaveLength(2);
+    expect(counts).toHaveLength(2);
+    // The text must NOT carry an inline `fill` (it would be dead anyway, overridden by
+    // CSS) — fill is owned by the stylesheet so the selected state can flip it.
+    for (const t of [...labels, ...counts]) {
+      expect(t.getAttribute("fill")).toBeNull();
+    }
+    // Exactly the selected node's <g> carries `gnode--on`, the CSS hook that flips its
+    // label + count to --text-on-accent over the accent-filled circle.
+    const on = container.querySelectorAll("g.gnode--on");
+    expect(on).toHaveLength(1);
+    expect(on[0]?.getAttribute("data-concept-id")).toBe("c-child");
+    // Its inner label/count are the ones the on-accent rule targets.
+    expect(on[0]?.querySelector("text.gnode__label")?.textContent).toBe("Intelligence");
+    expect(on[0]?.querySelector("text.gnode__count")?.textContent).toContain("member");
+  });
 });

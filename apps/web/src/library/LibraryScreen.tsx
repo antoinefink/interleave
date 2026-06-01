@@ -90,6 +90,10 @@ export function LibraryScreen() {
   const [priorityFilter, setPriorityFilter] = useState<PriorityLetter | null>(null);
 
   const [results, setResults] = useState<readonly SearchResult[]>([]);
+  // DRILL-DOWN per-concept counts (keyed by concept id), scoped to the active
+  // keyword + type — so the concept chip number matches the narrowed result list,
+  // NOT the global ConceptNode.memberCount.
+  const [conceptCounts, setConceptCounts] = useState<Readonly<Record<string, number>>>({});
   const [concepts, setConcepts] = useState<readonly ConceptNode[]>([]);
   const [selId, setSelId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -128,6 +132,7 @@ export function LibraryScreen() {
       // `ConceptRepository.elementsForConcept` / the queue concept filter — out of
       // scope for the keyword-search milestone, tracked as a follow-up.
       setResults([]);
+      setConceptCounts({});
       setLoading(false);
       return;
     }
@@ -142,6 +147,9 @@ export function LibraryScreen() {
       .then((res) => {
         if (cancelled) return;
         setResults(res.results);
+        // Guarded by the SAME cancelled flag as setResults so an out-of-order
+        // response can never leave the chip counts pointing at a different query.
+        setConceptCounts(res.counts.byConcept);
         setError(null);
       })
       .catch((e) => {
@@ -178,7 +186,11 @@ export function LibraryScreen() {
     [navigate],
   );
 
-  const conceptCount = useMemo(() => {
+  // The Map tab's "members" volume — the GLOBAL member count across all element
+  // types (NOT filter-scoped). This is intentionally distinct from the filterbar
+  // concept chip's drill-down `conceptCounts` (keyword/type-scoped): the Map shows
+  // a concept's total reach, while the chip must match the narrowed result list.
+  const conceptVolume = useMemo(() => {
     const m = new Map<string, number>();
     for (const c of concepts) m.set(c.id, c.memberCount);
     return m;
@@ -272,7 +284,11 @@ export function LibraryScreen() {
                   onClick={() => setConceptFilter((cur) => (cur === c.id ? null : c.id))}
                 >
                   <ConceptTag name={c.name} />
-                  <span className="filter-opt__count">{c.memberCount}</span>
+                  {/* DRILL-DOWN count: members of this concept that ALSO match the
+                      active keyword + type (NOT the global memberCount) — so the chip
+                      number always matches the narrowed result list. Empty until a
+                      keyword is entered (search returns [] for an empty query). */}
+                  <span className="filter-opt__count">{conceptCounts[c.id] ?? 0}</span>
                 </button>
               ))}
             </div>
@@ -497,7 +513,7 @@ export function LibraryScreen() {
                   </div>
                   <div className="lib-map__concept-counts">
                     <span>
-                      <b>{conceptCount.get(c.id) ?? 0}</b> members
+                      <b>{conceptVolume.get(c.id) ?? 0}</b> members
                     </span>
                     <span>
                       <b>{c.childCount}</b> children

@@ -2025,8 +2025,24 @@ export const SearchQueryRequestSchema = z.object({
 });
 export type SearchQueryRequest = z.infer<typeof SearchQueryRequestSchema>;
 
+/**
+ * DRILL-DOWN faceted counts for the `/search` filterbar concept chips. Mirrors the
+ * Library browse counts' concept dimension: `byConcept[c]` is the number of result
+ * rows you'd get if concept `c` were selected together with the SAME keyword + type
+ * (+ tag) — the concept dimension's own predicate is DROPPED — so the chip number
+ * always matches the keyword/type-narrowed list. Keyed by concept element id. (The
+ * chip MUST use this, NOT the global `ConceptNode.memberCount`, which never matches
+ * the narrowed list — the same mismatch class as the reported Library bug.)
+ */
+export interface SearchCounts {
+  /** Per concept (keyed by concept element id), ignoring the active concept filter. */
+  readonly byConcept: Readonly<Record<string, number>>;
+}
+
 export interface SearchQueryResult {
   readonly results: readonly SearchResult[];
+  /** Drill-down per-concept counts for the filterbar concept chips. */
+  readonly counts: SearchCounts;
 }
 
 // ---------------------------------------------------------------------------
