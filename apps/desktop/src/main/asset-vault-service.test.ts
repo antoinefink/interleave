@@ -216,6 +216,41 @@ describe("AssetVaultService orphan GC (T059)", () => {
     svc.close();
   });
 
+  it("never treats an in-flight `<dest>.tmp` scratch file as an orphan / extra file, and GC never deletes it", async () => {
+    const svc = openDb();
+    const owner = makeSource(svc, "keep");
+    const vault = svc.assetVaultService;
+
+    const live = await vault.importAsset({
+      owningElementId: owner,
+      kind: "image",
+      source: Readable.from(Buffer.from("live-bytes")),
+      mime: "image/png",
+    });
+
+    // Simulate an import streaming bytes: writeStreamedToVault writes `<dest>.tmp`
+    // before the atomic rename. A GC/verify sweep that races it must NOT see it.
+    fs.mkdirSync(path.join(assetsDir, "media", "inflight"), { recursive: true });
+    const tmpRel = "media/inflight/original.bin.tmp";
+    const tmpAbs = path.join(assetsDir, ...tmpRel.split("/"));
+    fs.writeFileSync(tmpAbs, "half-written-bytes");
+
+    // Neither scan surfaces the scratch file.
+    const { orphans } = await vault.findOrphans();
+    expect(orphans.map((o) => o.relativePath)).not.toContain(tmpRel);
+    const report = await vault.verifyIntegrity();
+    expect(report.extraFiles).not.toContain(tmpRel);
+
+    // An unguarded "remove every orphan" sweep must leave the in-flight scratch
+    // (and the live asset) untouched.
+    await vault.collectOrphans({ confirm: true });
+    expect(fs.existsSync(tmpAbs)).toBe(true);
+    expect(
+      fs.existsSync(path.join(assetsDir, ...live.location.vaultPath.relativePath.split("/"))),
+    ).toBe(true);
+    svc.close();
+  });
+
   it("collectOrphans removes ONLY confirmed orphan files and survives a DB re-open", async () => {
     let svc = openDb();
     const liveOwner = makeSource(svc, "keep");

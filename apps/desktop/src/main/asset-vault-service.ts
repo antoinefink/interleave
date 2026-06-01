@@ -239,7 +239,7 @@ export class AssetVaultService {
     // Extra files = on-disk vault files whose canonical relative path is not in the
     // live reference set (a never-rowed stray, or the leftover bytes of a purge).
     const onDisk = listFilesRelative(this.assetsDir);
-    const extraFiles = onDisk.filter((rel) => !referenced.has(rel));
+    const extraFiles = onDisk.filter((rel) => !referenced.has(rel) && !isVaultScratch(rel));
 
     return { ok, mismatched, missing, extraFiles };
   }
@@ -260,6 +260,8 @@ export class AssetVaultService {
     let totalBytes = 0;
     for (const rel of onDisk) {
       if (referenced.has(rel)) continue;
+      // Skip in-flight atomic-write scratch — never an orphan (see isVaultScratch).
+      if (isVaultScratch(rel)) continue;
       let size = 0;
       try {
         size = (await fs.stat(this.resolve(rel))).size;
@@ -340,4 +342,15 @@ export class AssetVaultService {
 /** Normalize a relative path to the canonical POSIX, leading-slash-free form. */
 function normalizeRelative(rel: string): string {
   return rel.replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+/**
+ * A `<dest>.tmp` is the in-flight scratch file `writeStreamedToVault` writes before
+ * the atomic `rename` into place (see `vault-io.ts`). It has no `assets` row yet, so
+ * an orphan/integrity walk would otherwise flag it as an `extraFile`/orphan and — if a
+ * GC sweep raced an in-flight import — delete the bytes mid-write. `.tmp` is reserved
+ * vault scratch and is NEVER a real asset, so both scans exclude it.
+ */
+function isVaultScratch(rel: string): boolean {
+  return rel.endsWith(".tmp");
 }
