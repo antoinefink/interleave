@@ -31,7 +31,20 @@ there is no standing `content` script in T062 — T063 adds one if it needs to.)
 
 Regenerate the icons with `node apps/extension/scripts/make-icons.mjs` (they are
 committed PNGs derived from a layered-stack glyph — a Chrome manifest icon cannot
-be an SVG).
+be an SVG). Production bundles are **minified** (the worker bundles zod via
+`@interleave/capture-contract`); `--watch` builds stay unminified for debugging.
+
+### Permissions (manifest)
+
+The extension requests the minimum surface it needs:
+
+- `activeTab` + `scripting` — inject the page-scrape / selection-read **on demand
+  into the active tab** when the user invokes a save (no standing content script).
+- `contextMenus` — the right-click "Save … to Interleave" entries.
+- `sidePanel` — the T063 side-panel capture UI.
+- `storage` — persist the paired loopback port + recent-capture list.
+- `notifications` — show the capture success / failure / "app not running" toast.
+- `host_permissions: http://127.0.0.1/*` — POST captures to the loopback server only.
 
 ## Manual load-unpacked verification checklist
 

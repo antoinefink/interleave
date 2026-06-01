@@ -33,6 +33,10 @@ const common = {
   format: "esm",
   target: "chrome114",
   sourcemap: false,
+  // Minify the shipped bundles (the service worker bundles zod via
+  // `@interleave/capture-contract` — unminified it is ~550kb; minified it is a
+  // fraction of that). Watch/dev builds stay readable for debugging.
+  minify: !watch,
   logLevel: "info",
 };
 
