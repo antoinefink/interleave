@@ -1262,6 +1262,12 @@ export interface SearchQueryRequest {
   readonly type?: SearchableType;
   readonly conceptId?: string;
   readonly tag?: string;
+  /**
+   * Restrict to elements whose priority maps to this A/B/C/D band (the priority
+   * facet). Applied MAIN-side so the drill-down concept-chip `byConcept` counts
+   * respect it too — the chip number then matches the priority-narrowed list.
+   */
+  readonly priorityLabel?: PriorityLabel;
   readonly limit?: number;
 }
 

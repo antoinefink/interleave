@@ -412,6 +412,118 @@ describe("SearchRepository (FTS5, T042)", () => {
     });
   });
 
+  describe("priority facet (drill-down band filter + count-vs-list invariant)", () => {
+    /** A source matching "neuron" at a given numeric priority. */
+    function seedSourceAtPriority(priority: number, name: string) {
+      const { element: src } = sources.create({ title: `Neuron ${name}`, priority });
+      documents.upsert({
+        elementId: src.id,
+        prosemirrorJson: { type: "doc", content: [] },
+        plainText: "the neuron body",
+      });
+      return src;
+    }
+
+    it("restricts a search to elements in the chosen A/B/C/D band (canonical boundaries)", () => {
+      // One per band, at the representative band midpoint.
+      const a = seedSourceAtPriority(0.875, "alpha"); // A
+      const b = seedSourceAtPriority(0.625, "beta"); // B
+      const c = seedSourceAtPriority(0.375, "gamma"); // C
+      const d = seedSourceAtPriority(0.125, "delta"); // D
+
+      expect(search.search("neuron", { priorityLabel: "A" }).map((h) => h.id)).toEqual([a.id]);
+      expect(search.search("neuron", { priorityLabel: "B" }).map((h) => h.id)).toEqual([b.id]);
+      expect(search.search("neuron", { priorityLabel: "C" }).map((h) => h.id)).toEqual([c.id]);
+      expect(search.search("neuron", { priorityLabel: "D" }).map((h) => h.id)).toEqual([d.id]);
+    });
+
+    it("buckets on the SAME half-open band edges as priorityToLabel (0.75/0.5/0.25)", () => {
+      // Exactly on a boundary is the HIGHER band (>= lower bound), matching priorityToLabel.
+      const onA = seedSourceAtPriority(0.75, "edgeA"); // >= 0.75 → A
+      const onB = seedSourceAtPriority(0.5, "edgeB"); // >= 0.5 → B
+      const onC = seedSourceAtPriority(0.25, "edgeC"); // >= 0.25 → C
+
+      expect(search.search("neuron", { priorityLabel: "A" }).map((h) => h.id)).toEqual([onA.id]);
+      expect(search.search("neuron", { priorityLabel: "B" }).map((h) => h.id)).toEqual([onB.id]);
+      expect(search.search("neuron", { priorityLabel: "C" }).map((h) => h.id)).toEqual([onC.id]);
+    });
+
+    it("buckets the [0,1] extremes like priorityToLabel (1.0 → A, 0.0 → D)", () => {
+      // The DB CHECK constrains priority to [0,1]; these are the extreme in-range
+      // values. The half-open bands map 1.0 → A (>= 0.75) and 0.0 → D (< 0.25).
+      const top = seedSourceAtPriority(1, "top"); // A
+      const bottom = seedSourceAtPriority(0, "bottom"); // D
+      expect(search.search("neuron", { priorityLabel: "A" }).map((h) => h.id)).toContain(top.id);
+      expect(search.search("neuron", { priorityLabel: "D" }).map((h) => h.id)).toContain(bottom.id);
+      expect(search.search("neuron", { priorityLabel: "A" }).map((h) => h.id)).not.toContain(
+        bottom.id,
+      );
+      expect(search.search("neuron", { priorityLabel: "D" }).map((h) => h.id)).not.toContain(
+        top.id,
+      );
+    });
+
+    it("matchedIdsForConceptCounts honours the priority facet (drops only the concept predicate)", () => {
+      // Two members of one concept at DIFFERENT priorities; the priority-scoped scan
+      // returns only the one in-band, so a concept-chip count under that priority is 1.
+      const concept = conceptsRepo.createConcept({ name: "Attention" });
+      const aMember = seedSourceAtPriority(0.875, "a-member"); // A
+      const cMember = seedSourceAtPriority(0.375, "c-member"); // C
+      conceptsRepo.assignConcept(aMember.id, concept.id);
+      conceptsRepo.assignConcept(cMember.id, concept.id);
+
+      const aScan = search.matchedIdsForConceptCounts("neuron", { priorityLabel: "A" });
+      expect(aScan).toContain(aMember.id);
+      expect(aScan).not.toContain(cMember.id);
+    });
+
+    it("INVARIANT: byConcept[c] under (keyword+type+priority) equals the list when c is added", () => {
+      // The exact /search count-vs-list gap finding #1 fixed: with a priority facet
+      // active, the concept-chip count must equal the rows you'd get if that concept
+      // were selected alongside the SAME keyword/type/priority.
+      const concept = conceptsRepo.createConcept({ name: "Attention" });
+      const aMember = seedSourceAtPriority(0.875, "a-member"); // A, in concept
+      const cMember = seedSourceAtPriority(0.375, "c-member"); // C, in concept
+      const aLoner = seedSourceAtPriority(0.875, "a-loner"); // A, NOT in concept
+      conceptsRepo.assignConcept(aMember.id, concept.id);
+      conceptsRepo.assignConcept(cMember.id, concept.id);
+
+      const foldByConcept = (priorityLabel: "A" | "B" | "C" | "D") => {
+        const membership = conceptsRepo.liveMembershipMap();
+        const byConcept: Record<string, number> = {};
+        for (const id of search.matchedIdsForConceptCounts("neuron", { priorityLabel })) {
+          for (const cc of membership.get(id) ?? []) byConcept[cc] = (byConcept[cc] ?? 0) + 1;
+        }
+        return byConcept;
+      };
+
+      // Under priority A: only aMember is both A AND in the concept → count 1, and the
+      // narrowed list (concept + A) is exactly [aMember].
+      expect(foldByConcept("A")[concept.id]).toBe(1);
+      expect(
+        search.search("neuron", { conceptId: concept.id, priorityLabel: "A" }).map((h) => h.id),
+      ).toEqual([aMember.id]);
+      // aLoner is A but not a member — never inflates the chip.
+      expect(foldByConcept("A")[concept.id]).not.toBe(2);
+      void aLoner;
+
+      // Under priority C: only cMember → count 1, list [cMember].
+      expect(foldByConcept("C")[concept.id]).toBe(1);
+      expect(
+        search.search("neuron", { conceptId: concept.id, priorityLabel: "C" }).map((h) => h.id),
+      ).toEqual([cMember.id]);
+    });
+
+    it("excludes soft-deleted elements even when the priority band matches", () => {
+      const src = seedSourceAtPriority(0.875, "doomed"); // A
+      expect(search.search("neuron", { priorityLabel: "A" }).map((h) => h.id)).toContain(src.id);
+      elementsRepo.softDelete(src.id);
+      expect(search.search("neuron", { priorityLabel: "A" }).map((h) => h.id)).not.toContain(
+        src.id,
+      );
+    });
+  });
+
   it("matches by prefix (typing the start of a word)", () => {
     const { element: src } = sources.create({ title: "Intelligence measure", priority: 0.5 });
     documents.upsert({

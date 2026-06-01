@@ -187,6 +187,63 @@ describe("LibraryScreen", () => {
     );
   });
 
+  it("sends the priority facet to the backend (priorityLabel), not just client-side", async () => {
+    render(<LibraryScreen />);
+    await waitFor(() => expect(h.listConcepts).toHaveBeenCalled());
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+    await waitFor(() => expect(h.searchQuery).toHaveBeenCalled());
+
+    h.searchQuery.mockClear();
+    // Backend now returns the A-priority-narrowed set (both fixtures are A).
+    h.searchQuery.mockResolvedValue({
+      results: [h.sourceHit, h.cardHit],
+      counts: { byConcept: { "concept-1": 2 } },
+    });
+    fireEvent.click(screen.getByTestId("library-filter-prio-A"));
+
+    // The priority facet MUST be threaded to the query so the byConcept counts respect
+    // it (the count-vs-list invariant) — it is no longer applied client-side only.
+    await waitFor(() =>
+      expect(h.searchQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ q: "intelligence", priorityLabel: "A" }),
+      ),
+    );
+  });
+
+  it("priority + concept active: the chip count equals the visible row count (count-vs-list)", async () => {
+    // The /search count-vs-list invariant finding #1 fixed, at the renderer seam: with
+    // a Priority facet AND a concept active, the chip's byConcept number must equal the
+    // number of result rows shown. The backend returns the priority-narrowed list +
+    // a byConcept already scoped to that priority; the renderer must render them in sync
+    // (no client-side priority re-filtering that would desync the chip from the list).
+    render(<LibraryScreen />);
+    await waitFor(() => expect(h.listConcepts).toHaveBeenCalled());
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+    await waitFor(() => expect(h.searchQuery).toHaveBeenCalled());
+
+    // Activate priority A: the backend returns ONE A-priority member (the card) of the
+    // concept and a byConcept of 1 (priority-scoped) — chip 1 must equal the 1 visible row.
+    h.searchQuery.mockResolvedValue({
+      results: [h.cardHit],
+      counts: { byConcept: { "concept-1": 1 } },
+    });
+    fireEvent.click(screen.getByTestId("library-filter-prio-A"));
+
+    await waitFor(() =>
+      expect(h.searchQuery).toHaveBeenCalledWith(expect.objectContaining({ priorityLabel: "A" })),
+    );
+
+    // The visible rows narrowed to 1…
+    await waitFor(() => expect(screen.getAllByTestId("library-result").length).toBe(1));
+    // …and the concept chip count matches that 1 (the count-vs-list invariant).
+    const chip = await screen.findByTestId("library-filter-concept-concept-1");
+    expect(within(chip).getByText("1", { selector: ".filter-opt__count" })).toBeTruthy();
+  });
+
   it("renders the DRILL-DOWN byConcept count on the chip, NOT the global memberCount", async () => {
     // The concept's GLOBAL memberCount is 2 (the Map volume), but under the active
     // keyword the drill-down count is 1 — the chip must show the drill-down value so

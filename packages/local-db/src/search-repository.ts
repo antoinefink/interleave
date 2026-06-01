@@ -34,6 +34,27 @@ import { elements, type InterleaveDatabase } from "@interleave/db";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { rowToElement } from "./mappers";
 
+/** The four coarse priority labels the `/search` priority facet exposes. */
+export type SearchPriorityLabel = "A" | "B" | "C" | "D";
+
+/**
+ * Half-open numeric `[lower, upper)` bands for each A/B/C/D label, derived from the
+ * canonical `priorityToLabel` thresholds (`A>=0.75`, `B>=0.5`, `C>=0.25`, `D>=0`).
+ * `A` has no upper bound and `D` no lower bound so the filter agrees with
+ * `priorityToLabel` for ANY value — including, defensively, an out-of-range one
+ * (`>=0.75` is `A`, `<0.25` is `D`), matching `priorityToLabel`'s `clamp01`. In
+ * practice `elements.priority` is `[0,1]` (DB CHECK), so the open ends just keep the
+ * SQL band filter in lock-step with the label mapping, with no per-row clamp in SQL.
+ */
+const PRIORITY_BANDS: Readonly<
+  Record<SearchPriorityLabel, readonly [number | null, number | null]>
+> = {
+  A: [0.75, null],
+  B: [0.5, 0.75],
+  C: [0.25, 0.5],
+  D: [null, 0.25],
+};
+
 /** Options narrowing a search. */
 export interface SearchOptions {
   /** Restrict to a single element type. */
@@ -81,6 +102,14 @@ export interface SearchQueryOptions {
   readonly conceptId?: ElementId;
   /** Restrict to elements carrying this tag (exact name). */
   readonly tag?: string;
+  /**
+   * Restrict to elements whose numeric priority maps to this A/B/C/D band (the
+   * `/search` priority facet). Band boundaries mirror the canonical
+   * `priorityToLabel` thresholds, so a priority-narrowed search matches the
+   * SAME rows the renderer would render — and the drill-down concept-chip counts
+   * stay in lock-step with the priority-narrowed list.
+   */
+  readonly priorityLabel?: SearchPriorityLabel;
 }
 
 /**
@@ -226,6 +255,14 @@ export class SearchRepository {
             JOIN tags tf ON tf.id = etf.tag_id AND tf.name = ${options.tag}`
       : sql``;
 
+    // The PRIORITY facet (drill-down): narrow on `elements.priority` by the chosen
+    // A/B/C/D band, using the SAME `[lower, upper)` boundaries `priorityToLabel`
+    // derives so the SQL filter and the label mapping never diverge. Applied here
+    // (in `search`) means BOTH the result list AND the concept-count scan
+    // (`matchedIdsForConceptCounts`, which reuses `search`) respect priority — so a
+    // concept-chip count always matches the priority-narrowed list.
+    const priorityClause = priorityBandClause(options.priorityLabel);
+
     const rows = this.db.all<{
       id: string;
       type: SearchableType;
@@ -240,6 +277,7 @@ export class SearchRepository {
       JOIN elements e ON e.id = m.id AND e.deleted_at IS NULL
       ${conceptJoin}
       ${tagJoin}
+      WHERE 1 = 1 ${priorityClause}
       ORDER BY m.tier ASC, m.score ASC
     `);
 
@@ -276,11 +314,16 @@ export class SearchRepository {
    */
   matchedIdsForConceptCounts(
     query: string,
-    options: { readonly type?: ElementType; readonly tag?: string } = {},
+    options: {
+      readonly type?: ElementType;
+      readonly tag?: string;
+      readonly priorityLabel?: SearchPriorityLabel;
+    } = {},
   ): ElementId[] {
     const hits = this.search(query, {
       ...(options.type ? { type: options.type } : {}),
       ...(options.tag ? { tag: options.tag } : {}),
+      ...(options.priorityLabel ? { priorityLabel: options.priorityLabel } : {}),
       limit: MAX_COUNT_SCAN,
     });
     return hits.map((h) => h.id);
@@ -316,4 +359,19 @@ export class SearchRepository {
  */
 function escapeLikePattern(input: string): string {
   return input.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+/**
+ * The `AND`-prefixed `e.priority` band predicate for the chosen A/B/C/D facet, or
+ * an empty fragment when no priority facet is active. Uses the canonical half-open
+ * {@link PRIORITY_BANDS} boundaries (mirroring `priorityToLabel`) so the
+ * filter and the label mapping agree on every band edge. Designed to be appended
+ * after a `WHERE 1 = 1` so an absent facet contributes nothing.
+ */
+function priorityBandClause(label: SearchPriorityLabel | undefined): ReturnType<typeof sql> {
+  if (!label) return sql``;
+  const [lower, upper] = PRIORITY_BANDS[label];
+  const lowerClause = lower !== null ? sql` AND e.priority >= ${lower}` : sql``;
+  const upperClause = upper !== null ? sql` AND e.priority < ${upper}` : sql``;
+  return sql`${lowerClause}${upperClause}`;
 }

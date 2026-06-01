@@ -143,6 +143,7 @@ export function LibraryScreen() {
         q,
         ...(typeFilter ? { type: typeFilter } : {}),
         ...(conceptFilter ? { conceptId: conceptFilter } : {}),
+        ...(priorityFilter ? { priorityLabel: priorityFilter } : {}),
       })
       .then((res) => {
         if (cancelled) return;
@@ -161,14 +162,15 @@ export function LibraryScreen() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery, typeFilter, conceptFilter]);
+  }, [debouncedQuery, typeFilter, conceptFilter, priorityFilter]);
 
-  // Priority narrowing is applied client-side over the ranked results (priority
-  // is on every result; the FTS query layer already did the heavy filtering).
-  const visible = useMemo(
-    () => (priorityFilter ? results.filter((r) => r.priorityLabel === priorityFilter) : results),
-    [results, priorityFilter],
-  );
+  // The result list IS the backend-narrowed set. The Priority facet is now applied
+  // MAIN-side (threaded as `priorityLabel` into the FTS query), so the drill-down
+  // concept-chip `byConcept` counts respect priority TOO — the chip number always
+  // matches the priority-narrowed list (the count-vs-list invariant). No client-side
+  // priority filtering: doing it here would re-introduce the chip/list mismatch the
+  // reported Library bug was about.
+  const visible = results;
 
   const selected = useMemo(() => visible.find((r) => r.id === selId) ?? null, [visible, selId]);
 

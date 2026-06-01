@@ -266,7 +266,7 @@ describe("QueueQuery", () => {
     expect(queue.list({ asOf: NOW, filters: { tag: "missing" } }).items).toHaveLength(0);
   });
 
-  it("reports per-type counts over the unfiltered due set", () => {
+  it("reports per-type counts over the full due set when no filter is active", () => {
     buildDueSet();
     const { counts } = queue.list({ asOf: NOW });
     expect(counts.all).toBe(3);
@@ -276,6 +276,70 @@ describe("QueueQuery", () => {
     expect(counts.highPriority).toBe(2); // source A + qa card A
     expect(counts.overdue).toBeGreaterThanOrEqual(1);
     expect(counts.protected).toBe(2);
+  });
+
+  it("DRILL-DOWN: per-type + all counts respect an active STATUS filter (count-vs-list invariant)", () => {
+    // Two due sources of the SAME priority: one `active`, one `scheduled`.
+    const active = repos.sources.create({
+      title: "active source",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "active",
+    });
+    repos.elements.reschedule(active.element.id, iso("2026-05-29T08:00:00.000Z"));
+    const scheduled = repos.sources.create({
+      title: "scheduled source",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "scheduled",
+    });
+    repos.elements.reschedule(scheduled.element.id, iso("2026-05-29T08:00:00.000Z"));
+
+    // Narrow to `active` (what the queue UI's "Active" status chip sends). The
+    // "Sources" chip count + the "N items due" total must match the narrowed list —
+    // NOT the full due set (the reported bug class: chip shows 2, list shows 1).
+    const res = queue.list({ asOf: NOW, filters: { statuses: ["active"] } });
+    const sourcesShown = res.items.filter((i) => i.type === "source").length;
+    expect(res.counts.source).toBe(sourcesShown);
+    expect(res.counts.source).toBe(1);
+    expect(res.counts.all).toBe(res.items.length);
+    // The budget gauge tracks the filtered set the user faces, not the raw merge.
+    expect(res.budget.used).toBe(res.items.length);
+  });
+
+  it("DRILL-DOWN: per-type counts respect an active CONCEPT filter", () => {
+    const a = repos.sources.create({
+      title: "in-concept source",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "active",
+    });
+    repos.elements.reschedule(a.element.id, iso("2026-05-29T08:00:00.000Z"));
+    const b = repos.sources.create({
+      title: "out-of-concept source",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "active",
+    });
+    repos.elements.reschedule(b.element.id, iso("2026-05-29T08:00:00.000Z"));
+    const concept = repos.concepts.createConcept({ name: "Focus" });
+    repos.concepts.assignConcept(a.element.id, concept.id);
+
+    const res = queue.list({ asOf: NOW, filters: { concept: "Focus" } });
+    // Only the in-concept source is shown, and the Sources chip count agrees.
+    expect(res.items.map((i) => i.id)).toEqual([a.element.id]);
+    expect(res.counts.source).toBe(1);
+    expect(res.counts.all).toBe(res.items.length);
+  });
+
+  it("DRILL-DOWN: an explicit `types` filter is DROPPED from the per-type counts (chips drill down)", () => {
+    buildDueSet();
+    // When the caller passes `types: ['card']`, the per-type counts must still report
+    // EVERY type (the type dimension is the chip's own value — dropped from its count),
+    // so the renderer can show non-zero counts on the other chips to switch to.
+    const res = queue.list({ asOf: NOW, filters: { types: ["card"] } });
+    expect(res.items.every((i) => i.type === "card")).toBe(true);
+    // Counts ignore the type filter: sources/extracts still counted.
+    expect(res.counts.source).toBe(1);
+    expect(res.counts.extract).toBe(1);
+    expect(res.counts.card).toBe(1);
+    expect(res.counts.all).toBe(3);
   });
 
   it("reads the daily review budget from settings for the gauge", () => {

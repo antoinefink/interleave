@@ -511,7 +511,12 @@ export interface QueueItemSummary {
   readonly dueLabel: string;
 }
 
-/** Per-type counts over the unfiltered due set + the at-risk counts. */
+/**
+ * DRILL-DOWN per-type + at-risk counts. Each respects the active status/concept/tag
+ * filters but DROPS the type dimension (the chips drive it), so a chip's number equals
+ * the rows shown when that chip is selected alongside the other active filters (the
+ * count-vs-list invariant). `all` equals the filtered list length.
+ */
 export interface QueueCounts {
   readonly all: number;
   readonly card: number;
@@ -2020,6 +2025,14 @@ export const SearchQueryRequestSchema = z.object({
   conceptId: ElementIdSchema.optional(),
   /** Restrict to elements carrying this tag name — T041 filter. */
   tag: TagNameSchema.optional(),
+  /**
+   * Restrict to elements whose numeric priority maps to this A/B/C/D band (the
+   * `/search` priority facet). Applied MAIN-side via the canonical priority-band
+   * boundaries (mirroring `priorityToLabel`) so the result list AND the drill-down
+   * concept-chip counts respect priority together — the chip number then matches the
+   * priority-narrowed list (the count-vs-list invariant).
+   */
+  priorityLabel: PriorityLabelSchema.optional(),
   /** Cap the result count (1..200; defaults main-side). */
   limit: z.number().int().min(1).max(200).optional(),
 });
@@ -2029,8 +2042,8 @@ export type SearchQueryRequest = z.infer<typeof SearchQueryRequestSchema>;
  * DRILL-DOWN faceted counts for the `/search` filterbar concept chips. Mirrors the
  * Library browse counts' concept dimension: `byConcept[c]` is the number of result
  * rows you'd get if concept `c` were selected together with the SAME keyword + type
- * (+ tag) — the concept dimension's own predicate is DROPPED — so the chip number
- * always matches the keyword/type-narrowed list. Keyed by concept element id. (The
+ * + priority (+ tag) — the concept dimension's own predicate is DROPPED — so the
+ * chip number always matches the narrowed list. Keyed by concept element id. (The
  * chip MUST use this, NOT the global `ConceptNode.memberCount`, which never matches
  * the narrowed list — the same mismatch class as the reported Library bug.)
  */

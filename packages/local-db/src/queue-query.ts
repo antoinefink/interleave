@@ -100,7 +100,14 @@ export interface QueueFilters {
 /** The complete queue read: rows + per-type counts + the budget gauge. */
 export interface QueueListData {
   readonly items: readonly QueueItemSummary[];
-  /** Per-type counts over the UNFILTERED due set (so the filter chips show totals). */
+  /**
+   * DRILL-DOWN per-type / at-risk counts: each respects the active status/concept/tag
+   * filters but DROPS the type dimension (the chips drive it), so a chip's number
+   * equals the rows shown when that chip is selected alongside the other active
+   * filters — the count-vs-list invariant. `all` equals the filtered list length (the
+   * `/queue` type chips narrow client-side, so `counts.all === items.length` before the
+   * optional limit).
+   */
   readonly counts: {
     readonly all: number;
     readonly card: number;
@@ -176,8 +183,10 @@ export class QueueQuery {
    * The unified, sorted, filtered due queue. Merges due cards (FSRS) and due
    * attention items, decorates each with its scheduler signals + meta, sorts by
    * **priority desc then `due_at` asc**, applies the type/concept/status filters,
-   * and computes the per-type counts (over the unfiltered due set) + the budget
-   * gauge. Deterministic — jitter is the caller's concern.
+   * and computes the DRILL-DOWN per-type counts (respecting the active status/concept/
+   * tag filters but not the type dimension, so a chip's count matches the rows shown
+   * when that chip is selected) + the budget gauge. Deterministic — jitter is the
+   * caller's concern.
    */
   list(
     options: { asOf?: IsoTimestamp; filters?: QueueFilters; limit?: number } = {},
@@ -194,32 +203,51 @@ export class QueueQuery {
     const attentionRows = dueAttention.map((el) => this.toAttentionSummary(el, asOfMs));
     const all = [...cardRows, ...attentionRows];
 
-    // Counts over the UNFILTERED due set (so the filter chips show real totals).
-    const counts = {
-      all: all.length,
-      card: all.filter((r) => r.type === "card").length,
-      source: all.filter((r) => r.type === "source").length,
-      extract: all.filter((r) => r.type === "extract").length,
-      topic: all.filter((r) => r.type === "topic").length,
-      task: all.filter((r) => r.type === "task").length,
-      highPriority: all.filter((r) => r.protected).length,
-      overdue: all.filter((r) => r.due === "overdue").length,
-      protected: all.filter((r) => r.protected).length,
-    };
-
     // Pre-resolve concept membership ONCE (not per-row): when a concept-name filter
     // is active, build the canonical `member -> Set<liveConceptId>` map a single time
     // and the set of live concept ids carrying that name, so `matchesFilters` does a
     // map lookup instead of a `conceptsForElement` query per row (no N+1).
     const conceptMatch = filters.concept ? this.buildConceptMatcher(filters.concept) : null;
 
-    // Apply filters, then sort priority desc, then due date asc (stable).
+    // DRILL-DOWN counts (the count-vs-list invariant): the per-type / at-risk counts
+    // must respect every ACTIVE filter EXCEPT the type dimension (the chips drive that
+    // dimension, so its own value is dropped) — so a chip's number equals the rows you
+    // get when that chip is selected together with the OTHER active filters (status /
+    // concept / tag). Previously these were over the WHOLE due set ignoring the active
+    // status filter, so e.g. the "Active" status filter narrowed the list to 1 source
+    // while the "Sources" chip still showed 2 — the same count-vs-list mismatch class as
+    // the reported Library bug. We count over the rows that pass status/concept/tag (the
+    // non-type predicates); the `/queue` UI applies the type chip client-side and never
+    // sends `types`, so this set carries every type and the per-type counts match what
+    // each chip shows. (`{ countType: true }` would additionally honour the type filter,
+    // but the type dimension is intentionally OMITTED here so the chips drill down.)
+    const nonTypeMatched = all.filter((r) =>
+      this.matchesFilters(r, filters, conceptMatch, { countType: false }),
+    );
+    const counts = {
+      all: nonTypeMatched.length,
+      card: nonTypeMatched.filter((r) => r.type === "card").length,
+      source: nonTypeMatched.filter((r) => r.type === "source").length,
+      extract: nonTypeMatched.filter((r) => r.type === "extract").length,
+      topic: nonTypeMatched.filter((r) => r.type === "topic").length,
+      task: nonTypeMatched.filter((r) => r.type === "task").length,
+      highPriority: nonTypeMatched.filter((r) => r.protected).length,
+      overdue: nonTypeMatched.filter((r) => r.due === "overdue").length,
+      protected: nonTypeMatched.filter((r) => r.protected).length,
+    };
+
+    // Apply ALL active filters (type included), then sort priority desc, then due date
+    // asc (stable). With the type dimension driven client-side this equals
+    // `nonTypeMatched`, so `counts.all === items.length` (before the optional limit).
     let rows = all.filter((r) => this.matchesFilters(r, filters, conceptMatch));
     rows = this.sort(rows);
     if (options.limit !== undefined) rows = rows.slice(0, options.limit);
 
+    // The budget gauge counts the items the user actually faces today — the filtered
+    // due set (so a status/concept filter narrows the gauge with the list), not the raw
+    // pre-filter merge.
     const target = this.repos.settings.getAppSettings().dailyReviewBudget;
-    const used = all.length;
+    const used = nonTypeMatched.length;
 
     return { items: rows, counts, budget: { used, target } };
   }
@@ -277,13 +305,23 @@ export class QueueQuery {
     };
   }
 
-  /** Whether a row passes the active type/concept/tag/status filters. */
+  /**
+   * Whether a row passes the active type/concept/tag/status filters.
+   *
+   * `options.countType` (default `true`) controls the TYPE dimension only: pass
+   * `false` to DROP the type predicate while still applying status/concept/tag. The
+   * drill-down per-type counts use `false` so each type chip's count reflects the
+   * other active filters but not its own value (the count-vs-list invariant); the
+   * result-list match uses the default `true` so the items honour every filter.
+   */
   private matchesFilters(
     row: QueueItemSummary,
     filters: QueueFilters,
     conceptMatch: ((elementId: ElementId) => boolean) | null,
+    options: { countType?: boolean } = {},
   ): boolean {
-    if (filters.types && filters.types.length > 0) {
+    const applyType = options.countType ?? true;
+    if (applyType && filters.types && filters.types.length > 0) {
       if (!filters.types.includes(row.type as ElementType)) return false;
     }
     if (filters.statuses && filters.statuses.length > 0) {

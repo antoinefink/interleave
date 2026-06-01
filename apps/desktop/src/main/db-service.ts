@@ -1678,6 +1678,7 @@ export class DbService {
       ...(request.type ? { type: request.type } : {}),
       ...(request.conceptId ? { conceptId: request.conceptId as ElementId } : {}),
       ...(request.tag ? { tag: request.tag } : {}),
+      ...(request.priorityLabel ? { priorityLabel: request.priorityLabel } : {}),
       ...(request.limit !== undefined ? { limit: request.limit } : {}),
     });
 
@@ -1732,20 +1733,23 @@ export class DbService {
 
     // DRILL-DOWN per-concept counts for the filterbar concept chips. Like the
     // Library browse counts, the concept dimension DROPS its own predicate: the
-    // count is taken over the keyword+type+tag match set WITHOUT the active concept
-    // filter, so the number next to a concept chip equals the rows you'd get if that
-    // concept were selected alongside the SAME keyword/type. (Previously the chip
-    // showed `ConceptNode.memberCount` — the GLOBAL member count across ALL element
-    // types — which never matched the keyword/type-narrowed list, the same mismatch
-    // class as the reported Library bug.) Built in ONE pass by folding the matched
-    // ids through the canonical `concept_membership` map (a Set dedups duplicate
-    // edges; soft-deleted members/concepts already dropped) — never an
-    // `elementsForConcept` per concept (no N+1).
+    // count is taken over the keyword+type+priority+tag match set WITHOUT the active
+    // concept filter, so the number next to a concept chip equals the rows you'd get
+    // if that concept were selected alongside the SAME keyword/type/priority.
+    // (Previously the chip showed `ConceptNode.memberCount` — the GLOBAL member count
+    // across ALL element types — which never matched the narrowed list, the same
+    // mismatch class as the reported Library bug; and the priority facet was applied
+    // renderer-side only, so the chip ignored it — fixed by threading `priorityLabel`
+    // here.) Built in ONE pass by folding the matched ids through the canonical
+    // `concept_membership` map (a Set dedups duplicate edges; soft-deleted
+    // members/concepts already dropped) — never an `elementsForConcept` per concept
+    // (no N+1).
     const byConcept: Record<string, number> = {};
     const membership = this.repos.concepts.liveMembershipMap();
     const countedIds = this.repos.search.matchedIdsForConceptCounts(request.q, {
       ...(request.type ? { type: request.type } : {}),
       ...(request.tag ? { tag: request.tag } : {}),
+      ...(request.priorityLabel ? { priorityLabel: request.priorityLabel } : {}),
     });
     for (const id of countedIds) {
       const conceptIds = membership.get(id as ElementId);
