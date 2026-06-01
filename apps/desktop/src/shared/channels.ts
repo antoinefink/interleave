@@ -73,6 +73,15 @@ export const IPC_CHANNELS = {
   analyticsGet: "analytics:get",
   balanceGet: "balance:get",
   backupsCreate: "backups:create",
+  // Background-runner observe surface (T058). `jobs:list` reads the current queue.
+  // The renderer enqueues ONLY via `sources:importUrl` — there is intentionally NO
+  // `jobs:enqueue` channel (a generic renderer enqueue is deferred to M14/M18).
+  jobsList: "jobs:list",
+  // One-way main → renderer event (T058): the runner broadcasts a `JobSummary` on
+  // every `job:update`; the preload forwards it to `jobs.subscribe` callbacks.
+  // SEND channel (no `ipcMain.handle`); the preload exposes a narrow receive-only
+  // subscription, never a generic listener.
+  jobsUpdated: "jobs:updated",
   // One-way main → renderer event (T048): the native Help → "Keyboard shortcuts"
   // menu item asks the renderer to open the in-app cheat sheet. This is a SEND
   // channel (main → renderer), not an `invoke` handler — the preload exposes a

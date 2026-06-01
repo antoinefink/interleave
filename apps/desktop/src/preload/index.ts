@@ -45,6 +45,8 @@ import type {
   InboxGetRequest,
   InboxTriageRequest,
   InspectorGetRequest,
+  JobSummary,
+  JobsListRequest,
   LibraryBrowseRequest,
   LineageGetRequest,
   QueueActRequest,
@@ -214,6 +216,21 @@ const appApi: AppApi = {
   },
   backups: {
     create: () => ipcRenderer.invoke(IPC_CHANNELS.backupsCreate),
+  },
+  jobs: {
+    // Observe the background-runner queue (T058) — invoke only. NO `enqueue`: per
+    // the contract decision the renderer enqueues only via `sources.importUrl`.
+    list: (request?: JobsListRequest) => ipcRenderer.invoke(IPC_CHANNELS.jobsList, request ?? {}),
+    // Receive-only subscription (T058): the runner sends `jobs:updated` with a
+    // `JobSummary` on every job state change. Same narrow named-event pattern as
+    // `menu.onShowShortcuts`, but — UNLIKE those payload-free exemplars — it must
+    // DELIVER the summary to the callback, so the listener forwards the event's
+    // payload arg (a plain serializable `JobSummary`, never the raw event).
+    subscribe: (callback: (summary: JobSummary) => void) => {
+      const listener = (_event: unknown, summary: JobSummary) => callback(summary);
+      ipcRenderer.on(IPC_CHANNELS.jobsUpdated, listener);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.jobsUpdated, listener);
+    },
   },
   menu: {
     // Receive-only subscription (T048): the native Help → "Keyboard shortcuts"

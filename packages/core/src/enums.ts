@@ -164,3 +164,36 @@ export type AssetKind = (typeof ASSET_KINDS)[number];
  */
 export const VAULT_ROOTS = ["assets", "exports", "backups"] as const;
 export type VaultRoot = (typeof VAULT_ROOTS)[number];
+
+/**
+ * Background-runner job types (`jobs.type`, T058). The local on-device runner (an
+ * Electron `utilityProcess` worker — NOT pg-boss, NOT a server worker) dispatches
+ * on this closed union. Only `url_import` is wired end-to-end in T058 (the proof
+ * job that moves the URL-import fetch off-main); the rest are **reserved** —
+ * declared so M14 (`ocr`), M18 (`embed`/`ai`), and T059 (`vault_verify`/
+ * `vault_gc`) slot in with only a worker dispatch case + a main-side apply
+ * handler, never a queue/table/IPC shape change. `cleanup` is a generic
+ * housekeeping slot. A job is infra, so adding a type is a migration (the
+ * `jobs.type` CHECK is built from this tuple) but adds NO `operation_log` op.
+ */
+export const JOB_TYPES = [
+  "url_import",
+  "ocr",
+  "embed",
+  "ai",
+  "cleanup",
+  "vault_verify",
+  "vault_gc",
+] as const;
+export type JobType = (typeof JOB_TYPES)[number];
+
+/**
+ * Background-runner job lifecycle statuses (`jobs.status`, T058). A job moves
+ * `queued` → `running` → terminal (`succeeded` | `failed` | `cancelled`). The
+ * queue is persisted in SQLite, so these survive an app restart: on launch the
+ * runner re-queues any row left `running` by a crash (at-least-once) and resumes
+ * draining `queued` rows. `cancelled`/`failed` are recorded, never silently
+ * dropped (soft-state only).
+ */
+export const JOB_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled"] as const;
+export type JobStatus = (typeof JOB_STATUSES)[number];

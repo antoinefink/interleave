@@ -163,8 +163,6 @@ import type {
   SettingValue,
   SourcesImportManualRequest,
   SourcesImportManualResult,
-  SourcesImportUrlRequest,
-  SourcesImportUrlResult,
   TagsAddRequest,
   TagsAddResult,
   TagsListResult,
@@ -701,6 +699,16 @@ export class DbService {
    * clear error if `assetsDir` was not provided (a contract-only test that never
    * imports), rather than constructing a half-wired service.
    */
+  /**
+   * Whether URL import permits loopback/private hosts (the DEV/E2E SSRF-guard
+   * escape, set at {@link open}). The IPC `importUrl` handler forwards this into
+   * the `url_import` job payload so the background-runner WORKER's fetch permits
+   * the 127.0.0.1 fixture server in the E2E (never true in a packaged app).
+   */
+  get allowsLoopbackImport(): boolean {
+    return this.allowLoopbackImport;
+  }
+
   get urlImportService(): UrlImportService {
     if (this.urlImport) return this.urlImport;
     const repositories = this.repos;
@@ -718,24 +726,14 @@ export class DbService {
     return this.urlImport;
   }
 
-  /**
-   * Fetch + clean + snapshot a live URL into an `inbox` source (T060). ASYNC — it
-   * does network I/O. Delegates to the shared {@link urlImportService} so the IPC
-   * path and M13's loopback path produce identical sources. The discriminated
-   * result is the contract's {@link SourcesImportUrlResult} (T060 always
-   * `"imported"`; T061 adds `"duplicate"`).
-   */
-  async importFromUrl(request: SourcesImportUrlRequest): Promise<SourcesImportUrlResult> {
-    const result = await this.urlImportService.importFromUrl({
-      url: request.url,
-      ...(request.priority ? { priority: request.priority } : {}),
-      ...(request.reasonAdded !== undefined ? { reasonAdded: request.reasonAdded } : {}),
-      ...(request.forceNewVersion !== undefined
-        ? { forceNewVersion: request.forceNewVersion }
-        : {}),
-    });
-    return result;
-  }
+  // NOTE: URL import (T060) no longer has an inline `DbService.importFromUrl`
+  // method. The renderer's `sources.importUrl` IPC handler now ENQUEUES a
+  // `url_import` job on the background runner (T058) so the page FETCH runs
+  // OFF-MAIN in the `utilityProcess` worker; MAIN applies the result through the
+  // shared {@link urlImportService} (`importFromHtml`) — see ipc.ts +
+  // job-apply-handlers.ts. The `UrlImportService.importFromUrl` inline path stays
+  // available as a library method (used by M13's direct callers + the service
+  // tests), but no main-side handler blocks the event loop on a network fetch.
 
   /** Live inbox-status source summaries (T012). */
   listInbox(): InboxListResult {

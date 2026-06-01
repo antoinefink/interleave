@@ -78,7 +78,7 @@ export {
   ExtractionService,
   rawExtractIntervalDays,
 } from "./extraction-service";
-export { newElementId, newRowId, newSiblingGroupId, nowIso } from "./ids";
+export { newElementId, newJobId, newRowId, newSiblingGroupId, nowIso } from "./ids";
 export {
   type InboxItemDetail,
   type InboxItemSummary,
@@ -96,6 +96,13 @@ export {
   type SourceProvenance,
   schedulerKindForType,
 } from "./inspector-query";
+export {
+  DEFAULT_MAX_ATTEMPTS,
+  type EnqueueJobInput,
+  type JobListFilter,
+  JobsRepository,
+  rowToJob,
+} from "./jobs-repository";
 export {
   LIBRARY_STATUSES,
   LIBRARY_TYPES,
@@ -194,6 +201,8 @@ export interface Repositories {
   readonly analytics: import("./analytics-query").AnalyticsService;
   /** Duplicate-detection lookups for URL import (T061) — read-only. */
   readonly sourceDedup: import("./source-dedup-query").SourceDedupQuery;
+  /** The persisted background-runner job queue (T058) — main-runner-only. */
+  readonly jobs: import("./jobs-repository").JobsRepository;
 }
 
 import type { InterleaveDatabase } from "@interleave/db";
@@ -202,6 +211,7 @@ import { AssetRepository } from "./asset-repository";
 import { ConceptRepository } from "./concept-repository";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
+import { JobsRepository } from "./jobs-repository";
 import { OperationLogRepository } from "./operation-log-repository";
 import { QueueRepository } from "./queue-repository";
 import { ReviewRepository } from "./review-repository";
@@ -231,5 +241,6 @@ export function createRepositories(db: InterleaveDatabase): Repositories {
     trash: new TrashRepository(db),
     analytics: new AnalyticsService(db),
     sourceDedup: new SourceDedupQuery(db, assets),
+    jobs: new JobsRepository(db),
   };
 }

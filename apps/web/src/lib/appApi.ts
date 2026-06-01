@@ -544,6 +544,34 @@ export type SourcesImportUrlResult =
       readonly matches: readonly SourceDuplicateSummary[];
     };
 
+/**
+ * A renderer-safe projection of a background-runner job (T058). The renderer
+ * observes the local job queue (e.g. a Maintenance "background activity" view)
+ * but never runs a job — no raw payload/result bytes are exposed.
+ */
+export interface JobSummary {
+  readonly id: string;
+  readonly type: string;
+  readonly status: string;
+  /** Progress as an integer percent 0–100. */
+  readonly progressRatio: number;
+  readonly progressNote: string | null;
+  readonly error: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/** Observe the current background-runner queue, optionally filtered (T058). */
+export interface JobsListRequest {
+  readonly status?: string;
+  readonly type?: string;
+  readonly limit?: number;
+}
+
+export interface JobsListResult {
+  readonly jobs: readonly JobSummary[];
+}
+
 // ---------------------------------------------------------------------------
 // capture.* — browser-extension pairing (T062). The TRUSTED desktop renderer
 // reads/regenerates the pairing token + toggles the loopback capture server.
@@ -1659,6 +1687,12 @@ export interface AppApi {
   readonly backups: {
     create(): Promise<BackupsCreateResult>;
   };
+  readonly jobs: {
+    /** Observe the on-device background-runner queue (T058) — read-only. */
+    list(request?: JobsListRequest): Promise<JobsListResult>;
+    /** Subscribe to runner job updates (T058); returns an unsubscribe fn. */
+    subscribe(callback: (summary: JobSummary) => void): () => void;
+  };
   readonly menu: {
     /** Subscribe to the native Help → "Keyboard shortcuts" menu item (T048). */
     onShowShortcuts(callback: () => void): () => void;
@@ -2037,6 +2071,22 @@ export const appApi = {
    */
   createBackup(): Promise<BackupsCreateResult> {
     return requireAppApi().backups.create();
+  },
+  /**
+   * Observe the on-device background-runner queue (T058) — read-only. Returns an
+   * empty list outside the desktop shell (the renderer never runs a job).
+   */
+  listJobs(request?: JobsListRequest): Promise<JobsListResult> {
+    if (!isDesktop() || !window.appApi?.jobs) return Promise.resolve({ jobs: [] });
+    return window.appApi.jobs.list(request);
+  },
+  /**
+   * Subscribe to background-runner job updates (T058) — a `JobSummary` per state
+   * change. Returns an unsubscribe fn; a no-op outside the desktop shell.
+   */
+  subscribeJobs(callback: (summary: JobSummary) => void): () => void {
+    if (!isDesktop() || !window.appApi?.jobs) return () => {};
+    return window.appApi.jobs.subscribe(callback);
   },
   /**
    * Subscribe to the native Help → "Keyboard shortcuts" (⌘/) menu item (T048). The

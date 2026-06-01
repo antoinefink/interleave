@@ -44,24 +44,35 @@ import {
   type SourceRepository,
 } from "@interleave/local-db";
 import { sha256 } from "./backup-manifest";
-import { isBlockedImportHost, isImportableScheme } from "./url-import-host";
+import {
+  assertImportableUrl as assertFetchableUrl,
+  fetchImportablePage,
+  UrlFetchError,
+  type UrlFetchErrorCode,
+} from "./url-fetch";
 
 /** The friendly error codes the IPC layer maps to a user-facing message. */
-export type UrlImportErrorCode =
-  | "fetch_failed"
-  | "timeout"
-  | "not_html"
-  | "too_large"
-  | "http_error"
-  | "blocked_host";
+export type UrlImportErrorCode = UrlFetchErrorCode;
 
-/** A typed import failure carrying a `code` the IPC layer maps to a friendly line. */
+/**
+ * A typed import failure carrying a `code` the IPC layer maps to a friendly line.
+ * The fetch layer ({@link UrlFetchError}, shared with the background-runner
+ * worker) is the same closed `code` set; this subclass is the public type the IPC
+ * handler + the renderer modal already match on, and {@link fromFetchError}
+ * reconstructs one from a worker-reported `{ code, message }` so a job that fails
+ * in the worker re-throws here exactly as the inline path does.
+ */
 export class UrlImportError extends Error {
   readonly code: UrlImportErrorCode;
   constructor(code: UrlImportErrorCode, message: string) {
     super(message);
     this.name = "UrlImportError";
     this.code = code;
+  }
+
+  /** Reconstruct a `UrlImportError` from a worker fetch error (same code set). */
+  static fromFetchError(error: UrlFetchError): UrlImportError {
+    return new UrlImportError(error.code, error.message);
   }
 }
 
@@ -129,6 +140,7 @@ export interface ImportFromUrlInput {
 
 /** Arguments to {@link UrlImportService.importFromHtml} (the M13 capture entry point). */
 export interface ImportFromHtmlInput {
+  /** The page url — the FINAL (post-redirect) url for the url_import job path. */
   readonly url: string;
   readonly html: string;
   readonly title?: string | null;
@@ -136,6 +148,13 @@ export interface ImportFromHtmlInput {
   readonly reasonAdded?: string | null;
   readonly accessedAt?: string | null;
   readonly forceNewVersion?: boolean;
+  /**
+   * The as-ENTERED url, preserved verbatim as `originalUrl` (T058 runner path).
+   * The background-runner worker follows redirects, so the entered url and the
+   * final `url` can differ; passing it keeps provenance correct. Defaults to
+   * `url` (the M13 capture path has no separate entered url).
+   */
+  readonly originalUrl?: string | null;
 }
 
 /**
@@ -152,11 +171,6 @@ export interface ImportSelectionInput {
   readonly blockContext?: string | null;
   readonly accessedAt?: string | null;
 }
-
-/** Fetch tuning. Conservative defaults; not configurable at the surface. */
-const FETCH_TIMEOUT_MS = 15_000;
-const MAX_BODY_BYTES = 8 * 1024 * 1024; // 8 MB cap on the fetched body.
-const USER_AGENT = "Interleave/0.1 (+https://interleave.app; desktop import)";
 
 /** The shared, internal step 2–6 inputs (after the fetch has produced the HTML). */
 interface PipelineInput {
@@ -225,13 +239,16 @@ export class UrlImportService {
    * fetch cannot). Skips the fetch; runs the identical step 2–6 pipeline.
    */
   async importFromHtml(input: ImportFromHtmlInput): Promise<UrlImportResult> {
-    const entered = input.url.trim();
+    const finalUrl = input.url.trim();
+    // The as-entered url (the runner's worker followed redirects); falls back to
+    // the final url for the M13 capture path, which has no separate entered url.
+    const originalUrl = (input.originalUrl ?? finalUrl).trim();
     // The supplied URL still passes the scheme/SSRF guard (defense in depth).
-    this.assertImportableUrl(entered);
+    this.assertImportableUrl(finalUrl);
     return this.runPipeline({
       html: input.html,
-      finalUrl: entered,
-      originalUrl: entered,
+      finalUrl,
+      originalUrl,
       priority: input.priority ?? "C",
       reasonAdded: input.reasonAdded ?? null,
       titleOverride: input.title ?? null,
@@ -303,114 +320,38 @@ export class UrlImportService {
     return Promise.resolve({ status: "imported", id: sourceId, item });
   }
 
-  /** Parse + validate a URL against the scheme + SSRF guard; throws on rejection. */
+  /**
+   * Parse + validate a URL against the scheme + SSRF guard; throws a
+   * {@link UrlImportError} on rejection. Delegates to the shared {@link url-fetch}
+   * guard (the SAME classification the worker uses) and re-wraps its
+   * {@link UrlFetchError} as the public `UrlImportError`.
+   */
   private assertImportableUrl(raw: string): URL {
-    let url: URL;
     try {
-      url = new URL(raw);
-    } catch {
-      throw new UrlImportError("fetch_failed", `Not a valid URL: ${raw}`);
+      return assertFetchableUrl(raw, this.allowLoopback);
+    } catch (err) {
+      if (err instanceof UrlFetchError) throw UrlImportError.fromFetchError(err);
+      throw err;
     }
-    if (!isImportableScheme(url.protocol)) {
-      throw new UrlImportError("blocked_host", `Unsupported scheme: ${url.protocol}`);
-    }
-    if (!this.allowLoopback && isBlockedImportHost(url.hostname)) {
-      throw new UrlImportError("blocked_host", `Refusing to fetch a private host: ${url.hostname}`);
-    }
-    return url;
   }
 
   /**
-   * Fetch the page: scheme + SSRF guard (entered AND final url), redirect
-   * following, timeout, non-HTML reject, and an 8 MB body-size cap. Returns the
-   * raw HTML + the final (post-redirect) url.
+   * Fetch the page via the shared, DB-free {@link fetchImportablePage} (the SAME
+   * implementation the background-runner worker uses off-main). Re-wraps a
+   * {@link UrlFetchError} as the public `UrlImportError`. The inline path here is
+   * kept for the M13 capture callers + tests; the renderer `importUrl` path now
+   * runs this fetch in the WORKER (see {@link JobRunner}).
    */
   private async fetchPage(entered: string): Promise<{ html: string; finalUrl: string }> {
-    this.assertImportableUrl(entered);
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    let response: Response;
     try {
-      response = await this.fetchImpl(entered, {
-        redirect: "follow",
-        signal: controller.signal,
-        headers: { "User-Agent": USER_AGENT, Accept: "text/html,application/xhtml+xml" },
+      return await fetchImportablePage(entered, {
+        allowLoopback: this.allowLoopback,
+        fetchImpl: this.fetchImpl,
       });
     } catch (err) {
-      clearTimeout(timer);
-      if (err instanceof Error && err.name === "AbortError") {
-        throw new UrlImportError("timeout", `Timed out fetching ${entered}`);
-      }
-      throw new UrlImportError("fetch_failed", `Could not reach ${entered}`);
+      if (err instanceof UrlFetchError) throw UrlImportError.fromFetchError(err);
+      throw err;
     }
-
-    try {
-      // Re-check the FINAL (post-redirect) url against the scheme + SSRF guard —
-      // a public URL must not redirect us into a private host.
-      const finalUrl = response.url || entered;
-      this.assertImportableUrl(finalUrl);
-
-      if (!response.ok) {
-        throw new UrlImportError("http_error", `Server returned ${response.status} for ${entered}`);
-      }
-
-      const contentType = response.headers.get("content-type") ?? "";
-      const mime = contentType.split(";")[0]?.trim().toLowerCase() ?? "";
-      // An absent content-type (mime === "") is intentionally permitted: many
-      // servers omit the header. A genuinely non-article payload then yields an
-      // empty Readability result and still produces a (capture-never-lost) source.
-      if (mime !== "" && mime !== "text/html" && mime !== "application/xhtml+xml") {
-        throw new UrlImportError("not_html", `That page is not an article (${mime || "unknown"})`);
-      }
-
-      // Enforce the declared content-length cap up front when present.
-      const declared = Number(response.headers.get("content-length") ?? "");
-      if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
-        throw new UrlImportError("too_large", `Page exceeds ${MAX_BODY_BYTES} bytes`);
-      }
-
-      const bytes = await this.readCappedBody(response);
-      const html = new TextDecoder("utf-8").decode(bytes);
-      return { html, finalUrl };
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  /** Read a response body, aborting if it exceeds the size cap (streaming-measured). */
-  private async readCappedBody(response: Response): Promise<Uint8Array> {
-    const body = response.body;
-    if (!body) {
-      // No stream (e.g. a mocked Response): fall back to the buffered read + cap.
-      const buf = new Uint8Array(await response.arrayBuffer());
-      if (buf.byteLength > MAX_BODY_BYTES) {
-        throw new UrlImportError("too_large", `Page exceeds ${MAX_BODY_BYTES} bytes`);
-      }
-      return buf;
-    }
-    const reader = body.getReader();
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        total += value.byteLength;
-        if (total > MAX_BODY_BYTES) {
-          await reader.cancel();
-          throw new UrlImportError("too_large", `Page exceeds ${MAX_BODY_BYTES} bytes`);
-        }
-        chunks.push(value);
-      }
-    }
-    const out = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      out.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    return out;
   }
 
   /**

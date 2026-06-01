@@ -80,6 +80,8 @@ export type {
   ElementStatus,
   ElementType,
   FsrsState,
+  JobStatus,
+  JobType,
   MarkType,
   RelationType,
   ReviewRating,
@@ -94,6 +96,8 @@ export {
   ELEMENT_TYPES,
   FSRS_STATES,
   isMarkType,
+  JOB_STATUSES,
+  JOB_TYPES,
   MARK_TYPES,
   RELATION_TYPES,
   REVIEW_RATING_VALUE,
@@ -107,12 +111,15 @@ export type {
   DocumentId,
   ElementId,
   IsoTimestamp,
+  JobId,
   OperationId,
   RelationId,
   ReviewLogId,
   SiblingGroupId,
   SourceLocationId,
 } from "./ids";
+// Background-runner job model — local infra, not an element (./job).
+export type { Job, JobJsonValue, JobProgress } from "./job";
 // Shared numeric helpers (./numeric).
 export { clamp01 } from "./numeric";
 // Desktop pivot: command-shaped operation log — day-one invariant (./operation-log).

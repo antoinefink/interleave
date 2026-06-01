@@ -19,6 +19,8 @@ import { CaptureController } from "./capture-controller";
 import { setCaptureEnabled } from "./capture-pairing";
 import { DbService } from "./db-service";
 import { registerIpcHandlers } from "./ipc";
+import { createJobApplyHandlers } from "./job-apply-handlers";
+import { JobRunner } from "./job-runner";
 import { installApplicationMenu } from "./menu";
 import { resolveMigrationsDir } from "./migrations";
 import { resolveNativeBinding } from "./native-binding";
@@ -31,6 +33,8 @@ const dbService = new DbService();
 let disposeIpc: (() => void) | null = null;
 /** The live loopback capture controller (T062), held for the will-quit stop. */
 let captureController: CaptureController | null = null;
+/** The on-device background job runner (T058), held for the will-quit stop. */
+let jobRunner: JobRunner | null = null;
 
 /** The compiled-main directory (preload sits alongside the entry). */
 const distDir = __dirname;
@@ -120,7 +124,28 @@ function bootstrap(): void {
     getImportService: () => dbService.urlImportService,
     appVersion: app.getVersion(),
   });
-  disposeIpc = registerIpcHandlers(dbService, { paths, migrationsDir, captureController });
+
+  // 3b) The on-device background job runner (T058). It OWNS an Electron
+  //     utilityProcess worker (bundled as `dist/job-worker.cjs`, resolved next to
+  //     the compiled main — same distDir discipline as the renderer/preload) and
+  //     the job-type apply handlers bound to the open DB. `start()` recovers any
+  //     job left `running` by a crash (re-queue or terminal-fail) then drains the
+  //     persisted queue. The renderer's `sources.importUrl` enqueues a `url_import`
+  //     job; the worker fetches OFF-MAIN; MAIN applies via the shared import
+  //     service (the single SQLite writer stays main-owned).
+  jobRunner = new JobRunner({
+    jobsRepo: dbService.repos.jobs,
+    applyHandlers: createJobApplyHandlers(() => dbService.urlImportService),
+    workerPath: path.join(distDir, "job-worker.cjs"),
+  });
+  jobRunner.start();
+
+  disposeIpc = registerIpcHandlers(dbService, {
+    paths,
+    migrationsDir,
+    captureController,
+    runner: jobRunner,
+  });
 
   // Start the capture server ONLY if `capture.enabled` (default off). Bind the
   // socket FIRST, then persist the port, then mark running (all inside the
@@ -185,6 +210,10 @@ if (!gotLock) {
     // Stop the loopback capture server (T062) before closing the DB. Fire-and-
     // forget the async close — the process is exiting and the socket is local.
     void captureController?.stop();
+    // Stop the background runner (T058) BEFORE closing the DB so no apply handler
+    // writes to a closed connection. The persisted queue is left intact — pending
+    // jobs resume on the next launch. Mirrors the capture-controller stop ordering.
+    jobRunner?.stop();
     disposeIpc?.();
     dbService.close();
   });

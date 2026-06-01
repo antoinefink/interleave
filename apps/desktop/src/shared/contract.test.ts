@@ -43,6 +43,9 @@ import {
   InspectorGetRequestSchema,
   IPC_CHANNELS,
   IsoTimestampInputSchema,
+  type JobSummary,
+  JobsListRequestSchema,
+  type JobsListResult,
   LibraryBrowseRequestSchema,
   LineageGetRequestSchema,
   QueueActRequestSchema,
@@ -136,11 +139,16 @@ describe("IPC channels", () => {
         "analytics:get",
         "balance:get",
         "backups:create",
+        "jobs:list",
+        "jobs:updated",
         "menu:showShortcuts",
         "menu:createBackup",
       ].sort(),
     );
     expect(Object.values(IPC_CHANNELS)).not.toContain("db:query");
+    // T058: the renderer enqueues ONLY via `sources:importUrl` — there is no
+    // generic `jobs:enqueue` channel.
+    expect(Object.values(IPC_CHANNELS)).not.toContain("jobs:enqueue");
   });
 });
 
@@ -1378,5 +1386,58 @@ describe("BackupsCreateRequestSchema (T047)", () => {
   it("takes no arguments (void request)", () => {
     expect(BackupsCreateRequestSchema.parse(undefined)).toBeUndefined();
     expect(() => BackupsCreateRequestSchema.parse({ anything: true })).toThrow();
+  });
+});
+
+describe("Jobs observe schemas (T058)", () => {
+  it("JobsListRequestSchema accepts an empty / filtered request and rejects bad enums", () => {
+    expect(JobsListRequestSchema.parse({})).toEqual({});
+    expect(
+      JobsListRequestSchema.parse({ status: "queued", type: "url_import", limit: 50 }),
+    ).toEqual({ status: "queued", type: "url_import", limit: 50 });
+    expect(() => JobsListRequestSchema.parse({ status: "nope" })).toThrow();
+    expect(() => JobsListRequestSchema.parse({ type: "made_up" })).toThrow();
+    expect(() => JobsListRequestSchema.parse({ limit: 0 })).toThrow();
+  });
+
+  it("a JobSummary / JobsListResult round-trips as plain JSON", () => {
+    const summary: JobSummary = {
+      id: "job-1",
+      type: "url_import",
+      status: "running",
+      progressRatio: 50,
+      progressNote: "fetching",
+      error: null,
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:01.000Z",
+    };
+    const result: JobsListResult = { jobs: [summary] };
+    expect(JSON.parse(JSON.stringify(result))).toEqual(result);
+  });
+});
+
+describe("Worker message schemas (T058)", () => {
+  it("WorkerRequest round-trips a valid request and rejects a bad type", async () => {
+    const { WorkerRequestSchema } = await import("../worker/messages");
+    const req = { jobId: "job-1", type: "url_import", payload: { url: "https://x.test" } };
+    expect(WorkerRequestSchema.parse(req)).toEqual(req);
+    expect(() => WorkerRequestSchema.parse({ jobId: "j", type: "made_up", payload: {} })).toThrow();
+    expect(() => WorkerRequestSchema.parse({ type: "url_import", payload: {} })).toThrow();
+  });
+
+  it("WorkerMessage round-trips progress/result/error and rejects a malformed one", async () => {
+    const { WorkerMessageSchema } = await import("../worker/messages");
+    const progress = { kind: "progress", jobId: "j", progress: { ratio: 0.5, note: "x" } };
+    const result = { kind: "result", jobId: "j", data: { html: "<h1/>", finalUrl: "u" } };
+    const error = { kind: "error", jobId: "j", code: "fetch_failed", message: "boom" };
+    expect(WorkerMessageSchema.parse(progress)).toEqual(progress);
+    expect(WorkerMessageSchema.parse(result)).toEqual(result);
+    expect(WorkerMessageSchema.parse(error)).toEqual(error);
+    // Bad: unknown kind; out-of-range ratio; missing jobId.
+    expect(() => WorkerMessageSchema.parse({ kind: "nope", jobId: "j" })).toThrow();
+    expect(() =>
+      WorkerMessageSchema.parse({ kind: "progress", jobId: "j", progress: { ratio: 2 } }),
+    ).toThrow();
+    expect(() => WorkerMessageSchema.parse({ kind: "error", code: "c", message: "m" })).toThrow();
   });
 });

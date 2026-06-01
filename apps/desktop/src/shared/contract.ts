@@ -27,6 +27,8 @@ import {
   ELEMENT_TYPES,
   IMPORT_BALANCE_FACTOR_MAX,
   IMPORT_BALANCE_FACTOR_MIN,
+  JOB_STATUSES,
+  JOB_TYPES,
   KEYBOARD_LAYOUTS,
   MARK_TYPES,
   REVIEW_RATINGS,
@@ -870,6 +872,42 @@ export type SourcesImportUrlResult =
       /** The existing live source(s) this URL/content already maps to. */
       readonly matches: readonly SourceDuplicateSummary[];
     };
+
+// ---------------------------------------------------------------------------
+// jobs.list() / jobs.subscribe()  (T058 — observe the local background runner)
+// ---------------------------------------------------------------------------
+
+/**
+ * A renderer-safe projection of a background-runner job (T058). It carries the
+ * lifecycle fields the renderer observes — NO raw `payload`/`result` bytes (the
+ * `url_import` terminal result the renderer cares about is the inbox summary,
+ * surfaced via the existing {@link SourcesImportUrlResult}). The renderer never
+ * runs a job; it only observes via `jobs.list` / `jobs.subscribe`.
+ */
+export interface JobSummary {
+  readonly id: string;
+  readonly type: string;
+  readonly status: string;
+  /** Progress as an integer percent 0–100. */
+  readonly progressRatio: number;
+  readonly progressNote: string | null;
+  /** A terminal error line (with a leading `code:`), or `null`. */
+  readonly error: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+/** Observe the current queue (optionally filtered) for a maintenance view. */
+export const JobsListRequestSchema = z.object({
+  status: z.enum(JOB_STATUSES).optional(),
+  type: z.enum(JOB_TYPES).optional(),
+  limit: z.number().int().positive().max(500).optional(),
+});
+export type JobsListRequest = z.infer<typeof JobsListRequestSchema>;
+
+export interface JobsListResult {
+  readonly jobs: readonly JobSummary[];
+}
 
 // ---------------------------------------------------------------------------
 // capture.getPairing() / capture.regenerateToken() / capture.setEnabled()  (T062)
@@ -2830,6 +2868,23 @@ export interface AppApi {
      * final `.zip` path for display (no raw filesystem access reaches the renderer).
      */
     create(): Promise<BackupsCreateResult>;
+  };
+  readonly jobs: {
+    /**
+     * Observe the on-device background-runner queue (T058) — read-only. Returns
+     * renderer-safe {@link JobSummary} rows (no raw payload/result bytes). T058
+     * does NOT expose a generic `enqueue` to the renderer; the only renderer-
+     * reachable enqueue path is `sources.importUrl`.
+     */
+    list(request?: JobsListRequest): Promise<JobsListResult>;
+    /**
+     * Subscribe to runner `job:update`s (T058). A one-way main → renderer event
+     * delivering a {@link JobSummary} to the callback on every state change.
+     * Returns an unsubscribe fn. Receive-only — no enqueue, no generic listener,
+     * and the renderer never sees the raw `ipcRenderer`/event. Structurally
+     * mirrors `menu.onShowShortcuts`, but its callback receives a `JobSummary`.
+     */
+    subscribe(callback: (summary: JobSummary) => void): () => void;
   };
   readonly menu: {
     /**

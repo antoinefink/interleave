@@ -8,7 +8,8 @@
  * `db.query(sql)` handler — only the four explicit commands below exist.
  */
 
-import { app, ipcMain } from "electron";
+import type { Job, JobJsonValue } from "@interleave/core";
+import { app, BrowserWindow, ipcMain } from "electron";
 import {
   AnalyticsGetRequestSchema,
   BackupsCreateRequestSchema,
@@ -48,6 +49,9 @@ import {
   InspectorGetRequestSchema,
   InspectorListRequestSchema,
   IPC_CHANNELS,
+  type JobSummary,
+  JobsListRequestSchema,
+  type JobsListResult,
   LibraryBrowseRequestSchema,
   LineageGetRequestSchema,
   QueueActRequestSchema,
@@ -68,6 +72,7 @@ import {
   SettingsUpdateRequestSchema,
   SourcesImportManualRequestSchema,
   SourcesImportUrlRequestSchema,
+  type SourcesImportUrlResult,
   TagsAddRequestSchema,
   TagsListRequestSchema,
   TagsRemoveRequestSchema,
@@ -80,7 +85,10 @@ import {
 import { BackupService } from "./backup-service";
 import type { CaptureController } from "./capture-controller";
 import type { DbService } from "./db-service";
+import type { UrlImportJobPayload } from "./job-apply-handlers";
+import type { JobRunner } from "./job-runner";
 import type { AppPaths } from "./paths";
+import { UrlImportError } from "./url-import-service";
 
 /** Extra main-process context the backup handler (T047) needs (absolute paths). */
 export interface IpcHandlerContext {
@@ -95,6 +103,27 @@ export interface IpcHandlerContext {
    * register the non-capture handlers alone.
    */
   readonly captureController?: CaptureController;
+  /**
+   * The on-device background job runner (T058). The `sources.importUrl` path now
+   * ENQUEUES a `url_import` job (the worker fetches off-main); `jobs.list` +
+   * `jobs.subscribe` observe the queue. Optional so contract-only tests register
+   * the non-runner handlers alone; a runner-requiring handler then throws clearly.
+   */
+  readonly runner?: JobRunner;
+}
+
+/** Project a domain {@link Job} to the renderer-safe {@link JobSummary}. */
+function toJobSummary(job: Job): JobSummary {
+  return {
+    id: job.id,
+    type: job.type,
+    status: job.status,
+    progressRatio: Math.round(job.progress.ratio * 100),
+    progressNote: job.progress.note ?? null,
+    error: job.error,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+  };
 }
 
 /**
@@ -187,14 +216,43 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
     return dbService.importManualSource(request);
   });
 
-  // URL import (T060) is ASYNC — it does network I/O in the main process (unlike
-  // the synchronous inbox handlers). Mirror the async backupsCreate handler: a
-  // thin adapter that only parses + awaits. The vault `assetsDir` was injected
-  // into the DB service at open() time (NOT threaded per-call), so the handler
-  // never sees a filesystem path.
+  // URL import (T060/T058) — the renderer enqueues a `url_import` job; the
+  // background-runner WORKER fetches the page OFF-MAIN (so a slow fetch never
+  // freezes the UI or blocks the SQLite writer), and MAIN applies the result
+  // through the existing UrlImportService snapshot+createSource pipeline. The
+  // handler keeps the existing single-result contract by ENQUEUEING + AWAITING
+  // the job's terminal state (main never blocks on the network — only on the
+  // job's terminal `job:update`). A `succeeded` job carries the apply handler's
+  // SourcesImportUrlResult (imported | duplicate) → returned as-is; a `failed`/
+  // `cancelled` job → re-throw a reconstructed UrlImportError (the result type has
+  // NO error arm — errors are THROWN, exactly as the inline path did), which the
+  // `ImportUrlModal` catch already handles.
   ipcMain.handle(IPC_CHANNELS.sourcesImportUrl, async (_event, rawRequest: unknown) => {
     const request = SourcesImportUrlRequestSchema.parse(rawRequest);
-    return dbService.importFromUrl(request);
+    const runner = requireRunner();
+    const payload: UrlImportJobPayload = {
+      url: request.url,
+      ...(request.priority ? { priority: request.priority } : {}),
+      ...(request.reasonAdded !== undefined ? { reasonAdded: request.reasonAdded } : {}),
+      ...(request.forceNewVersion !== undefined
+        ? { forceNewVersion: request.forceNewVersion }
+        : {}),
+      // Forward the DEV/E2E loopback-import escape so the worker's SSRF guard
+      // permits the 127.0.0.1 fixture server in the E2E (never set in production).
+      ...(dbService.allowsLoopbackImport ? { allowLoopback: true } : {}),
+    };
+    const enqueued = runner.enqueue("url_import", payload as unknown as JobJsonValue);
+    const job = await runner.waitForTerminal(enqueued.id);
+    if (job.status === "succeeded" && job.result && typeof job.result === "object") {
+      return job.result as unknown as SourcesImportUrlResult;
+    }
+    // Terminal failed/cancelled → reconstruct + throw the typed import error. The
+    // stored error is a `code: message` line; split it back into the typed shape.
+    const errorLine = job.error ?? "fetch_failed: URL import did not complete";
+    const sep = errorLine.indexOf(":");
+    const code = (sep > 0 ? errorLine.slice(0, sep) : "fetch_failed").trim();
+    const message = (sep > 0 ? errorLine.slice(sep + 1) : errorLine).trim();
+    throw new UrlImportError(code as UrlImportError["code"], message);
   });
 
   // Browser-capture pairing (T062). The TRUSTED desktop renderer reads the
@@ -208,6 +266,16 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
       throw new Error("capture: handler registered without a capture controller");
     }
     return context.captureController;
+  }
+
+  // The background runner (T058) backs `sources.importUrl` (enqueue) +
+  // `jobs.list`/`jobs.subscribe` (observe). A handler registered without it (a
+  // contract-only test) throws a clear error, mirroring `requireCaptureController`.
+  function requireRunner(): JobRunner {
+    if (!context?.runner) {
+      throw new Error("jobs: handler registered without a background runner");
+    }
+    return context.runner;
   }
 
   ipcMain.handle(IPC_CHANNELS.captureGetPairing, () => {
@@ -472,7 +540,40 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
     };
   });
 
+  // Jobs OBSERVE surface (T058) — read-only. `jobs.list` reads the current queue
+  // (e.g. for an Analytics/Maintenance "background activity" view); `jobs.subscribe`
+  // (the renderer) receives a `JobSummary` on every `job:update`. T058 deliberately
+  // does NOT expose a generic `jobs.enqueue` to the renderer — the only renderer-
+  // reachable enqueue path is `sources.importUrl` (above). The runner is optional
+  // for contract-only tests, so the handler throws clearly when absent.
+  ipcMain.handle(IPC_CHANNELS.jobsList, (_event, rawRequest: unknown) => {
+    const request = JobsListRequestSchema.parse(rawRequest ?? {});
+    const jobs = requireRunner()
+      .list({
+        ...(request.status ? { status: request.status } : {}),
+        ...(request.type ? { type: request.type } : {}),
+        ...(request.limit != null ? { limit: request.limit } : {}),
+      })
+      .map(toJobSummary);
+    return { jobs } satisfies JobsListResult;
+  });
+
+  // Broadcast every runner `job:update` to all open windows as a `JobSummary` over
+  // the one-way `jobs:updated` send channel (the preload forwards it to
+  // `jobs.subscribe` callbacks). Capture the unsubscribe fn so the disposer tears
+  // it down — the `removeHandler` loop below only removes `invoke` handlers, not
+  // this emitter listener; re-registering handlers (a DbService-reopen test) would
+  // otherwise leak listeners / double-send.
+  const unsubscribeRunner =
+    context?.runner?.observe((job) => {
+      const summary = toJobSummary(job);
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (!win.isDestroyed()) win.webContents.send(IPC_CHANNELS.jobsUpdated, summary);
+      }
+    }) ?? null;
+
   return () => {
+    unsubscribeRunner?.();
     for (const channel of Object.values(IPC_CHANNELS)) {
       ipcMain.removeHandler(channel);
     }

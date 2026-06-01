@@ -47,11 +47,12 @@ afterEach(() => {
 });
 
 describe("schema migration", () => {
-  it("creates all 18 M1 tables from empty", () => {
+  it("creates all M1 base tables (+ the T058 jobs table) from empty", () => {
     // Exclude the T042 FTS5 search index — its virtual tables (source_fts /
     // extract_fts / card_fts) and their auto-created shadow tables (…_data,
     // …_idx, …_content, …_docsize, …_config) all appear as `type='table'` but
-    // are M8 search additions, not M1 base tables.
+    // are M8 search additions, not M1 base tables. The `jobs` table (T058) is the
+    // background-runner queue — infra, not part of the M1 element graph.
     const rows = handle.sqlite
       .prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '__drizzle%' AND name NOT LIKE '%fts%' ORDER BY name",
@@ -68,6 +69,7 @@ describe("schema migration", () => {
       "element_relations",
       "element_tags",
       "elements",
+      "jobs",
       "operation_log",
       "read_points",
       "review_logs",

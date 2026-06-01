@@ -16,6 +16,7 @@
 export * from "./cards";
 export * from "./documents";
 export * from "./elements";
+export * from "./jobs";
 export * from "./organize";
 export * from "./relations";
 export * from "./sources";

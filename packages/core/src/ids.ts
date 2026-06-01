@@ -51,6 +51,14 @@ export type ReviewLogId = Brand<string, "ReviewLogId">;
 export type SiblingGroupId = Brand<string, "SiblingGroupId">;
 
 /**
+ * ID of a background-runner {@link Job} row (`jobs.id`, T058). A job is local
+ * infrastructure (an off-main work unit), NOT an element — it carries no lineage
+ * and never appears in `operation_log`; it MAY reference an element inside its
+ * typed payload/result, but it is not part of the element graph.
+ */
+export type JobId = Brand<string, "JobId">;
+
+/**
  * An ISO-8601 timestamp string (UTC). Stored as text in SQLite. Kept as a named
  * alias so timestamp columns read clearly and can be tightened later without a
  * sweep across the codebase.

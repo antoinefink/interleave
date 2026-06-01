@@ -121,6 +121,19 @@ async function run() {
       entryPoints: [path.join(here, "src", "preload", "index.ts")],
       outfile: path.join(distDir, "preload.cjs"),
     },
+    {
+      // The background-job WORKER (T058) — its OWN self-contained bundle, forked
+      // by the runner with `utilityProcess.fork(path.join(__dirname,
+      // "job-worker.cjs"))`. It is DB-FREE (imports NO @interleave/db /
+      // better-sqlite3 / repositories), so it bundles only the pure fetch + Zod
+      // message code. Same CJS/node22 options as main; no `import.meta` shim (the
+      // worker uses none). In the shared `targets` array so BOTH `--watch` and the
+      // one-shot prod branch emit `dist/job-worker.cjs` (the latter is what
+      // `pnpm dev` → scripts/dev.mjs runs, so the bundle exists under dev too).
+      ...common,
+      entryPoints: [path.join(here, "src", "worker", "job-worker.ts")],
+      outfile: path.join(distDir, "job-worker.cjs"),
+    },
   ];
 
   stageMigrations();
@@ -128,7 +141,7 @@ async function run() {
   if (watch) {
     const contexts = await Promise.all(targets.map((t) => esbuild.context(t)));
     await Promise.all(contexts.map((c) => c.watch()));
-    console.log("[desktop] esbuild watching main + preload…");
+    console.log("[desktop] esbuild watching main + preload + job-worker…");
     return;
   }
 
@@ -138,7 +151,7 @@ async function run() {
   stageRenderer();
 
   await Promise.all(targets.map((t) => esbuild.build(t)));
-  console.log("[desktop] built main.cjs + preload.cjs + drizzle/");
+  console.log("[desktop] built main.cjs + preload.cjs + job-worker.cjs + drizzle/");
 }
 
 run().catch((error) => {

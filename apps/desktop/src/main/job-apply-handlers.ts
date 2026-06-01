@@ -1,0 +1,74 @@
+/**
+ * Job apply-handler registry (T058) — the MAIN-side functions that apply a
+ * worker result by committing through the existing repositories.
+ *
+ * The worker does pure compute/I/O and posts a result back; THESE handlers run in
+ * main and do the DB write (in a transaction, appending the correct existing
+ * `operation_log` ops via the repositories). They MUST be idempotent / dedup-
+ * guarded — at-least-once delivery means a crash-then-resume can re-run an
+ * already-applied job (see `JobRunner`). The `url_import` apply is safe: T061
+ * canonical-URL/content-hash dedup turns a re-run into a `"duplicate"` no-op.
+ *
+ * The handlers are bound to the open `DbService`'s `urlImportService` accessor
+ * (built lazily once), so the single-writer SQLite connection stays main-owned.
+ */
+
+import type { JobJsonValue } from "@interleave/core";
+import type { JobApplyHandlers } from "./job-runner";
+import type { UrlImportService } from "./url-import-service";
+
+/** The `url_import` job payload (enqueued by main, fetched by the worker). */
+export interface UrlImportJobPayload {
+  /** The as-entered url (worker follows redirects). */
+  readonly url: string;
+  readonly priority?: "A" | "B" | "C" | "D";
+  readonly reasonAdded?: string | null;
+  readonly forceNewVersion?: boolean;
+  /** DEV/E2E-only loopback escape, forwarded to the worker's fetch. */
+  readonly allowLoopback?: boolean;
+}
+
+/** The worker's `url_import` result (the fetched HTML + final url). */
+interface UrlImportFetchResult {
+  readonly html: string;
+  readonly finalUrl: string;
+}
+
+/**
+ * Build the apply-handler registry. `getUrlImportService` lazily resolves the
+ * shared, fully-wired `UrlImportService` (built against the open DB + vault), so
+ * the runner never holds a half-wired service and the DB write happens here in
+ * main.
+ */
+export function createJobApplyHandlers(
+  getUrlImportService: () => UrlImportService,
+): JobApplyHandlers {
+  return {
+    /**
+     * Apply a fetched page: run the EXISTING Readability → sanitize → vault-write
+     * → createSource transaction over the worker-supplied HTML. The fetch already
+     * ran off-main in the worker; this only does the (main-owned) DB write. Throws
+     * a `UrlImportError` on a snapshot/persist failure, which the runner records
+     * as the job's terminal error.
+     */
+    url_import: async (job, resultData) => {
+      const payload = job.payload as unknown as UrlImportJobPayload;
+      const fetched = resultData as unknown as UrlImportFetchResult;
+      const result = await getUrlImportService().importFromHtml({
+        // The post-redirect final url becomes the source url/canonical url; the
+        // as-entered url is preserved as originalUrl.
+        url: fetched.finalUrl,
+        originalUrl: payload.url,
+        html: fetched.html,
+        ...(payload.priority ? { priority: payload.priority } : {}),
+        ...(payload.reasonAdded !== undefined ? { reasonAdded: payload.reasonAdded } : {}),
+        ...(payload.forceNewVersion !== undefined
+          ? { forceNewVersion: payload.forceNewVersion }
+          : {}),
+      });
+      // The result is the discriminated import outcome (imported | duplicate) —
+      // serializable JSON the IPC handler maps back to SourcesImportUrlResult.
+      return result as unknown as JobJsonValue;
+    },
+  };
+}

@@ -17,6 +17,7 @@ import type {
   BlockId,
   ElementId,
   IsoTimestamp,
+  JobId,
   OperationId,
   RelationId,
   ReviewLogId,
@@ -36,6 +37,8 @@ export const newAssetId = (): AssetId => uuid() as AssetId;
 export const newOperationId = (): OperationId => uuid() as OperationId;
 export const newReviewLogId = (): ReviewLogId => uuid() as ReviewLogId;
 export const newSiblingGroupId = (): SiblingGroupId => uuid() as SiblingGroupId;
+/** Mint a stable id for a background-runner job row (`jobs.id`, T058). */
+export const newJobId = (): JobId => uuid() as JobId;
 /** Mint a stable block id (the lineage anchor extracts/marks/read-points reference). */
 export const newBlockId = (): BlockId => uuid() as BlockId;
 
