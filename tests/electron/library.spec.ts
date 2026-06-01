@@ -313,6 +313,148 @@ test("DRILL-DOWN — the concept facet chip count equals the visible extract row
   await app.close();
 });
 
+test("RAPID CONCEPT SWITCHING — the list never gets stuck empty/stale; it always matches the active chip", async () => {
+  // The SECOND half of the reported bug: "switching between concepts SOMETIMES shows
+  // nothing even though the chip shows a non-zero count." That is a combination of
+  // (a) the stale global memberCount (fixed by the drill-down byConcept count) and
+  // (b) an out-of-order browse response overwriting the list when facets switch
+  // faster than the bridge resolves. The renderer guards (b) with a cancelled-flag
+  // closure; this drives the EXACT user gesture — rapidly clicking among several
+  // concepts — against the real Electron + SQLite stack and asserts that after each
+  // switch the rendered rows equal the active concept's chip count (so the list is
+  // never stuck on a previous/empty payload), for many fast iterations.
+  const app = await launchApp(dataDir);
+  const page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+
+  // Seed THREE concepts, each owning a DISTINCT, non-overlapping number of fresh
+  // extracts (2 / 3 / 1). Distinct counts make a stale overwrite visibly wrong: if
+  // the list were stuck on the previous concept's payload, the row count would not
+  // match the now-active chip. Anchored on the seeded source via the typed bridge.
+  const seeded = await page.evaluate(async () => {
+    const api = window.appApi as unknown as {
+      inspector: { list(): Promise<{ elements: { id: string; type: string; title: string }[] }> };
+      extractions: {
+        create(r: {
+          sourceElementId: string;
+          selectedText: string;
+          blockIds: string[];
+          title?: string;
+        }): Promise<{ extract: { id: string } }>;
+      };
+      concepts: {
+        create(r: { name: string }): Promise<{ concept: { id: string } }>;
+        assign(r: { elementId: string; conceptId: string }): Promise<unknown>;
+      };
+    };
+    const { elements } = await api.inspector.list();
+    const source = elements.find(
+      (e) => e.type === "source" && e.title === "On the Measure of Intelligence",
+    );
+    if (!source) throw new Error("seeded source not found");
+
+    const blocks = ["blk_intro_p1", "blk_intro_p2", "blk_def_p2"];
+    const makeExtracts = async (n: number, tag: string): Promise<string[]> => {
+      const ids: string[] = [];
+      for (let i = 0; i < n; i++) {
+        const { extract } = await api.extractions.create({
+          sourceElementId: source.id,
+          selectedText: `Rapid-switch fixture ${tag} extract ${i + 1}.`,
+          blockIds: [blocks[i % blocks.length]],
+          title: `Rapid ${tag} extract ${i + 1}`,
+        });
+        ids.push(extract.id);
+      }
+      return ids;
+    };
+
+    const specs: { name: string; n: number }[] = [
+      { name: "Switch Alpha", n: 2 },
+      { name: "Switch Beta", n: 3 },
+      { name: "Switch Gamma", n: 1 },
+    ];
+    const made: { id: string; name: string; n: number }[] = [];
+    for (const spec of specs) {
+      const ids = await makeExtracts(spec.n, spec.name);
+      const { concept } = await api.concepts.create({ name: spec.name });
+      for (const id of ids) await api.concepts.assign({ elementId: id, conceptId: concept.id });
+      made.push({ id: concept.id, name: spec.name, n: spec.n });
+    }
+    return made;
+  });
+
+  await openLibrary(page);
+
+  // Scope to extracts so each concept's chip count == its extract members == its rows.
+  await page.getByTestId("library-filter-type-extract").click();
+
+  const chipFor = (id: string) => page.getByTestId(`library-filter-concept-${id}`);
+  // The drill-down chip counts are the distinct seeded extract counts under TYPE=Extracts.
+  for (const c of seeded) {
+    await expect(chipFor(c.id).locator(".filter-opt__count")).toHaveText(String(c.n));
+  }
+
+  // Rapidly cycle the concept selection in bursts, asserting the settled state only
+  // ONCE PER BURST — after a CHAIN of switches has been dispatched back-to-back — so
+  // several browse() reads are genuinely in flight at once and the list must converge
+  // on the burst's FINAL concept, never a stale intermediate or empty payload.
+  // Selecting a different concept does not auto-toggle the previous one, so each step
+  // is "clear current, select next".
+  let active: string | null = null;
+  // Each burst is a CHAIN of switches issued without settling between them; the LAST
+  // entry is the one the list must end up showing. Earlier entries in a burst exist
+  // only to put a stale, slower-resolving browse() in flight that the renderer's
+  // cancelled-flag guard must drop. The single-element bursts re-check the calm path.
+  // No burst's first step may equal the previous burst's final concept: stepping to
+  // the already-active concept would toggle it OFF instead of switching, so each
+  // burst below begins with a concept different from the one before it ended on.
+  const bursts: (typeof seeded)[number][][] = [
+    [seeded[1]],
+    [seeded[0], seeded[2], seeded[1], seeded[0]],
+    [seeded[2]],
+    [seeded[1], seeded[2], seeded[0]],
+    [seeded[1], seeded[2], seeded[0], seeded[1]],
+  ];
+  for (const burst of bursts) {
+    // Fire the whole chain of switches back-to-back. `locator.click()` resolves once
+    // the DOM click is DISPATCHED — it does NOT wait for the async browse() IPC the
+    // click kicks off — so awaiting clicks in order keeps a deterministic selection
+    // sequence while still leaving each switch's browse() read in flight when the
+    // next switch fires. We deliberately do NOT assert (which would settle the list)
+    // between switches inside a burst, so multiple browse() reads overlap and a
+    // slower one can resolve AFTER a later selection was issued — exactly the
+    // out-of-order overlap the renderer's cancelled-flag guard must drop. Only the
+    // FINAL selection's payload may win.
+    for (const step of burst) {
+      // Every step is a real switch to a DIFFERENT concept (the chains above never
+      // repeat a concept back-to-back), so we always clear the current one first.
+      if (active) await chipFor(active).click();
+      await chipFor(step.id).click();
+      active = step.id;
+    }
+
+    const target = burst[burst.length - 1];
+    // After it settles, the active chip count and the visible extract rows agree, and
+    // the list is NEVER stuck on an earlier (stale) or empty payload.
+    await expect(chipFor(target.id).locator(".filter-opt__count")).toHaveText(String(target.n));
+    const extractGroup = page.getByTestId("library-group-extract");
+    await expect(extractGroup).toBeVisible();
+    await expect(extractGroup.getByTestId("library-result")).toHaveCount(target.n);
+    // Only the extract group renders (the intersection never leaks other types).
+    await expect(page.getByTestId("library-group-source")).toHaveCount(0);
+    await expect(page.getByTestId("library-group-card")).toHaveCount(0);
+    // The calm total summary equals the rendered rows (counts.all tracks the list;
+    // the label pluralizes, so "1 element" vs "N elements").
+    await expect(page.getByTestId("library-count")).toHaveText(
+      `${target.n} element${target.n === 1 ? "" : "s"}`,
+    );
+    // The facet-driven empty state is absent whenever the active chip is non-zero.
+    await expect(page.getByTestId("library-empty")).toHaveCount(0);
+  }
+
+  await app.close();
+});
+
 test("the library still lists the seeded elements after an app restart (browse persisted)", async () => {
   // Re-launch against the SAME data dir — the restart analogue.
   const app = await launchApp(dataDir);
