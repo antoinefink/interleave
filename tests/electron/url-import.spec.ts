@@ -195,3 +195,91 @@ test("the imported URL source + its snapshots survive an app restart", async () 
 
   await app.close();
 });
+
+// --- T061: canonical-URL & content-hash dedup, reuse-or-new-version prompt. ---
+
+test("re-importing the SAME url is detected as a duplicate (no second source)", async () => {
+  const app = await launch();
+  const page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+
+  await page.getByTestId("nav-inbox").click();
+  await expect(page.getByTestId("route-inbox")).toBeVisible();
+  // One source already imported by the earlier tests.
+  await expect(page.getByTestId("inbox-row")).toHaveCount(1);
+
+  // Paste the SAME URL again — the main process detects the canonical-URL dup and
+  // returns the "already imported" outcome WITHOUT creating anything.
+  await page.getByTestId("inbox-import-paste-url").click();
+  await expect(page.getByTestId("import-url-modal")).toBeVisible();
+  await page.getByTestId("import-url-input").fill(`${baseUrl}${ARTICLE_PATH}`);
+  await page.getByTestId("import-url-submit").click();
+
+  // The duplicate panel appears (modal stays open); still ONE inbox row.
+  await expect(page.getByTestId("import-url-duplicate")).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByTestId("import-url-open-existing")).toBeVisible();
+  await expect(page.getByTestId("import-url-modal")).toBeVisible();
+  await page.getByTestId("import-url-duplicate-cancel").click();
+  await expect(page.getByTestId("import-url-modal")).toBeHidden();
+  await expect(page.getByTestId("inbox-row")).toHaveCount(1);
+
+  await app.close();
+});
+
+test("'Import new version' explicitly creates a SECOND source for the same url", async () => {
+  const app = await launch();
+  const page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+
+  await page.getByTestId("nav-inbox").click();
+  await expect(page.getByTestId("route-inbox")).toBeVisible();
+  await expect(page.getByTestId("inbox-row")).toHaveCount(1);
+
+  await page.getByTestId("inbox-import-paste-url").click();
+  await expect(page.getByTestId("import-url-modal")).toBeVisible();
+  await page.getByTestId("import-url-input").fill(`${baseUrl}${ARTICLE_PATH}`);
+  await page.getByTestId("import-url-submit").click();
+
+  // On the duplicate prompt, choose "Import new version" — a second source lands.
+  await expect(page.getByTestId("import-url-duplicate")).toBeVisible({ timeout: 20_000 });
+  await page.getByTestId("import-url-new-version").click();
+  await expect(page.getByTestId("import-url-modal")).toBeHidden({ timeout: 20_000 });
+  await expect(page.getByTestId("inbox-row")).toHaveCount(2);
+
+  await app.close();
+});
+
+test("both sources (and the new version) survive an app restart", async () => {
+  const app = await launch();
+  const page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+
+  await page.getByTestId("nav-inbox").click();
+  await expect(page.getByTestId("route-inbox")).toBeVisible();
+  // The original + the explicit new version both persist.
+  await expect(page.getByTestId("inbox-row")).toHaveCount(2);
+
+  // Both share the same canonical URL (the index is non-unique by design).
+  const canonicals = await page.evaluate(async () => {
+    const api = window.appApi as unknown as {
+      inbox: { list(): Promise<{ items: { id: string }[] }> };
+      inspector: {
+        get(req: { id: string }): Promise<{
+          data: { provenance: { canonicalUrl: string | null } | null } | null;
+        }>;
+      };
+    };
+    const { items } = await api.inbox.list();
+    const out: (string | null | undefined)[] = [];
+    for (const it of items) {
+      const { data } = await api.inspector.get({ id: it.id });
+      out.push(data?.provenance?.canonicalUrl);
+    }
+    return out;
+  });
+  expect(canonicals).toHaveLength(2);
+  expect(canonicals[0]).toBe(`${baseUrl}${ARTICLE_PATH}`);
+  expect(canonicals[1]).toBe(`${baseUrl}${ARTICLE_PATH}`);
+
+  await app.close();
+});

@@ -58,7 +58,9 @@ import {
   SettingsUpdateManyRequestSchema,
   SettingsUpdateRequestSchema,
   SourcesImportManualRequestSchema,
+  type SourcesImportUrlRequest,
   SourcesImportUrlRequestSchema,
+  type SourcesImportUrlResult,
   TagsAddRequestSchema,
   TagsRemoveRequestSchema,
 } from "./contract";
@@ -169,6 +171,32 @@ describe("SourcesImportUrlRequestSchema (T060)", () => {
     expect(() =>
       SourcesImportUrlRequestSchema.parse({ url: "https://example.com", priority: "Z" }),
     ).toThrow();
+  });
+
+  it("the request type carries the optional forceNewVersion flag (T061)", () => {
+    const req: SourcesImportUrlRequest = { url: "https://example.com", forceNewVersion: true };
+    expect(req.forceNewVersion).toBe(true);
+  });
+
+  it("the discriminated result round-trips a duplicate `matches` payload (T061)", () => {
+    // The duplicate arm carries the existing live match(es) so the modal can offer
+    // Open existing / Import new version. A pure TS shape — assert it narrows.
+    const result: SourcesImportUrlResult = {
+      status: "duplicate",
+      matches: [
+        {
+          elementId: "el_existing",
+          title: "The Spacing Effect",
+          status: "inbox",
+          accessedAt: "2026-05-10T00:00:00.000Z",
+          matchedBy: "canonicalUrl",
+        },
+      ],
+    };
+    expect(result.status).toBe("duplicate");
+    if (result.status !== "duplicate") throw new Error("expected duplicate");
+    expect(result.matches[0]?.elementId).toBe("el_existing");
+    expect(result.matches[0]?.matchedBy).toBe("canonicalUrl");
   });
 });
 

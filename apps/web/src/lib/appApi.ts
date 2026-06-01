@@ -518,14 +518,31 @@ export interface SourcesImportUrlRequest {
 }
 
 /**
+ * One existing source an import candidate duplicates (T061) — surfaced in the
+ * `"duplicate"` result so the modal can offer Open existing / Import new version.
+ */
+export interface SourceDuplicateSummary {
+  readonly elementId: string;
+  readonly title: string;
+  readonly status: string;
+  readonly accessedAt: string | null;
+  readonly matchedBy: "canonicalUrl" | "contentHash";
+}
+
+/**
  * The discriminated URL-import result (T060 always `"imported"`; T061 adds
  * `"duplicate"`). Keeping it discriminated avoids a breaking shape change later.
  */
-export type SourcesImportUrlResult = {
-  readonly status: "imported";
-  readonly id: string;
-  readonly item: InboxItemSummary;
-};
+export type SourcesImportUrlResult =
+  | {
+      readonly status: "imported";
+      readonly id: string;
+      readonly item: InboxItemSummary;
+    }
+  | {
+      readonly status: "duplicate";
+      readonly matches: readonly SourceDuplicateSummary[];
+    };
 
 export interface InboxListResult {
   readonly items: readonly InboxItemSummary[];

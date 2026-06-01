@@ -153,6 +153,11 @@ export {
   toMatchExpression,
 } from "./search-repository";
 export { SettingsRepository } from "./settings-repository";
+export {
+  SourceDedupQuery,
+  type SourceDuplicateMatch,
+  type SourceDuplicateMatchKind,
+} from "./source-dedup-query";
 export { deriveSourceLocationLabel, type LabelBlock } from "./source-location-label";
 export { resolveSourceRef } from "./source-ref-query";
 export {
@@ -187,6 +192,8 @@ export interface Repositories {
   readonly trash: import("./trash-query").TrashRepository;
   /** The system-wide analytics aggregation (T045) — read-only. */
   readonly analytics: import("./analytics-query").AnalyticsService;
+  /** Duplicate-detection lookups for URL import (T061) — read-only. */
+  readonly sourceDedup: import("./source-dedup-query").SourceDedupQuery;
 }
 
 import type { InterleaveDatabase } from "@interleave/db";
@@ -200,6 +207,7 @@ import { QueueRepository } from "./queue-repository";
 import { ReviewRepository } from "./review-repository";
 import { SearchRepository } from "./search-repository";
 import { SettingsRepository } from "./settings-repository";
+import { SourceDedupQuery } from "./source-dedup-query";
 import { SourceRepository } from "./source-repository";
 import { TrashRepository } from "./trash-query";
 
@@ -208,6 +216,7 @@ import { TrashRepository } from "./trash-query";
  * main/DB service after it opens + migrates the database.
  */
 export function createRepositories(db: InterleaveDatabase): Repositories {
+  const assets = new AssetRepository(db);
   return {
     elements: new ElementRepository(db),
     documents: new DocumentRepository(db),
@@ -216,10 +225,11 @@ export function createRepositories(db: InterleaveDatabase): Repositories {
     queue: new QueueRepository(db),
     search: new SearchRepository(db),
     concepts: new ConceptRepository(db),
-    assets: new AssetRepository(db),
+    assets,
     settings: new SettingsRepository(db),
     operationLog: new OperationLogRepository(db),
     trash: new TrashRepository(db),
     analytics: new AnalyticsService(db),
+    sourceDedup: new SourceDedupQuery(db, assets),
   };
 }

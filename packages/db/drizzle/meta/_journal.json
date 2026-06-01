@@ -43,6 +43,13 @@
       "when": 1780172530484,
       "tag": "0005_card_fts_softdelete",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1780344591162,
+      "tag": "0006_round_vertigo",
+      "breakpoints": true
     }
   ]
 }

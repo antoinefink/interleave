@@ -39,6 +39,8 @@ import {
   InboxQuery,
   newElementId,
   type Repositories,
+  type SourceDedupQuery,
+  type SourceDuplicateMatch,
   type SourceRepository,
 } from "@interleave/local-db";
 import { sha256 } from "./backup-manifest";
@@ -63,12 +65,35 @@ export class UrlImportError extends Error {
   }
 }
 
-/** A discriminated import result. T060 always returns `"imported"`; T061 adds `"duplicate"`. */
-export type UrlImportResult = {
-  readonly status: "imported";
-  readonly id: string;
-  readonly item: InboxItemSummary;
-};
+/**
+ * One existing live source that an import candidate duplicates (T061). Carries the
+ * existing element so the caller can offer "Open existing" / "Import new version".
+ */
+export interface UrlImportDuplicateMatch {
+  readonly elementId: string;
+  readonly title: string;
+  readonly status: string;
+  readonly accessedAt: string | null;
+  readonly matchedBy: "canonicalUrl" | "contentHash";
+}
+
+/**
+ * A discriminated import result. T060 always returned `"imported"`; T061 adds the
+ * `"duplicate"` arm — when the canonical URL or the cleaned-snapshot content hash
+ * already maps to a live source (and `forceNewVersion` is false), the import
+ * creates NOTHING and returns the existing match(es) so the caller can offer
+ * reuse-or-new-version. The same shape is the IPC contract's `SourcesImportUrlResult`.
+ */
+export type UrlImportResult =
+  | {
+      readonly status: "imported";
+      readonly id: string;
+      readonly item: InboxItemSummary;
+    }
+  | {
+      readonly status: "duplicate";
+      readonly matches: readonly UrlImportDuplicateMatch[];
+    };
 
 /** Constructor dependencies (injected once; shared by the IPC + loopback callers). */
 export interface UrlImportServiceDeps {
@@ -132,12 +157,19 @@ interface PipelineInput {
   readonly titleOverride?: string | null;
   /** An explicit accessed timestamp (capture path), else auto-stamped now. */
   readonly accessedAt?: string | null;
+  /**
+   * T061: when true, skip the canonical-URL + content-hash dedup checks and import
+   * a SECOND source even if a duplicate exists (the user's "import new version
+   * anyway" choice; the canonical-URL index is non-unique by design).
+   */
+  readonly forceNewVersion: boolean;
 }
 
 export class UrlImportService {
   private readonly db: InterleaveDatabase;
   private readonly sources: SourceRepository;
   private readonly assetsRepo: AssetRepository;
+  private readonly dedup: SourceDedupQuery;
   private readonly inbox: InboxQuery;
   private readonly assetsDir: string;
   private readonly fetchImpl: typeof fetch;
@@ -147,6 +179,7 @@ export class UrlImportService {
     this.db = deps.db;
     this.sources = deps.repositories.sources;
     this.assetsRepo = deps.repositories.assets;
+    this.dedup = deps.repositories.sourceDedup;
     this.inbox = new InboxQuery(deps.repositories);
     this.assetsDir = deps.assetsDir;
     this.fetchImpl = deps.fetchImpl ?? fetch;
@@ -167,6 +200,7 @@ export class UrlImportService {
       originalUrl: entered,
       priority: input.priority ?? "C",
       reasonAdded: input.reasonAdded ?? null,
+      forceNewVersion: input.forceNewVersion ?? false,
     });
   }
 
@@ -187,6 +221,7 @@ export class UrlImportService {
       reasonAdded: input.reasonAdded ?? null,
       titleOverride: input.title ?? null,
       accessedAt: input.accessedAt ?? null,
+      forceNewVersion: input.forceNewVersion ?? false,
     });
   }
 
@@ -342,13 +377,30 @@ export class UrlImportService {
     const accessedAt = input.accessedAt ?? new Date().toISOString();
     const canonicalUrl = canonicalizeUrl(input.finalUrl);
 
-    // 4. Write the snapshots to the vault FIRST (outside the tx — bytes on disk).
+    // Prepare the snapshot bytes + hashes up front so dedup can compare the
+    // cleaned-snapshot hash WITHOUT writing anything (a duplicate writes no files).
     const sourceDir = path.join(this.assetsDir, "sources", sourceId);
     const originalRel = `sources/${sourceId}/original.html`;
     const cleanedRel = `sources/${sourceId}/cleaned.html`;
     const originalBytes = Buffer.from(input.html, "utf-8");
     const cleanedBytes = Buffer.from(cleanedHtml, "utf-8");
+    const originalHash = sha256(originalBytes);
+    const cleanedHash = sha256(cleanedBytes);
 
+    // 3b. Dedup (T061) — BEFORE any vault write or DB row. Unless the user chose
+    //     "import new version anyway", a live canonical-URL match OR a live
+    //     cleaned-snapshot content-hash match returns the `"duplicate"` outcome
+    //     and persists NOTHING (no file written, no row inserted). Canonical URL is
+    //     the primary signal; the content hash is the same-article-different-URL
+    //     backstop. Only live (non-soft-deleted) sources count.
+    if (!input.forceNewVersion) {
+      const duplicates = this.findDuplicates(canonicalUrl, cleanedHash);
+      if (duplicates.length > 0) {
+        return { status: "duplicate", matches: duplicates.map(toDuplicateMatch) };
+      }
+    }
+
+    // 4. Write the snapshots to the vault FIRST (outside the tx — bytes on disk).
     let wroteDir = false;
     try {
       mkdirSync(sourceDir, { recursive: true });
@@ -380,7 +432,7 @@ export class UrlImportService {
           kind: "source_html",
           vaultRoot: "assets",
           relativePath: originalRel,
-          contentHash: sha256(originalBytes),
+          contentHash: originalHash,
           mime: "text/html",
           size: originalBytes.byteLength,
         });
@@ -389,7 +441,7 @@ export class UrlImportService {
           kind: "source_html",
           vaultRoot: "assets",
           relativePath: cleanedRel,
-          contentHash: sha256(cleanedBytes),
+          contentHash: cleanedHash,
           mime: "text/html",
           size: cleanedBytes.byteLength,
         });
@@ -415,6 +467,36 @@ export class UrlImportService {
     }
     return { status: "imported", id: sourceId, item };
   }
+
+  /**
+   * The dedup decision (T061): ALL live sources this import candidate duplicates,
+   * newest first, or `[]`. Canonical URL is the primary signal (checked first; it
+   * can match MULTIPLE sources once the user has explicitly imported new versions
+   * under the same canonical URL); the cleaned-snapshot content hash is the
+   * same-article-different-URL backstop (a single match). Only live
+   * (non-soft-deleted) sources count. Returns the raw `SourceDuplicateMatch`es from
+   * the typed `local-db` query.
+   */
+  private findDuplicates(
+    canonicalUrl: string | null,
+    cleanedHash: string,
+  ): readonly SourceDuplicateMatch[] {
+    const byUrl = this.dedup.findSourcesByCanonicalUrl(canonicalUrl);
+    if (byUrl.length > 0) return byUrl;
+    const byHash = this.dedup.findSourceBySnapshotHash(cleanedHash);
+    return byHash ? [byHash] : [];
+  }
+}
+
+/** Project a typed dedup-query match into the service's result shape. */
+function toDuplicateMatch(match: SourceDuplicateMatch): UrlImportDuplicateMatch {
+  return {
+    elementId: match.elementId,
+    title: match.title,
+    status: match.status,
+    accessedAt: match.accessedAt,
+    matchedBy: match.matchedBy,
+  };
 }
 
 /** Trim a string to a non-empty value, or `null`. */

@@ -1,0 +1,1 @@
+CREATE INDEX `sources_canonical_url_idx` ON `sources` (`canonical_url`);

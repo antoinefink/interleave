@@ -2423,7 +2423,7 @@ describe("DbService — backup support (T047)", () => {
   it("getSchemaVersion returns the latest applied Drizzle migration tag", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
-    expect(svc.getSchemaVersion(MIGRATIONS_DIR)).toBe("0005_card_fts_softdelete");
+    expect(svc.getSchemaVersion(MIGRATIONS_DIR)).toBe("0006_round_vertigo");
     svc.close();
   });
 

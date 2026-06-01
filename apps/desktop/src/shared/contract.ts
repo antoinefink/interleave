@@ -833,17 +833,43 @@ export const SourcesImportUrlRequestSchema = z.object({
 export type SourcesImportUrlRequest = z.infer<typeof SourcesImportUrlRequestSchema>;
 
 /**
- * The discriminated URL-import result. T060 always returns the `"imported"` arm;
- * T061 adds the `"duplicate"` arm to this SAME shape (so the result never has a
- * breaking shape change). Defined discriminated from the start.
+ * One existing source that an import candidate duplicates (T061). Surfaced in the
+ * `"duplicate"` result so the renderer can show "Already imported as '<title>' on
+ * <date>" and offer "Open existing" / "Import new version" / "Cancel".
  */
-export type SourcesImportUrlResult = {
-  readonly status: "imported";
-  /** The new source element id. */
-  readonly id: string;
-  /** The fresh inbox summary for the created source. */
-  readonly item: InboxItemSummary;
-};
+export interface SourceDuplicateSummary {
+  /** The existing source element's id (so "Open existing" can navigate to it). */
+  readonly elementId: string;
+  readonly title: string;
+  /** Lifecycle status (never `deleted` — only live sources match). */
+  readonly status: string;
+  /** When it was imported/snapshotted (ISO-8601), or `null`. */
+  readonly accessedAt: string | null;
+  /** Which signal matched — the canonical URL or the cleaned-snapshot content hash. */
+  readonly matchedBy: "canonicalUrl" | "contentHash";
+}
+
+/**
+ * The discriminated URL-import result. T060 always returned the `"imported"` arm;
+ * T061 adds the `"duplicate"` arm to this SAME shape (so the result never has a
+ * breaking shape change). When the canonical URL or the cleaned-snapshot content
+ * hash already maps to a live source (and `forceNewVersion` is false), the import
+ * creates NOTHING and returns `"duplicate"` with the existing match(es); the user
+ * then chooses Open existing / Import new version (re-call with `forceNewVersion`).
+ */
+export type SourcesImportUrlResult =
+  | {
+      readonly status: "imported";
+      /** The new source element id. */
+      readonly id: string;
+      /** The fresh inbox summary for the created source. */
+      readonly item: InboxItemSummary;
+    }
+  | {
+      readonly status: "duplicate";
+      /** The existing live source(s) this URL/content already maps to. */
+      readonly matches: readonly SourceDuplicateSummary[];
+    };
 
 /** `inbox.list()` takes no arguments. */
 export const InboxListRequestSchema = z.void();

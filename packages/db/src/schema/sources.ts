@@ -18,25 +18,34 @@
 import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { elements } from "./elements";
 
-export const sources = sqliteTable("sources", {
-  /** Mirrors the owning `source` element's id (one-to-one). */
-  elementId: text("element_id")
-    .primaryKey()
-    .references(() => elements.id, { onDelete: "cascade" }),
-  url: text("url"),
-  /** Normalized URL used for duplicate detection (tracking params stripped). */
-  canonicalUrl: text("canonical_url"),
-  /** Original/pre-redirect URL, preserved for provenance. */
-  originalUrl: text("original_url"),
-  author: text("author"),
-  publishedAt: text("published_at"),
-  /** When the user imported/snapshotted the source. */
-  accessedAt: text("accessed_at"),
-  /** Vault key/relative path of the saved snapshot asset, if any. */
-  snapshotKey: text("snapshot_key"),
-  /** Why the user added this source (free text), aiding later triage. */
-  reasonAdded: text("reason_added"),
-});
+export const sources = sqliteTable(
+  "sources",
+  {
+    /** Mirrors the owning `source` element's id (one-to-one). */
+    elementId: text("element_id")
+      .primaryKey()
+      .references(() => elements.id, { onDelete: "cascade" }),
+    url: text("url"),
+    /** Normalized URL used for duplicate detection (tracking params stripped). */
+    canonicalUrl: text("canonical_url"),
+    /** Original/pre-redirect URL, preserved for provenance. */
+    originalUrl: text("original_url"),
+    author: text("author"),
+    publishedAt: text("published_at"),
+    /** When the user imported/snapshotted the source. */
+    accessedAt: text("accessed_at"),
+    /** Vault key/relative path of the saved snapshot asset, if any. */
+    snapshotKey: text("snapshot_key"),
+    /** Why the user added this source (free text), aiding later triage. */
+    reasonAdded: text("reason_added"),
+  },
+  (table) => [
+    // T061: the canonical-URL duplicate-detection lookup. Non-unique by design —
+    // distinct sources MAY legitimately share a canonical URL (an explicit
+    // "import new version anyway"), so uniqueness would block that escape hatch.
+    index("sources_canonical_url_idx").on(table.canonicalUrl),
+  ],
+);
 
 export const sourceLocations = sqliteTable(
   "source_locations",
