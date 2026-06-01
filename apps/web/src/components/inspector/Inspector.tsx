@@ -552,13 +552,19 @@ function InspectorBody({
               {priorityLabel(element.priority)} · {element.priority.toFixed(3)}
             </span>
           </MetaRow>
-          <MetaRow k="Set priority">
+          {/* Full-width row: the A/B/C/D editor needs the whole body width to lay
+              out ↑ A B C D ↓ on one calm line. In the 2-column MetaRow the ~147px
+              value cell is too narrow and the last band ("D") clips at the fixed
+              296px inspector edge — so the label sits on its own line and the
+              control spans below it. The control's own flex-wrap is the safety net. */}
+          <div className="meta-row meta-row--stack">
+            <span className="meta-key">Set priority</span>
             <PriorityControl
               priority={element.priority}
               busy={priorityBusy}
               onSetPriority={onSetPriority}
             />
-          </MetaRow>
+          </div>
           <MetaRow k="Due">
             <span data-testid="meta-due">{fmtDate(element.dueAt)}</span>
           </MetaRow>

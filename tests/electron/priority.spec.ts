@@ -181,46 +181,124 @@ test("the priority editor fits fully inside the fixed-width inspector (no clip) 
   const editor = page.getByTestId("inspector-priority");
   await expect(editor).toBeVisible();
 
-  // The editor's own scroll width must not exceed its client width (it wraps within
-  // its cell rather than overflowing it).
-  const editorOverflow = await editor.evaluate((el) => ({
+  /**
+   * Assert the editor never clips: it does not overflow its own box AND every
+   * interactive control (both steppers + all four bands, especially "D") sits
+   * fully inside the inspector body's CONTENT box (body box inset by its computed
+   * L/R padding). Re-used at the default 296px AND at a forced narrower width.
+   */
+  const assertNoClip = async (label: string) => {
+    // The editor's own scroll width must not exceed its client width (it wraps
+    // within its cell rather than overflowing/clipping it).
+    const editorOverflow = await editor.evaluate((el) => ({
+      clientWidth: el.clientWidth,
+      scrollWidth: el.scrollWidth,
+    }));
+    expect(editorOverflow.scrollWidth, `${label}: editor does not overflow`).toBeLessThanOrEqual(
+      editorOverflow.clientWidth,
+    );
+
+    // The inspector body content box = body box inset by its computed L/R padding.
+    const body = page.locator(".shell-inspector__body");
+    const bodyBox = await body.boundingBox();
+    const pad = await body.evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { left: parseFloat(cs.paddingLeft), right: parseFloat(cs.paddingRight) };
+    });
+    if (!bodyBox) throw new Error("expected inspector body box");
+    const contentLeft = bodyBox.x + pad.left;
+    const contentRight = bodyBox.x + bodyBox.width - pad.right;
+
+    const eps = 0.5;
+    const controls = [
+      "inspector-priority-raise",
+      "inspector-priority-lower",
+      "inspector-priority-A",
+      "inspector-priority-B",
+      "inspector-priority-C",
+      "inspector-priority-D",
+    ];
+    for (const testId of controls) {
+      const box = await page.getByTestId(testId).boundingBox();
+      if (!box) throw new Error(`expected box for ${testId}`);
+      expect(box.x, `${label}: ${testId} left edge inside content box`).toBeGreaterThanOrEqual(
+        contentLeft - eps,
+      );
+      expect(
+        box.x + box.width,
+        `${label}: ${testId} right edge inside content box`,
+      ).toBeLessThanOrEqual(contentRight + eps);
+    }
+  };
+
+  // 1) At the canonical fixed 296px inspector width.
+  await assertNoClip("296px");
+
+  // 2) At a FORCED narrower width (the safety net `.prio-edit{flex-wrap:wrap}` must
+  // keep the control from clipping even when the panel is squeezed / under a larger
+  // font scale). Shrink the inspector shell and re-assert — every band incl. "D" and
+  // both steppers stay inside the (now narrower) body content box, with the editor
+  // wrapping onto extra rows rather than overflowing.
+  await page.locator(".shell-inspector").evaluate((el) => {
+    (el as HTMLElement).style.width = "230px";
+  });
+  // The control reflows; wait for the body to reflect the narrower width.
+  await expect
+    .poll(async () => {
+      const box = await page.locator(".shell-inspector__body").boundingBox();
+      return box ? Math.round(box.width) : 0;
+    })
+    .toBeLessThan(280);
+  await assertNoClip("narrow");
+
+  await app.close();
+});
+
+/**
+ * Layout regression (hardening, sibling of the priority clip): the FSRS three-stat
+ * readout (`.fsrs-stats` = `repeat(3,1fr)`) lives in the same fixed-width (296px)
+ * inspector. The un-wrappable single-word "Retrievability" label of the 3rd stat
+ * used to widen the grid past the panel and clip at the edge. The `.fstat{min-width:0}`
+ * + ellipsized `.fstat__l` fix keeps all three stats inside the body content box.
+ * These bounding-box assertions guard the FSRS readout the same way.
+ */
+test("the FSRS stat readout fits fully inside the fixed-width inspector (no clip) (layout)", async () => {
+  const app = await launchApp(dataDir);
+  const page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+
+  // The seeded Q&A card has a review state, so it surfaces the FSRS (recall)
+  // scheduler + the three-stat readout (Stability / Difficulty / Retrievability).
+  await selectByTitle(page, "Chollet's definition of intelligence");
+  const stats = page.getByTestId("fsrs-stats");
+  await expect(stats).toBeVisible();
+
+  // The grid never overflows its own box (the long label ellipsizes instead of
+  // forcing the track wider than the panel).
+  const statsOverflow = await stats.evaluate((el) => ({
     clientWidth: el.clientWidth,
     scrollWidth: el.scrollWidth,
   }));
-  expect(editorOverflow.scrollWidth).toBeLessThanOrEqual(editorOverflow.clientWidth);
+  expect(statsOverflow.scrollWidth).toBeLessThanOrEqual(statsOverflow.clientWidth);
 
   // The inspector body content box = body box inset by its computed L/R padding.
   const body = page.locator(".shell-inspector__body");
   const bodyBox = await body.boundingBox();
   const pad = await body.evaluate((el) => {
     const cs = getComputedStyle(el);
-    return { left: parseFloat(cs.paddingLeft), right: parseFloat(cs.paddingRight) };
+    return { right: parseFloat(cs.paddingRight) };
   });
   if (!bodyBox) throw new Error("expected inspector body box");
-  const contentLeft = bodyBox.x + pad.left;
   const contentRight = bodyBox.x + bodyBox.width - pad.right;
 
-  // Every interactive control of the editor — both steppers + all four bands — must
-  // sit fully within [contentLeft, contentRight] (allowing a sub-pixel rounding eps).
+  // The 3rd (rightmost) stat — "Retrievability" — must lie fully inside the panel.
   const eps = 0.5;
-  const controls = [
-    "inspector-priority-raise",
-    "inspector-priority-lower",
-    "inspector-priority-A",
-    "inspector-priority-B",
-    "inspector-priority-C",
-    "inspector-priority-D",
-  ];
-  for (const testId of controls) {
-    const box = await page.getByTestId(testId).boundingBox();
-    if (!box) throw new Error(`expected box for ${testId}`);
-    expect(box.x, `${testId} left edge inside content box`).toBeGreaterThanOrEqual(
-      contentLeft - eps,
-    );
-    expect(box.x + box.width, `${testId} right edge inside content box`).toBeLessThanOrEqual(
-      contentRight + eps,
-    );
-  }
+  const thirdStat = stats.locator(".fstat").nth(2);
+  const box = await thirdStat.boundingBox();
+  if (!box) throw new Error("expected box for the 3rd FSRS stat");
+  expect(box.x + box.width, "3rd FSRS stat right edge inside content box").toBeLessThanOrEqual(
+    contentRight + eps,
+  );
 
   await app.close();
 });

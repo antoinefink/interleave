@@ -99,10 +99,10 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  /* The editor lives in the inspector's fixed-width (296px) `meta-val` cell, so
-     it must wrap rather than overflow/clip: at narrow widths the band segment
-     drops below the steppers instead of pushing the "D" button + lower stepper
-     out of the panel. */
+  /* The editor sits in a full-width stacked row (.meta-row--stack) so ↑ A B C D ↓
+     fits the inspector body. flex-wrap is the safety net: at narrower widths /
+     larger font scales the band segment drops below the steppers instead of
+     pushing the "D" button + lower stepper out of the panel. */
   flex-wrap: wrap;
 }
 .prio-edit__seg {
@@ -291,6 +291,11 @@
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--surface);
+  /* Each stat is a `repeat(3,1fr)` grid track, which defaults to `min-width:auto`
+     — so the un-wrappable single-word "Retrievability" label forces the grid wider
+     than the fixed 296px inspector and the 3rd stat clips at the panel edge. Allow
+     the track to shrink below its content so the grid stays inside the panel. */
+  min-width: 0;
 }
 .fstat__v {
   font-family: var(--font-ui);
@@ -304,6 +309,11 @@
   color: var(--text-3);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  /* Ellipsize the long single-word "Retrievability" label rather than letting it
+     widen the track and clip past the fixed inspector edge. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .fstat__bar {
   height: 3px;
@@ -497,6 +507,15 @@
 }
 .meta-row:last-child {
   border-bottom: none;
+}
+/* Full-width variant: key on its own line, the control below it spanning the full
+   inspector body width. Used by "Set priority" so the A/B/C/D editor never has to
+   squeeze into (or clip past) the narrow `1fr` value cell of the 2-column row. */
+.meta-row--stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-width: 0;
 }
 .meta-key {
   font-size: var(--t-sm);
