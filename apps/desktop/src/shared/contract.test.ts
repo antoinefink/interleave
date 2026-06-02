@@ -75,6 +75,8 @@ import {
   type SourcesImportDocumentResult,
   SourcesImportEpubRequestSchema,
   type SourcesImportEpubResult,
+  SourcesImportHighlightsRequestSchema,
+  type SourcesImportHighlightsResult,
   SourcesImportManualRequestSchema,
   SourcesImportMarkdownTextRequestSchema,
   SourcesImportPdfRequestSchema,
@@ -117,6 +119,7 @@ describe("IPC channels", () => {
         "sources:importEpub",
         "sources:importDocument",
         "sources:importMarkdownText",
+        "sources:importHighlights",
         "sources:extractRegion",
         "sources:getRegionImage",
         "sources:runOcr",
@@ -360,6 +363,65 @@ describe("EPUB import schemas (T067)", () => {
     expect(result.status).toBe("imported");
     expect(result.bookId).toBe("el_book");
     expect(result.chapterCount).toBe(3);
+  });
+});
+
+describe("Highlight import schemas (T069)", () => {
+  it("PickImportFileRequestSchema accepts the highlights kind", () => {
+    expect(PickImportFileRequestSchema.parse({ kind: "highlights" }).kind).toBe("highlights");
+  });
+
+  it("SourcesImportHighlightsRequestSchema requires a path + optional format/priority", () => {
+    const parsed = SourcesImportHighlightsRequestSchema.parse({
+      path: "/tmp/clippings.txt",
+      format: "kindle_clippings",
+      priority: "C",
+    });
+    expect(parsed.path).toBe("/tmp/clippings.txt");
+    expect(parsed.format).toBe("kindle_clippings");
+    expect(parsed.priority).toBe("C");
+    // A bare path is valid (format auto-detected main-side).
+    expect(SourcesImportHighlightsRequestSchema.parse({ path: "/x.csv" }).format).toBeUndefined();
+  });
+
+  it("SourcesImportHighlightsRequestSchema rejects bad payloads", () => {
+    expect(() => SourcesImportHighlightsRequestSchema.parse({ path: "" })).toThrow();
+    expect(() =>
+      SourcesImportHighlightsRequestSchema.parse({ path: "/x.csv", format: "csv" }),
+    ).toThrow();
+    expect(() =>
+      SourcesImportHighlightsRequestSchema.parse({ path: "/x.csv", priority: "Z" }),
+    ).toThrow();
+  });
+
+  it("SourcesImportHighlightsResult round-trips the imported shape (counts + items)", () => {
+    const result: SourcesImportHighlightsResult = {
+      status: "imported",
+      format: "readwise_csv",
+      sourceCount: 2,
+      extractCount: 5,
+      skipped: 1,
+      items: [
+        {
+          id: "el_src",
+          type: "source",
+          status: "inbox",
+          stage: "raw_source",
+          priority: 0.4,
+          title: "A Book",
+          srcType: "Manual note",
+          author: "An Author",
+          accessedAt: "2026-06-01T00:00:00.000Z",
+          charCount: 4,
+          previewSnippet: "Book",
+        },
+      ],
+    };
+    expect(result.format).toBe("readwise_csv");
+    expect(result.sourceCount).toBe(2);
+    expect(result.extractCount).toBe(5);
+    expect(result.skipped).toBe(1);
+    expect(result.items).toHaveLength(1);
   });
 });
 

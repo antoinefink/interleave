@@ -214,6 +214,7 @@ import {
   type MarkdownExportResult,
 } from "./document-import-service";
 import { EpubImportService } from "./epub-import-service";
+import { type HighlightImportResult, HighlightImportService } from "./highlight-import-service";
 import type { JobRunner } from "./job-runner";
 import { OcrService } from "./ocr-service";
 import { PdfImportService } from "./pdf-import-service";
@@ -294,6 +295,12 @@ export class DbService {
    * `exportsDir`, injected at open()).
    */
   private documentImport: DocumentImportService | null = null;
+  /**
+   * The highlight-import orchestrator (T069) — parse a Readwise/Kindle export into
+   * inbox `extract`s grouped under one `source` per book/article (NEVER cards). Built
+   * lazily on first read (it needs no vault — highlights are text).
+   */
+  private highlightImport: HighlightImportService | null = null;
   /**
    * The PDF region-extract orchestrator (T065) — crop a figure/table region into a
    * scheduled `media_fragment` extract (vault image + page+region source location).
@@ -418,6 +425,7 @@ export class DbService {
     this.pdfImport = null;
     this.epubImport = null;
     this.documentImport = null;
+    this.highlightImport = null;
     this.pdfRegion = null;
     this.ocr = null;
     this.runner = null;
@@ -968,6 +976,32 @@ export class DbService {
    */
   async exportMarkdown(input: { elementId: ElementId }): Promise<MarkdownExportResult> {
     return await this.documentImportService.exportToMarkdown(input);
+  }
+
+  /**
+   * The highlight-import orchestrator (T069), lazily built on first read against the
+   * open DB + repos. Needs NO vault directory — highlights are text, not assets.
+   */
+  get highlightImportService(): HighlightImportService {
+    if (this.highlightImport) return this.highlightImport;
+    this.highlightImport = new HighlightImportService({
+      db: this.require().db,
+      repositories: this.repos,
+    });
+    return this.highlightImport;
+  }
+
+  /**
+   * Import a Readwise/Kindle highlight export (T069) — the IPC handler resolved the
+   * chosen path via the MAIN file picker. Delegates to {@link HighlightImportService};
+   * a thrown `HighlightImportError` propagates to the IPC layer.
+   */
+  async importHighlights(input: {
+    absPath: string;
+    format?: "readwise_csv" | "readwise_json" | "kindle_clippings";
+    priority?: PriorityLabel;
+  }): Promise<HighlightImportResult> {
+    return await this.highlightImportService.importFromFile(input);
   }
 
   /**

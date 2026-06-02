@@ -1,0 +1,26 @@
+The Pragmatic Programmer (David Thomas;Andrew Hunt)
+- Your Highlight on page 24 | location 367-369 | Added on Monday, March 2, 2026 9:14:00 AM
+
+Care about your craft. Why spend your life developing software unless you care about doing it well?
+==========
+The Pragmatic Programmer (David Thomas;Andrew Hunt)
+- Your Highlight on page 50 | location 760-762 | Added on Tuesday, March 3, 2026 7:02:00 AM
+
+Don't live with broken windows. Fix bad designs and poor decisions when you see them.
+==========
+The Pragmatic Programmer (David Thomas;Andrew Hunt)
+- Your Bookmark on page 50 | location 760 | Added on Tuesday, March 3, 2026 7:03:00 AM
+
+==========
+Sapiens (Yuval Noah Harari)
+- Your Highlight on location 512-514 | Added on Wednesday, April 1, 2026 6:00:00 PM
+
+Large numbers of strangers can cooperate successfully by believing in common myths.
+==========
+This is a malformed record with no metadata line at all and should be skipped silently
+==========
+Sapiens (Yuval Noah Harari)
+- Your Note on location 512 | Added on Wednesday, April 1, 2026 6:01:00 PM
+
+This note record is metadata, not a passage, and is dropped.
+==========

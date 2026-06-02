@@ -73,6 +73,7 @@ import type {
   SourcesGetRegionImageRequest,
   SourcesImportDocumentRequest,
   SourcesImportEpubRequest,
+  SourcesImportHighlightsRequest,
   SourcesImportManualRequest,
   SourcesImportMarkdownTextRequest,
   SourcesImportPdfRequest,
@@ -138,6 +139,8 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.sourcesImportDocument, request),
     importMarkdownText: (request: SourcesImportMarkdownTextRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.sourcesImportMarkdownText, request),
+    importHighlights: (request: SourcesImportHighlightsRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.sourcesImportHighlights, request),
     extractRegion: (request: SourcesExtractRegionRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.sourcesExtractRegion, request),
     getRegionImage: (request: SourcesGetRegionImageRequest) =>

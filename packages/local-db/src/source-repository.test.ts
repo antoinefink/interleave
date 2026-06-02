@@ -432,3 +432,75 @@ describe("SourceRepository.createTopicWithDocument (T067 chapter seam)", () => {
     expect(loc?.blockIds).toEqual([]);
   });
 });
+
+describe("SourceRepository dedup queries (T069)", () => {
+  it("findByCanonicalUrl returns the live source for a canonical URL, ignoring deletes", () => {
+    const repo = new SourceRepository(handle.db);
+    const created = repo.createWithDocument({
+      title: "Attention Paper",
+      priority: priorityFromLabel("C"),
+      canonicalUrl: "https://arxiv.org/abs/1706.03762",
+      conversion: buildConversion(),
+    });
+
+    const found = repo.findByCanonicalUrl("https://arxiv.org/abs/1706.03762");
+    expect(found?.element.id).toBe(created.element.id);
+    // A different / null key matches nothing.
+    expect(repo.findByCanonicalUrl("https://other.example/x")).toBeNull();
+    expect(repo.findByCanonicalUrl(null)).toBeNull();
+
+    // After soft-delete the source no longer blocks a re-import.
+    new ElementRepository(handle.db).softDelete(created.element.id);
+    expect(repo.findByCanonicalUrl("https://arxiv.org/abs/1706.03762")).toBeNull();
+  });
+
+  it("findByTitleAndAuthor matches on (title, author) including the null-author case", () => {
+    const repo = new SourceRepository(handle.db);
+    const withAuthor = repo.create({
+      title: "Deep Work",
+      priority: priorityFromLabel("C"),
+      author: "Cal Newport",
+    });
+    const noAuthor = repo.create({
+      title: "Untitled Notes",
+      priority: priorityFromLabel("C"),
+      author: null,
+    });
+
+    expect(repo.findByTitleAndAuthor("Deep Work", "Cal Newport")?.element.id).toBe(
+      withAuthor.element.id,
+    );
+    // Wrong author → no match (so a different edition is not collapsed).
+    expect(repo.findByTitleAndAuthor("Deep Work", "Someone Else")).toBeNull();
+    // A null author matches a null-author source, not the authored one.
+    expect(repo.findByTitleAndAuthor("Untitled Notes", null)?.element.id).toBe(noAuthor.element.id);
+    expect(repo.findByTitleAndAuthor("Deep Work", null)).toBeNull();
+  });
+
+  it("listExtractSelectedText returns the highlight text of a source's extracts", () => {
+    const repo = new SourceRepository(handle.db);
+    const source = repo.create({ title: "A Book", priority: priorityFromLabel("C") });
+    handle.db.transaction((tx) => {
+      repo.createExtractWithin(tx, {
+        sourceElementId: source.element.id,
+        title: "Highlight one",
+        priority: priorityFromLabel("C"),
+        selectedText: "First highlight.",
+        blockIds: [],
+      });
+      repo.createExtractWithin(tx, {
+        sourceElementId: source.element.id,
+        title: "Highlight two",
+        priority: priorityFromLabel("C"),
+        selectedText: "Second highlight.",
+        blockIds: [],
+      });
+    });
+
+    const texts = repo.listExtractSelectedText(source.element.id);
+    expect(texts.has("First highlight.")).toBe(true);
+    expect(texts.has("Second highlight.")).toBe(true);
+    expect(texts.has("Not present.")).toBe(false);
+    expect(texts.size).toBe(2);
+  });
+});

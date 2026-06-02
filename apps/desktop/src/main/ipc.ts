@@ -80,6 +80,7 @@ import {
   SourcesGetRegionImageRequestSchema,
   SourcesImportDocumentRequestSchema,
   SourcesImportEpubRequestSchema,
+  SourcesImportHighlightsRequestSchema,
   SourcesImportManualRequestSchema,
   SourcesImportMarkdownTextRequestSchema,
   SourcesImportPdfRequestSchema,
@@ -103,6 +104,7 @@ import type { CaptureController } from "./capture-controller";
 import type { DbService } from "./db-service";
 import { DocumentImportError } from "./document-import-service";
 import { EpubImportError } from "./epub-import-service";
+import { HighlightImportError } from "./highlight-import-service";
 import type { UrlImportJobPayload } from "./job-apply-handlers";
 import type { JobRunner } from "./job-runner";
 import type { AppPaths } from "./paths";
@@ -378,6 +380,27 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
       });
     } catch (err) {
       if (err instanceof DocumentImportError) {
+        throw new Error(`${err.code}: ${err.message}`);
+      }
+      throw err;
+    }
+  });
+
+  // Import a Readwise/Kindle highlight export (T069) — the renderer resolved the chosen
+  // path via `sources.pickImportFile({ kind: "highlights" })`. MAIN reads + parses +
+  // groups the highlights into one inbox `source` per book/article, authoring `extract`s
+  // (NEVER cards). A thrown `HighlightImportError` is re-thrown as a `code: message` line
+  // so the modal can map the `code` to a friendly message (mirrors the EPUB/MD paths).
+  ipcMain.handle(IPC_CHANNELS.sourcesImportHighlights, async (_event, rawRequest: unknown) => {
+    const request = SourcesImportHighlightsRequestSchema.parse(rawRequest);
+    try {
+      return await dbService.importHighlights({
+        absPath: request.path,
+        ...(request.format ? { format: request.format } : {}),
+        ...(request.priority ? { priority: request.priority } : {}),
+      });
+    } catch (err) {
+      if (err instanceof HighlightImportError) {
         throw new Error(`${err.code}: ${err.message}`);
       }
       throw err;

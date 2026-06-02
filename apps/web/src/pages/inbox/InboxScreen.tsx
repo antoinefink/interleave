@@ -71,7 +71,12 @@ const IMPORT_OPTS: {
   { icon: "link", label: "Paste URL", hint: "Fetch & clean the page", action: "url" },
   { icon: "paste", label: "Paste text", hint: "Plain text", action: "manual" },
   { icon: "source", label: "Import PDF", hint: "Read a PDF incrementally", action: "pdf" },
-  { icon: "library", label: "Import file", hint: "EPUB, Markdown, HTML", action: "file" },
+  {
+    icon: "library",
+    label: "Import file",
+    hint: "EPUB, Markdown, HTML, highlights",
+    action: "file",
+  },
   { icon: "globe", label: "Browser capture", hint: "Pair the extension", action: "capture" },
   { icon: "text", label: "Manual note", hint: "Your own idea", action: "manual" },
 ];
@@ -653,6 +658,11 @@ export function InboxScreen() {
         onImported={(id) => {
           setFileModalOpen(false);
           void refresh(id);
+        }}
+        onHighlightsImported={(firstSourceId) => {
+          // Highlights produce many sources + a count summary: refresh the inbox
+          // underneath but leave the modal open so the user reads the counts.
+          void refresh(firstSourceId.length > 0 ? firstSourceId : null);
         }}
       />
     </div>

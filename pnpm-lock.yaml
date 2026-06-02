@@ -275,6 +275,9 @@ importers:
       markdown-it:
         specifier: ^14.2.0
         version: 14.2.0
+      papaparse:
+        specifier: ^5.4.1
+        version: 5.5.3
       pdfjs-dist:
         specifier: ^4.10.38
         version: 4.10.38
@@ -285,6 +288,9 @@ importers:
       '@types/markdown-it':
         specifier: ^14.1.2
         version: 14.1.2
+      '@types/papaparse':
+        specifier: ^5.3.15
+        version: 5.5.2
       '@types/sanitize-html':
         specifier: ^2.16.1
         version: 2.16.1
@@ -1586,6 +1592,9 @@ packages:
 
   '@types/node@24.12.4':
     resolution: {integrity: sha512-GUUEShf+PBCGW2KaXwcIt3Yk+e3pkKwWKb9GSyM9WQVE+ep2jzmHdGsHzu4wgcZy5fN9FBdVzjpBQsYlpfpgLA==}
+
+  '@types/papaparse@5.5.2':
+    resolution: {integrity: sha512-gFnFp/JMzLHCwRf7tQHrNnfhN4eYBVYYI897CGX4MY1tzY9l2aLkVyx2IlKZ/SAqDbB3I1AOZW5gTMGGsqWliA==}
 
   '@types/plist@3.0.5':
     resolution: {integrity: sha512-E6OCaRmAe4WDmWNsL/9RMqdkkzDCY1etutkflWk4c+AcjDU07Pcz1fQwTX0TQz+Pxqn9i4L1TU3UFpjnrcDgxA==}
@@ -3052,6 +3061,9 @@ packages:
 
   package-json-from-dist@1.0.1:
     resolution: {integrity: sha512-UEZIS3/by4OC8vL3P2dTXRETpebLI2NiI5vIrjaD/5UtrkFX/tNbwjTSRAGC/+7CAo2pIcBaRgWmcBBHcsaCIw==}
+
+  papaparse@5.5.3:
+    resolution: {integrity: sha512-5QvjGxYVjxO59MGU2lHVYpRWBBtKHnlIAcSe1uNFCkkptUh63NFRj0FJQm7nR67puEruUci/ZkjmEFrjCAyP4A==}
 
   parse-srcset@1.0.2:
     resolution: {integrity: sha512-/2qh0lav6CmI15FzA3i/2Bzk2zCgQhGMkvhOhKNcBVQ1ldgpbfiNTVslmooUmWJcADi1f1kIeynbDRVzNlfR6Q==}
@@ -4831,6 +4843,10 @@ snapshots:
       undici-types: 7.16.0
     optional: true
 
+  '@types/papaparse@5.5.2':
+    dependencies:
+      '@types/node': 22.19.19
+
   '@types/plist@3.0.5':
     dependencies:
       '@types/node': 22.19.19
@@ -6405,6 +6421,8 @@ snapshots:
       aggregate-error: 3.1.0
 
   package-json-from-dist@1.0.1: {}
+
+  papaparse@5.5.3: {}
 
   parse-srcset@1.0.2: {}
 

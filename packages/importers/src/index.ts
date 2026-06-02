@@ -25,6 +25,16 @@ export {
   type ParsedFootnote,
   parseEpub,
 } from "./epub";
+export {
+  detectHighlightFormat,
+  type HighlightFormat,
+  HighlightParseError,
+  type ImportedHighlight,
+  parseHighlights,
+  parseKindleClippings,
+  parseReadwiseCsv,
+  parseReadwiseJson,
+} from "./highlights";
 export { extractHtmlTitle, htmlFileToProseMirrorDoc } from "./html-file";
 export { htmlToProseMirrorDoc } from "./html-to-prosemirror";
 export { markdownToProseMirrorDoc, proseMirrorDocToMarkdown } from "./markdown";

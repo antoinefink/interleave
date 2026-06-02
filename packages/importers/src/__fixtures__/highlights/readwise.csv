@@ -1,0 +1,6 @@
+Highlight,Title,Author,Note,Location,Location Type,Highlighted at,URL,Tags
+"Attention is all you need, and nothing more.",Attention Paper,"Vaswani, Ashish",My note here,Location 1234,location,2026-01-02T10:00:00Z,https://arxiv.org/abs/1706.03762,"transformers, nlp"
+"A second highlight, with a comma and
+a newline inside.",Attention Paper,"Vaswani, Ashish",,Page 12,page,2026-01-03T10:00:00Z,https://arxiv.org/abs/1706.03762,nlp
+"Compounding is the eighth wonder.",The Psychology of Money,Morgan Housel,,Page 56,page,2026-02-01T09:00:00Z,,finance
+,The Psychology of Money,Morgan Housel,An empty highlight should be dropped,Page 99,page,2026-02-02T09:00:00Z,,

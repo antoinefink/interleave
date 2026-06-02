@@ -38,7 +38,7 @@ import {
   sourceLocations,
   sources,
 } from "@interleave/db";
-import { eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { ElementRepository } from "./element-repository";
 import { newRowId, newSourceLocationId, nowIso } from "./ids";
 import { rowToElement, rowToSource, rowToSourceLocation } from "./mappers";
@@ -446,6 +446,77 @@ export class SourceRepository {
     const sourceRow = this.db.select().from(sources).where(eq(sources.elementId, elementId)).get();
     if (!elementRow || !sourceRow) return null;
     return { element: rowToElement(elementRow), source: rowToSource(sourceRow) };
+  }
+
+  /**
+   * The newest LIVE `source` whose `sources.canonical_url` equals `canonicalUrl`, or
+   * `null` (T069). Backed by the indexed `sources_canonical_url_idx`; excludes soft-
+   * deleted sources (`elements.deleted_at IS NULL`) so a re-import after deletion is not
+   * blocked. The NAMED query the highlight import uses to REUSE an already-imported
+   * book/article source instead of creating a duplicate — T061 added the index +
+   * `canonicalUrl` field but no named query (its URL-import dedup inlines the lookup),
+   * so this parallels that pattern. Returns `null` for a null/empty key.
+   */
+  findByCanonicalUrl(canonicalUrl: string | null): SourceWithElement | null {
+    if (!canonicalUrl) return null;
+    const row = this.db
+      .select({ source: sources, element: elements })
+      .from(sources)
+      .innerJoin(elements, eq(sources.elementId, elements.id))
+      .where(
+        and(
+          eq(sources.canonicalUrl, canonicalUrl),
+          eq(elements.type, "source"),
+          isNull(elements.deletedAt),
+        ),
+      )
+      .orderBy(desc(sources.accessedAt), desc(elements.id))
+      .get();
+    if (!row) return null;
+    return { element: rowToElement(row.element), source: rowToSource(row.source) };
+  }
+
+  /**
+   * The newest LIVE `source` matching `title` AND `author` (case-sensitive exact
+   * match; a null author matches a null author), or `null` (T069) — the no-URL dedup
+   * fallback so re-importing a highlight export does not duplicate a book that has no
+   * canonical URL (Kindle clippings, a Readwise book with no `source_url`). Excludes
+   * soft-deleted sources.
+   */
+  findByTitleAndAuthor(title: string, author: string | null): SourceWithElement | null {
+    const row = this.db
+      .select({ source: sources, element: elements })
+      .from(sources)
+      .innerJoin(elements, eq(sources.elementId, elements.id))
+      .where(
+        and(
+          eq(elements.title, title),
+          author == null ? isNull(sources.author) : eq(sources.author, author),
+          eq(elements.type, "source"),
+          isNull(elements.deletedAt),
+        ),
+      )
+      .orderBy(desc(sources.accessedAt), desc(elements.id))
+      .get();
+    if (!row) return null;
+    return { element: rowToElement(row.element), source: rowToSource(row.source) };
+  }
+
+  /**
+   * The set of `selectedText` snapshots already anchored under a given source (T069) —
+   * i.e. the highlight text of every LIVE extract whose `source_locations.source_element_id`
+   * is `sourceElementId`. The highlight import uses this to dedup by `(sourceId, text)`
+   * so re-running an export does not re-add the same highlight. Exact-text match only
+   * (no semantic dedup — that is T088). Excludes soft-deleted extracts.
+   */
+  listExtractSelectedText(sourceElementId: ElementId): Set<string> {
+    const rows = this.db
+      .select({ selectedText: sourceLocations.selectedText })
+      .from(sourceLocations)
+      .innerJoin(elements, eq(sourceLocations.elementId, elements.id))
+      .where(and(eq(sourceLocations.sourceElementId, sourceElementId), isNull(elements.deletedAt)))
+      .all();
+    return new Set(rows.map((r) => r.selectedText));
   }
 
   /**

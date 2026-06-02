@@ -20,8 +20,8 @@ import { Kbd } from "../../shell/Kbd";
 
 const PRIORITY_LABELS: readonly PriorityLabelInput[] = ["A", "B", "C", "D"];
 
-/** The file kinds this modal can import (EPUB from T067; Markdown/HTML from T068). */
-export type ImportFileKind = "epub" | "markdown" | "html";
+/** The file kinds this modal can import (EPUB T067; Markdown/HTML T068; highlights T069). */
+export type ImportFileKind = "epub" | "markdown" | "html" | "highlights";
 
 /** Per-kind copy + picker config + hint shown before a file is chosen. */
 const KIND_CONFIG: Record<
@@ -46,6 +46,12 @@ const KIND_CONFIG: Record<
     ext: ".html",
     hint: "The HTML is sanitized and imported locally — its original .html is kept in your vault.",
   },
+  highlights: {
+    title: "Import highlights",
+    choose: "Choose export…",
+    ext: ".csv / .json / .txt",
+    hint: "A Readwise CSV/JSON or a Kindle My Clippings.txt — each highlight becomes an inbox extract.",
+  },
 };
 
 /** Map a thrown import `code: message` error line to a friendly message. */
@@ -61,6 +67,8 @@ function friendlyError(message: string): string {
     // Document import (T068).
     not_supported: "That file type isn't supported.",
     empty: "There's nothing to import in that file.",
+    // Highlight import (T069).
+    unrecognized: "Couldn't recognize that highlight export.",
     // Shared.
     too_large: "That file is too large to import.",
     unreadable: "That file could not be read.",
@@ -77,22 +85,33 @@ function basename(absPath: string): string {
 }
 
 /** The selectable file kinds, in display order. */
-const KIND_ORDER: readonly ImportFileKind[] = ["epub", "markdown", "html"];
+const KIND_ORDER: readonly ImportFileKind[] = ["epub", "markdown", "html", "highlights"];
 
 /** Short label for the kind selector chips. */
 const KIND_LABEL: Record<ImportFileKind, string> = {
   epub: "EPUB",
   markdown: "Markdown",
   html: "HTML",
+  highlights: "Highlights",
 };
 
 export type ImportFileModalProps = {
   open: boolean;
-  /** The file kind to start on (the user can switch between EPUB / Markdown / HTML). */
+  /** The file kind to start on (the user can switch EPUB / Markdown / HTML / highlights). */
   initialKind?: ImportFileKind;
   onClose: () => void;
-  /** Called with the new source/book id after a successful import. */
+  /**
+   * Called with the new source/book id after a single-source import (EPUB / Markdown /
+   * HTML) — the parent closes the modal + selects it.
+   */
   onImported: (id: string) => void;
+  /**
+   * Called after a highlight import (T069), which produces MANY sources + a count
+   * summary. The parent refreshes the inbox (selecting `firstSourceId` if present) but
+   * leaves the modal OPEN so the user sees the counts; they close it themselves.
+   * Falls back to {@link onImported} when not provided.
+   */
+  onHighlightsImported?: (firstSourceId: string) => void;
 };
 
 export function ImportFileModal({
@@ -100,6 +119,7 @@ export function ImportFileModal({
   initialKind = "epub",
   onClose,
   onImported,
+  onHighlightsImported,
 }: ImportFileModalProps) {
   const [kind, setKind] = useState<ImportFileKind>(initialKind);
   const config = KIND_CONFIG[kind];
@@ -107,6 +127,8 @@ export function ImportFileModal({
   const [priority, setPriority] = useState<PriorityLabelInput>("C");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A success summary (highlights import surfaces counts before the modal closes).
+  const [success, setSuccess] = useState<string | null>(null);
 
   // Reset on open (seed the kind from the prop the chip passed).
   useEffect(() => {
@@ -115,6 +137,7 @@ export function ImportFileModal({
     setPath(null);
     setPriority("C");
     setError(null);
+    setSuccess(null);
     setSubmitting(false);
   }, [open, initialKind]);
 
@@ -122,6 +145,7 @@ export function ImportFileModal({
   const choose = useCallback(async () => {
     if (!isDesktop() || submitting) return;
     setError(null);
+    setSuccess(null);
     try {
       const result = await appApi.pickImportFile({ kind });
       if ("cancelled" in result) return;
@@ -132,7 +156,8 @@ export function ImportFileModal({
   }, [kind, submitting]);
 
   // Import the chosen file (main parses + persists). Dispatch on the file kind:
-  // EPUB → the book/chapter importer; Markdown/HTML → the document importer.
+  // EPUB → the book/chapter importer; Markdown/HTML → the document importer;
+  // highlights → the Readwise/Kindle importer (surfaces counts, NOT a single source).
   const submit = useCallback(async () => {
     if (!path || submitting || !isDesktop()) return;
     setSubmitting(true);
@@ -141,6 +166,21 @@ export function ImportFileModal({
       if (kind === "epub") {
         const result = await appApi.importEpubSource({ path, priority });
         if (result.status === "imported") onImported(result.bookId);
+      } else if (kind === "highlights") {
+        const result = await appApi.importHighlights({ path, priority });
+        if (result.status === "imported") {
+          // Surface the counts; refresh the inbox underneath but keep the modal open so
+          // the user reads the summary, then closes it (highlights → many sources).
+          const skippedPart = result.skipped > 0 ? `, ${result.skipped} skipped` : "";
+          setSuccess(
+            `Imported ${result.extractCount} highlight${result.extractCount === 1 ? "" : "s"} into ${result.sourceCount} source${result.sourceCount === 1 ? "" : "s"}${skippedPart}.`,
+          );
+          setPath(null);
+          setSubmitting(false);
+          const firstId = result.items[0]?.id ?? "";
+          if (onHighlightsImported) onHighlightsImported(firstId);
+          else onImported(firstId);
+        }
       } else {
         const result = await appApi.importDocumentSource({ path, format: kind, priority });
         if (result.status === "imported") onImported(result.id);
@@ -149,7 +189,7 @@ export function ImportFileModal({
       setError(friendlyError(e instanceof Error ? e.message : String(e)));
       setSubmitting(false);
     }
-  }, [kind, path, priority, submitting, onImported]);
+  }, [kind, path, priority, submitting, onImported, onHighlightsImported]);
 
   // Esc to close, ⌘↵ to import while open.
   useEffect(() => {
@@ -290,6 +330,12 @@ export function ImportFileModal({
             {error ? (
               <p className="text-danger text-sm" data-testid="import-file-error">
                 {error}
+              </p>
+            ) : null}
+
+            {success ? (
+              <p className="text-ok text-sm" data-testid="import-file-success">
+                {success}
               </p>
             ) : null}
           </div>

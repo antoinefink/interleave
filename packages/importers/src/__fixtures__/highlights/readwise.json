@@ -1,0 +1,50 @@
+{
+  "books": [
+    {
+      "title": "Thinking, Fast and Slow",
+      "author": "Daniel Kahneman",
+      "source_url": "https://example.com/tfas",
+      "highlights": [
+        {
+          "text": "System 1 operates automatically and quickly.",
+          "note": "core idea",
+          "location": 101,
+          "location_type": "location",
+          "highlighted_at": "2026-03-01T08:00:00Z",
+          "tags": [{ "name": "psychology" }, { "name": "cognition" }]
+        },
+        {
+          "text": "System 2 allocates attention to effortful mental activities.",
+          "note": null,
+          "location": 56,
+          "location_type": "page",
+          "highlighted_at": "2026-03-02T08:00:00Z",
+          "tags": ["focus"]
+        },
+        {
+          "text": "",
+          "note": "empty text — dropped",
+          "location": 200,
+          "location_type": "location"
+        }
+      ]
+    },
+    {
+      "title": "Deep Work",
+      "author": "Cal Newport",
+      "source_url": null,
+      "highlights": [
+        {
+          "text": "Deep work is the ability to focus without distraction.",
+          "location": 12,
+          "location_type": "page",
+          "tags": []
+        }
+      ]
+    },
+    {
+      "author": "No Title Author",
+      "highlights": [{ "text": "This book has no title and is skipped." }]
+    }
+  ]
+}

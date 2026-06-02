@@ -1043,6 +1043,43 @@ export type DocumentsExportMarkdownResult = {
 };
 
 // ---------------------------------------------------------------------------
+// sources.importHighlights()  (T069 — Readwise / Kindle highlight import)
+// ---------------------------------------------------------------------------
+
+/**
+ * Import an external highlight export (T069) — a Readwise CSV/JSON export or a Kindle
+ * `My Clippings.txt`. After the renderer has a chosen path (via
+ * {@link PickImportFileRequestSchema} with kind `highlights`), it calls this with the
+ * path; MAIN reads + parses the file (auto-detecting the format, or using the supplied
+ * one) and turns the highlights into inbox `extract` elements grouped under one
+ * `source` per book/article — NEVER cards. The file never crosses the bridge as a
+ * payload; only the path does.
+ */
+export const SourcesImportHighlightsRequestSchema = z.object({
+  path: z.string().min(1),
+  /** Optional explicit format; omitted ⇒ MAIN auto-detects by filename + content. */
+  format: z.enum(["readwise_csv", "readwise_json", "kindle_clippings"]).optional(),
+  /** Coarse A/B/C/D priority; defaults `C` main-side so imports never dominate. */
+  priority: PriorityLabelSchema.optional(),
+});
+export type SourcesImportHighlightsRequest = z.infer<typeof SourcesImportHighlightsRequestSchema>;
+
+/**
+ * The highlight-import result. Discriminated on `status` so future arms can be added
+ * without a breaking change; `"imported"` carries the detected format, the per-import
+ * counts (sources created/updated, extracts added, duplicate highlights skipped), and
+ * the inbox summaries for the affected sources.
+ */
+export type SourcesImportHighlightsResult = {
+  readonly status: "imported";
+  readonly format: "readwise_csv" | "readwise_json" | "kindle_clippings";
+  readonly sourceCount: number;
+  readonly extractCount: number;
+  readonly skipped: number;
+  readonly items: readonly InboxItemSummary[];
+};
+
+// ---------------------------------------------------------------------------
 // sources.extractRegion() / sources.getRegionImage()  (T065 — PDF region extract)
 // ---------------------------------------------------------------------------
 
@@ -3099,6 +3136,14 @@ export interface AppApi {
     importMarkdownText(
       request: SourcesImportMarkdownTextRequest,
     ): Promise<SourcesImportDocumentResult>;
+    /**
+     * Import a Readwise/Kindle highlight export into inbox `extract`s grouped under one
+     * `source` per book/article (T069) — MAIN reads + parses the file (auto-detecting
+     * the format) and authors extracts (NEVER cards), one transaction per source.
+     */
+    importHighlights(
+      request: SourcesImportHighlightsRequest,
+    ): Promise<SourcesImportHighlightsResult>;
     /**
      * Crop a PDF page region into a scheduled `media_fragment` extract (T065) —
      * the renderer ships the cropped PNG + the normalized rect + page; MAIN streams

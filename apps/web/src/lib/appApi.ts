@@ -611,6 +611,26 @@ export type SourcesImportDocumentResult = {
   readonly item: InboxItemSummary;
 };
 
+/** Import a Readwise/Kindle highlight export (T069) — the renderer passes a chosen path. */
+export interface SourcesImportHighlightsRequest {
+  readonly path: string;
+  readonly format?: "readwise_csv" | "readwise_json" | "kindle_clippings";
+  readonly priority?: PriorityLabelInput;
+}
+
+/**
+ * The highlight-import result (T069) — the detected format + per-import counts (sources
+ * created/updated, extracts added, duplicate highlights skipped) + the inbox summaries.
+ */
+export type SourcesImportHighlightsResult = {
+  readonly status: "imported";
+  readonly format: "readwise_csv" | "readwise_json" | "kindle_clippings";
+  readonly sourceCount: number;
+  readonly extractCount: number;
+  readonly skipped: number;
+  readonly items: readonly InboxItemSummary[];
+};
+
 /** Export a document to Markdown (T068) — MAIN writes the `.md` to the `exports/` vault. */
 export interface DocumentsExportMarkdownRequest {
   readonly elementId: string;
@@ -1860,6 +1880,9 @@ export interface AppApi {
     importMarkdownText(
       request: SourcesImportMarkdownTextRequest,
     ): Promise<SourcesImportDocumentResult>;
+    importHighlights(
+      request: SourcesImportHighlightsRequest,
+    ): Promise<SourcesImportHighlightsResult>;
     extractRegion(request: SourcesExtractRegionRequest): Promise<SourcesExtractRegionResult>;
     getRegionImage(request: SourcesGetRegionImageRequest): Promise<SourcesGetRegionImageResult>;
     runOcr(request: SourcesRunOcrRequest): Promise<SourcesRunOcrResult>;
@@ -2129,6 +2152,18 @@ export const appApi = {
     request: SourcesImportMarkdownTextRequest,
   ): Promise<SourcesImportDocumentResult> {
     return requireAppApi().sources.importMarkdownText(request);
+  },
+  /**
+   * Import a Readwise/Kindle highlight export into inbox `extract`s grouped under one
+   * `source` per book/article (T069) — the renderer passes a path chosen via
+   * {@link pickImportFile}; MAIN reads + parses + persists, all main-side. The result
+   * carries the detected format + per-import counts. A thrown `HighlightImportError`
+   * (a `code: message` line) surfaces a friendly message.
+   */
+  importHighlights(
+    request: SourcesImportHighlightsRequest,
+  ): Promise<SourcesImportHighlightsResult> {
+    return requireAppApi().sources.importHighlights(request);
   },
   /**
    * Export a document (source/extract/topic) to a `.md` in the managed `exports/` vault

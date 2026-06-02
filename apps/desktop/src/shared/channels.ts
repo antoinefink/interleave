@@ -31,6 +31,7 @@ export const IPC_CHANNELS = {
   sourcesImportEpub: "sources:importEpub",
   sourcesImportDocument: "sources:importDocument",
   sourcesImportMarkdownText: "sources:importMarkdownText",
+  sourcesImportHighlights: "sources:importHighlights",
   sourcesExtractRegion: "sources:extractRegion",
   sourcesGetRegionImage: "sources:getRegionImage",
   sourcesRunOcr: "sources:runOcr",

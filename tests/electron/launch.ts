@@ -142,6 +142,13 @@ export interface LaunchOptions {
    * the `INTERLEAVE_EPUB_IMPORT_PATH` escape. Defaults unset (a real picker).
    */
   readonly markdownImportPath?: string;
+  /**
+   * Stub the native highlight-export file picker (T069) to return this absolute path,
+   * so the highlight-import E2E can drive import deterministically without a real
+   * dialog. Sets `INTERLEAVE_HIGHLIGHTS_IMPORT_PATH` (honored only in the unpackaged
+   * build), mirroring the `INTERLEAVE_EPUB_IMPORT_PATH` escape. Defaults unset.
+   */
+  readonly highlightsImportPath?: string;
 }
 
 /**
@@ -170,6 +177,9 @@ export async function launchApp(
       ...(options.epubImportPath ? { INTERLEAVE_EPUB_IMPORT_PATH: options.epubImportPath } : {}),
       ...(options.markdownImportPath
         ? { INTERLEAVE_MARKDOWN_IMPORT_PATH: options.markdownImportPath }
+        : {}),
+      ...(options.highlightsImportPath
+        ? { INTERLEAVE_HIGHLIGHTS_IMPORT_PATH: options.highlightsImportPath }
         : {}),
       // Suppress the first-run onboarding overlay unless a spec opts in, so it
       // never covers the UI in the feature specs (all start empty). See main/index.ts.
