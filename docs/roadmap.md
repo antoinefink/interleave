@@ -274,6 +274,7 @@ Detailed specs: [`tasks/M15-occlusion-formula.md`](./tasks/M15-occlusion-formula
   Done when: audio prompt/answer/looped-fragment cards can be reviewed as active recall.
 
 ## M16 — Advanced scheduling & overload (T076–T082)
+Detailed specs: [`tasks/M16-sort-overload.md`](./tasks/M16-sort-overload.md) (T076–T078) · [`tasks/M16-retention-sim.md`](./tasks/M16-retention-sim.md) (T079–T082)
 
 - [ ] **T076 — Advanced auto-sort** · _deps: T029, T036_
   Done when: queue sorting uses a scoring function over priority, due date, retrievability, type, sibling spacing, concept diversity, and session mode.
