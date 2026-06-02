@@ -304,6 +304,7 @@ Detailed specs: [`tasks/M17-analytics.md`](./tasks/M17-analytics.md) (T083–T08
   Done when: quality warnings extend to multiple facts, long lists, vague pronouns, unsupported claims, similar answers, no/outdated source, and oversized clozes.
 
 ## M18 — Semantic search & AI (T087–T095)
+Detailed specs: [`tasks/M18-semantic.md`](./tasks/M18-semantic.md) (T087–T089) · [`tasks/M18-trust.md`](./tasks/M18-trust.md) (T090–T092) · [`tasks/M18-ai.md`](./tasks/M18-ai.md) (T093–T095)
 
 > Local-first: embeddings and the vector index live **on-device** (e.g. `sqlite-vec` on the same
 > better-sqlite3 DB); AI runs from the Electron main with a **local model or the user's own API
