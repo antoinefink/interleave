@@ -235,6 +235,7 @@ Detailed specs: [`tasks/M13-browser-extension.md`](./tasks/M13-browser-extension
   Done when: the extension's Side Panel shows inbox/import UI beside the page and can save a selection with priority + reason, routed through the **same loopback capture path** (not direct DB writes).
 
 ## M14 — PDF / EPUB / document import (T064–T070)
+Detailed specs: [`tasks/M14-pdf-ocr.md`](./tasks/M14-pdf-ocr.md) (T064–T066) · [`tasks/M14-formats.md`](./tasks/M14-formats.md) (T067–T070)
 
 > Local-first: imported documents and their assets live in the **filesystem asset vault**
 > (T059 scaling), never app-level S3; OCR/parsing run on the **local background runner** (T058),
