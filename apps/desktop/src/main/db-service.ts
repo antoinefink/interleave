@@ -55,6 +55,7 @@ import {
   type DocumentMark,
   ExtractionService,
   ExtractService,
+  ExtractStagnationQuery,
   HEAVY_FIT_REVIEW_THRESHOLD,
   InboxQuery,
   InspectorQuery,
@@ -142,6 +143,8 @@ import type {
   ExtractActionSummary,
   ExtractionCreateRequest,
   ExtractionCreateResult,
+  ExtractStagnationListRequest,
+  ExtractStagnationListResult,
   ExtractsDeleteRequest,
   ExtractsDeleteResult,
   ExtractsMarkDoneRequest,
@@ -314,6 +317,8 @@ export class DbService {
   private library: LibraryQuery | null = null;
   /** The per-source yield rollup (T083) — read %, extracts/cards/mature/leeches/time, ranked. */
   private sourceYield: SourceYieldQuery | null = null;
+  /** The extract-stagnation scan (T084) — extracts that keep returning without progressing. */
+  private extractStagnation: ExtractStagnationQuery | null = null;
   private inboxQuery: InboxQuery | null = null;
   private queueAction: QueueActionService | null = null;
   /** The overload AUTO-POSTPONE apply seam (T077) — preview + apply, one `batchId` per sweep. */
@@ -536,6 +541,11 @@ export class DbService {
     // ranked rollup of read %, extracts/cards/mature-cards, leeches, and review time,
     // lowest-yield first. No mutation, no `operation_log`, no schedule change.
     this.sourceYield = new SourceYieldQuery(this.handle.db);
+    // The extract-stagnation scan behind `/maintenance/stagnant` (T084): a read-only
+    // detection of extracts that keep returning without progressing (stage never
+    // advanced, no children, postponed repeatedly), with rewrite/convert/postpone/
+    // delete suggestions. No mutation, no `operation_log`, no schedule change.
+    this.extractStagnation = new ExtractStagnationQuery(this.handle.db);
     this.queueAction = new QueueActionService(this.handle.db);
     // The overload AUTO-POSTPONE apply seam (T077): reads the merged due set + budget,
     // runs the pure `planAutoPostpone`, and applies each victim through its CORRECT
@@ -3461,6 +3471,13 @@ export class DbService {
     return this.sourceYield;
   }
 
+  private get extractStagnationQuery(): ExtractStagnationQuery {
+    if (!this.extractStagnation) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.extractStagnation;
+  }
+
   /**
    * The facet-driven "browse everything" read behind `/library`. DISTINCT from
    * {@link search}: it takes NO keyword and lists ALL live elements by default,
@@ -3778,6 +3795,31 @@ export class DbService {
       asOf: summary.asOf,
       rows: summary.rows,
       lowYieldCount: summary.lowYieldCount,
+    };
+  }
+
+  /**
+   * The extract-stagnation scan (T084) via {@link ExtractStagnationQuery.listStagnantExtracts}
+   * (in `packages/local-db`): for every live `extract`, reads the charter's
+   * attention-scheduler signals (stage / child count / op-log postpone markers + last
+   * stage advance), runs the PURE `@interleave/scheduler` `isStagnant` heuristic (the
+   * attention mirror of `isLeech`), and returns ONLY the stagnant rows (most-stagnant
+   * first) with their reasons + a recommended rewrite/convert/postpone/delete
+   * remediation. Read-only — no mutation, no `operation_log`, no schedule change. The
+   * suggestion is a LABEL; the actual remediations reuse the existing `extracts.*` /
+   * extract→card commands. `asOf` defaults to "now"; `limit` to 200. Stagnation is an
+   * ATTENTION concern — never FSRS `lapses`; an extract is never a "leech".
+   */
+  listStagnantExtracts(request?: ExtractStagnationListRequest): ExtractStagnationListResult {
+    const asOf = (request?.asOf ?? nowIso()) as IsoTimestamp;
+    const summary = this.extractStagnationQuery.listStagnantExtracts(asOf, {
+      ...(request?.limit !== undefined ? { limit: request.limit } : {}),
+      ...(request?.offset !== undefined ? { offset: request.offset } : {}),
+    });
+    return {
+      asOf: summary.asOf,
+      rows: summary.rows,
+      stagnantCount: summary.stagnantCount,
     };
   }
 

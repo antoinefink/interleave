@@ -43,6 +43,7 @@ import {
   DocumentsSaveRequestSchema,
   ElementsSetPriorityRequestSchema,
   ExtractionCreateRequestSchema,
+  ExtractStagnationListRequestSchema,
   ExtractsDeleteRequestSchema,
   ExtractsMarkDoneRequestSchema,
   ExtractsPostponeRequestSchema,
@@ -1077,6 +1078,11 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.sourceYieldList, (_event, rawRequest: unknown) => {
     const request = SourceYieldListRequestSchema.parse(rawRequest);
     return dbService.listSourceYield(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.extractStagnationList, (_event, rawRequest: unknown) => {
+    const request = ExtractStagnationListRequestSchema.parse(rawRequest);
+    return dbService.listStagnantExtracts(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.backupsCreate, async () => {

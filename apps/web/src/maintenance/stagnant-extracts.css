@@ -1,0 +1,56 @@
+/**
+ * Stagnant-extracts view styles (T084).
+ *
+ * The attention-side mirror of the leech cleanup screen. Reuses the leech list shell
+ * (`.lc-shell`/`.lc-head`/`.lc-list`/`.lc-card`/`.lc-card__*`, the review `.rv-*`
+ * repair primitives, and the `.badge` tokens) and adds only the stagnation-specific
+ * bits here, driven by the design tokens. UI only — no detection logic.
+ */
+
+.se-card[data-suggestion] {
+  /* A calm left rail to read the row as "needs a decision". */
+  border-left: 2px solid var(--border);
+}
+
+.se-title {
+  margin-left: 6px;
+}
+
+/* The "postponed ×N" badge — the load-bearing stagnation signal. */
+.se-badge--postpone {
+  border-color: color-mix(in oklch, var(--accent, var(--text-2)) 35%, var(--border));
+  color: var(--text-1);
+}
+
+.se-reasons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.se-reason {
+  font-size: var(--t-2xs);
+  color: var(--text-2);
+  padding: 2px 8px;
+  border-radius: var(--r-sm, 6px);
+  border: 1px solid var(--border);
+  background: var(--surface-2, var(--surface));
+}
+
+.se-suggest {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: var(--t-2xs);
+  color: var(--text-2);
+}
+
+/* The recommended remediation button — quietly emphasized, not loud. */
+.se-btn--suggested {
+  border-color: color-mix(in oklch, var(--accent, var(--text-1)) 45%, var(--border));
+  background: color-mix(in oklch, var(--accent, var(--text-1)) 8%, var(--surface));
+  color: var(--text-1);
+  font-weight: 600;
+}

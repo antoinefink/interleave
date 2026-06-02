@@ -2475,6 +2475,50 @@ export interface SourceYieldListResult {
 }
 
 // ---------------------------------------------------------------------------
+// extractStagnation.*  (T084 — extract-stagnation analytics)
+// ---------------------------------------------------------------------------
+
+/** `extractStagnation.list()` request — all fields optional (defaults applied main-side). */
+export interface ExtractStagnationListRequest {
+  readonly asOf?: string;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+/** A reason the stagnation predicate fired (the maintenance view's calm chips). */
+export type StagnationReason = "postponed-repeatedly" | "no-progress" | "no-children" | "stale";
+
+/** The recommended remediation — each maps to an existing `extracts.*` / extract→card command. */
+export type StagnationSuggestion = "rewrite" | "convert" | "postpone" | "delete";
+
+/** A small extract descriptor embedded in each stagnant row. */
+export interface StagnantExtractRef {
+  readonly id: string;
+  readonly title: string;
+  readonly stage: string;
+  readonly priority: number;
+  readonly dueAt: string | null;
+  readonly createdAt: string;
+}
+
+/** One stagnant extract + why it stalled + the recommended remediation. */
+export interface StagnantExtractRow {
+  readonly extract: StagnantExtractRef;
+  readonly postponeCount: number;
+  readonly childCount: number;
+  readonly daysSinceProgress: number;
+  readonly reasons: readonly StagnationReason[];
+  readonly suggestion: StagnationSuggestion;
+}
+
+/** The flat extract-stagnation snapshot the maintenance view reads (most-stagnant first). */
+export interface ExtractStagnationListResult {
+  readonly asOf: string;
+  readonly rows: readonly StagnantExtractRow[];
+  readonly stagnantCount: number;
+}
+
+// ---------------------------------------------------------------------------
 // backups.*  (T047 — Electron-managed backup/export of the canonical store)
 // ---------------------------------------------------------------------------
 
@@ -2659,6 +2703,9 @@ export interface AppApi {
   };
   readonly sourceYield: {
     list(request?: SourceYieldListRequest): Promise<SourceYieldListResult>;
+  };
+  readonly extractStagnation: {
+    list(request?: ExtractStagnationListRequest): Promise<ExtractStagnationListResult>;
   };
   readonly backups: {
     create(): Promise<BackupsCreateResult>;
@@ -3331,6 +3378,18 @@ export const appApi = {
    */
   getSourceYield(request?: SourceYieldListRequest): Promise<SourceYieldListResult> {
     return requireAppApi().sourceYield.list(request);
+  },
+  /**
+   * The extract-stagnation scan (T084) — every live extract that keeps returning
+   * without progressing (stage never advanced, no children, postponed repeatedly),
+   * with its reasons + a recommended rewrite/convert/postpone/delete remediation,
+   * most-stagnant first. Read-only; the remediations reuse the existing typed
+   * `extracts.*` / extract→card commands.
+   */
+  getExtractStagnation(
+    request?: ExtractStagnationListRequest,
+  ): Promise<ExtractStagnationListResult> {
+    return requireAppApi().extractStagnation.list(request);
   },
   /**
    * Export the entire local knowledge base (T047) — the consistently checkpointed

@@ -128,6 +128,16 @@ export {
   resolveDesiredRetentionDetailed,
 } from "./retention";
 export {
+  type ExtractStagnationSignals,
+  isStagnant,
+  STAGNATION_POSTPONE_THRESHOLD,
+  STAGNATION_STALE_DAYS,
+  type StagnationOptions,
+  type StagnationReason,
+  type StagnationSuggestion,
+  type StagnationVerdict,
+} from "./stagnation";
+export {
   DEFAULT_WORKLOAD_WINDOW_DAYS,
   projectWorkload,
   type WorkloadAddCardsChange,

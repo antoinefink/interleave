@@ -124,6 +124,12 @@ export const IPC_CHANNELS = {
   // extracts/cards/mature-cards, leeches, review time) so low-yield sources are
   // identifiable. No mutation, no `operation_log`, no schedule change.
   sourceYieldList: "sourceYield:list",
+  // Extract-stagnation analytics (T084) — a READ-ONLY scan that detects extracts
+  // which keep returning without progressing (stage never advanced, no children,
+  // postponed repeatedly) and surfaces them with rewrite/convert/postpone/delete
+  // suggestions. No mutation, no `operation_log`, no schedule change — the
+  // remediations reuse the existing `extracts:*` commands.
+  extractStagnationList: "extractStagnation:list",
   backupsCreate: "backups:create",
   // Background-runner observe surface (T058). `jobs:list` reads the current queue.
   // The renderer enqueues ONLY via `sources:importUrl` — there is intentionally NO

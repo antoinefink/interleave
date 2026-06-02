@@ -2505,6 +2505,63 @@ describe("DbService — source yield (T083)", () => {
   });
 });
 
+describe("DbService — extract stagnation (T084)", () => {
+  /** A far-future `asOf` so a never-advanced extract reads as stale. */
+  function farFutureAsOf(): string {
+    return new Date(Date.now() + 60 * 86_400_000).toISOString();
+  }
+
+  it("listStagnantExtracts round-trips the scan shape and survives reopen", () => {
+    const first = new DbService();
+    first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    // Seed a source + a top-level extract, then postpone it 3× (≥ threshold).
+    const { id: sourceId } = first.importManualSource({
+      title: "On the Measure of Intelligence",
+      priority: "B",
+      body: "The definition paragraph.\n\nAnother paragraph.",
+    });
+    const blockId = (
+      first.raw.sqlite
+        .prepare("SELECT stable_block_id AS b FROM document_blocks WHERE document_id = ? LIMIT 1")
+        .get(sourceId) as { b: string }
+    ).b;
+    const { extract } = first.createExtraction({
+      sourceElementId: sourceId,
+      selectedText: "The definition paragraph.",
+      blockIds: [blockId],
+      startOffset: 0,
+      endOffset: 25,
+    });
+    for (let i = 0; i < 3; i++) first.postponeExtract({ id: extract.id });
+
+    const summary = first.listStagnantExtracts({ asOf: farFutureAsOf() });
+    expect(summary.stagnantCount).toBe(1);
+    const row = summary.rows[0];
+    expect(row).toBeDefined();
+    if (row) {
+      expect(row.extract.id).toBe(extract.id);
+      expect(row.postponeCount).toBe(3);
+      expect(row.childCount).toBe(0);
+      expect(row.reasons).toContain("postponed-repeatedly");
+      expect(["rewrite", "convert", "postpone", "delete"]).toContain(row.suggestion);
+    }
+
+    // Defaults apply when called bare (asOf=now → the just-created extract is not yet stale).
+    expect(first.listStagnantExtracts().stagnantCount).toBe(0);
+    first.close();
+
+    // Reopen the SAME file — the scan recomputes from the durable op-log markers.
+    const second = new DbService();
+    second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const persisted = second.listStagnantExtracts({ asOf: farFutureAsOf() });
+    expect(persisted.stagnantCount).toBe(1);
+    expect(persisted.rows[0]?.extract.id).toBe(extract.id);
+    expect(persisted.rows[0]?.postponeCount).toBe(3);
+    second.close();
+  });
+});
+
 describe("DbService — backup support (T047)", () => {
   it("getSchemaVersion returns the latest applied Drizzle migration tag", () => {
     const svc = new DbService();

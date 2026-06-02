@@ -43,6 +43,7 @@ import type {
   DocumentsSaveRequest,
   ElementsSetPriorityRequest,
   ExtractionCreateRequest,
+  ExtractStagnationListRequest,
   ExtractsDeleteRequest,
   ExtractsMarkDoneRequest,
   ExtractsPostponeRequest,
@@ -332,6 +333,10 @@ const appApi: AppApi = {
   sourceYield: {
     list: (request?: SourceYieldListRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.sourceYieldList, request),
+  },
+  extractStagnation: {
+    list: (request?: ExtractStagnationListRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.extractStagnationList, request),
   },
   backups: {
     create: () => ipcRenderer.invoke(IPC_CHANNELS.backupsCreate),

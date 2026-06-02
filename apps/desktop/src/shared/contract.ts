@@ -3992,6 +3992,76 @@ export interface SourceYieldListResult {
 }
 
 // ---------------------------------------------------------------------------
+// extractStagnation.list()  (T084 — extract-stagnation analytics)
+// ---------------------------------------------------------------------------
+
+/**
+ * The extract-stagnation surface (T084) — a READ-ONLY scan that answers "which
+ * extracts keep coming back without ever turning into anything?". The MAIN process
+ * runs `ExtractStagnationQuery.listStagnantExtracts`, which for every live `extract`
+ * reads the charter's attention-scheduler signals (stage / child count / op-log
+ * postpone markers + last stage advance), runs the PURE `@interleave/scheduler`
+ * `isStagnant` heuristic (the attention mirror of `isLeech`), and returns ONLY the
+ * stagnant rows (most-stagnant first) with their `reasons` + a recommended
+ * `suggestion` (rewrite / convert / postpone / delete).
+ *
+ * Read-only: NO mutation, NO `operation_log`, no schedule change, no generic
+ * `db.query`. The suggestion is a LABEL; the actual remediations reuse the existing
+ * transactional `extracts:*` (+ extract→card) commands. Stagnation is an ATTENTION
+ * concern computed from stage/children/postpones — NEVER from FSRS `lapses`; an
+ * extract is NEVER called a "leech".
+ */
+export const ExtractStagnationListRequestSchema = z
+  .object({
+    /** The instant to compute the scan for (ISO-8601); defaults to now. */
+    asOf: z.string().min(1).optional(),
+    /** Cap the row count (1–1000); defaults to 200. */
+    limit: z.number().int().min(1).max(1000).optional(),
+    /** Skip the first `offset` rows (after the most-stagnant-first sort). */
+    offset: z.number().int().min(0).optional(),
+  })
+  .optional();
+export type ExtractStagnationListRequest = z.infer<typeof ExtractStagnationListRequestSchema>;
+
+/** A reason the stagnation predicate fired (the maintenance view's calm chips). */
+export type StagnationReason = "postponed-repeatedly" | "no-progress" | "no-children" | "stale";
+
+/** The recommended remediation — each maps to an EXISTING `extracts:*` / extract→card command. */
+export type StagnationSuggestion = "rewrite" | "convert" | "postpone" | "delete";
+
+/** A small extract descriptor embedded in each stagnant row (flat, JSON-serializable). */
+export interface StagnantExtractRef {
+  readonly id: string;
+  readonly title: string;
+  readonly stage: string;
+  readonly priority: number;
+  /** The attention `due_at` (ISO-8601), or `null`. Extracts are attention items. */
+  readonly dueAt: string | null;
+  readonly createdAt: string;
+}
+
+/** One stagnant extract + why it stalled + the recommended remediation (flat). */
+export interface StagnantExtractRow {
+  readonly extract: StagnantExtractRef;
+  readonly postponeCount: number;
+  readonly childCount: number;
+  /** Whole days since the last stage advance (or `createdAt`). */
+  readonly daysSinceProgress: number;
+  readonly reasons: readonly StagnationReason[];
+  readonly suggestion: StagnationSuggestion;
+}
+
+/** The flat, JSON-serializable extract-stagnation snapshot the renderer reads. */
+export interface ExtractStagnationListResult {
+  /** The instant the scan was computed for (ISO-8601). */
+  readonly asOf: string;
+  /** The stagnant rows, sorted most-stagnant first. */
+  readonly rows: readonly StagnantExtractRow[];
+  /** How many extracts are stagnant (`rows.length`). */
+  readonly stagnantCount: number;
+}
+
+// ---------------------------------------------------------------------------
 // backups.create()  (T047 — Electron-managed backup of the canonical store)
 // ---------------------------------------------------------------------------
 
@@ -4536,6 +4606,16 @@ export interface AppApi {
      * sources are identifiable. Read-only (no mutation, no `operation_log`).
      */
     list(request?: SourceYieldListRequest): Promise<SourceYieldListResult>;
+  };
+  readonly extractStagnation: {
+    /**
+     * The extract-stagnation scan (T084) — every live extract that keeps returning
+     * without progressing (stage never advanced, no children, postponed repeatedly),
+     * with its reasons + a recommended rewrite/convert/postpone/delete remediation,
+     * most-stagnant first. Read-only (no mutation, no `operation_log`); the
+     * remediations reuse the existing `extracts.*` / extract→card commands.
+     */
+    list(request?: ExtractStagnationListRequest): Promise<ExtractStagnationListResult>;
   };
   readonly backups: {
     /**

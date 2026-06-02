@@ -37,7 +37,13 @@ const h = vi.hoisted(() => {
     retired: 0,
     dayStreak: 5,
   };
-  return { summary, getAnalytics: vi.fn(), getSourceYield: vi.fn(), navigateSpy: vi.fn() };
+  return {
+    summary,
+    getAnalytics: vi.fn(),
+    getSourceYield: vi.fn(),
+    getExtractStagnation: vi.fn(),
+    navigateSpy: vi.fn(),
+  };
 });
 
 vi.mock("@tanstack/react-router", () => ({
@@ -49,7 +55,11 @@ vi.mock("../lib/appApi", async () => {
   return {
     ...actual,
     isDesktop: () => true,
-    appApi: { getAnalytics: h.getAnalytics, getSourceYield: h.getSourceYield },
+    appApi: {
+      getAnalytics: h.getAnalytics,
+      getSourceYield: h.getSourceYield,
+      getExtractStagnation: h.getExtractStagnation,
+    },
   };
 });
 
@@ -60,6 +70,8 @@ beforeEach(() => {
   h.getAnalytics.mockResolvedValue(h.summary);
   // The screen also reads the low-yield-source count (T083) for its banner.
   h.getSourceYield.mockResolvedValue({ asOf: h.summary.asOf, rows: [], lowYieldCount: 0 });
+  // …and the stagnant-extract count (T084) for its banner.
+  h.getExtractStagnation.mockResolvedValue({ asOf: h.summary.asOf, rows: [], stagnantCount: 0 });
 });
 
 describe("AnalyticsScreen", () => {
@@ -98,6 +110,21 @@ describe("AnalyticsScreen", () => {
     expect(banner.textContent).toContain("3 low-yield sources");
     fireEvent.click(banner);
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/analytics/sources" });
+  });
+
+  it("links the stagnant-extracts banner to /maintenance/stagnant when there are stagnant extracts", async () => {
+    h.getExtractStagnation.mockResolvedValue({
+      asOf: h.summary.asOf,
+      rows: [],
+      stagnantCount: 2,
+    });
+    render(<AnalyticsScreen />);
+    await screen.findByTestId("analytics-body");
+
+    const banner = await screen.findByTestId("banner-stagnant");
+    expect(banner.textContent).toContain("2 stagnant extracts");
+    fireEvent.click(banner);
+    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/maintenance/stagnant" });
   });
 
   it("shows the healthy state and hides the banners when there are no leeches/deletions", async () => {

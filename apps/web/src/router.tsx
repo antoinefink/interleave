@@ -38,6 +38,7 @@ import { BrowseScreen } from "./library/BrowseScreen";
 import { LibraryScreen } from "./library/LibraryScreen";
 import { LeechCleanup } from "./maintenance/LeechCleanup";
 import { RetiredCards } from "./maintenance/RetiredCards";
+import { StagnantExtracts } from "./maintenance/StagnantExtracts";
 import { HomeScreen } from "./pages/home/HomeScreen";
 import { InboxScreen } from "./pages/inbox/InboxScreen";
 import { ProcessQueue } from "./pages/queue/ProcessQueue";
@@ -140,6 +141,21 @@ const retiredCardsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/maintenance/retired",
   component: RetiredCards,
+});
+
+/**
+ * Stagnant-extracts maintenance view (T084) — the attention-side mirror of leech
+ * cleanup: every live extract that keeps returning without progressing (stage never
+ * advanced, no children, postponed repeatedly), detected by the read-only
+ * `ExtractStagnationQuery` (the pure `@interleave/scheduler` `isStagnant` heuristic),
+ * with rewrite / convert / postpone / delete remediations that invoke the existing
+ * `extracts.*` / extract→card commands. The whole list comes from
+ * `appApi.getExtractStagnation()`; the renderer holds no detection logic or SQL.
+ */
+const stagnantExtractsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/maintenance/stagnant",
+  component: StagnantExtracts,
 });
 
 /**
@@ -263,6 +279,7 @@ const routeTree = rootRoute.addChildren([
   reviewRoute,
   leechCleanupRoute,
   retiredCardsRoute,
+  stagnantExtractsRoute,
   searchRoute,
   libraryRoute,
   conceptsRoute,

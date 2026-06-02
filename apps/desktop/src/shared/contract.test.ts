@@ -43,6 +43,7 @@ import {
   DocumentsSaveRequestSchema,
   ElementsSetPriorityRequestSchema,
   ExtractionCreateRequestSchema,
+  ExtractStagnationListRequestSchema,
   ExtractsDeleteRequestSchema,
   ExtractsMarkDoneRequestSchema,
   ExtractsPostponeRequestSchema,
@@ -122,6 +123,7 @@ describe("IPC channels", () => {
         "settings:getAll",
         "settings:updateMany",
         "sourceYield:list",
+        "extractStagnation:list",
         "inspector:list",
         "inspector:get",
         "elements:setPriority",
@@ -2254,6 +2256,28 @@ describe("SourceYieldListRequestSchema (T083)", () => {
     expect(() => SourceYieldListRequestSchema.parse({ limit: 1.5 })).toThrow();
     expect(() => SourceYieldListRequestSchema.parse({ offset: -1 })).toThrow();
     expect(() => SourceYieldListRequestSchema.parse({ asOf: "" })).toThrow();
+  });
+});
+
+describe("ExtractStagnationListRequestSchema (T084)", () => {
+  it("accepts an empty/absent request (defaults applied main-side)", () => {
+    expect(ExtractStagnationListRequestSchema.parse(undefined)).toBeUndefined();
+    expect(ExtractStagnationListRequestSchema.parse({})).toEqual({});
+  });
+
+  it("accepts an explicit asOf + limit + offset and rejects out-of-range values", () => {
+    expect(
+      ExtractStagnationListRequestSchema.parse({
+        asOf: "2026-06-01T00:00:00.000Z",
+        limit: 50,
+        offset: 10,
+      }),
+    ).toEqual({ asOf: "2026-06-01T00:00:00.000Z", limit: 50, offset: 10 });
+    expect(() => ExtractStagnationListRequestSchema.parse({ limit: 0 })).toThrow();
+    expect(() => ExtractStagnationListRequestSchema.parse({ limit: 1001 })).toThrow();
+    expect(() => ExtractStagnationListRequestSchema.parse({ limit: 1.5 })).toThrow();
+    expect(() => ExtractStagnationListRequestSchema.parse({ offset: -1 })).toThrow();
+    expect(() => ExtractStagnationListRequestSchema.parse({ asOf: "" })).toThrow();
   });
 });
 

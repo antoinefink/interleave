@@ -82,6 +82,10 @@ export const SECONDARY_NAV: readonly NavItem[] = [
   // The leech cleanup view (T040) — maintenance for repeatedly-failing cards. Lives
   // under the "Organize" group until the full M9 analytics/maintenance screen lands.
   { id: "leeches", label: "Leeches", icon: "leech", to: "/maintenance/leeches" },
+  // The stagnant-extracts view (T084) — the attention mirror of leech cleanup:
+  // extracts that keep returning without progressing (stage never advanced, no
+  // children, postponed repeatedly), with rewrite/convert/postpone/delete remedies.
+  { id: "stagnant", label: "Stagnant", icon: "hourglass", to: "/maintenance/stagnant" },
   // The Trash view (T044) — soft-deleted elements, recoverable via Restore + undo.
   { id: "trash", label: "Trash", icon: "trash", to: "/trash" },
   { id: "settings", label: "Settings", icon: "settings", to: "/settings" },

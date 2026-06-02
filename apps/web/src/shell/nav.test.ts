@@ -24,6 +24,7 @@ const VALID_ROUTES = new Set([
   "/queue",
   "/review",
   "/maintenance/leeches",
+  "/maintenance/stagnant",
   "/search",
   "/library",
   "/concepts",
@@ -48,6 +49,7 @@ describe("shell nav config", () => {
       "Analytics",
       "Source yield",
       "Leeches",
+      "Stagnant",
       "Trash",
       "Settings",
     ]);

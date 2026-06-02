@@ -86,6 +86,14 @@ export {
   trimExtractText,
 } from "./extract-service";
 export {
+  DEFAULT_EXTRACT_STAGNATION_LIMIT,
+  type ExtractStagnationOptions,
+  ExtractStagnationQuery,
+  type ExtractStagnationSummary,
+  type StagnantExtractRef,
+  type StagnantExtractRow,
+} from "./extract-stagnation-query";
+export {
   type CreateClipExtractInput,
   type CreateExtractionInput,
   type CreateRegionExtractInput,
@@ -282,6 +290,8 @@ export interface Repositories {
   readonly occlusionMasks: import("./occlusion-masks-repository").OcclusionMasksRepository;
   /** The per-source yield rollup (T083) — read %, extracts/cards/mature/leeches/time, ranked. */
   readonly sourceYield: import("./source-yield-query").SourceYieldQuery;
+  /** The extract-stagnation scan (T084) — extracts that keep returning without progressing. */
+  readonly extractStagnation: import("./extract-stagnation-query").ExtractStagnationQuery;
 }
 
 import type { InterleaveDatabase } from "@interleave/db";
@@ -290,6 +300,7 @@ import { AssetRepository } from "./asset-repository";
 import { ConceptRepository } from "./concept-repository";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
+import { ExtractStagnationQuery } from "./extract-stagnation-query";
 import { JobsRepository } from "./jobs-repository";
 import { OcclusionMasksRepository } from "./occlusion-masks-repository";
 import { OcrPagesRepository } from "./ocr-pages-repository";
@@ -327,5 +338,6 @@ export function createRepositories(db: InterleaveDatabase): Repositories {
     ocrPages: new OcrPagesRepository(db),
     occlusionMasks: new OcclusionMasksRepository(db),
     sourceYield: new SourceYieldQuery(db),
+    extractStagnation: new ExtractStagnationQuery(db),
   };
 }

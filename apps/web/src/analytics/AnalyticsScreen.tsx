@@ -43,6 +43,9 @@ export function AnalyticsScreen() {
   // The number of low-yield sources (T083) — drives the "Low-yield sources" banner.
   // Read from the SAME read-only `SourceYieldQuery` the dedicated view renders.
   const [lowYieldCount, setLowYieldCount] = useState(0);
+  // The number of stagnant extracts (T084) — drives the "Stagnant extracts" banner.
+  // Read from the SAME read-only `ExtractStagnationQuery` the dedicated view renders.
+  const [stagnantCount, setStagnantCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,9 +55,14 @@ export function AnalyticsScreen() {
       return;
     }
     try {
-      const [res, yield_] = await Promise.all([appApi.getAnalytics(), appApi.getSourceYield()]);
+      const [res, yield_, stagnation] = await Promise.all([
+        appApi.getAnalytics(),
+        appApi.getSourceYield(),
+        appApi.getExtractStagnation(),
+      ]);
       setData(res);
       setLowYieldCount(yield_.lowYieldCount);
+      setStagnantCount(stagnation.stagnantCount);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -260,7 +268,26 @@ export function AnalyticsScreen() {
                   <Icon name="chevronRight" size={14} />
                 </button>
               ) : null}
-              {data.leeches === 0 && data.deletions === 0 && lowYieldCount === 0 ? (
+              {/* Stagnant extracts (T084) — links to the stagnant-extracts maintenance view. */}
+              {stagnantCount > 0 ? (
+                <button
+                  type="button"
+                  className="an-banner"
+                  data-testid="banner-stagnant"
+                  onClick={() => void navigate({ to: "/maintenance/stagnant" })}
+                >
+                  <Icon name="hourglass" size={16} />
+                  <span className="an-banner__title">
+                    {stagnantCount} stagnant extract{stagnantCount === 1 ? "" : "s"} to finish or
+                    drop
+                  </span>
+                  <Icon name="chevronRight" size={14} />
+                </button>
+              ) : null}
+              {data.leeches === 0 &&
+              data.deletions === 0 &&
+              lowYieldCount === 0 &&
+              stagnantCount === 0 ? (
                 <div className="an-banner an-banner--ok" data-testid="banner-healthy">
                   <Icon name="checkCircle" size={16} />
                   <span className="an-banner__title">No maintenance needed</span>
