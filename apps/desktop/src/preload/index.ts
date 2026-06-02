@@ -97,6 +97,7 @@ import type {
   SourcesImportPdfRequest,
   SourcesImportUrlRequest,
   SourcesRunOcrRequest,
+  SourceYieldListRequest,
   TagsAddRequest,
   TagsRemoveRequest,
   TrashPurgeRequest,
@@ -327,6 +328,10 @@ const appApi: AppApi = {
   },
   balance: {
     get: (request?: BalanceGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.balanceGet, request),
+  },
+  sourceYield: {
+    list: (request?: SourceYieldListRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.sourceYieldList, request),
   },
   backups: {
     create: () => ipcRenderer.invoke(IPC_CHANNELS.backupsCreate),

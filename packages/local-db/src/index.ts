@@ -240,6 +240,14 @@ export {
   type SourceWithDocument,
   type SourceWithElement,
 } from "./source-repository";
+export {
+  DEFAULT_SOURCE_YIELD_LIMIT,
+  type SourceYieldOptions,
+  SourceYieldQuery,
+  type SourceYieldRow,
+  type SourceYieldSourceRef,
+  type SourceYieldSummary,
+} from "./source-yield-query";
 export { type TrashItem, TrashRepository } from "./trash-query";
 export type { DbClient, TransactionClient } from "./types";
 export { type UndoResult, UndoService } from "./undo-service";
@@ -272,6 +280,8 @@ export interface Repositories {
   readonly ocrPages: import("./ocr-pages-repository").OcrPagesRepository;
   /** The image-occlusion masks store (T071) — vector masks kept separate from the base image. */
   readonly occlusionMasks: import("./occlusion-masks-repository").OcclusionMasksRepository;
+  /** The per-source yield rollup (T083) — read %, extracts/cards/mature/leeches/time, ranked. */
+  readonly sourceYield: import("./source-yield-query").SourceYieldQuery;
 }
 
 import type { InterleaveDatabase } from "@interleave/db";
@@ -290,6 +300,7 @@ import { SearchRepository } from "./search-repository";
 import { SettingsRepository } from "./settings-repository";
 import { SourceDedupQuery } from "./source-dedup-query";
 import { SourceRepository } from "./source-repository";
+import { SourceYieldQuery } from "./source-yield-query";
 import { TrashRepository } from "./trash-query";
 
 /**
@@ -315,5 +326,6 @@ export function createRepositories(db: InterleaveDatabase): Repositories {
     jobs: new JobsRepository(db),
     ocrPages: new OcrPagesRepository(db),
     occlusionMasks: new OcclusionMasksRepository(db),
+    sourceYield: new SourceYieldQuery(db),
   };
 }

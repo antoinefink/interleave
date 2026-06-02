@@ -909,6 +909,24 @@ function InspectorBody({
             </MetaRow>
             <MetaRow k="Postponed">{scheduler.postponed}×</MetaRow>
             <MetaRow k="Last seen">{fmtDate(scheduler.lastProcessedAt)}</MetaRow>
+            {/* Source-yield chip (T083): read % + extracts/cards produced. */}
+            {scheduler.yield ? (
+              <>
+                <MetaRow k="Read">
+                  <span data-testid="inspector-yield-read">
+                    {Math.round(scheduler.yield.readPct * 100)}%
+                  </span>
+                </MetaRow>
+                <MetaRow k="Yield">
+                  <span data-testid="inspector-yield">
+                    {scheduler.yield.extractsCreated} extract
+                    {scheduler.yield.extractsCreated === 1 ? "" : "s"} ·{" "}
+                    {scheduler.yield.cardsCreated} card
+                    {scheduler.yield.cardsCreated === 1 ? "" : "s"}
+                  </span>
+                </MetaRow>
+              </>
+            ) : null}
           </div>
         )}
       </div>

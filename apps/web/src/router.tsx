@@ -16,6 +16,7 @@
  *   /concepts            concept knowledge-map + member drill-in
  *   /trash               soft-deleted elements (T044)
  *   /analytics           learning-health snapshot (T045)
+ *   /analytics/sources   per-source yield analytics (T083)
  *   /settings            local settings
  *
  * Code-based routing (vs the file-based codegen plugin) keeps the route tree
@@ -30,6 +31,7 @@
  */
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { AnalyticsScreen } from "./analytics/AnalyticsScreen";
+import { SourceYield } from "./analytics/SourceYield";
 import { DesktopStatusPanel } from "./components/DesktopStatusPanel";
 import { ConceptsScreen } from "./concepts/ConceptsScreen";
 import { BrowseScreen } from "./library/BrowseScreen";
@@ -210,6 +212,22 @@ const analyticsRoute = createRoute({
   component: AnalyticsScreen,
 });
 
+/**
+ * Source-yield view (T083) — the ranked, lowest-yield-first per-source rollup:
+ * read %, extracts/cards/mature-cards created, leeches, and review time per source,
+ * so low-yield sources are identifiable. The whole payload comes from
+ * `appApi.getSourceYield()` (the domain `SourceYieldQuery` aggregates over
+ * `elements`/`read_points`/`document_blocks`/`review_states`/`review_logs`/`cards`
+ * via the persisted `sourceId` lineage + the pure `scoreSourceYield` rule); the
+ * renderer holds no aggregation or SQL. Linked from the Analytics "Low-yield
+ * sources" banner.
+ */
+const sourceYieldRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/analytics/sources",
+  component: SourceYield,
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
@@ -250,6 +268,7 @@ const routeTree = rootRoute.addChildren([
   conceptsRoute,
   trashRoute,
   analyticsRoute,
+  sourceYieldRoute,
   settingsRoute,
 ]);
 

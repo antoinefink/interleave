@@ -204,6 +204,21 @@ export type { Document, DocumentSchemaVersion, MediaKind, Source } from "./sourc
 // Source reference (the refblock) — citation formatter, one source of truth (./source-ref).
 export type { FormattedSourceRef, SourceRef } from "./source-ref";
 export { EMPTY_SOURCE_REF, formatSourceRef } from "./source-ref";
+// Source-yield scoring — the pure, tunable per-source yield rank (T083, ./source-yield).
+export type { SourceYieldInputs, SourceYieldVerdict, YieldBand } from "./source-yield";
+export {
+  scoreSourceYield,
+  UNSTARTED_READ_FLOOR,
+  YIELD_BARREN_OUTPUT_THRESHOLD,
+  YIELD_HIGH_SCORE,
+  YIELD_LEECH_RATIO_PENALTY,
+  YIELD_LOW_SCORE,
+  YIELD_MINUTES_PER_MATURE_PENALTY,
+  YIELD_READ_BARREN_PENALTY,
+  YIELD_WEIGHT_CARD,
+  YIELD_WEIGHT_EXTRACT,
+  YIELD_WEIGHT_MATURE_CARD,
+} from "./source-yield";
 // URL canonicalization for provenance/duplicate detection — pure, fetch-free (./url).
 export { canonicalizeUrl } from "./url";
 // Desktop pivot: filesystem asset vault vocabulary (./vault).

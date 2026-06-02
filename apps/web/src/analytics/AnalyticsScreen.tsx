@@ -40,6 +40,9 @@ export function AnalyticsScreen() {
   const desktop = isDesktop();
   const navigate = useNavigate();
   const [data, setData] = useState<AnalyticsGetResult | null>(null);
+  // The number of low-yield sources (T083) — drives the "Low-yield sources" banner.
+  // Read from the SAME read-only `SourceYieldQuery` the dedicated view renders.
+  const [lowYieldCount, setLowYieldCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,8 +52,9 @@ export function AnalyticsScreen() {
       return;
     }
     try {
-      const res = await appApi.getAnalytics();
+      const [res, yield_] = await Promise.all([appApi.getAnalytics(), appApi.getSourceYield()]);
       setData(res);
+      setLowYieldCount(yield_.lowYieldCount);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -241,7 +245,22 @@ export function AnalyticsScreen() {
                   <Icon name="chevronRight" size={14} />
                 </button>
               ) : null}
-              {data.leeches === 0 && data.deletions === 0 ? (
+              {/* Low-yield sources (T083) — links to the ranked per-source yield view. */}
+              {lowYieldCount > 0 ? (
+                <button
+                  type="button"
+                  className="an-banner"
+                  data-testid="banner-source-yield"
+                  onClick={() => void navigate({ to: "/analytics/sources" })}
+                >
+                  <Icon name="library" size={16} />
+                  <span className="an-banner__title">
+                    {lowYieldCount} low-yield source{lowYieldCount === 1 ? "" : "s"} to review
+                  </span>
+                  <Icon name="chevronRight" size={14} />
+                </button>
+              ) : null}
+              {data.leeches === 0 && data.deletions === 0 && lowYieldCount === 0 ? (
                 <div className="an-banner an-banner--ok" data-testid="banner-healthy">
                   <Icon name="checkCircle" size={16} />
                   <span className="an-banner__title">No maintenance needed</span>

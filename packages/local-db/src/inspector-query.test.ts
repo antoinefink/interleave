@@ -186,12 +186,21 @@ describe("InspectorQuery.get — attention scheduler", () => {
 
     // The extract is a live child of the source.
     expect(data.children.map((c) => c.id)).toContain(extractId);
+
+    // The source's "yield (N extracts / M cards)" chip (T083): 1 extract + 1 card,
+    // and a read % (no read-point here → 0).
+    expect(data.scheduler.yield).not.toBeNull();
+    expect(data.scheduler.yield?.extractsCreated).toBe(1);
+    expect(data.scheduler.yield?.cardsCreated).toBe(1);
+    expect(data.scheduler.yield?.readPct).toBe(0);
   });
 
   it("shows the extract's tag, parent source, and FSRS-free attention chip", () => {
     const { sourceId, extractId } = buildChain();
     const data = inspector.get(extractId);
     expect(data?.scheduler.kind).toBe("attention");
+    // Yield is a SOURCE concern — an extract's attention chip carries no yield.
+    expect(data?.scheduler.yield).toBeNull();
     expect(data?.tags).toContain("definitions");
     // Extract's parent is the source (default parentId on createExtract).
     expect(data?.source?.id).toBe(sourceId);

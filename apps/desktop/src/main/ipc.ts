@@ -107,6 +107,7 @@ import {
   SourcesImportUrlRequestSchema,
   type SourcesImportUrlResult,
   SourcesRunOcrRequestSchema,
+  SourceYieldListRequestSchema,
   TagsAddRequestSchema,
   TagsListRequestSchema,
   TagsRemoveRequestSchema,
@@ -1071,6 +1072,11 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.balanceGet, (_event, rawRequest: unknown) => {
     const request = BalanceGetRequestSchema.parse(rawRequest);
     return dbService.getBalance(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.sourceYieldList, (_event, rawRequest: unknown) => {
+    const request = SourceYieldListRequestSchema.parse(rawRequest);
+    return dbService.listSourceYield(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.backupsCreate, async () => {

@@ -22,6 +22,7 @@ import type {
   ClipWindow,
   Element,
   ElementId,
+  IsoTimestamp,
   RegionRect,
   SourceLocationId,
   SourceRef,
@@ -57,6 +58,23 @@ export interface SchedulerSignals {
   readonly stage: string;
   readonly postponed: number;
   readonly lastProcessedAt: string | null;
+  /**
+   * The attention `SchedulerChip`'s promised "yield (N extracts / M cards)" for a
+   * SOURCE (T083) — its read %, extracts created, and cards created, surfaced from
+   * the SAME read-only `SourceYieldQuery` rollup. `null` for non-source attention
+   * items (extracts/topics/tasks) and for cards (the FSRS branch). Read-only.
+   */
+  readonly yield: SourceYieldSignals | null;
+}
+
+/** The per-source yield summary the inspector chip shows (T083). */
+export interface SourceYieldSignals {
+  /** How far the source has been read, in `[0, 1]`. */
+  readonly readPct: number;
+  /** Live `extract` descendants created from the source. */
+  readonly extractsCreated: number;
+  /** Live `card` descendants created from the source. */
+  readonly cardsCreated: number;
 }
 
 export interface LineageItem {
@@ -296,6 +314,8 @@ export class InspectorQuery {
         stage: element.stage,
         postponed: 0,
         lastProcessedAt: state?.lastReviewedAt ?? null,
+        // Yield is a SOURCE concern; a card's panel shows FSRS stats instead.
+        yield: null,
       };
       if (state) {
         reviewSummary = {
@@ -311,6 +331,20 @@ export class InspectorQuery {
         };
       }
     } else {
+      // The "yield (N extracts / M cards)" chip the attention `SchedulerChip` promises
+      // — only meaningful for a SOURCE (the lineage root). Computed from the SAME
+      // read-only `SourceYieldQuery` rollup (no duplicated read-%/lineage math).
+      let sourceYield: SourceYieldSignals | null = null;
+      if (element.type === "source") {
+        const row = this.repos.sourceYield.getSourceYield(id, asOf.toISOString() as IsoTimestamp);
+        if (row) {
+          sourceYield = {
+            readPct: row.readPct,
+            extractsCreated: row.extractsCreated,
+            cardsCreated: row.cardsCreated,
+          };
+        }
+      }
       scheduler = {
         kind: "attention",
         retrievability: null,
@@ -325,6 +359,7 @@ export class InspectorQuery {
         // schema column. The full attention scheduler lands with T028.
         postponed: this.countPostpones(id),
         lastProcessedAt: element.updatedAt,
+        yield: sourceYield,
       };
     }
 

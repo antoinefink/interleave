@@ -1,0 +1,266 @@
+/**
+ * Source-yield view styles (T083).
+ *
+ * A ranked table (lowest-yield first) in the analytics aesthetic: a centered
+ * ~1080px column, a header, and dense rows with a read-% bar, the yield numbers,
+ * review time, and a calm `band` chip. Driven entirely by the design tokens (no
+ * hard-coded colors). UI only. The `low` band tints its row so the sources to
+ * abandon are visually distinguishable.
+ */
+
+.sy-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 100%;
+  overflow-y: auto;
+}
+
+.sy-head {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: var(--s-6, 24px) var(--s-6, 24px) var(--s-3, 12px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-4, 16px);
+}
+.sy-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--t-xl, 22px);
+  font-weight: 650;
+  color: var(--text-1);
+}
+.sy-sub {
+  margin-top: 4px;
+  font-size: var(--t-sm, 13px);
+  color: var(--text-2);
+  max-width: 620px;
+}
+.sy-count {
+  flex-shrink: 0;
+  font-size: var(--t-xs, 12px);
+  font-weight: 600;
+  color: var(--text-2);
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill, 999px);
+  background: var(--surface);
+  white-space: nowrap;
+}
+
+.sy-error {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 4px var(--s-6, 24px);
+  font-size: var(--t-sm, 13px);
+  color: var(--danger, #e5484d);
+}
+.sy-loading {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: var(--s-4, 16px) var(--s-6, 24px);
+  font-size: var(--t-sm, 13px);
+  color: var(--text-3);
+}
+
+.sy-body {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: var(--s-3, 12px) var(--s-6, 24px) var(--s-8, 48px);
+}
+
+.sy-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg, 12px);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.sy-row {
+  display: grid;
+  grid-template-columns:
+    minmax(180px, 2.4fr) minmax(96px, 1.2fr) 64px 56px 64px 70px
+    minmax(78px, 0.9fr) minmax(108px, 1fr) 72px;
+  align-items: center;
+  gap: var(--s-2, 8px);
+  padding: 10px var(--s-4, 16px);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--t-sm, 13px);
+  color: var(--text-1);
+}
+.sy-row:last-child {
+  border-bottom: none;
+}
+.sy-row--head {
+  background: var(--surface-2, var(--surface));
+  font-size: var(--t-2xs, 11px);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* A low-yield row is tinted so it stands out as a candidate to abandon. */
+.sy-row--band-low {
+  background: color-mix(in oklch, var(--danger-soft, #fdecec) 55%, var(--surface));
+}
+
+.sy-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.sy-cell--num,
+.sy-cell--read,
+.sy-cell--time {
+  font-variant-numeric: tabular-nums;
+}
+.sy-cell--num {
+  justify-content: flex-end;
+  padding-right: 6px;
+}
+.sy-cell--warn {
+  color: var(--danger, #e5484d);
+  font-weight: 600;
+}
+.sy-cell--time {
+  color: var(--text-2);
+}
+.sy-cell--act {
+  justify-content: flex-end;
+}
+
+.sy-cell--src {
+  color: var(--text-1);
+}
+.sy-cell--src > svg {
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+.sy-src__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.sy-bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2, color-mix(in oklch, var(--border) 50%, var(--surface)));
+  overflow: hidden;
+  min-width: 36px;
+}
+.sy-bar__fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent, #3b82f6);
+}
+.sy-read__pct {
+  flex-shrink: 0;
+  font-size: var(--t-2xs, 11px);
+  color: var(--text-2);
+  width: 30px;
+  text-align: right;
+}
+
+.sy-band {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t-2xs, 11px);
+  font-weight: 600;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.sy-band__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+}
+.sy-band--high {
+  color: var(--ok, #30a46c);
+}
+.sy-band--high .sy-band__dot {
+  background: var(--ok, #30a46c);
+}
+.sy-band--medium {
+  color: var(--warn, #f5a623);
+}
+.sy-band--medium .sy-band__dot {
+  background: var(--warn, #f5a623);
+}
+.sy-band--low {
+  color: var(--danger, #e5484d);
+}
+.sy-band--low .sy-band__dot {
+  background: var(--danger, #e5484d);
+}
+.sy-band--neutral {
+  color: var(--text-3);
+}
+
+.sy-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 8px);
+  background: var(--surface);
+  color: var(--text-1);
+  font-size: var(--t-xs, 12px);
+  font-weight: 500;
+  cursor: pointer;
+}
+.sy-open:hover {
+  border-color: var(--border-strong, var(--border));
+  background: var(--surface-2, var(--surface));
+}
+
+.sy-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  max-width: 480px;
+  margin: auto;
+  padding: var(--s-8, 48px) var(--s-6, 24px);
+}
+.sy-empty__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  color: var(--text-3);
+  background: var(--surface);
+  margin-bottom: 6px;
+}
+.sy-empty__title {
+  font-size: var(--t-lg, 18px);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.sy-empty__body {
+  font-size: var(--t-sm, 13px);
+  color: var(--text-2);
+  line-height: 1.5;
+}

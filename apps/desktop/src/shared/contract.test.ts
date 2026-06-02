@@ -102,6 +102,7 @@ import {
   SourcesImportUrlRequestSchema,
   type SourcesImportUrlResult,
   SourcesRunOcrRequestSchema,
+  SourceYieldListRequestSchema,
   TagsAddRequestSchema,
   TagsRemoveRequestSchema,
   VaultCollectOrphansRequestSchema,
@@ -120,6 +121,7 @@ describe("IPC channels", () => {
         "settings:update",
         "settings:getAll",
         "settings:updateMany",
+        "sourceYield:list",
         "inspector:list",
         "inspector:get",
         "elements:setPriority",
@@ -2230,6 +2232,28 @@ describe("BalanceGetRequestSchema (T046)", () => {
     expect(() => BalanceGetRequestSchema.parse({ windowDays: 0 })).toThrow();
     expect(() => BalanceGetRequestSchema.parse({ windowDays: 400 })).toThrow();
     expect(() => BalanceGetRequestSchema.parse({ asOf: "" })).toThrow();
+  });
+});
+
+describe("SourceYieldListRequestSchema (T083)", () => {
+  it("accepts an empty/absent request (defaults applied main-side)", () => {
+    expect(SourceYieldListRequestSchema.parse(undefined)).toBeUndefined();
+    expect(SourceYieldListRequestSchema.parse({})).toEqual({});
+  });
+
+  it("accepts an explicit asOf + limit + offset and rejects out-of-range values", () => {
+    expect(
+      SourceYieldListRequestSchema.parse({
+        asOf: "2026-06-01T00:00:00.000Z",
+        limit: 50,
+        offset: 10,
+      }),
+    ).toEqual({ asOf: "2026-06-01T00:00:00.000Z", limit: 50, offset: 10 });
+    expect(() => SourceYieldListRequestSchema.parse({ limit: 0 })).toThrow();
+    expect(() => SourceYieldListRequestSchema.parse({ limit: 1001 })).toThrow();
+    expect(() => SourceYieldListRequestSchema.parse({ limit: 1.5 })).toThrow();
+    expect(() => SourceYieldListRequestSchema.parse({ offset: -1 })).toThrow();
+    expect(() => SourceYieldListRequestSchema.parse({ asOf: "" })).toThrow();
   });
 });
 

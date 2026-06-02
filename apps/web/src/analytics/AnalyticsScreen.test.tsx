@@ -37,7 +37,7 @@ const h = vi.hoisted(() => {
     retired: 0,
     dayStreak: 5,
   };
-  return { summary, getAnalytics: vi.fn(), navigateSpy: vi.fn() };
+  return { summary, getAnalytics: vi.fn(), getSourceYield: vi.fn(), navigateSpy: vi.fn() };
 });
 
 vi.mock("@tanstack/react-router", () => ({
@@ -49,7 +49,7 @@ vi.mock("../lib/appApi", async () => {
   return {
     ...actual,
     isDesktop: () => true,
-    appApi: { getAnalytics: h.getAnalytics },
+    appApi: { getAnalytics: h.getAnalytics, getSourceYield: h.getSourceYield },
   };
 });
 
@@ -58,6 +58,8 @@ import { AnalyticsScreen } from "./AnalyticsScreen";
 beforeEach(() => {
   vi.clearAllMocks();
   h.getAnalytics.mockResolvedValue(h.summary);
+  // The screen also reads the low-yield-source count (T083) for its banner.
+  h.getSourceYield.mockResolvedValue({ asOf: h.summary.asOf, rows: [], lowYieldCount: 0 });
 });
 
 describe("AnalyticsScreen", () => {
@@ -85,6 +87,17 @@ describe("AnalyticsScreen", () => {
 
     fireEvent.click(screen.getByTestId("banner-deletions"));
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/trash" });
+  });
+
+  it("links the low-yield-sources banner to /analytics/sources when there are low-yield sources", async () => {
+    h.getSourceYield.mockResolvedValue({ asOf: h.summary.asOf, rows: [], lowYieldCount: 3 });
+    render(<AnalyticsScreen />);
+    await screen.findByTestId("analytics-body");
+
+    const banner = await screen.findByTestId("banner-source-yield");
+    expect(banner.textContent).toContain("3 low-yield sources");
+    fireEvent.click(banner);
+    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/analytics/sources" });
   });
 
   it("shows the healthy state and hides the banners when there are no leeches/deletions", async () => {

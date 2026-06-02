@@ -29,6 +29,7 @@ const VALID_ROUTES = new Set([
   "/concepts",
   "/trash",
   "/analytics",
+  "/analytics/sources",
   "/settings",
 ]);
 
@@ -45,6 +46,7 @@ describe("shell nav config", () => {
     expect(SECONDARY_NAV.map((n) => n.label)).toEqual([
       "Concepts",
       "Analytics",
+      "Source yield",
       "Leeches",
       "Trash",
       "Settings",

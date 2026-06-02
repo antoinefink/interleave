@@ -74,6 +74,7 @@ import {
   type ReviewOutcome,
   ReviewSessionService,
   resolveSourceRef,
+  SourceYieldQuery,
   UndoService,
   WorkloadService,
 } from "@interleave/local-db";
@@ -233,6 +234,8 @@ import type {
   SourcesImportPdfResult,
   SourcesRunOcrRequest,
   SourcesRunOcrResult,
+  SourceYieldListRequest,
+  SourceYieldListResult,
   TagsAddRequest,
   TagsAddResult,
   TagsListResult,
@@ -309,6 +312,8 @@ export class DbService {
   private lineage: LineageQuery | null = null;
   private queue: QueueQuery | null = null;
   private library: LibraryQuery | null = null;
+  /** The per-source yield rollup (T083) — read %, extracts/cards/mature/leeches/time, ranked. */
+  private sourceYield: SourceYieldQuery | null = null;
   private inboxQuery: InboxQuery | null = null;
   private queueAction: QueueActionService | null = null;
   /** The overload AUTO-POSTPONE apply seam (T077) — preview + apply, one `batchId` per sweep. */
@@ -527,6 +532,10 @@ export class DbService {
     // lists ALL live elements narrowed by type/concept/priority/status facets,
     // including topic/synthesis_note/task which the FTS index never covers.
     this.library = new LibraryQuery(this.handle.db, this.repositories);
+    // The per-source yield rollup behind `/analytics/sources` (T083): a read-only
+    // ranked rollup of read %, extracts/cards/mature-cards, leeches, and review time,
+    // lowest-yield first. No mutation, no `operation_log`, no schedule change.
+    this.sourceYield = new SourceYieldQuery(this.handle.db);
     this.queueAction = new QueueActionService(this.handle.db);
     // The overload AUTO-POSTPONE apply seam (T077): reads the merged due set + budget,
     // runs the pure `planAutoPostpone`, and applies each victim through its CORRECT
@@ -3445,6 +3454,13 @@ export class DbService {
     return this.library;
   }
 
+  private get sourceYieldQuery(): SourceYieldQuery {
+    if (!this.sourceYield) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.sourceYield;
+  }
+
   /**
    * The facet-driven "browse everything" read behind `/library`. DISTINCT from
    * {@link search}: it takes NO keyword and lists ALL live elements by default,
@@ -3738,6 +3754,30 @@ export class DbService {
       reviewsDueThisWeek: summary.reviewsDueThisWeek,
       imbalanced: summary.imbalanced,
       severity: summary.severity,
+    };
+  }
+
+  /**
+   * The per-source yield rollup (T083) via {@link SourceYieldQuery.listSourceYield}
+   * (in `packages/local-db`): for every live `source`, its read % (`read_points` vs
+   * `document_blocks`), extracts/cards/mature-cards created (via the persisted
+   * `sourceId` lineage), leeches (`cards.is_leech`), and review time
+   * (`SUM(review_logs.responseMs)`) — plus a derived `yieldScore`/`yieldBand` (the
+   * pure `@interleave/core` `scoreSourceYield` rule), ranked **lowest-yield first** so
+   * low-yield sources are identifiable. Read-only — no mutation, no `operation_log`,
+   * no schedule change. `asOf` defaults to "now"; `limit` to 200. The FSRS-vs-attention
+   * split stays labeled (the source is attention; its leeches/mature-cards are FSRS).
+   */
+  listSourceYield(request?: SourceYieldListRequest): SourceYieldListResult {
+    const asOf = (request?.asOf ?? nowIso()) as IsoTimestamp;
+    const summary = this.sourceYieldQuery.listSourceYield(asOf, {
+      ...(request?.limit !== undefined ? { limit: request.limit } : {}),
+      ...(request?.offset !== undefined ? { offset: request.offset } : {}),
+    });
+    return {
+      asOf: summary.asOf,
+      rows: summary.rows,
+      lowYieldCount: summary.lowYieldCount,
     };
   }
 

@@ -157,6 +157,20 @@ export interface SchedulerSignals {
   readonly stage: string;
   readonly postponed: number;
   readonly lastProcessedAt: string | null;
+  /**
+   * The attention chip's "yield (N extracts / M cards)" for a SOURCE (T083) — read %,
+   * extracts/cards created. `null` for non-source attention items and for cards; absent
+   * on the queue/review adapter signals that don't carry yield.
+   */
+  readonly yield?: SourceYieldSignals | null;
+}
+
+/** The per-source yield summary the inspector "yield" chip shows (T083). */
+export interface SourceYieldSignals {
+  /** How far the source has been read, in `[0, 1]`. */
+  readonly readPct: number;
+  readonly extractsCreated: number;
+  readonly cardsCreated: number;
 }
 
 export interface LineageItem {
@@ -2413,6 +2427,54 @@ export interface BalanceGetResult {
 }
 
 // ---------------------------------------------------------------------------
+// sourceYield.*  (T083 — per-source yield analytics)
+// ---------------------------------------------------------------------------
+
+/** `sourceYield.list()` request — all fields optional (defaults applied main-side). */
+export interface SourceYieldListRequest {
+  readonly asOf?: string;
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+/** Coarse yield band: `neutral` = un-started (never flagged); the rest rank a worked source. */
+export type YieldBand = "high" | "medium" | "low" | "neutral";
+
+/** The flat source descriptor embedded in each yield row. */
+export interface SourceYieldSourceRef {
+  readonly id: string;
+  readonly title: string;
+  readonly priority: number;
+  readonly priorityLabel: "A" | "B" | "C" | "D";
+  readonly createdAt: string;
+  readonly url: string | null;
+}
+
+/** One source's complete yield rollup the ranked "Source yield" view renders. */
+export interface SourceYieldRow {
+  readonly source: SourceYieldSourceRef;
+  /** How far the source has been read, in `[0, 1]`. */
+  readonly readPct: number;
+  readonly extractsCreated: number;
+  readonly cardsCreated: number;
+  readonly matureCards: number;
+  readonly leeches: number;
+  /** Summed review response time on the source's cards (ms) — review time, not reading. */
+  readonly timeSpentMs: number;
+  readonly reviewCount: number;
+  readonly lastActivityAt: string | null;
+  readonly yieldScore: number;
+  readonly yieldBand: YieldBand;
+}
+
+/** The flat source-yield snapshot the ranked view reads (lowest-yield first). */
+export interface SourceYieldListResult {
+  readonly asOf: string;
+  readonly rows: readonly SourceYieldRow[];
+  readonly lowYieldCount: number;
+}
+
+// ---------------------------------------------------------------------------
 // backups.*  (T047 — Electron-managed backup/export of the canonical store)
 // ---------------------------------------------------------------------------
 
@@ -2594,6 +2656,9 @@ export interface AppApi {
   };
   readonly balance: {
     get(request?: BalanceGetRequest): Promise<BalanceGetResult>;
+  };
+  readonly sourceYield: {
+    list(request?: SourceYieldListRequest): Promise<SourceYieldListResult>;
   };
   readonly backups: {
     create(): Promise<BackupsCreateResult>;
@@ -3258,6 +3323,14 @@ export const appApi = {
    */
   getBalance(request?: BalanceGetRequest): Promise<BalanceGetResult> {
     return requireAppApi().balance.get(request);
+  },
+  /**
+   * The per-source yield rollup (T083) — for every live source, its read %,
+   * extracts/cards/mature-cards created, leeches, and review time, ranked
+   * lowest-yield first so low-yield sources are identifiable. Read-only.
+   */
+  getSourceYield(request?: SourceYieldListRequest): Promise<SourceYieldListResult> {
+    return requireAppApi().sourceYield.list(request);
   },
   /**
    * Export the entire local knowledge base (T047) — the consistently checkpointed

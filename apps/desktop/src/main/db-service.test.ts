@@ -2451,6 +2451,60 @@ describe("DbService — balance (T046)", () => {
   });
 });
 
+describe("DbService — source yield (T083)", () => {
+  const ASOF = "2026-06-01T12:00:00.000Z";
+
+  it("listSourceYield round-trips the ranked rollup shape and survives reopen", () => {
+    const first = new DbService();
+    first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(first.seedIfEmpty()).toBe(true);
+
+    const summary = first.listSourceYield({ asOf: ASOF });
+    // The seed has at least one source (the demo + math/code sources).
+    expect(summary.rows.length).toBeGreaterThanOrEqual(1);
+    // Sorted lowest-yield first (ascending score).
+    const scores = summary.rows.map((r) => r.yieldScore);
+    expect([...scores].sort((a, b) => a - b)).toEqual(scores);
+    // Every row carries the rollup fields + a band.
+    const row = summary.rows[0];
+    expect(row).toBeDefined();
+    if (row) {
+      expect(typeof row.readPct).toBe("number");
+      expect(row.readPct).toBeGreaterThanOrEqual(0);
+      expect(row.readPct).toBeLessThanOrEqual(1);
+      expect(row.extractsCreated).toBeGreaterThanOrEqual(0);
+      expect(row.cardsCreated).toBeGreaterThanOrEqual(0);
+      expect(["high", "medium", "low", "neutral"]).toContain(row.yieldBand);
+    }
+    expect(summary.lowYieldCount).toBeGreaterThanOrEqual(0);
+
+    // The demo source has a read-point at the 3rd of 4 blocks → readPct = 3/4 = 0.75,
+    // and produced extracts + cards via the sourceId lineage.
+    const demo = summary.rows.find((r) => r.source.title === "On the Measure of Intelligence");
+    expect(demo).toBeDefined();
+    if (demo) {
+      expect(demo.readPct).toBeCloseTo(0.75);
+      expect(demo.extractsCreated).toBeGreaterThanOrEqual(1);
+      expect(demo.cardsCreated).toBeGreaterThanOrEqual(1);
+      // The seed flags a leech card under this source.
+      expect(demo.leeches).toBeGreaterThanOrEqual(1);
+    }
+
+    // Defaults apply when called bare.
+    expect(first.listSourceYield().rows.length).toBeGreaterThanOrEqual(1);
+    first.close();
+
+    // Reopen the SAME file — the rollup recomputes from the durable tables.
+    const second = new DbService();
+    second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const persisted = second.listSourceYield({ asOf: ASOF });
+    const demo2 = persisted.rows.find((r) => r.source.title === "On the Measure of Intelligence");
+    expect(demo2?.readPct).toBeCloseTo(0.75);
+    expect(demo2?.cardsCreated).toBe(demo?.cardsCreated);
+    second.close();
+  });
+});
+
 describe("DbService — backup support (T047)", () => {
   it("getSchemaVersion returns the latest applied Drizzle migration tag", () => {
     const svc = new DbService();

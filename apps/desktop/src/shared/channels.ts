@@ -120,6 +120,10 @@ export const IPC_CHANNELS = {
   undoLast: "undo:last",
   analyticsGet: "analytics:get",
   balanceGet: "balance:get",
+  // Per-source yield analytics (T083) — a READ-ONLY ranked rollup (read %,
+  // extracts/cards/mature-cards, leeches, review time) so low-yield sources are
+  // identifiable. No mutation, no `operation_log`, no schedule change.
+  sourceYieldList: "sourceYield:list",
   backupsCreate: "backups:create",
   // Background-runner observe surface (T058). `jobs:list` reads the current queue.
   // The renderer enqueues ONLY via `sources:importUrl` — there is intentionally NO

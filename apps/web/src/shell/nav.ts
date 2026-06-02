@@ -73,7 +73,12 @@ export const SECONDARY_NAV: readonly NavItem[] = [
   // `/search` highlight with Search (the triple-highlight bug fixed in ac73484 stays
   // fixed: distinct routes resolve to distinct owners).
   { id: "concepts", label: "Concepts", icon: "concepts", to: "/concepts", canonical: true },
-  { id: "analytics", label: "Analytics", icon: "analytics", to: "/analytics" },
+  { id: "analytics", label: "Analytics", icon: "analytics", to: "/analytics", canonical: true },
+  // The per-source yield view (T083) — ranked, lowest-yield-first per-source rollup
+  // (read %, extracts/cards/mature-cards, leeches, review time). Its own
+  // `/analytics/sources` route so it highlights exclusively (a deeper route than
+  // `/analytics`, which `resolveActiveNavId`'s longest-prefix rule already favours).
+  { id: "source-yield", label: "Source yield", icon: "library", to: "/analytics/sources" },
   // The leech cleanup view (T040) — maintenance for repeatedly-failing cards. Lives
   // under the "Organize" group until the full M9 analytics/maintenance screen lands.
   { id: "leeches", label: "Leeches", icon: "leech", to: "/maintenance/leeches" },

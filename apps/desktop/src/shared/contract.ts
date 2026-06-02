@@ -248,6 +248,23 @@ export interface SchedulerSignals {
   readonly postponed: number;
   /** When it was last processed/reviewed (ISO-8601), when known. */
   readonly lastProcessedAt: string | null;
+  /**
+   * The attention chip's promised "yield (N extracts / M cards)" for a SOURCE
+   * (T083) — read %, extracts/cards created, from the read-only `SourceYieldQuery`.
+   * `null` for non-source attention items and for cards (the FSRS branch); absent on
+   * adapter signals that don't carry yield.
+   */
+  readonly yield?: SourceYieldSignals | null;
+}
+
+/** The per-source yield summary the inspector "yield" chip shows (T083). */
+export interface SourceYieldSignals {
+  /** How far the source has been read, in `[0, 1]`. */
+  readonly readPct: number;
+  /** Live `extract` descendants created from the source. */
+  readonly extractsCreated: number;
+  /** Live `card` descendants created from the source. */
+  readonly cardsCreated: number;
 }
 
 /** A parent/child/source row in the inspector's lineage sections. */
@@ -3904,6 +3921,77 @@ export interface BalanceGetResult {
 }
 
 // ---------------------------------------------------------------------------
+// sourceYield.list()  (T083 — per-source yield analytics)
+// ---------------------------------------------------------------------------
+
+/**
+ * The per-source yield surface (T083) — a READ-ONLY ranked rollup that answers
+ * "which sources are not paying their way?". The MAIN process runs
+ * `SourceYieldQuery.listSourceYield`, which for every live `source` computes its
+ * read % (`read_points` vs `document_blocks`), extracts/cards/mature-cards created
+ * (via the persisted `sourceId` lineage), leeches (`cards.is_leech`), review time
+ * (`SUM(review_logs.responseMs)`), and a derived `yieldScore`/`yieldBand` (the pure
+ * `@interleave/core` `scoreSourceYield` rule). Rows come back sorted **lowest-yield
+ * first** so the ranked view can lead with the sources to abandon.
+ *
+ * The FSRS-vs-attention split stays labeled: the source is an attention item; its
+ * leeches/mature-cards are its FSRS-card outputs. Read-only: NO mutation, NO
+ * `operation_log`, no schedule change, no generic `db.query`. Reading time is NOT
+ * tracked — `timeSpentMs` is REVIEW time on the source's cards.
+ */
+export const SourceYieldListRequestSchema = z
+  .object({
+    /** The instant to compute the snapshot for (ISO-8601); defaults to now. */
+    asOf: z.string().min(1).optional(),
+    /** Cap the row count (1–1000); defaults to 200. */
+    limit: z.number().int().min(1).max(1000).optional(),
+    /** Skip the first `offset` rows (after the lowest-yield sort). */
+    offset: z.number().int().min(0).optional(),
+  })
+  .optional();
+export type SourceYieldListRequest = z.infer<typeof SourceYieldListRequestSchema>;
+
+/** Coarse yield band: `neutral` = un-started (never flagged); the rest rank a worked source. */
+export type YieldBand = "high" | "medium" | "low" | "neutral";
+
+/** The flat source descriptor embedded in each yield row. */
+export interface SourceYieldSourceRef {
+  readonly id: string;
+  readonly title: string;
+  readonly priority: number;
+  readonly priorityLabel: "A" | "B" | "C" | "D";
+  readonly createdAt: string;
+  readonly url: string | null;
+}
+
+/** One source's complete yield rollup (flat, JSON-serializable). */
+export interface SourceYieldRow {
+  readonly source: SourceYieldSourceRef;
+  /** How far the source has been read, in `[0, 1]`. */
+  readonly readPct: number;
+  readonly extractsCreated: number;
+  readonly cardsCreated: number;
+  readonly matureCards: number;
+  readonly leeches: number;
+  /** Summed review response time on the source's cards (ms) — review time, not reading. */
+  readonly timeSpentMs: number;
+  readonly reviewCount: number;
+  readonly lastActivityAt: string | null;
+  readonly yieldScore: number;
+  readonly yieldBand: YieldBand;
+}
+
+/** The flat, JSON-serializable source-yield snapshot the renderer reads. */
+export interface SourceYieldListResult {
+  /** The instant the snapshot was computed for (ISO-8601). */
+  readonly asOf: string;
+  /** The rows, sorted by `yieldScore` ASCENDING (lowest-yield first). */
+  readonly rows: readonly SourceYieldRow[];
+  /** How many rows are in the `low` band. */
+  readonly lowYieldCount: number;
+}
+
+// ---------------------------------------------------------------------------
 // backups.create()  (T047 — Electron-managed backup of the canonical store)
 // ---------------------------------------------------------------------------
 
@@ -4440,6 +4528,14 @@ export interface AppApi {
      * Read-only.
      */
     get(request?: BalanceGetRequest): Promise<BalanceGetResult>;
+  };
+  readonly sourceYield: {
+    /**
+     * The per-source yield rollup (T083) — read %, extracts/cards/mature-cards,
+     * leeches, and review time per source, ranked lowest-yield first so low-yield
+     * sources are identifiable. Read-only (no mutation, no `operation_log`).
+     */
+    list(request?: SourceYieldListRequest): Promise<SourceYieldListResult>;
   };
   readonly backups: {
     /**
