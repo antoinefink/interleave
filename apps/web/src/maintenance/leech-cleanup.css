@@ -107,3 +107,55 @@
   padding-top: 12px;
   border-top: 1px solid var(--border);
 }
+
+/* The saved add-context note (T085) — surfaced as a separate context line so the
+   note re-appears after the list refreshes and the prompt becomes answerable. */
+.lc-card__context {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: var(--t-2xs);
+  line-height: 1.45;
+  color: var(--text-2);
+}
+.lc-card__context > svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--text-3);
+}
+
+/* Remediation lineage hint (T085) — "From an extract". */
+.lc-card__lineage {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  font-size: var(--t-2xs);
+  color: var(--text-3);
+}
+
+/* The split editor's per-part blocks + the helper hint (T085). */
+.rv-edit__hint {
+  font-size: var(--t-sm, 13px);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.lc-split-part {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+
+/* The inline lower-priority A/B/C/D control (T085) — sits in the action row. */
+.lc-prio {
+  margin: 0;
+}

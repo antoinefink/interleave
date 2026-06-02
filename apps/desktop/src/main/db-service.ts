@@ -49,6 +49,7 @@ import {
   SchedulerService as AttentionScheduleService,
   AutoPostponeService,
   CardEditService,
+  CardRemediationService,
   CardRetirementService,
   CardService,
   createRepositories,
@@ -95,6 +96,10 @@ import type {
   BalanceGetRequest,
   BalanceGetResult,
   CardEditSummary,
+  CardsAddContextRequest,
+  CardsAddContextResult,
+  CardsBackToExtractRequest,
+  CardsBackToExtractResult,
   CardsCreateRequest,
   CardsCreateResult,
   CardsDeleteRequest,
@@ -108,6 +113,8 @@ import type {
   CardsRetiredResult,
   CardsRetireRequest,
   CardsRetireResult,
+  CardsSplitRequest,
+  CardsSplitResult,
   CardsSuspendRequest,
   CardsSuspendResult,
   CardsUnretireRequest,
@@ -330,6 +337,12 @@ export class DbService {
   private cardService: CardService | null = null;
   private occlusionService: OcclusionService | null = null;
   private cardEditService: CardEditService | null = null;
+  /**
+   * Leech remediation seam (T085) — the three new compositions (split / add-context /
+   * back-to-extract) the remediation screen drives. Each is one transaction + the
+   * correct EXISTING op; only back-to-extract touches the attention scheduler.
+   */
+  private cardRemediationService: CardRemediationService | null = null;
   /**
    * Mature-card retirement seam (T082) — flips the durable `cards.is_retired` flag
    * (reversible, non-destructive) so a low-value mature card leaves active review,
@@ -563,6 +576,8 @@ export class DbService {
     // cards from a `media_fragment` image extract + its masks in one transaction.
     this.occlusionService = new OcclusionService(this.handle.db);
     this.cardEditService = new CardEditService(this.handle.db);
+    // Leech remediation compositions (T085) — split / add-context / back-to-extract.
+    this.cardRemediationService = new CardRemediationService(this.handle.db);
     // Mature-card retirement (T082) — the reversible `cards.is_retired` flag.
     this.cardRetirementService = new CardRetirementService(this.handle.db);
     // The sibling-aware review-session ordering seam (T039): chooses the next due
@@ -607,6 +622,7 @@ export class DbService {
     this.extractReview = null;
     this.cardService = null;
     this.cardEditService = null;
+    this.cardRemediationService = null;
     this.cardRetirementService = null;
     this.reviewSession = null;
     this.retention = null;
@@ -2229,6 +2245,14 @@ export class DbService {
     return this.cardEditService;
   }
 
+  /** The leech remediation seam (T085), bound to the open database. */
+  private get cardRemediation(): CardRemediationService {
+    if (!this.cardRemediationService) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.cardRemediationService;
+  }
+
   /** Map a {@link CardEditResult} (element + cards row) onto the flat wire shape. */
   private toCardEditSummary(result: {
     element: {
@@ -2341,6 +2365,83 @@ export class DbService {
   }
 
   /**
+   * Split a failing card (T085) into atomic sibling cards via
+   * {@link CardRemediationService.split}. Each new card inherits the original's
+   * lineage (`parentId`/`sourceLocationId`/priority/tags) with a FRESH `review_states`
+   * row (a split card is a NEW card — never copies the original's FSRS memory), all in
+   * one `sibling_group`; the original is soft-deleted (default) or suspended. ONE
+   * transaction; logs `create_card` ×N + `add_relation` + `soft_delete_element`/
+   * `update_element`. The original's `review_logs` history survives.
+   */
+  splitCard(request: CardsSplitRequest): CardsSplitResult {
+    const { cards, siblingGroupId } = this.cardRemediation.split({
+      cardId: request.cardId as ElementId,
+      parts: request.parts.map((p) => ({
+        kind: p.kind as CardKind,
+        ...(p.prompt !== undefined ? { prompt: p.prompt } : {}),
+        ...(p.answer !== undefined ? { answer: p.answer } : {}),
+        ...(p.cloze !== undefined ? { cloze: p.cloze } : {}),
+      })),
+      ...(request.originalDisposition ? { originalDisposition: request.originalDisposition } : {}),
+    });
+    return {
+      cards: cards.map(({ element, card }) => ({
+        id: element.id,
+        type: element.type,
+        status: element.status,
+        stage: element.stage,
+        priority: element.priority,
+        title: element.title,
+        kind: card.kind,
+        parentId: element.parentId,
+        sourceId: element.sourceId,
+        siblingGroupId,
+        // A split text card carries no audio clip; it is a fresh, non-retired card.
+        mediaRef: null,
+        isRetired: false,
+      })),
+    };
+  }
+
+  /**
+   * Append a clarifying CONTEXT NOTE to a card (T085) via
+   * {@link CardRemediationService.addContext}: an op-payload marker (no new column),
+   * `update_element`. The card stays in rotation; body/`review_states`/lineage are
+   * untouched. Returns the card summary + the accumulated context note.
+   */
+  addCardContext(request: CardsAddContextRequest): CardsAddContextResult {
+    const result = this.cardRemediation.addContext(request.cardId as ElementId, request.note);
+    return { card: this.toCardEditSummary(result.card), context: result.context };
+  }
+
+  /**
+   * Send a card's parent EXTRACT back into the attention queue (T085) via
+   * {@link CardRemediationService.backToExtract}: reactivate it to DUE-NOW on the
+   * ATTENTION scheduler (`reschedule_element`, never `review_states`) and dispose the
+   * card (default suspend). Returns the reactivated extract summary, or `null` when the
+   * card has no live parent extract. The ONLY remediation action touching attention.
+   */
+  backToExtractCard(request: CardsBackToExtractRequest): CardsBackToExtractResult {
+    const { extract } = this.cardRemediation.backToExtract(
+      request.cardId as ElementId,
+      request.cardDisposition,
+    );
+    return {
+      extract: extract
+        ? {
+            id: extract.id,
+            type: extract.type,
+            status: extract.status,
+            stage: extract.stage,
+            priority: extract.priority,
+            title: extract.title,
+            dueAt: extract.dueAt,
+          }
+        : null,
+    };
+  }
+
+  /**
    * The leech cleanup view's read (T040) — every card flagged a leech (auto after
    * ≥4 lapses, or manual) with its lapse count + source. Composes
    * {@link ReviewRepository.listLeechCards} (the durable `cards.is_leech` query,
@@ -2358,6 +2459,12 @@ export class DbService {
         : null;
       const sourceEl = element.sourceId ? this.repos.elements.findById(element.sourceId) : null;
       const sourceTitle = sourceEl && !sourceEl.deletedAt ? sourceEl.title : null;
+      // The originating extract (T085) — `parentId` filtered to a LIVE `extract`
+      // element; `null` when the parent is missing/soft-deleted/not an extract (e.g.
+      // an Anki-imported card). Drives the screen's Back-to-extract enable/disable.
+      const parent = element.parentId ? this.repos.elements.findById(element.parentId) : null;
+      const parentExtractId =
+        parent && !parent.deletedAt && parent.type === "extract" ? parent.id : null;
       return {
         id: element.id,
         kind: card.kind,
@@ -2372,6 +2479,12 @@ export class DbService {
         reps: leech.reps,
         sourceTitle,
         sourceLocationLabel: location?.label ?? null,
+        // T085: the id (for Open source's jump fetch) + the originating extract id.
+        sourceLocationId: sourceLocationId ?? null,
+        parentExtractId,
+        // T085: the latest op-log-derived context note (so an added note re-appears
+        // after the list refreshes — making the prompt answerable, not just logged).
+        context: this.cardRemediation.contextNote(element.id),
       };
     });
     return { cards };

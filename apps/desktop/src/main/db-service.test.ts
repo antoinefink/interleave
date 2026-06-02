@@ -1640,6 +1640,35 @@ describe("DbService — review session (T037)", () => {
     svc.close();
   });
 
+  it("addCardContext's note re-appears on the reviewLeeches read (and survives reopen)", () => {
+    const first = new DbService();
+    first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(first.seedIfEmpty()).toBe(true);
+    const leechId = seededLeechCardId(first);
+
+    // Before any context note the read surface carries `null`.
+    expect(first.reviewLeeches().cards.find((c) => c.id === leechId)?.context).toBeNull();
+
+    // Add a clarifying note; the write returns it transiently.
+    const note = "In the context of the ARC-AGI benchmark.";
+    expect(first.addCardContext({ cardId: leechId, note }).context).toBe(note);
+
+    // The note now rides the leech list read — i.e. it is surfaced, not write-only.
+    expect(first.reviewLeeches().cards.find((c) => c.id === leechId)?.context).toBe(note);
+    first.close();
+
+    // It is op-log-derived, so it survives a close + reopen (restart analogue).
+    const second = new DbService();
+    second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(second.reviewLeeches().cards.find((c) => c.id === leechId)?.context).toBe(note);
+
+    // A later add-context REPLACES the surfaced note.
+    const updated = "As of the 2024 ARC-AGI results.";
+    second.addCardContext({ cardId: leechId, note: updated });
+    expect(second.reviewLeeches().cards.find((c) => c.id === leechId)?.context).toBe(updated);
+    second.close();
+  });
+
   it("markLeech toggles the durable flag via update_element (manual mark / un-leech)", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });

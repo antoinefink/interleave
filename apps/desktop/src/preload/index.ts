@@ -20,6 +20,8 @@ import type {
   AppApi,
   BalanceGetRequest,
   CaptureSetEnabledRequest,
+  CardsAddContextRequest,
+  CardsBackToExtractRequest,
   CardsCreateRequest,
   CardsDeleteRequest,
   CardsExportAnkiRequest,
@@ -28,6 +30,7 @@ import type {
   CardsImportAnkiRequest,
   CardsMarkLeechRequest,
   CardsRetireRequest,
+  CardsSplitRequest,
   CardsSuspendRequest,
   CardsUnretireRequest,
   CardsUpdateRequest,
@@ -234,6 +237,11 @@ const appApi: AppApi = {
     flag: (request: CardsFlagRequest) => ipcRenderer.invoke(IPC_CHANNELS.cardsFlag, request),
     markLeech: (request: CardsMarkLeechRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.cardsMarkLeech, request),
+    split: (request: CardsSplitRequest) => ipcRenderer.invoke(IPC_CHANNELS.cardsSplit, request),
+    addContext: (request: CardsAddContextRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.cardsAddContext, request),
+    backToExtract: (request: CardsBackToExtractRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.cardsBackToExtract, request),
     retire: (request: CardsRetireRequest) => ipcRenderer.invoke(IPC_CHANNELS.cardsRetire, request),
     unretire: (request: CardsUnretireRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.cardsUnretire, request),

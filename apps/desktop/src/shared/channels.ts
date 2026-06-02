@@ -67,6 +67,14 @@ export const IPC_CHANNELS = {
   cardsDelete: "cards:delete",
   cardsFlag: "cards:flag",
   cardsMarkLeech: "cards:markLeech",
+  // Leech remediation compositions (T085). `cards:split` divides a multi-fact failing
+  // card into atomic sibling cards; `cards:addContext` appends a clarifying note (op-
+  // log marker, no new column); `cards:backToExtract` reactivates the card's parent
+  // extract on the ATTENTION scheduler (due-now). Each is one transaction + the correct
+  // EXISTING op; lower-priority/open-source/suspend/delete reuse existing channels.
+  cardsSplit: "cards:split",
+  cardsAddContext: "cards:addContext",
+  cardsBackToExtract: "cards:backToExtract",
   // Mature-card retirement (T082). `cards:retire`/`cards:unretire` flip the durable
   // `cards.is_retired` flag (reversible, non-destructive); `cards:retired` reads the
   // live retired-card inventory. A retired card is skipped by the due/review reads.

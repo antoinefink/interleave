@@ -2701,6 +2701,87 @@ export interface CardsMarkLeechResult {
 }
 
 // ---------------------------------------------------------------------------
+// cards.split() / cards.addContext() / cards.backToExtract()  (T085 — leech remediation)
+// ---------------------------------------------------------------------------
+
+/**
+ * The three NEW leech-remediation compositions (T085) — the only new domain logic on
+ * the remediation screen (the rest reuse existing `cards.*` / `elements.setPriority`
+ * / T022 navigation). The MAIN process runs {@link CardRemediationService}
+ * (`packages/local-db`) in ONE transaction per action, appending the correct EXISTING
+ * `operation_log` op (NO new op types — the closed set is unchanged); lineage and the
+ * append-only `review_logs` history are preserved:
+ *
+ *  - `cards.split`        → divide a multi-fact failing card into 2+ ATOMIC sibling
+ *    cards, each inheriting the original's lineage (`parentId`/`sourceLocationId`/
+ *    priority/tags) with a FRESH `review_states` row (a split card is a NEW card —
+ *    never copies the original's FSRS memory), all in one `sibling_group`; the
+ *    original is soft-deleted (default) or suspended. Logs `create_element`/
+ *    `create_card` per new card, `add_relation` per grouping, `soft_delete_element`
+ *    (or `update_element`) for the original.
+ *  - `cards.addContext`  → append a clarifying CONTEXT NOTE (op-payload marker, no new
+ *    column); the card stays in rotation; logs `update_element`.
+ *  - `cards.backToExtract` → reactivate the card's parent EXTRACT to DUE-NOW on the
+ *    ATTENTION scheduler (`reschedule_element`, never `review_states`) and dispose the
+ *    card (default suspend). Returns the reactivated extract, or `null` when the card
+ *    has no live parent extract.
+ */
+
+/** One authored atomic part of a split (validated non-empty for its kind main-side). */
+export const CardsSplitPartSchema = z.object({
+  /** The part's card kind (`qa` or `cloze`). */
+  kind: z.enum(["qa", "cloze"]),
+  /** Q&A prompt (required non-empty for `qa`). */
+  prompt: z.string().trim().max(20_000).optional(),
+  /** Q&A answer (required non-empty for `qa`). */
+  answer: z.string().trim().max(20_000).optional(),
+  /** Canonical `{{c1::answer}}` cloze text (required non-empty for `cloze`). */
+  cloze: z.string().trim().max(20_000).optional(),
+});
+
+export const CardsSplitRequestSchema = z.object({
+  /** The failing card to split. */
+  cardId: ElementIdSchema,
+  /** The authored atomic parts — at least 2; one new sibling card per part. */
+  parts: z.array(CardsSplitPartSchema).min(2),
+  /** Disposition of the ORIGINAL card; default `delete` (soft, recoverable). */
+  originalDisposition: z.enum(["delete", "suspend"]).optional(),
+});
+export type CardsSplitRequest = z.infer<typeof CardsSplitRequestSchema>;
+
+export interface CardsSplitResult {
+  /** The new atomic sibling cards (in authored order). */
+  readonly cards: readonly CardSummary[];
+}
+
+export const CardsAddContextRequestSchema = z.object({
+  /** The card to add a clarifying context note to. */
+  cardId: ElementIdSchema,
+  /** The context note — non-empty, bounded. */
+  note: z.string().trim().min(1).max(20_000),
+});
+export type CardsAddContextRequest = z.infer<typeof CardsAddContextRequestSchema>;
+
+export interface CardsAddContextResult {
+  readonly card: CardEditSummary;
+  /** The accumulated context note now on the card (op-log-derived). */
+  readonly context: string | null;
+}
+
+export const CardsBackToExtractRequestSchema = z.object({
+  /** The leech card whose parent extract is sent back into the attention queue. */
+  cardId: ElementIdSchema,
+  /** What to do with the card; default `suspend` (recoverable). */
+  cardDisposition: z.enum(["suspend", "delete", "keep"]).optional(),
+});
+export type CardsBackToExtractRequest = z.infer<typeof CardsBackToExtractRequestSchema>;
+
+export interface CardsBackToExtractResult {
+  /** The reactivated parent extract (due-now), or `null` when the card has none live. */
+  readonly extract: ElementSummary | null;
+}
+
+// ---------------------------------------------------------------------------
 // cards.retire() / cards.unretire() / cards.retired()  (T082 — mature-card retirement)
 // ---------------------------------------------------------------------------
 
@@ -3065,6 +3146,27 @@ export interface LeechSummary {
   readonly sourceTitle: string | null;
   /** The human-readable source location label ("¶ 4" / "p. 12"), or `null`. */
   readonly sourceLocationLabel: string | null;
+  /**
+   * The card's source-location anchor id (T085) — the **Open source** action needs the
+   * id (not just `sourceLocationLabel`) to fetch the full jump payload; `null` when the
+   * card has no source location.
+   */
+  readonly sourceLocationId: string | null;
+  /**
+   * The card's originating extract id (T085), filtered to a LIVE `extract` element —
+   * `null` when the parent is missing / soft-deleted / not an extract (e.g. an
+   * Anki-imported card). The screen uses this only to enable/disable **Back to
+   * extract** (`extractAvailable = parentExtractId != null`); the authoritative guard
+   * still lives main-side in `cards.backToExtract`.
+   */
+  readonly parentExtractId: string | null;
+  /**
+   * The card's current CONTEXT NOTE (T085) — the latest clarifying note appended via
+   * **Add context** (op-log-derived, `null` when none). Surfaced as a separate context
+   * line on the leech card so the note re-appears after the list refreshes and the
+   * prompt actually becomes answerable (the deliverable's purpose), not just logged.
+   */
+  readonly context: string | null;
 }
 
 /** `review.leeches()` takes no arguments. */
@@ -4373,6 +4475,26 @@ export interface AppApi {
      * after ≥4 lapses; this is the manual override.
      */
     markLeech(request: CardsMarkLeechRequest): Promise<CardsMarkLeechResult>;
+    /**
+     * Split a failing card (T085) into 2+ ATOMIC sibling cards — each inheriting the
+     * original's lineage with a FRESH `review_states` row, all in one `sibling_group`;
+     * the original is soft-deleted (default) or suspended. One transaction; logs
+     * `create_card` ×N + `add_relation` + `soft_delete_element`/`update_element`.
+     */
+    split(request: CardsSplitRequest): Promise<CardsSplitResult>;
+    /**
+     * Append a clarifying CONTEXT NOTE to a card (T085) — an op-payload marker (no new
+     * column); the card stays in rotation. Logs `update_element`. Never touches
+     * `review_states`/lineage.
+     */
+    addContext(request: CardsAddContextRequest): Promise<CardsAddContextResult>;
+    /**
+     * Send a card's parent EXTRACT back into the attention queue (T085) — reactivate it
+     * to DUE-NOW on the ATTENTION scheduler (`reschedule_element`, never `review_states`)
+     * and dispose the card (default suspend). Returns the extract, or `null` when the
+     * card has no live parent extract.
+     */
+    backToExtract(request: CardsBackToExtractRequest): Promise<CardsBackToExtractResult>;
     /**
      * Retire a card (T082) — flip the durable `cards.is_retired` flag so a low-value
      * mature card leaves active review gracefully (skipped by the due/review reads),

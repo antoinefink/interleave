@@ -1517,6 +1517,55 @@ export interface CardsMarkLeechResult {
 }
 
 // ---------------------------------------------------------------------------
+// cards.split() / cards.addContext() / cards.backToExtract()  (T085 — leech remediation)
+// ---------------------------------------------------------------------------
+
+/** One authored atomic part of a split — only fields valid for its `kind` are used. */
+export interface CardsSplitPart {
+  readonly kind: "qa" | "cloze";
+  readonly prompt?: string;
+  readonly answer?: string;
+  readonly cloze?: string;
+}
+
+export interface CardsSplitRequest {
+  /** The failing card to split. */
+  readonly cardId: string;
+  /** The authored atomic parts — at least 2; one new sibling card per part. */
+  readonly parts: readonly CardsSplitPart[];
+  /** Disposition of the ORIGINAL card; default `delete` (soft, recoverable). */
+  readonly originalDisposition?: "delete" | "suspend";
+}
+
+export interface CardsSplitResult {
+  /** The new atomic sibling cards (in authored order). */
+  readonly cards: readonly CardSummary[];
+}
+
+export interface CardsAddContextRequest {
+  readonly cardId: string;
+  /** The clarifying context note — non-empty. */
+  readonly note: string;
+}
+
+export interface CardsAddContextResult {
+  readonly card: CardEditSummary;
+  /** The accumulated context note now on the card (op-log-derived). */
+  readonly context: string | null;
+}
+
+export interface CardsBackToExtractRequest {
+  readonly cardId: string;
+  /** What to do with the card; default `suspend` (recoverable). */
+  readonly cardDisposition?: "suspend" | "delete" | "keep";
+}
+
+export interface CardsBackToExtractResult {
+  /** The reactivated parent extract (due-now), or `null` when the card has none live. */
+  readonly extract: ElementSummary | null;
+}
+
+// ---------------------------------------------------------------------------
 // cards.retire() / cards.unretire() / cards.retired()  (T082 — mature-card retirement)
 // ---------------------------------------------------------------------------
 
@@ -1902,6 +1951,19 @@ export interface LeechSummary {
   readonly reps: number;
   readonly sourceTitle: string | null;
   readonly sourceLocationLabel: string | null;
+  /** The card's source-location anchor id (T085) — `null` when it has no source location. */
+  readonly sourceLocationId: string | null;
+  /**
+   * The card's originating extract id (T085), filtered to a LIVE `extract`; `null` for
+   * an Anki-imported / orphaned card. Enables/disables the screen's Back-to-extract.
+   */
+  readonly parentExtractId: string | null;
+  /**
+   * The card's current CONTEXT NOTE (T085) — the latest **Add context** note (op-log-
+   * derived), `null` when none. Rendered as a separate context line so the note
+   * re-appears after the list refreshes and the prompt actually becomes answerable.
+   */
+  readonly context: string | null;
 }
 
 export interface ReviewLeechesResult {
@@ -2629,6 +2691,9 @@ export interface AppApi {
     delete(request: CardsDeleteRequest): Promise<CardsDeleteResult>;
     flag(request: CardsFlagRequest): Promise<CardsFlagResult>;
     markLeech(request: CardsMarkLeechRequest): Promise<CardsMarkLeechResult>;
+    split(request: CardsSplitRequest): Promise<CardsSplitResult>;
+    addContext(request: CardsAddContextRequest): Promise<CardsAddContextResult>;
+    backToExtract(request: CardsBackToExtractRequest): Promise<CardsBackToExtractResult>;
     retire(request: CardsRetireRequest): Promise<CardsRetireResult>;
     unretire(request: CardsUnretireRequest): Promise<CardsUnretireResult>;
     retired(): Promise<CardsRetiredResult>;
@@ -3108,6 +3173,31 @@ export const appApi = {
    */
   markLeechCard(request: CardsMarkLeechRequest): Promise<CardsMarkLeechResult> {
     return requireAppApi().cards.markLeech(request);
+  },
+  /**
+   * Split a failing card (T085) into atomic sibling cards — each inheriting the
+   * original's lineage with a FRESH `review_states` row, all in one `sibling_group`;
+   * the original is soft-deleted (default) or suspended. One transaction; logs
+   * `create_card` ×N + `add_relation` + `soft_delete_element`/`update_element`.
+   */
+  splitCard(request: CardsSplitRequest): Promise<CardsSplitResult> {
+    return requireAppApi().cards.split(request);
+  },
+  /**
+   * Append a clarifying CONTEXT NOTE to a card (T085) — an op-payload marker (no new
+   * column); the card stays in rotation. Logs `update_element`.
+   */
+  addCardContext(request: CardsAddContextRequest): Promise<CardsAddContextResult> {
+    return requireAppApi().cards.addContext(request);
+  },
+  /**
+   * Send a card's parent EXTRACT back into the attention queue (T085) — reactivate it
+   * to DUE-NOW on the ATTENTION scheduler (`reschedule_element`, never `review_states`)
+   * and dispose the card (default suspend). Returns the extract, or `null` when the
+   * card has no live parent extract.
+   */
+  backToExtractCard(request: CardsBackToExtractRequest): Promise<CardsBackToExtractResult> {
+    return requireAppApi().cards.backToExtract(request);
   },
   /**
    * Retire a card (T082) — flip the durable `cards.is_retired` flag so a low-value

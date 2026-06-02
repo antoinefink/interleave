@@ -36,7 +36,7 @@ import { DesktopStatusPanel } from "./components/DesktopStatusPanel";
 import { ConceptsScreen } from "./concepts/ConceptsScreen";
 import { BrowseScreen } from "./library/BrowseScreen";
 import { LibraryScreen } from "./library/LibraryScreen";
-import { LeechCleanup } from "./maintenance/LeechCleanup";
+import { LeechRemediation } from "./maintenance/LeechRemediation";
 import { RetiredCards } from "./maintenance/RetiredCards";
 import { StagnantExtracts } from "./maintenance/StagnantExtracts";
 import { HomeScreen } from "./pages/home/HomeScreen";
@@ -119,15 +119,18 @@ const reviewRoute = createRoute({
 });
 
 /**
- * Leech cleanup view (T040) — the maintenance surface listing every card flagged a
- * leech (auto after ≥4 lapses, or manual) with rewrite / suspend / delete / un-leech.
- * Reads `appApi.reviewLeeches()` (read-only) and drives remediation through the
- * existing `cards.*` surface; the renderer holds no leech threshold logic or SQL.
+ * Leech remediation view (T040 → T085) — the maintenance surface listing every card
+ * flagged a leech (auto after ≥4 lapses, or manual) with the full repair workflow:
+ * rewrite / split / add-context / open-source / back-to-extract / lower-priority /
+ * suspend / delete / un-leech. Reads `appApi.reviewLeeches()` (read-only) and drives
+ * every action through the typed `cards.*` / `elements.setPriority` surface; the
+ * renderer holds no leech threshold, lineage, or scheduling logic, and no SQL. The
+ * `/maintenance/leeches` path + `route-leech-cleanup` testid stay stable.
  */
 const leechCleanupRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/maintenance/leeches",
-  component: LeechCleanup,
+  component: LeechRemediation,
 });
 
 /**

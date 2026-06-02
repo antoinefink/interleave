@@ -37,10 +37,20 @@ export {
   type PostponePreviewRow,
 } from "./auto-postpone-service";
 export {
+  type CardBodyForKind,
   type CardEditResult,
   CardEditService,
+  resolveCardBodyForKind,
   type UpdateCardBodyInput,
 } from "./card-edit-service";
+export {
+  type AddContextResult,
+  type BackToExtractResult,
+  type CardRemediationPart,
+  CardRemediationService,
+  type SplitLeechCardInput,
+  type SplitLeechCardResult,
+} from "./card-remediation-service";
 export {
   type CardRetirementResult,
   CardRetirementService,

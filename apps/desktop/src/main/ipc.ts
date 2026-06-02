@@ -18,6 +18,8 @@ import {
   CaptureGetPairingRequestSchema,
   CaptureRegenerateTokenRequestSchema,
   CaptureSetEnabledRequestSchema,
+  CardsAddContextRequestSchema,
+  CardsBackToExtractRequestSchema,
   CardsCreateRequestSchema,
   CardsDeleteRequestSchema,
   CardsExportAnkiRequestSchema,
@@ -26,6 +28,7 @@ import {
   CardsImportAnkiRequestSchema,
   CardsMarkLeechRequestSchema,
   CardsRetireRequestSchema,
+  CardsSplitRequestSchema,
   CardsSuspendRequestSchema,
   CardsUnretireRequestSchema,
   CardsUpdateRequestSchema,
@@ -867,6 +870,21 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.cardsMarkLeech, (_event, rawRequest: unknown) => {
     const request = CardsMarkLeechRequestSchema.parse(rawRequest);
     return dbService.markLeechCard(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.cardsSplit, (_event, rawRequest: unknown) => {
+    const request = CardsSplitRequestSchema.parse(rawRequest);
+    return dbService.splitCard(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.cardsAddContext, (_event, rawRequest: unknown) => {
+    const request = CardsAddContextRequestSchema.parse(rawRequest);
+    return dbService.addCardContext(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.cardsBackToExtract, (_event, rawRequest: unknown) => {
+    const request = CardsBackToExtractRequestSchema.parse(rawRequest);
+    return dbService.backToExtractCard(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.cardsRetire, (_event, rawRequest: unknown) => {

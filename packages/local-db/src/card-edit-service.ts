@@ -55,6 +55,44 @@ export interface UpdateCardBodyInput {
 /** A card element + its `cards` side-table row, after a repair. */
 export type CardEditResult = CardWithElement;
 
+/** The resolved, validated body fields for a card kind. */
+export interface CardBodyForKind {
+  readonly prompt: string | null;
+  readonly answer: string | null;
+  readonly cloze: string | null;
+}
+
+/**
+ * Resolve + validate a card body for its kind — the SINGLE non-empty-per-kind rule
+ * shared by {@link CardEditService.updateBody} (the in-review rewrite, T038) and the
+ * split composition (T085, {@link CardRemediationService.split}). Only the fields
+ * valid for the card's `kind` are written; a `qa` card requires a non-empty prompt
+ * AND answer, a `cloze` card requires non-empty cloze text (a bare `{{answer}}` is
+ * auto-numbered to the canonical `{{c1::answer}}`). Throws a clear error when the
+ * resolved body is empty for the kind. Pure — no DB, no op-log; the validation is
+ * single-sourced here so the rewrite path + the split path can never diverge.
+ *
+ * @param current the existing body to fall back to per field (pass empty strings to
+ *   require every field on a fresh authored part, as the split does).
+ */
+export function resolveCardBodyForKind(
+  kind: CardKind,
+  current: { prompt?: string | null; answer?: string | null; cloze?: string | null },
+  patch: UpdateCardBodyInput,
+): CardBodyForKind {
+  if (kind === "qa") {
+    const prompt = (patch.prompt ?? current.prompt ?? "").trim();
+    const answer = (patch.answer ?? current.answer ?? "").trim();
+    if (prompt.length === 0) throw new Error("CardEditService: a Q&A card requires a prompt");
+    if (answer.length === 0) throw new Error("CardEditService: a Q&A card requires an answer");
+    return { prompt, answer, cloze: null };
+  }
+  // cloze: keep the canonical `{{c1::answer}}` text (auto-number bare markers).
+  const raw = (patch.cloze ?? current.cloze ?? "").trim();
+  if (raw.length === 0) throw new Error("CardEditService: a cloze card requires cloze text");
+  return { prompt: null, answer: null, cloze: canonicalizeCloze(raw) };
+}
+
 export class CardEditService {
   private readonly elements: ElementRepository;
   private readonly review: ReviewRepository;
@@ -195,22 +233,16 @@ export class CardEditService {
     return this.flagState(id).flagged;
   }
 
-  /** Resolve the next body fields for the card's kind, validating non-empty. */
+  /**
+   * Resolve the next body fields for the card's kind, validating non-empty.
+   * Delegates to the shared {@link resolveCardBodyForKind} so the rewrite path and
+   * the split path (T085) validate by the SAME single-sourced rule.
+   */
   private nextBodyForKind(
     kind: CardKind,
     current: CardRow,
     patch: UpdateCardBodyInput,
-  ): { prompt: string | null; answer: string | null; cloze: string | null } {
-    if (kind === "qa") {
-      const prompt = (patch.prompt ?? current.prompt ?? "").trim();
-      const answer = (patch.answer ?? current.answer ?? "").trim();
-      if (prompt.length === 0) throw new Error("CardEditService: a Q&A card requires a prompt");
-      if (answer.length === 0) throw new Error("CardEditService: a Q&A card requires an answer");
-      return { prompt, answer, cloze: null };
-    }
-    // cloze: keep the canonical `{{c1::answer}}` text (auto-number bare markers).
-    const raw = (patch.cloze ?? current.cloze ?? "").trim();
-    if (raw.length === 0) throw new Error("CardEditService: a cloze card requires cloze text");
-    return { prompt: null, answer: null, cloze: canonicalizeCloze(raw) };
+  ): CardBodyForKind {
+    return resolveCardBodyForKind(kind, current, patch);
   }
 }
