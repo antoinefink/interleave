@@ -163,8 +163,12 @@ import type {
   SettingsUpdateManyResult,
   SettingsUpdateResult,
   SettingValue,
+  SourcesAcceptOcrRequest,
+  SourcesAcceptOcrResult,
   SourcesExtractRegionRequest,
   SourcesExtractRegionResult,
+  SourcesGetOcrRequest,
+  SourcesGetOcrResult,
   SourcesGetPdfDataRequest,
   SourcesGetPdfDataResult,
   SourcesGetRegionImageRequest,
@@ -172,6 +176,8 @@ import type {
   SourcesImportManualRequest,
   SourcesImportManualResult,
   SourcesImportPdfResult,
+  SourcesRunOcrRequest,
+  SourcesRunOcrResult,
   TagsAddRequest,
   TagsAddResult,
   TagsListResult,
@@ -201,6 +207,8 @@ import {
   CAPTURE_PORT_KEY,
   CAPTURE_TOKEN_KEY,
 } from "./capture-pairing";
+import type { JobRunner } from "./job-runner";
+import { OcrService } from "./ocr-service";
 import { PdfImportService } from "./pdf-import-service";
 import { PdfRegionService } from "./pdf-region-service";
 import { UrlImportService } from "./url-import-service";
@@ -271,6 +279,18 @@ export class DbService {
    * Built lazily (it needs the extraction service + the `assetVaultService`).
    */
   private pdfRegion: PdfRegionService | null = null;
+  /**
+   * The OCR orchestrator (T066) — write the page PNG to the vault + enqueue the
+   * `ocr` job; apply the worker result into `ocr_pages` + the durable vault json;
+   * accept OCR text into the body. Built lazily (it needs the vault + the runner).
+   */
+  private ocr: OcrService | null = null;
+  /**
+   * The background-runner reference (T058), injected by the bootstrap AFTER the
+   * runner is constructed (it is built against this open DB). The OCR service uses
+   * it to enqueue an `ocr` job; left `null` for contract-only tests that never OCR.
+   */
+  private runner: JobRunner | null = null;
   /** The vault asset-root, injected at open() time; required for URL import. */
   private assetsDir: string | null = null;
   /** DEV/E2E-only: permit loopback/private hosts in URL import (see open()). */
@@ -371,6 +391,8 @@ export class DbService {
     this.assetVault = null;
     this.pdfImport = null;
     this.pdfRegion = null;
+    this.ocr = null;
+    this.runner = null;
     this.assetsDir = null;
     this.allowLoopbackImport = false;
     this.migrated = false;
@@ -925,6 +947,86 @@ export class DbService {
     } catch {
       return { bytes: null, mime: null };
     }
+  }
+
+  /**
+   * Inject the background runner (T058) after it is constructed against this open
+   * DB. The OCR service (T066) uses it to enqueue an `ocr` job; the bootstrap calls
+   * this once after `new JobRunner(...)`.
+   */
+  setRunner(runner: JobRunner): void {
+    this.runner = runner;
+  }
+
+  /**
+   * The OCR service (T066), lazily built on first read against the open DB + the
+   * `assetVaultService` + the injected runner. Returns the SAME instance every
+   * call. The apply handler reaches it via `getOcrService` (only `applyResult`,
+   * which needs no runner); the IPC `runOcr` path needs the runner to enqueue.
+   * Throws a clear error if `assetsDir` was not provided — mirrors the others.
+   */
+  get ocrService(): OcrService {
+    if (this.ocr) return this.ocr;
+    if (!this.assetsDir) {
+      throw new Error(
+        "DbService: OCR requires an assets directory — call open() with { assetsDir }",
+      );
+    }
+    this.ocr = new OcrService({
+      db: this.require().db,
+      repositories: this.repos,
+      assetVault: this.assetVaultService,
+      getRunner: () => {
+        if (!this.runner) {
+          throw new Error(
+            "DbService: OCR enqueue requires a background runner — setRunner() first",
+          );
+        }
+        return this.runner;
+      },
+    });
+    return this.ocr;
+  }
+
+  /**
+   * Enqueue OCR for a text-free PDF page (T066). The renderer ships the page PNG it
+   * already rendered (the same render path the reader/region crop use); MAIN writes
+   * it to the vault (`sources/<id>/ocr/page-N.png`) and enqueues an `ocr` job
+   * carrying ONLY that vault-relative path (never the bytes — a persisted `jobs`
+   * row holds no blob). The worker OCRs it on the runner; MAIN applies the result.
+   * The renderer observes progress via the existing `jobs.subscribe` surface.
+   */
+  async runOcr(request: SourcesRunOcrRequest): Promise<SourcesRunOcrResult> {
+    const { jobId } = await this.ocrService.enqueuePage({
+      sourceElementId: request.elementId as ElementId,
+      page: request.page,
+      imagePng: request.imagePng,
+    });
+    return { enqueued: 1, jobId };
+  }
+
+  /**
+   * Read a PDF source's OCR suggestion layer (T066) — the per-page recognized text
+   * + confidence + review status the reader shows. Read-only.
+   */
+  getOcr(request: SourcesGetOcrRequest): SourcesGetOcrResult {
+    return { pages: this.ocrService.listForSource(request.elementId as ElementId) };
+  }
+
+  /**
+   * Accept a page's OCR text into the body (T066) — an explicit user action. Merges
+   * the recognized lines into the page's empty "Page N" run through the normal
+   * `documents.save` path (logging `update_document`, updating `plainText` → FTS),
+   * so accepted OCR becomes ordinary searchable/extractable body text, and flips the
+   * `ocr_pages` row to `accepted`. The text is NEVER auto-merged.
+   */
+  acceptOcr(request: SourcesAcceptOcrRequest): SourcesAcceptOcrResult {
+    return this.ocrService.acceptPage(request.elementId as ElementId, request.page);
+  }
+
+  /** Dismiss a page's OCR suggestion (T066) — sets `dismissed`. */
+  dismissOcr(request: SourcesAcceptOcrRequest): { dismissed: boolean } {
+    return this.ocrService.dismissPage(request.elementId as ElementId, request.page);
   }
 
   /**

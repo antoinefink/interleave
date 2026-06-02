@@ -16,6 +16,12 @@ export const IMPORTERS_PACKAGE = "@interleave/importers" as const;
 
 export { htmlToProseMirrorDoc } from "./html-to-prosemirror";
 export {
+  aggregateOcrWords,
+  type OcrResult,
+  type OcrWord,
+  type RawOcrWord,
+} from "./ocr";
+export {
   extractPdfPages,
   extractPdfTitle,
   type PdfPage,

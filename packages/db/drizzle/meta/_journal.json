@@ -71,6 +71,13 @@
       "when": 1780361667391,
       "tag": "0009_public_steel_serpent",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1780363597985,
+      "tag": "0010_free_silver_fox",
+      "breakpoints": true
     }
   ]
 }

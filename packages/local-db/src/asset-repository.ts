@@ -86,6 +86,69 @@ export class AssetRepository {
     return row ? rowToAsset(row) : null;
   }
 
+  /**
+   * The first LIVE asset row owned by `owningElementId` whose `(vault_root,
+   * relative_path)` matches (its owning `elements` row still exists). This backs
+   * {@link AssetVaultService.importAsset}'s upsert-by-path: re-importing to the
+   * SAME destination path (e.g. re-OCR overwriting `ocr/page-N.png`, or a T065
+   * re-crop) UPDATES the existing metadata row in place rather than minting a new
+   * one for the same overwritten file (which would accumulate redundant rows).
+   */
+  findLiveByOwnerAndPath(
+    owningElementId: ElementId,
+    vaultRoot: VaultRoot,
+    relativePath: string,
+  ): Asset | null {
+    const row = this.db
+      .select({ asset: assets })
+      .from(assets)
+      .innerJoin(elements, eq(assets.owningElementId, elements.id))
+      .where(
+        and(
+          eq(assets.owningElementId, owningElementId),
+          eq(assets.vaultRoot, vaultRoot),
+          eq(assets.relativePath, relativePath),
+        ),
+      )
+      .get();
+    return row ? rowToAsset(row.asset) : null;
+  }
+
+  /**
+   * Refresh an existing asset row's bytes-metadata IN PLACE (content hash, size,
+   * mime, optional media dimensions) on the passed transaction — used when an
+   * import overwrites the SAME `(owner, vault_root, relative_path)` file, so the
+   * row stays unique per path instead of duplicating. The id/owner/kind/path are
+   * unchanged; the `createdAt` is preserved (it is the row's first-seen time).
+   */
+  updateBytesWithin(
+    tx: DbClient,
+    id: AssetId,
+    fields: {
+      readonly contentHash: string;
+      readonly mime: string;
+      readonly size: number;
+      readonly width?: number | null;
+      readonly height?: number | null;
+      readonly durationMs?: number | null;
+    },
+  ): Asset {
+    tx.update(assets)
+      .set({
+        contentHash: fields.contentHash,
+        mime: fields.mime,
+        size: fields.size,
+        width: fields.width ?? null,
+        height: fields.height ?? null,
+        durationMs: fields.durationMs ?? null,
+      })
+      .where(eq(assets.id, id))
+      .run();
+    const row = tx.select().from(assets).where(eq(assets.id, id)).get();
+    if (!row) throw new Error("AssetRepository.updateBytesWithin: asset row missing after update");
+    return rowToAsset(row);
+  }
+
   /** All assets owned by a given element. */
   listForElement(owningElementId: ElementId): Asset[] {
     return this.db

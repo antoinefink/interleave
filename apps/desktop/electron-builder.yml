@@ -66,6 +66,12 @@ files:
 asar: true
 asarUnpack:
   - "native/**/*"
+  # The OCR WASM core + `eng.traineddata` + the tesseract.js node worker-script
+  # (T066) cannot be read/`dlopen`'d from inside the asar archive, so the staged
+  # `dist/resources/tesseract/**` tree is unpacked to `app.asar.unpacked/`. The
+  # worker resolves its `workerPath`/`corePath`/`langPath` there at runtime (NEVER
+  # `node_modules`, NEVER the CDN) so OCR works fully offline.
+  - "dist/resources/tesseract/**/*"
 
 mac:
   category: public.app-category.productivity

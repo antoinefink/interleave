@@ -97,6 +97,7 @@ function makeRunner(svc: DbService, worker: WorkerHandle): JobRunner {
     applyHandlers: createJobApplyHandlers({
       getUrlImportService: () => svc.urlImportService,
       getAssetVaultService: () => svc.assetVaultService,
+      getOcrService: () => svc.ocrService,
     }),
     workerPath: "(unused)",
     fork: () => worker,

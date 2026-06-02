@@ -63,7 +63,9 @@ import {
   SettingsPatchSchema,
   SettingsUpdateManyRequestSchema,
   SettingsUpdateRequestSchema,
+  SourcesAcceptOcrRequestSchema,
   SourcesExtractRegionRequestSchema,
+  SourcesGetOcrRequestSchema,
   SourcesGetPdfDataRequestSchema,
   SourcesGetRegionImageRequestSchema,
   SourcesImportManualRequestSchema,
@@ -72,6 +74,7 @@ import {
   type SourcesImportUrlRequest,
   SourcesImportUrlRequestSchema,
   type SourcesImportUrlResult,
+  SourcesRunOcrRequestSchema,
   TagsAddRequestSchema,
   TagsRemoveRequestSchema,
   VaultCollectOrphansRequestSchema,
@@ -104,6 +107,10 @@ describe("IPC channels", () => {
         "sources:getPdfData",
         "sources:extractRegion",
         "sources:getRegionImage",
+        "sources:runOcr",
+        "sources:getOcr",
+        "sources:acceptOcr",
+        "sources:dismissOcr",
         "capture:getPairing",
         "capture:regenerateToken",
         "capture:setEnabled",
@@ -362,6 +369,55 @@ describe("SourcesExtractRegionRequestSchema (T065)", () => {
   it("SourcesGetRegionImageRequestSchema requires an elementId", () => {
     expect(SourcesGetRegionImageRequestSchema.parse({ elementId: "el_1" }).elementId).toBe("el_1");
     expect(() => SourcesGetRegionImageRequestSchema.parse({})).toThrow();
+  });
+});
+
+describe("OCR schemas (T066)", () => {
+  it("SourcesRunOcrRequestSchema accepts a valid page + PNG", () => {
+    const parsed = SourcesRunOcrRequestSchema.parse({
+      elementId: "el_pdf",
+      page: 1,
+      imagePng: new ArrayBuffer(128),
+    });
+    expect(parsed.page).toBe(1);
+    expect(parsed.imagePng.byteLength).toBe(128);
+  });
+
+  it("SourcesRunOcrRequestSchema rejects an empty / oversize PNG and a non-positive page", () => {
+    expect(() =>
+      SourcesRunOcrRequestSchema.parse({ elementId: "el", page: 1, imagePng: new ArrayBuffer(0) }),
+    ).toThrow();
+    expect(() =>
+      SourcesRunOcrRequestSchema.parse({
+        elementId: "el",
+        page: 1,
+        imagePng: new ArrayBuffer(25 * 1024 * 1024),
+      }),
+    ).toThrow();
+    expect(() =>
+      SourcesRunOcrRequestSchema.parse({ elementId: "el", page: 0, imagePng: new ArrayBuffer(8) }),
+    ).toThrow();
+  });
+
+  it("SourcesGetOcrRequestSchema / SourcesAcceptOcrRequestSchema validate their shape", () => {
+    expect(SourcesGetOcrRequestSchema.parse({ elementId: "el_1" }).elementId).toBe("el_1");
+    expect(() => SourcesGetOcrRequestSchema.parse({})).toThrow();
+    const accept = SourcesAcceptOcrRequestSchema.parse({ elementId: "el_1", page: 3 });
+    expect(accept).toEqual({ elementId: "el_1", page: 3 });
+    expect(() => SourcesAcceptOcrRequestSchema.parse({ elementId: "el_1", page: 0 })).toThrow();
+  });
+
+  it("the worker `ocr` result data shape rides the generic worker `result.data` JSON", () => {
+    // The worker posts `{ page, text, meanConfidence, words }` as the generic
+    // `result.data` (the WorkerMessage envelope is unchanged); validated at the
+    // apply boundary. A plain object round-trips through JSON.
+    const data = {
+      page: 1,
+      text: "CARDS",
+      meanConfidence: 80,
+      words: [{ text: "CARDS", confidence: 80, bbox: { x0: 0, y0: 0, x1: 1, y1: 1 } }],
+    };
+    expect(JSON.parse(JSON.stringify(data))).toEqual(data);
   });
 });
 

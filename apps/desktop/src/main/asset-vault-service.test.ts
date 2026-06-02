@@ -5,7 +5,9 @@
  * Covers the load-bearing vault-scaling behavior end-to-end:
  *  - `importAsset` streams bytes to the vault + records metadata whose contentHash
  *    matches a streamed re-hash; importing IDENTICAL bytes a second time DEDUPS
- *    (one copy on disk, two metadata rows sharing the relative path);
+ *    (one copy on disk, two metadata rows sharing the relative path); re-importing
+ *    to the SAME owner+path (a re-OCR / re-crop) UPDATES the row in place rather
+ *    than minting a duplicate;
  *  - `verifyIntegrity` reports `ok` for an intact vault, MISMATCH for a corrupted
  *    file, MISSING for a deleted referenced file, and lists an `extraFile`;
  *  - `findOrphans` finds the leftover FILE of a HARD-purged element (a real
@@ -109,6 +111,39 @@ describe("AssetVaultService.importAsset (T059)", () => {
     expect(
       fs.existsSync(path.join(assetsDir, ...a.location.vaultPath.relativePath.split("/"))),
     ).toBe(true);
+    svc.close();
+  });
+
+  it("re-importing to the SAME owner+path UPDATES the row in place (no duplicate metadata)", async () => {
+    const svc = openDb();
+    const owner = makeSource(svc);
+    const vault = svc.assetVaultService;
+    const rel = `sources/${owner}/ocr/page-1.png`;
+
+    const first = await vault.importAsset({
+      owningElementId: owner,
+      kind: "snapshot",
+      source: Readable.from(Buffer.from("first ocr render")),
+      mime: "image/png",
+      destRelativePath: rel,
+    });
+    // Re-OCR the same page: different bytes overwrite the SAME path.
+    const second = await vault.importAsset({
+      owningElementId: owner,
+      kind: "snapshot",
+      source: Readable.from(Buffer.from("a DIFFERENT, re-rendered ocr image payload")),
+      mime: "image/png",
+      destRelativePath: rel,
+    });
+
+    // SAME row id (updated in place), refreshed hash/size, still ONE metadata row.
+    expect(second.id).toBe(first.id);
+    expect(second.contentHash).not.toBe(first.contentHash);
+    expect(svc.repos.assets.listForElement(owner)).toHaveLength(1);
+    // The single file on disk is the latest render (matches the updated hash).
+    const abs = path.join(assetsDir, ...rel.split("/"));
+    expect(fs.existsSync(abs)).toBe(true);
+    expect(await hashFileStreamed(abs)).toBe(second.contentHash);
     svc.close();
   });
 });

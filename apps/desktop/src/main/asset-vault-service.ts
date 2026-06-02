@@ -149,9 +149,14 @@ export class AssetVaultService {
    * Flow:
    *  1. Stream-write the bytes to a temp path under the destination dir, hashing as
    *     it writes (no whole-file-in-memory) → `{ contentHash, size }`.
-   *  2. DEDUP: if a LIVE asset already has that hash, DELETE the just-written copy
-   *     and record a new metadata row pointing at the EXISTING bytes' relative path
-   *     (shared-path reuse) — one copy on disk for identical content.
+   *  1b. UPSERT-BY-PATH: if a LIVE asset already owns this exact destination path
+   *     (a re-import overwriting the SAME file — e.g. re-OCR / a T065 re-crop), the
+   *     write above atomically replaced that one file, so REFRESH the existing row's
+   *     bytes-metadata in place and return it (no redundant second row per path).
+   *  2. DEDUP: if a LIVE asset already has that hash at a DIFFERENT path, DELETE the
+   *     just-written copy and record a new metadata row pointing at the EXISTING
+   *     bytes' relative path (shared-path reuse) — one copy on disk for identical
+   *     content.
    *  3. Otherwise keep the written file and record its metadata.
    *  A failed metadata insert rolls back AND removes the partial file (best-effort),
    *  mirroring `UrlImportService`'s rollback discipline.
@@ -168,6 +173,32 @@ export class AssetVaultService {
       source: input.source,
       destAbsPath,
     });
+
+    // 1b. Upsert-by-path: if a LIVE asset already owns THIS exact destination path
+    //     (e.g. a re-OCR overwriting `ocr/page-N.png`, or a T065 re-crop), the
+    //     stream-write above atomically overwrote that one file — so REFRESH the
+    //     existing row's bytes-metadata in place instead of minting a second row
+    //     for the same path (which would slowly accumulate redundant metadata).
+    const samePath = this.assetsRepo.findLiveByOwnerAndPath(
+      input.owningElementId,
+      "assets" as VaultRoot,
+      relativePath,
+    );
+    if (samePath) {
+      // The overwrite was atomic and the file is consistent, so a metadata-update
+      // failure leaves the file for the row that already references this path (no
+      // cleanup) — the error propagates naturally.
+      return this.db.transaction((tx) =>
+        this.assetsRepo.updateBytesWithin(tx, samePath.id, {
+          contentHash,
+          mime: input.mime,
+          size,
+          width: input.width ?? null,
+          height: input.height ?? null,
+          durationMs: input.durationMs ?? null,
+        }),
+      );
+    }
 
     // 2. Content-hash dedup against a LIVE existing asset.
     const existing = this.assetsRepo.findLiveByContentHash(contentHash);

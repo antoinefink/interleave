@@ -91,9 +91,10 @@ describe("sha256 / sha256File (T047)", () => {
 
 describe("resolveSchemaVersion (T047)", () => {
   it("maps the applied-migration count to the latest tag via the real journal", () => {
-    // The packaged journal currently has 10 entries (0000…0009). With all applied,
-    // the latest tag is the source_locations.region column (T065); fewer applied
-    // resolve to the prior tags.
+    // The packaged journal currently has 11 entries (0000…0010). With all applied,
+    // the latest tag is the ocr_pages table (T066); fewer applied resolve to the
+    // prior tags.
+    expect(resolveSchemaVersion(MIGRATIONS_DIR, 11)).toBe("0010_free_silver_fox");
     expect(resolveSchemaVersion(MIGRATIONS_DIR, 10)).toBe("0009_public_steel_serpent");
     expect(resolveSchemaVersion(MIGRATIONS_DIR, 9)).toBe("0008_outgoing_sir_ram");
     expect(resolveSchemaVersion(MIGRATIONS_DIR, 8)).toBe("0007_parched_killmonger");

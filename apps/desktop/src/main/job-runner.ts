@@ -92,6 +92,14 @@ export interface JobRunnerDeps {
   readonly applyHandlers: JobApplyHandlers;
   /** Absolute path to the bundled `dist/job-worker.cjs` (real-fork mode). */
   readonly workerPath: string;
+  /**
+   * The asset-vault root (`<dataDir>/assets`), passed to the forked worker via
+   * its env (`INTERLEAVE_ASSETS_DIR`) so a DB-free OCR job (T066) can resolve the
+   * vault-relative page-image path MAIN prepared — the absolute root NEVER lands
+   * in a persisted `jobs` row. Optional: the existing `url_import`/`vault_*` jobs
+   * do not read it, so a runner built without it stays harmless.
+   */
+  readonly assetsDir?: string;
   /** Optional fork factory override (a fake worker for unit tests). */
   readonly fork?: WorkerForkFactory;
   /** Max in-flight jobs (fixed small concurrency); defaults to {@link DEFAULT_CONCURRENCY}. */
@@ -120,10 +128,20 @@ function backoffMs(attempts: number, baseMs: number): number {
   return Math.min(exp, RETRY_BACKOFF_MAX_MS);
 }
 
-/** Build the default real-`utilityProcess` fork factory. */
-function defaultFork(workerPath: string): WorkerForkFactory {
+/**
+ * Build the default real-`utilityProcess` fork factory. When `assetsDir` is set,
+ * the worker is forked with `INTERLEAVE_ASSETS_DIR` in its env (the fork-env seam,
+ * T066) so a DB-free OCR job can resolve the vault-relative page-image path. Env
+ * is chosen over the job `payload` deliberately — the absolute vault root must
+ * NEVER be written to a persisted, restart-safe `jobs` row.
+ */
+function defaultFork(workerPath: string, assetsDir?: string): WorkerForkFactory {
   return () => {
-    const child = utilityProcess.fork(workerPath);
+    const child = assetsDir
+      ? utilityProcess.fork(workerPath, [], {
+          env: { ...process.env, INTERLEAVE_ASSETS_DIR: assetsDir },
+        })
+      : utilityProcess.fork(workerPath);
     return {
       postMessage: (request) => child.postMessage(request),
       onMessage: (listener) => {
@@ -161,7 +179,7 @@ export class JobRunner {
   constructor(deps: JobRunnerDeps) {
     this.jobsRepo = deps.jobsRepo;
     this.applyHandlers = deps.applyHandlers;
-    this.forkFactory = deps.fork ?? defaultFork(deps.workerPath);
+    this.forkFactory = deps.fork ?? defaultFork(deps.workerPath, deps.assetsDir);
     this.concurrency = deps.concurrency ?? DEFAULT_CONCURRENCY;
     this.retryBackoffBaseMs = deps.retryBackoffBaseMs ?? RETRY_BACKOFF_BASE_MS;
   }

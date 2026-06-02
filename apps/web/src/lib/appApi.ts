@@ -640,6 +640,48 @@ export interface SourcesGetRegionImageResult {
   readonly mime: string | null;
 }
 
+/** Run OCR on one scanned/text-free PDF page (T066) — ships the rendered page PNG. */
+export interface SourcesRunOcrRequest {
+  readonly elementId: string;
+  /** The 1-based page to OCR. */
+  readonly page: number;
+  /** The rendered page PNG bytes (produced in the renderer's `<canvas>`). */
+  readonly imagePng: ArrayBuffer;
+}
+
+export interface SourcesRunOcrResult {
+  readonly enqueued: number;
+  readonly jobId: string;
+}
+
+/** One page's OCR suggestion (text + confidence + status) (T066). */
+export interface OcrPageSummary {
+  readonly page: number;
+  readonly text: string;
+  /** Mean confidence 0–100 (the renderer derives a green/amber/red badge). */
+  readonly meanConfidence: number;
+  /** `suggested` | `accepted` | `dismissed`. */
+  readonly status: string;
+}
+
+export interface SourcesGetOcrRequest {
+  readonly elementId: string;
+}
+
+export interface SourcesGetOcrResult {
+  readonly pages: readonly OcrPageSummary[];
+}
+
+/** Accept / dismiss one page's OCR suggestion (T066). */
+export interface SourcesAcceptOcrRequest {
+  readonly elementId: string;
+  readonly page: number;
+}
+
+export interface SourcesAcceptOcrResult {
+  readonly accepted: boolean;
+}
+
 /**
  * A renderer-safe projection of a background-runner job (T058). The renderer
  * observes the local job queue (e.g. a Maintenance "background activity" view)
@@ -1755,6 +1797,10 @@ export interface AppApi {
     getPdfData(request: SourcesGetPdfDataRequest): Promise<SourcesGetPdfDataResult>;
     extractRegion(request: SourcesExtractRegionRequest): Promise<SourcesExtractRegionResult>;
     getRegionImage(request: SourcesGetRegionImageRequest): Promise<SourcesGetRegionImageResult>;
+    runOcr(request: SourcesRunOcrRequest): Promise<SourcesRunOcrResult>;
+    getOcr(request: SourcesGetOcrRequest): Promise<SourcesGetOcrResult>;
+    acceptOcr(request: SourcesAcceptOcrRequest): Promise<SourcesAcceptOcrResult>;
+    dismissOcr(request: SourcesAcceptOcrRequest): Promise<{ dismissed: boolean }>;
   };
   readonly capture: {
     getPairing(): Promise<CapturePairingResult>;
@@ -1996,6 +2042,29 @@ export const appApi = {
   /** Serve a region extract's cropped image bytes to the renderer (T065). */
   getRegionImage(request: SourcesGetRegionImageRequest): Promise<SourcesGetRegionImageResult> {
     return requireAppApi().sources.getRegionImage(request);
+  },
+  /**
+   * Run OCR on a scanned/text-free PDF page (T066) — ships the rendered page PNG;
+   * MAIN writes it to the vault + enqueues an `ocr` job on the T058 runner (DB-free
+   * `tesseract.js` worker, offline). Observe progress via `subscribeJobs`.
+   */
+  runOcr(request: SourcesRunOcrRequest): Promise<SourcesRunOcrResult> {
+    return requireAppApi().sources.runOcr(request);
+  },
+  /** Read a PDF source's OCR suggestion layer — per-page text + confidence (T066). */
+  getOcr(request: SourcesGetOcrRequest): Promise<SourcesGetOcrResult> {
+    return requireAppApi().sources.getOcr(request);
+  },
+  /**
+   * Accept a page's OCR text into the body (T066) — merges it via `documents.save`
+   * (logs `update_document`), making it searchable/extractable; sets `accepted`.
+   */
+  acceptOcr(request: SourcesAcceptOcrRequest): Promise<SourcesAcceptOcrResult> {
+    return requireAppApi().sources.acceptOcr(request);
+  },
+  /** Dismiss a page's OCR suggestion (T066) — sets `dismissed`. */
+  dismissOcr(request: SourcesAcceptOcrRequest): Promise<{ dismissed: boolean }> {
+    return requireAppApi().sources.dismissOcr(request);
   },
   /** Read the browser-capture pairing state (token + enabled/running/port) (T062). */
   getCapturePairing(): Promise<CapturePairingResult> {

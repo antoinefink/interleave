@@ -31,9 +31,12 @@
  */
 
 import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
+
+const require = createRequire(import.meta.url);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..");
@@ -80,6 +83,60 @@ function stageMigrations() {
   const to = path.join(distDir, "drizzle");
   rmSync(to, { recursive: true, force: true });
   cpSync(from, to, { recursive: true });
+}
+
+/**
+ * Stage the `tesseract.js` engine + its WASM core + the `eng.traineddata` next to
+ * the worker bundle for OFFLINE OCR (T066).
+ *
+ * The packaged app ships NO `node_modules` (electron-builder `files:` excludes it),
+ * so the OCR worker cannot `require('tesseract.js')`/load its CDN core+lang at
+ * runtime. We copy a SELF-CONTAINED tree into `dist/resources/tesseract/`:
+ *
+ *   - `node_modules/` ← the pnpm peer dir of `tesseract.js` (the engine + its
+ *     runtime deps — `tesseract.js-core`, `wasm-feature-detect`, `node-fetch`, … —
+ *     laid out as a real `node_modules`, so the worker-script's `require`s resolve),
+ *   - `lang/eng.traineddata.gz` ← the pinned `@tesseract.js-data/eng` (committed
+ *     locally; NEVER fetched at build time — offline).
+ *
+ * The worker (`src/worker/ocr.ts`) points `tesseract.js` at these LOCAL staged
+ * paths (`workerPath`/`corePath`/`langPath`), never `node_modules` or the CDN. This
+ * dir is PACKAGED by the existing `dist/**` glob and `asarUnpack`'d (a `.wasm`/data
+ * file cannot be read from inside the asar) — see electron-builder.yml.
+ */
+function stageTesseract() {
+  const stageDir = path.join(distDir, "resources", "tesseract");
+  rmSync(stageDir, { recursive: true, force: true });
+
+  // The pnpm peer node_modules dir of tesseract.js holds the engine + all its
+  // runtime deps as a self-contained `node_modules` tree (so requires resolve).
+  const tjsPkg = require.resolve("tesseract.js/package.json");
+  // …/.pnpm/tesseract.js@<v>/node_modules/tesseract.js/package.json → that
+  // grandparent `node_modules` dir is the self-contained tree.
+  const tjsDir = path.dirname(tjsPkg); // …/node_modules/tesseract.js
+  const peerNodeModules = path.dirname(tjsDir); // …/node_modules
+  cpSync(peerNodeModules, path.join(stageDir, "node_modules"), {
+    recursive: true,
+    dereference: true,
+  });
+
+  // The English language data (gzipped traineddata), from the pinned data package.
+  const engPkg = require.resolve("@tesseract.js-data/eng/package.json");
+  const engDir = path.dirname(engPkg);
+  // The package nests the data under `<version>/eng.traineddata.gz`; find the first.
+  const candidates = [
+    path.join(engDir, "4.0.0", "eng.traineddata.gz"),
+    path.join(engDir, "4.0.0_best_int", "eng.traineddata.gz"),
+  ];
+  const engSrc = candidates.find((p) => existsSync(p));
+  if (!engSrc) {
+    throw new Error(
+      `[desktop] stageTesseract: eng.traineddata.gz not found under ${engDir} — is @tesseract.js-data/eng installed?`,
+    );
+  }
+  const langDir = path.join(stageDir, "lang");
+  mkdirSync(langDir, { recursive: true });
+  cpSync(engSrc, path.join(langDir, "eng.traineddata.gz"));
 }
 
 /**
@@ -130,13 +187,20 @@ async function run() {
       // worker uses none). In the shared `targets` array so BOTH `--watch` and the
       // one-shot prod branch emit `dist/job-worker.cjs` (the latter is what
       // `pnpm dev` → scripts/dev.mjs runs, so the bundle exists under dev too).
+      //
+      // `tesseract.js` (+ core, T066) is kept EXTERNAL: the worker loads it by a
+      // DYNAMIC require from the STAGED `dist/resources/tesseract/node_modules`
+      // (its node worker-thread script must be a real file on disk, so it cannot be
+      // inlined). `stageTesseract()` copies that self-contained tree.
       ...common,
+      external: [...external, "tesseract.js", "tesseract.js-core"],
       entryPoints: [path.join(here, "src", "worker", "job-worker.ts")],
       outfile: path.join(distDir, "job-worker.cjs"),
     },
   ];
 
   stageMigrations();
+  stageTesseract();
 
   if (watch) {
     const contexts = await Promise.all(targets.map((t) => esbuild.context(t)));
@@ -151,7 +215,9 @@ async function run() {
   stageRenderer();
 
   await Promise.all(targets.map((t) => esbuild.build(t)));
-  console.log("[desktop] built main.cjs + preload.cjs + job-worker.cjs + drizzle/");
+  console.log(
+    "[desktop] built main.cjs + preload.cjs + job-worker.cjs + drizzle/ + resources/tesseract/",
+  );
 }
 
 run().catch((error) => {

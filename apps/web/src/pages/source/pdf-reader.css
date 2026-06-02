@@ -193,3 +193,86 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* OCR affordance (T066) — the scanned-page prompt + recognized-text suggestion. */
+.pdf-ocr-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: var(--t-sm);
+  color: var(--text);
+}
+
+.pdf-ocr-panel--done {
+  color: var(--text-2);
+}
+
+.pdf-ocr-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pdf-ocr-panel__prompt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+}
+
+.pdf-ocr-panel__progress {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.pdf-ocr-panel__text {
+  flex: 1 1 100%;
+  margin: 0;
+  max-height: 8.5em;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  white-space: pre-wrap;
+  line-height: 1.45;
+}
+
+.pdf-ocr-panel__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.pdf-ocr-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: var(--t-xs, 11px);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.pdf-ocr-badge--high {
+  color: var(--sched-fsrs);
+  background: color-mix(in oklch, var(--sched-fsrs) 14%, transparent);
+}
+
+.pdf-ocr-badge--medium {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+.pdf-ocr-badge--low {
+  color: var(--danger);
+  background: var(--danger-soft);
+}

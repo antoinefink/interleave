@@ -16,6 +16,7 @@
 import type { JobJsonValue } from "@interleave/core";
 import type { AssetVaultService } from "./asset-vault-service";
 import type { JobApplyHandlers } from "./job-runner";
+import type { OcrJobPayload, OcrResultData, OcrService } from "./ocr-service";
 import type { UrlImportService } from "./url-import-service";
 
 /** The `url_import` job payload (enqueued by main, fetched by the worker). */
@@ -41,6 +42,8 @@ export interface JobApplyHandlerDeps {
   readonly getUrlImportService: () => UrlImportService;
   /** The asset-vault scaling service (T059), for the `vault_verify`/`vault_gc` sweeps. */
   readonly getAssetVaultService: () => AssetVaultService;
+  /** The OCR service (T066) — persists the worker's recognized text into `ocr_pages`. */
+  readonly getOcrService: () => OcrService;
 }
 
 /**
@@ -70,8 +73,23 @@ export interface JobApplyHandlerDeps {
  * a cross-process redesign that no current invariant requires.
  */
 export function createJobApplyHandlers(deps: JobApplyHandlerDeps): JobApplyHandlers {
-  const { getUrlImportService, getAssetVaultService } = deps;
+  const { getUrlImportService, getAssetVaultService, getOcrService } = deps;
   return {
+    /**
+     * Persist a worker OCR result (T066): UPSERT the recognized text into the
+     * `ocr_pages` layer (status `suggested`) + write the durable `ocr/page-N.json`
+     * to the vault. IDEMPOTENT — upsert by `(source, page)`, so an at-least-once
+     * re-run overwrites the page's record rather than duplicating it (the worker
+     * never reads the DB; this main-owned handler does the write). The text is a
+     * confidence-flagged suggestion — it is NOT merged into the body here (the user
+     * accepts it explicitly via `sources.acceptOcr`).
+     */
+    ocr: async (job, resultData) => {
+      const payload = job.payload as unknown as OcrJobPayload;
+      const result = resultData as unknown as OcrResultData;
+      const summary = await getOcrService().applyResult(payload, result);
+      return summary as unknown as JobJsonValue;
+    },
     /** Re-hash stored bytes (streamed) and report integrity (read-only). */
     vault_verify: async () => {
       const report = await getAssetVaultService().verifyIntegrity();

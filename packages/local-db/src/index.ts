@@ -79,7 +79,15 @@ export {
   ExtractionService,
   rawExtractIntervalDays,
 } from "./extraction-service";
-export { newAssetId, newElementId, newJobId, newRowId, newSiblingGroupId, nowIso } from "./ids";
+export {
+  newAssetId,
+  newBlockId,
+  newElementId,
+  newJobId,
+  newRowId,
+  newSiblingGroupId,
+  nowIso,
+} from "./ids";
 export {
   type InboxItemDetail,
   type InboxItemSummary,
@@ -118,6 +126,12 @@ export {
   type LineageNode,
   LineageQuery,
 } from "./lineage-query";
+export {
+  type OcrPage,
+  OcrPagesRepository,
+  type OcrPageWord,
+  type UpsertOcrPageInput,
+} from "./ocr-pages-repository";
 export {
   type AppendOpInput,
   OperationLogRepository,
@@ -204,6 +218,8 @@ export interface Repositories {
   readonly sourceDedup: import("./source-dedup-query").SourceDedupQuery;
   /** The persisted background-runner job queue (T058) — main-runner-only. */
   readonly jobs: import("./jobs-repository").JobsRepository;
+  /** The reviewable per-page OCR layer (T066) — the recognized-text suggestion store. */
+  readonly ocrPages: import("./ocr-pages-repository").OcrPagesRepository;
 }
 
 import type { InterleaveDatabase } from "@interleave/db";
@@ -213,6 +229,7 @@ import { ConceptRepository } from "./concept-repository";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
 import { JobsRepository } from "./jobs-repository";
+import { OcrPagesRepository } from "./ocr-pages-repository";
 import { OperationLogRepository } from "./operation-log-repository";
 import { QueueRepository } from "./queue-repository";
 import { ReviewRepository } from "./review-repository";
@@ -243,5 +260,6 @@ export function createRepositories(db: InterleaveDatabase): Repositories {
     analytics: new AnalyticsService(db),
     sourceDedup: new SourceDedupQuery(db, assets),
     jobs: new JobsRepository(db),
+    ocrPages: new OcrPagesRepository(db),
   };
 }

@@ -19,7 +19,9 @@
     "dist:pack": "electron-builder --mac --config electron-builder.yml"
   },
   "dependencies": {
-    "better-sqlite3": "^12.10.0"
+    "better-sqlite3": "^12.10.0",
+    "tesseract.js": "^6.0.1",
+    "tesseract.js-core": "^6.1.2"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
@@ -31,6 +33,7 @@
     "@interleave/scheduler": "workspace:*",
     "@interleave/testing": "workspace:*",
     "@interleave/web": "workspace:*",
+    "@tesseract.js-data/eng": "^1.0.0",
     "@types/node": "^22.10.0",
     "@types/yazl": "^2.4.6",
     "drizzle-orm": "^0.45.2",

@@ -70,13 +70,16 @@ import {
   SettingsGetRequestSchema,
   SettingsUpdateManyRequestSchema,
   SettingsUpdateRequestSchema,
+  SourcesAcceptOcrRequestSchema,
   SourcesExtractRegionRequestSchema,
+  SourcesGetOcrRequestSchema,
   SourcesGetPdfDataRequestSchema,
   SourcesGetRegionImageRequestSchema,
   SourcesImportManualRequestSchema,
   SourcesImportPdfRequestSchema,
   SourcesImportUrlRequestSchema,
   type SourcesImportUrlResult,
+  SourcesRunOcrRequestSchema,
   TagsAddRequestSchema,
   TagsListRequestSchema,
   TagsRemoveRequestSchema,
@@ -313,6 +316,38 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.sourcesGetRegionImage, (_event, rawRequest: unknown) => {
     const request = SourcesGetRegionImageRequestSchema.parse(rawRequest);
     return dbService.getRegionImage(request);
+  });
+
+  // Run OCR on a scanned/text-free PDF page (T066). The renderer ships the rendered
+  // page PNG (size-capped at the schema); MAIN writes it to the vault + enqueues an
+  // `ocr` job on the T058 runner (DB-free `tesseract.js` worker, offline). The
+  // renderer observes progress via the existing `jobs.subscribe` surface. The
+  // recognized text is persisted as a reviewable suggestion — NOT merged into the
+  // body until the user accepts it.
+  ipcMain.handle(IPC_CHANNELS.sourcesRunOcr, async (_event, rawRequest: unknown) => {
+    const request = SourcesRunOcrRequestSchema.parse(rawRequest);
+    return await dbService.runOcr(request);
+  });
+
+  // Read a PDF source's OCR suggestion layer (T066) — per-page text + confidence +
+  // status. Read-only.
+  ipcMain.handle(IPC_CHANNELS.sourcesGetOcr, (_event, rawRequest: unknown) => {
+    const request = SourcesGetOcrRequestSchema.parse(rawRequest);
+    return dbService.getOcr(request);
+  });
+
+  // Accept a page's OCR text into the body (T066) — merges it via the document-save
+  // path (logs `update_document`), making it searchable/extractable, and sets the
+  // `ocr_pages` row `accepted`. Never auto-merged — this is the explicit user action.
+  ipcMain.handle(IPC_CHANNELS.sourcesAcceptOcr, (_event, rawRequest: unknown) => {
+    const request = SourcesAcceptOcrRequestSchema.parse(rawRequest);
+    return dbService.acceptOcr(request);
+  });
+
+  // Dismiss a page's OCR suggestion (T066) — sets `dismissed`.
+  ipcMain.handle(IPC_CHANNELS.sourcesDismissOcr, (_event, rawRequest: unknown) => {
+    const request = SourcesAcceptOcrRequestSchema.parse(rawRequest);
+    return dbService.dismissOcr(request);
   });
 
   // Browser-capture pairing (T062). The TRUSTED desktop renderer reads the

@@ -23,7 +23,7 @@ import { GlobalWorkerOptions, getDocument, type PDFDocumentProxy, TextLayer } fr
 import PdfWorkerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
-import { appApi, isDesktop } from "../../lib/appApi";
+import { appApi, isDesktop, type OcrPageSummary } from "../../lib/appApi";
 import "./pdf-reader.css";
 
 GlobalWorkerOptions.workerSrc = PdfWorkerUrl;
@@ -108,6 +108,23 @@ export function PdfReader({
   const [extractedRegions, setExtractedRegions] = useState<
     readonly { page: number; region: RegionRect }[]
   >([]);
+  // OCR (T066): the per-page recognized-text suggestion layer, the set of pages
+  // detected as text-free (scanned), and the in-flight OCR job for the active page.
+  const [ocrPages, setOcrPages] = useState<readonly OcrPageSummary[]>([]);
+  const [textFreePages, setTextFreePages] = useState<ReadonlySet<number>>(new Set());
+  const [ocrBusyPage, setOcrBusyPage] = useState<number | null>(null);
+  const [ocrProgress, setOcrProgress] = useState(0);
+  const [ocrJobId, setOcrJobId] = useState<string | null>(null);
+  // Pages we have already AUTO-enqueued OCR for (the lazy on-first-read trigger),
+  // so we enqueue each text-free page at most once automatically (the explicit
+  // "Run OCR" button can still re-run a page on demand). A ref (not state) so it
+  // never re-runs the auto effect by changing identity.
+  const autoOcrPagesRef = useRef<Set<number>>(new Set());
+  // Whether the existing OCR layer (`getOcr`) has loaded for the current source —
+  // the lazy auto-enqueue waits for it so it never re-OCRs a page the user already
+  // accepted/dismissed in a prior session (avoiding a redundant job on the race
+  // between `status: "ready"` and the async `getOcr`).
+  const [ocrLayerLoaded, setOcrLayerLoaded] = useState(false);
 
   const firstBlockByPage = useMemo(() => pageToFirstBlock(blockPages), [blockPages]);
 
@@ -124,6 +141,10 @@ export function PdfReader({
     let cancelled = false;
     setStatus("loading");
     setError(null);
+    // Reset the per-page auto-OCR guard for the new source (each scanned PDF gets
+    // its own one-auto-enqueue-per-page budget), and the OCR-layer-loaded gate.
+    autoOcrPagesRef.current = new Set();
+    setOcrLayerLoaded(false);
     void (async () => {
       try {
         const { bytes } = await appApi.getSourcePdfData({ elementId });
@@ -139,16 +160,29 @@ export function PdfReader({
         }
         docRef.current = doc;
         const measured: PageState[] = [];
+        const scanned = new Set<number>();
         for (let n = 1; n <= doc.numPages; n++) {
           const page = await doc.getPage(n);
           const vp = page.getViewport({ scale: RENDER_SCALE });
           measured.push({ pageNumber: n, width: vp.width, height: vp.height });
+          // A text-free (scanned) page yields no text items — the OCR target (T066).
+          const tc = await page.getTextContent();
+          if (tc.items.length === 0) scanned.add(n);
           page.cleanup();
         }
         if (cancelled) return;
         setPages(measured);
+        setTextFreePages(scanned);
         setStatus("ready");
         onActivePageChangeRef.current?.(1, measured.length);
+        // Load any existing OCR suggestions for the source, then open the lazy
+        // auto-enqueue gate (so we never auto-OCR a page already handled before).
+        void appApi.getOcr({ elementId }).then((r) => {
+          if (!cancelled) {
+            setOcrPages(r.pages);
+            setOcrLayerLoaded(true);
+          }
+        });
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : String(e));
@@ -322,6 +356,137 @@ export function PdfReader({
     }
   }, [desktop, elementId, activePage, firstBlockByPage, pageOfNode, toast]);
 
+  // --- OCR (T066) ----------------------------------------------------------
+
+  /** Render one page to a PNG `ArrayBuffer` (off the visible canvases) for OCR. */
+  const renderPageToPng = useCallback(async (pageNumber: number): Promise<ArrayBuffer | null> => {
+    const doc = docRef.current;
+    if (!doc) return null;
+    const pdfPage = await doc.getPage(pageNumber);
+    // Render at a higher scale than the reader so OCR has crisp glyphs.
+    const viewport = pdfPage.getViewport({ scale: 2 });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    await pdfPage.render({ canvasContext: ctx, viewport }).promise;
+    pdfPage.cleanup();
+    return await new Promise<ArrayBuffer | null>((resolve) => {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          resolve(null);
+          return;
+        }
+        void blob.arrayBuffer().then(resolve);
+      }, "image/png");
+    });
+  }, []);
+
+  /**
+   * Run OCR on a page: render it → ship the PNG → enqueue → observe the job. Used
+   * by BOTH the explicit "Run OCR" button and the lazy auto-enqueue effect below
+   * (the latter fires once per text-free page on first read).
+   */
+  const runOcr = useCallback(
+    async (pageNumber: number) => {
+      if (!desktop || ocrBusyPage != null) return;
+      setOcrBusyPage(pageNumber);
+      setOcrProgress(0);
+      try {
+        const imagePng = await renderPageToPng(pageNumber);
+        if (!imagePng) {
+          toast("Could not render the page for OCR");
+          setOcrBusyPage(null);
+          return;
+        }
+        const { jobId } = await appApi.runOcr({ elementId, page: pageNumber, imagePng });
+        setOcrJobId(jobId);
+      } catch {
+        toast("Could not start OCR");
+        setOcrBusyPage(null);
+      }
+    },
+    [desktop, elementId, ocrBusyPage, renderPageToPng, toast],
+  );
+
+  // Observe OCR jobs (T058 jobs.subscribe): track progress for the job THIS reader
+  // started, and refresh the OCR suggestion layer whenever ANY `ocr` job succeeds
+  // (so an auto-on-import OCR, or one enqueued elsewhere for this source, also
+  // surfaces here — the JobSummary carries no source link, so we re-read `getOcr`).
+  useEffect(() => {
+    if (!desktop) return;
+    const unsubscribe = appApi.subscribeJobs((job) => {
+      const ours = ocrJobId != null && job.id === ocrJobId;
+      if (ours) setOcrProgress(job.progressRatio);
+      const terminal =
+        job.status === "succeeded" || job.status === "failed" || job.status === "cancelled";
+      if (job.type === "ocr" && job.status === "succeeded") {
+        void appApi.getOcr({ elementId }).then((r) => setOcrPages(r.pages));
+      }
+      if (ours && terminal) {
+        setOcrBusyPage(null);
+        setOcrJobId(null);
+        toast(job.status === "succeeded" ? "OCR finished" : "OCR failed");
+      }
+    });
+    return unsubscribe;
+  }, [desktop, ocrJobId, elementId, toast]);
+
+  /** Accept a page's OCR text into the body (it becomes searchable/extractable). */
+  const acceptOcr = useCallback(
+    async (pageNumber: number) => {
+      try {
+        const { accepted } = await appApi.acceptOcr({ elementId, page: pageNumber });
+        if (accepted) {
+          toast(`OCR accepted into page ${pageNumber}`);
+          const r = await appApi.getOcr({ elementId });
+          setOcrPages(r.pages);
+        }
+      } catch {
+        toast("Could not accept the OCR text");
+      }
+    },
+    [elementId, toast],
+  );
+
+  /** Dismiss a page's OCR suggestion. */
+  const dismissOcr = useCallback(
+    async (pageNumber: number) => {
+      try {
+        await appApi.dismissOcr({ elementId, page: pageNumber });
+        const r = await appApi.getOcr({ elementId });
+        setOcrPages(r.pages);
+      } catch {
+        toast("Could not dismiss the OCR text");
+      }
+    },
+    [elementId, toast],
+  );
+
+  /** The OCR suggestion for the active page (or `null`). */
+  const activeOcr = useMemo(
+    () => ocrPages.find((p) => p.page === activePage) ?? null,
+    [ocrPages, activePage],
+  );
+
+  // Lazy auto-enqueue (T066 "automatic on import"): when the reader settles on a
+  // text-free (scanned) page that has NO OCR record yet, automatically enqueue OCR
+  // for it — so a scanned PDF gets recognized without the user pressing a button,
+  // while staying BOUNDED (one page at a time, only the page being read, at most
+  // once per page) so a 500-page scan never floods the queue. A page that already
+  // has any OCR record (suggested / accepted / dismissed) is skipped; the explicit
+  // "Run OCR" button remains available to re-run on demand.
+  useEffect(() => {
+    if (!desktop || status !== "ready" || !ocrLayerLoaded) return;
+    if (!textFreePages.has(activePage)) return;
+    if (ocrBusyPage != null) return;
+    if (activeOcr) return;
+    if (autoOcrPagesRef.current.has(activePage)) return;
+    autoOcrPagesRef.current.add(activePage);
+    void runOcr(activePage);
+  }, [desktop, status, ocrLayerLoaded, activePage, textFreePages, activeOcr, ocrBusyPage, runOcr]);
+
   // Keyboard: `E` extracts the page selection; `R` toggles region mode; `␣` sets
   // the page read-point; `Esc` cancels a pending region crop.
   useEffect(() => {
@@ -420,6 +585,18 @@ export function PdfReader({
           {status === "ready" ? `Page ${activePage} of ${pages.length}` : "—"}
         </span>
       </div>
+
+      {status === "ready" && (textFreePages.has(activePage) || activeOcr) ? (
+        <OcrPanel
+          page={activePage}
+          ocr={activeOcr}
+          busy={ocrBusyPage === activePage}
+          progress={ocrProgress}
+          onRun={() => void runOcr(activePage)}
+          onAccept={() => void acceptOcr(activePage)}
+          onDismiss={() => void dismissOcr(activePage)}
+        />
+      ) : null}
 
       {status === "loading" ? (
         <p className="pdf-reader-state" data-testid="pdf-reader-loading">
@@ -739,4 +916,117 @@ function regionStyle(r: RegionRect): React.CSSProperties {
     width: `${(r.x1 - r.x0) * 100}%`,
     height: `${(r.y1 - r.y0) * 100}%`,
   };
+}
+
+/** Confidence band thresholds → a green/amber/red badge (T066). */
+function confidenceBand(meanConfidence: number): "high" | "medium" | "low" {
+  if (meanConfidence >= 80) return "high";
+  if (meanConfidence >= 55) return "medium";
+  return "low";
+}
+
+/**
+ * The OCR affordance for a scanned/text-free page (T066). When the page has no OCR
+ * yet it shows a "Scanned page — Run OCR" prompt; while the job runs it shows
+ * progress; once recognized it shows the text as a SUGGESTION with a confidence
+ * badge (green/amber/red) and Accept / Dismiss. The text is NEVER auto-merged — the
+ * user accepts it into the searchable body. Low confidence is visibly flagged.
+ */
+function OcrPanel({
+  page,
+  ocr,
+  busy,
+  progress,
+  onRun,
+  onAccept,
+  onDismiss,
+}: {
+  page: number;
+  ocr: OcrPageSummary | null;
+  busy: boolean;
+  progress: number;
+  onRun: () => void;
+  onAccept: () => void;
+  onDismiss: () => void;
+}) {
+  // A suggestion to review (recognized + not yet accepted/dismissed).
+  if (ocr && ocr.status === "suggested") {
+    const band = confidenceBand(ocr.meanConfidence);
+    return (
+      <section
+        className="pdf-ocr-panel"
+        data-testid="pdf-ocr-suggestion"
+        aria-label={`OCR text for page ${page}`}
+      >
+        <div className="pdf-ocr-panel__head">
+          <Icon name="extract" size={14} /> OCR text for page {page}
+          <span
+            className={`pdf-ocr-badge pdf-ocr-badge--${band}`}
+            data-testid="pdf-ocr-confidence"
+            title="Mean recognition confidence"
+          >
+            {ocr.meanConfidence}% confidence
+            {band === "low" ? " · low — review carefully" : ""}
+          </span>
+        </div>
+        <p className="pdf-ocr-panel__text" data-testid="pdf-ocr-text">
+          {ocr.text || "(no text recognized)"}
+        </p>
+        <div className="pdf-ocr-panel__actions">
+          <button
+            type="button"
+            className="reader-btn"
+            data-testid="pdf-ocr-dismiss"
+            onClick={onDismiss}
+          >
+            Dismiss
+          </button>
+          <button
+            type="button"
+            className="reader-btn reader-btn--primary"
+            data-testid="pdf-ocr-accept"
+            onClick={onAccept}
+          >
+            <Icon name="check" size={14} /> Accept into page
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  // Already accepted — a calm confirmation.
+  if (ocr && ocr.status === "accepted") {
+    return (
+      <div className="pdf-ocr-panel pdf-ocr-panel--done" data-testid="pdf-ocr-accepted">
+        <Icon name="check" size={14} /> OCR text accepted into page {page} (now searchable).
+      </div>
+    );
+  }
+
+  // Not yet OCR'd (or dismissed) — the run prompt.
+  return (
+    <section
+      className="pdf-ocr-panel"
+      data-testid="pdf-ocr-prompt"
+      aria-label={`OCR for page ${page}`}
+    >
+      <span className="pdf-ocr-panel__prompt">
+        <Icon name="image" size={14} /> Scanned page — no embedded text.
+      </span>
+      {busy ? (
+        <span className="pdf-ocr-panel__progress" data-testid="pdf-ocr-progress">
+          Recognizing… {progress}%
+        </span>
+      ) : (
+        <button
+          type="button"
+          className="reader-btn reader-btn--primary"
+          data-testid="pdf-ocr-run"
+          onClick={onRun}
+        >
+          <Icon name="extract" size={14} /> Run OCR on this page
+        </button>
+      )}
+    </section>
+  );
 }

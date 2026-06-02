@@ -197,3 +197,15 @@ export type JobType = (typeof JOB_TYPES)[number];
  */
 export const JOB_STATUSES = ["queued", "running", "succeeded", "failed", "cancelled"] as const;
 export type JobStatus = (typeof JOB_STATUSES)[number];
+
+/**
+ * OCR-page review statuses (`ocr_pages.status`, T066). The on-device OCR runner
+ * produces a `suggested` recognized-text layer for a scanned page; it is a
+ * REVIEWABLE suggestion (with confidence), NOT blindly merged into the body. The
+ * user explicitly `accepted`s it (merging it into the page body via the normal
+ * `documents.save` → `update_document` path) or `dismissed`s it. Low confidence is
+ * flagged in the UI and never auto-accepted — confidence is attached, the text is
+ * opt-in (the whole point of "not blindly inserted").
+ */
+export const OCR_PAGE_STATUSES = ["suggested", "accepted", "dismissed"] as const;
+export type OcrPageStatus = (typeof OCR_PAGE_STATUSES)[number];

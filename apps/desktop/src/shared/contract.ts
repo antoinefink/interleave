@@ -1034,6 +1034,79 @@ export interface SourcesGetRegionImageResult {
 }
 
 // ---------------------------------------------------------------------------
+// sources.runOcr() / sources.getOcr() / sources.acceptOcr()  (T066 — OCR fallback)
+// ---------------------------------------------------------------------------
+
+/** Max bytes a single rendered page PNG may cross the IPC bridge for OCR (T066). */
+const MAX_OCR_PAGE_PNG_BYTES = 24 * 1024 * 1024; // 24 MB — a high-DPI full page.
+
+/**
+ * Run OCR on one scanned/text-free PDF page (T066). The renderer renders the page
+ * to a PNG (it already has the page on a `<canvas>`) and ships the size-capped
+ * bytes; MAIN writes the PNG to the vault (`sources/<id>/ocr/page-N.png`) and
+ * enqueues an `ocr` job carrying ONLY that vault-relative path (never the bytes —
+ * a persisted `jobs` row holds no blob). The worker OCRs it on the T058 runner with
+ * the bundled WASM/lang (offline); MAIN applies the result into the `ocr_pages`
+ * layer. The renderer observes progress via the existing `jobs.subscribe` surface.
+ */
+export const SourcesRunOcrRequestSchema = z.object({
+  elementId: ElementIdSchema,
+  /** The 1-based page to OCR. */
+  page: z.number().int().min(1),
+  /** The rendered page PNG bytes (produced in the renderer's `<canvas>`). */
+  imagePng: z
+    .instanceof(ArrayBuffer)
+    .refine((b) => b.byteLength > 0 && b.byteLength <= MAX_OCR_PAGE_PNG_BYTES, {
+      message: `imagePng must be 1..${MAX_OCR_PAGE_PNG_BYTES} bytes`,
+    }),
+});
+export type SourcesRunOcrRequest = z.infer<typeof SourcesRunOcrRequestSchema>;
+
+export interface SourcesRunOcrResult {
+  /** How many `ocr` jobs were enqueued (1 for a single page). */
+  readonly enqueued: number;
+  /** The enqueued job id (so the renderer can observe its progress). */
+  readonly jobId: string;
+}
+
+/** Read a PDF source's OCR suggestion layer (T066) — per-page text + confidence. */
+export const SourcesGetOcrRequestSchema = z.object({
+  elementId: ElementIdSchema,
+});
+export type SourcesGetOcrRequest = z.infer<typeof SourcesGetOcrRequestSchema>;
+
+/** One page's OCR suggestion (the renderer shows the text + a confidence badge). */
+export interface OcrPageSummary {
+  readonly page: number;
+  readonly text: string;
+  /** Mean confidence 0–100 (the renderer derives a green/amber/red badge). */
+  readonly meanConfidence: number;
+  /** `suggested` | `accepted` | `dismissed`. */
+  readonly status: string;
+}
+
+export interface SourcesGetOcrResult {
+  readonly pages: readonly OcrPageSummary[];
+}
+
+/**
+ * Accept / dismiss one page's OCR suggestion (T066). Accepting MERGES the text into
+ * the page body via the normal `documents.save` → `update_document` path (so it
+ * becomes searchable/extractable) and sets the row `accepted`; dismissing sets
+ * `dismissed`. The text is NEVER auto-merged — the user accepts it explicitly.
+ */
+export const SourcesAcceptOcrRequestSchema = z.object({
+  elementId: ElementIdSchema,
+  page: z.number().int().min(1),
+});
+export type SourcesAcceptOcrRequest = z.infer<typeof SourcesAcceptOcrRequestSchema>;
+
+export interface SourcesAcceptOcrResult {
+  /** Whether the OCR text was merged into the body (false when no suggestion). */
+  readonly accepted: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // jobs.list() / jobs.subscribe()  (T058 — observe the local background runner)
 // ---------------------------------------------------------------------------
 
@@ -2902,6 +2975,21 @@ export interface AppApi {
     extractRegion(request: SourcesExtractRegionRequest): Promise<SourcesExtractRegionResult>;
     /** Serve a region extract's cropped image bytes to the renderer (T065). */
     getRegionImage(request: SourcesGetRegionImageRequest): Promise<SourcesGetRegionImageResult>;
+    /**
+     * Run OCR on one scanned/text-free PDF page (T066) — the renderer ships the
+     * rendered page PNG; MAIN writes it to the vault + enqueues an `ocr` job on the
+     * T058 runner (DB-free `tesseract.js` worker, offline). Observe via `jobs.subscribe`.
+     */
+    runOcr(request: SourcesRunOcrRequest): Promise<SourcesRunOcrResult>;
+    /** Read a PDF source's OCR suggestion layer — per-page text + confidence (T066). */
+    getOcr(request: SourcesGetOcrRequest): Promise<SourcesGetOcrResult>;
+    /**
+     * Accept a page's OCR text into the body (T066) — merges it via `documents.save`
+     * (logs `update_document`); sets the `ocr_pages` row `accepted`. Never auto-merged.
+     */
+    acceptOcr(request: SourcesAcceptOcrRequest): Promise<SourcesAcceptOcrResult>;
+    /** Dismiss a page's OCR suggestion (T066) — sets `dismissed`. */
+    dismissOcr(request: SourcesAcceptOcrRequest): Promise<{ dismissed: boolean }>;
   };
   readonly capture: {
     /** Read the browser-capture pairing state (token + enabled/running/port) (T062). */

@@ -3,7 +3,9 @@
  *
  * Covers the read queries the vault integrity-verify + file-centric orphan GC rely
  * on: `findByContentHash` (any-by-hash), the liveness-aware `findLiveByContentHash`,
- * `referencedRelativePaths` (the GC reference set), and `listAll`. The load-bearing
+ * `referencedRelativePaths` (the GC reference set), `listAll`, and the upsert-by-path
+ * pair (`findLiveByOwnerAndPath` + `updateBytesWithin`, which let a re-import to the
+ * same owner+path refresh one row in place instead of duplicating). The load-bearing
  * GC-safety property is asserted directly: a soft-deleted-but-restorable owner keeps
  * its path REFERENCED (so its file is NOT an orphan), and only a HARD-purge (whose
  * cascade FK deletes the asset row) drops the path from the reference set — so the
@@ -85,6 +87,38 @@ describe("AssetRepository — dedup/GC/verify queries (T059)", () => {
     expect(assets.findLiveByContentHash("hash-live")?.contentHash).toBe("hash-live");
     // Unknown hash → null.
     expect(assets.findLiveByContentHash("missing")).toBeNull();
+  });
+
+  it("findLiveByOwnerAndPath + updateBytesWithin upsert a re-imported same-path asset in place", () => {
+    const assets = new AssetRepository(handle.db);
+    const { sourceId, assetId } = seedSourceWithAsset({
+      contentHash: "hash-v1",
+      relativePath: "sources/sX/ocr/page-1.png",
+      size: 100,
+    });
+
+    // The owner+path lookup finds the row (any-root default "assets").
+    const found = assets.findLiveByOwnerAndPath(sourceId, "assets", "sources/sX/ocr/page-1.png");
+    if (!found) throw new Error("expected the same-path asset row to be found");
+    expect(found.id).toBe(assetId);
+    // A different owner / path / root does NOT match.
+    expect(
+      assets.findLiveByOwnerAndPath(sourceId, "assets", "sources/sX/ocr/page-2.png"),
+    ).toBeNull();
+
+    // Update bytes-metadata in place → SAME id, refreshed hash/size, still one row.
+    const updated = handle.db.transaction((tx) =>
+      assets.updateBytesWithin(tx, found.id, {
+        contentHash: "hash-v2",
+        mime: "image/png",
+        size: 250,
+      }),
+    );
+    expect(updated.id).toBe(assetId);
+    expect(updated.contentHash).toBe("hash-v2");
+    expect(updated.size).toBe(250);
+    expect(assets.listForElement(sourceId)).toHaveLength(1);
+    expect(assets.findById(found.id)?.contentHash).toBe("hash-v2");
   });
 
   it("referencedRelativePaths includes a soft-deleted-but-restorable owner's path (NOT an orphan)", () => {

@@ -33,6 +33,13 @@ export interface DocumentBlockInput {
   readonly blockType: string;
   readonly order: number;
   readonly stableBlockId: BlockId;
+  /**
+   * The 1-based PAGE number for a PAGINATED (PDF, T064) block; `null`/omitted for
+   * non-paginated HTML/text bodies. Preserved across saves so accepting OCR text
+   * (T066) into a PDF body keeps the block→page map the read-point + extract path
+   * read. The renderer's plain document saves omit it (→ `null`, unchanged).
+   */
+  readonly page?: number | null;
 }
 
 /** Arguments to create/replace a document body + its blocks. */
@@ -145,6 +152,9 @@ export class DocumentRepository {
             blockType: block.blockType,
             order: block.order,
             stableBlockId: block.stableBlockId,
+            // Preserve the page mapping for paginated (PDF) blocks; `null` for the
+            // HTML/text path (its block inputs never set `page`).
+            page: block.page ?? null,
           })
           .run();
       }

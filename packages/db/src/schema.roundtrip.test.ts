@@ -70,6 +70,7 @@ describe("schema migration", () => {
       "element_tags",
       "elements",
       "jobs",
+      "ocr_pages",
       "operation_log",
       "read_points",
       "review_logs",

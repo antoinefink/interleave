@@ -140,9 +140,18 @@ function bootstrap(): void {
       // The asset-vault scaling service (T059) backs the `vault_verify`/`vault_gc`
       // job types so a large-vault hash/walk runs OFF-MAIN on the runner.
       getAssetVaultService: () => dbService.assetVaultService,
+      // The OCR apply (T066) persists the worker's recognized text into the
+      // `ocr_pages` layer + the durable vault json, through the open DB.
+      getOcrService: () => dbService.ocrService,
     }),
     workerPath: path.join(distDir, "job-worker.cjs"),
+    // The vault root the OCR worker resolves its page-image path against (T066),
+    // passed via the worker's env (never a persisted job payload).
+    assetsDir: paths.assetsDir,
   });
+  // Hand the runner to the DB service so the OCR command path (T066) can enqueue
+  // an `ocr` job (the apply handler reaches the OCR service the other direction).
+  dbService.setRunner(jobRunner);
   jobRunner.start();
 
   disposeIpc = registerIpcHandlers(dbService, {

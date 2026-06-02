@@ -64,12 +64,15 @@ import type {
   SettingsGetRequest,
   SettingsUpdateManyRequest,
   SettingsUpdateRequest,
+  SourcesAcceptOcrRequest,
   SourcesExtractRegionRequest,
+  SourcesGetOcrRequest,
   SourcesGetPdfDataRequest,
   SourcesGetRegionImageRequest,
   SourcesImportManualRequest,
   SourcesImportPdfRequest,
   SourcesImportUrlRequest,
+  SourcesRunOcrRequest,
   TagsAddRequest,
   TagsRemoveRequest,
   TrashPurgeRequest,
@@ -126,6 +129,14 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.sourcesExtractRegion, request),
     getRegionImage: (request: SourcesGetRegionImageRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.sourcesGetRegionImage, request),
+    runOcr: (request: SourcesRunOcrRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.sourcesRunOcr, request),
+    getOcr: (request: SourcesGetOcrRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.sourcesGetOcr, request),
+    acceptOcr: (request: SourcesAcceptOcrRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.sourcesAcceptOcr, request),
+    dismissOcr: (request: SourcesAcceptOcrRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.sourcesDismissOcr, request),
   },
   capture: {
     getPairing: () => ipcRenderer.invoke(IPC_CHANNELS.captureGetPairing),
