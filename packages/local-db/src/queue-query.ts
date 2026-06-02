@@ -13,10 +13,14 @@
  *
  * It composes {@link QueueRepository} (the two due reads) and the other
  * repositories (provenance/lineage for the per-row meta line, the op log for the
- * attention postpone count). The merged list is then **sorted by priority desc,
- * then `due_at` asc** — deterministic; the 10–20% jitter the daily-queue rule
- * asks for is a SEPARATE, seeded shuffle layer applied by the caller/renderer so
- * re-renders never reshuffle (kept out of here so the sort stays testable).
+ * attention postpone count). The merged list is then **ordered by the T076 scoring
+ * function** (`scoreQueueItems` in `@interleave/scheduler` — a deterministic weighted
+ * sum over priority/due/retrievability/type plus sibling/same-source/concept
+ * de-clumping, modulated by the active session `mode`), replacing the old
+ * priority-desc/due-asc two-key sort. The score is the deterministic ordering; the
+ * 10–20% jitter the daily-queue rule asks for is a SEPARATE, seeded shuffle layer
+ * applied by the caller/renderer so re-renders never reshuffle (kept out of here so
+ * the order stays testable).
  *
  * Read-only: no mutations, no `operation_log` append. The renderer reaches this
  * only through the typed `window.appApi.queue.list` command; it never touches SQL.
@@ -28,9 +32,13 @@ import type {
   ElementStatus,
   ElementType,
   IsoTimestamp,
+  SiblingGroupId,
 } from "@interleave/core";
 import { priorityToLabel } from "@interleave/core";
+import { type SessionMode, scoreQueueItems } from "@interleave/scheduler";
 import type { Repositories } from "./index";
+
+export type { SessionMode } from "@interleave/scheduler";
 
 /** Which scheduler a queue row is on — the FSRS vs attention split. */
 export type QueueScheduler = "fsrs" | "attention";
@@ -75,6 +83,17 @@ export interface QueueItemSummary {
   readonly author: string | null;
   /** A concept this row is a member of (the first membership), or null (T041). */
   readonly concept: string | null;
+  /**
+   * The sibling-group id (cards only), or `null` — a de-clumping key for the T076
+   * score (siblings/same-source rows are not placed adjacent). Resolved batched from
+   * the `sibling_group` `element_relations` edge; non-cards are always `null`.
+   */
+  readonly siblingGroupId: string | null;
+  /**
+   * The owning source's id (provenance), or `null` — the same-source de-clumping key
+   * for the T076 score. Already resolved in scope by `sourceContext`.
+   */
+  readonly sourceId: string | null;
   /** Card kind (`qa`/`cloze`), for the card meta line; null for non-cards. */
   readonly cardType: string | null;
   /** True for A-priority items (the `--protected` accent bar). */
@@ -180,26 +199,38 @@ export class QueueQuery {
   constructor(private readonly repos: Repositories) {}
 
   /**
-   * The unified, sorted, filtered due queue. Merges due cards (FSRS) and due
-   * attention items, decorates each with its scheduler signals + meta, sorts by
-   * **priority desc then `due_at` asc**, applies the type/concept/status filters,
+   * The unified, scored, filtered due queue. Merges due cards (FSRS) and due
+   * attention items, decorates each with its scheduler signals + meta (incl. the
+   * sibling-group + source de-clumping keys), orders by the **T076 scoring function**
+   * (priority/due/retrievability/type + sibling/source/concept de-clumping, modulated
+   * by the session `mode`, default `"full"`), applies the type/concept/status filters,
    * and computes the DRILL-DOWN per-type counts (respecting the active status/concept/
    * tag filters but not the type dimension, so a chip's count matches the rows shown
    * when that chip is selected) + the budget gauge. Deterministic — jitter is the
    * caller's concern.
    */
   list(
-    options: { asOf?: IsoTimestamp; filters?: QueueFilters; limit?: number } = {},
+    options: {
+      asOf?: IsoTimestamp;
+      filters?: QueueFilters;
+      limit?: number;
+      mode?: SessionMode;
+    } = {},
   ): QueueListData {
     const asOfIso = options.asOf ?? (new Date().toISOString() as IsoTimestamp);
     const asOfMs = Date.parse(asOfIso);
     const filters = options.filters ?? {};
+    const mode = options.mode ?? "full";
 
     // The two distinct due reads (the FSRS join vs the attention `due_at` read).
     const dueCards = this.repos.queue.dueCards(asOfIso);
     const dueAttention = this.repos.queue.dueAttentionItems(asOfIso);
 
-    const cardRows = dueCards.map((el) => this.toCardSummary(el, asOfMs));
+    // Resolve the sibling-group key for every card in ONE batched read (not N+1) so
+    // the T076 score's sibling-spacing pass has the identifier without a per-row query.
+    const siblingGroups = this.repos.elements.liveSiblingGroupMap();
+
+    const cardRows = dueCards.map((el) => this.toCardSummary(el, asOfMs, siblingGroups));
     const attentionRows = dueAttention.map((el) => this.toAttentionSummary(el, asOfMs));
     const all = [...cardRows, ...attentionRows];
 
@@ -236,11 +267,14 @@ export class QueueQuery {
       protected: nonTypeMatched.filter((r) => r.protected).length,
     };
 
-    // Apply ALL active filters (type included), then sort priority desc, then due date
-    // asc (stable). With the type dimension driven client-side this equals
-    // `nonTypeMatched`, so `counts.all === items.length` (before the optional limit).
+    // Apply ALL active filters (type included), then ORDER by the T076 scoring
+    // function (priority/due/retrievability/type + sibling/source/concept de-clumping,
+    // modulated by the session `mode`) — replacing the old priority-desc/due-asc sort.
+    // With the type dimension driven client-side this equals `nonTypeMatched`, so
+    // `counts.all === items.length` (before the optional limit). The score is the
+    // deterministic ordering; the renderer's seeded jitter still runs on top.
     let rows = all.filter((r) => this.matchesFilters(r, filters, conceptMatch));
-    rows = this.sort(rows);
+    rows = scoreQueueItems(rows, { mode, asOf: asOfIso });
     if (options.limit !== undefined) rows = rows.slice(0, options.limit);
 
     // The budget gauge counts the items the user actually faces today — the filtered
@@ -266,16 +300,6 @@ export class QueueQuery {
     return element.type === "card"
       ? this.toCardSummary(element, asOfMs)
       : this.toAttentionSummary(element, asOfMs);
-  }
-
-  /** Sort by priority DESCending, then by `due_at` ASCending (nulls last). Stable. */
-  private sort(rows: readonly QueueItemSummary[]): QueueItemSummary[] {
-    return [...rows].sort((a, b) => {
-      if (a.priority !== b.priority) return b.priority - a.priority;
-      const aDue = a.dueAt ? Date.parse(a.dueAt) : Number.POSITIVE_INFINITY;
-      const bDue = b.dueAt ? Date.parse(b.dueAt) : Number.POSITIVE_INFINITY;
-      return aDue - bDue;
-    });
   }
 
   /**
@@ -341,8 +365,17 @@ export class QueueQuery {
     return true;
   }
 
-  /** Build a card (FSRS) queue row from its element + review state. */
-  private toCardSummary(element: Element, asOfMs: number): QueueItemSummary {
+  /**
+   * Build a card (FSRS) queue row from its element + review state. The optional
+   * batched `siblingGroups` map (built once per `list()`) supplies the card's
+   * sibling-group key without an N+1 per-row read; the single-row {@link summaryFor}
+   * path falls back to a per-card resolve when the map is absent.
+   */
+  private toCardSummary(
+    element: Element,
+    asOfMs: number,
+    siblingGroups?: Map<ElementId, SiblingGroupId>,
+  ): QueueItemSummary {
     const state = this.repos.review.findReviewState(element.id);
     const card = this.repos.review.findCardById(element.id);
     const retrievability = state
@@ -350,7 +383,9 @@ export class QueueQuery {
       : null;
     const dueAt = state?.dueAt ?? element.dueAt;
     const due = dueStateFor(dueAt, asOfMs);
-    const { sourceTitle, author } = this.sourceContext(element);
+    const { sourceTitle, author, sourceId } = this.sourceContext(element);
+    const siblingGroupId =
+      (siblingGroups ? siblingGroups.get(element.id) : this.siblingGroupOf(element.id)) ?? null;
     return {
       id: element.id,
       type: element.type,
@@ -370,6 +405,8 @@ export class QueueQuery {
       sourceTitle,
       author,
       concept: this.conceptFor(element.id),
+      siblingGroupId,
+      sourceId,
       cardType: card?.card.kind ?? null,
       protected: priorityToLabel(element.priority) === "A",
       due,
@@ -380,7 +417,7 @@ export class QueueQuery {
   /** Build an attention (source/topic/extract/task/…) queue row. */
   private toAttentionSummary(element: Element, asOfMs: number): QueueItemSummary {
     const due = dueStateFor(element.dueAt, asOfMs);
-    const { sourceTitle, author } = this.sourceContext(element);
+    const { sourceTitle, author, sourceId } = this.sourceContext(element);
     return {
       id: element.id,
       type: element.type,
@@ -400,6 +437,10 @@ export class QueueQuery {
       sourceTitle,
       author,
       concept: this.conceptFor(element.id),
+      // Attention items never carry a sibling group (cards-only relation); `sourceId`
+      // is the owning source (or the element itself when it IS a source).
+      siblingGroupId: null,
+      sourceId,
       cardType: null,
       protected: priorityToLabel(element.priority) === "A",
       due,
@@ -407,16 +448,38 @@ export class QueueQuery {
     };
   }
 
-  /** The owning source's title + author for the per-row meta line. */
-  private sourceContext(element: Element): { sourceTitle: string | null; author: string | null } {
+  /**
+   * The owning source's title + author + ID for the per-row meta line (the `sourceId`
+   * is the same-source de-clumping key the T076 score reads — resolved here ONCE and
+   * carried on the summary, never re-resolved at the call sites).
+   */
+  private sourceContext(element: Element): {
+    sourceTitle: string | null;
+    author: string | null;
+    sourceId: string | null;
+  } {
     const sourceId = element.type === "source" ? element.id : element.sourceId;
-    if (!sourceId) return { sourceTitle: null, author: null };
+    if (!sourceId) return { sourceTitle: null, author: null, sourceId: null };
     const sourceEl = element.type === "source" ? element : this.repos.elements.findById(sourceId);
     const provenance = this.repos.sources.findById(sourceId)?.source ?? null;
     return {
       sourceTitle: sourceEl && !sourceEl.deletedAt ? sourceEl.title : null,
       author: provenance?.author ?? null,
+      sourceId,
     };
+  }
+
+  /**
+   * The sibling group of ONE card (the {@link summaryFor} single-row path), via the
+   * `sibling_group` `element_relations` edge FROM the card — the same M6 shape
+   * {@link ReviewSessionService.siblingGroupOf} reads. The batched `list()` path uses
+   * {@link ElementRepository.liveSiblingGroupMap} instead (one read for the whole set).
+   */
+  private siblingGroupOf(id: ElementId): SiblingGroupId | null {
+    const edge = this.repos.elements
+      .listRelationsFrom(id)
+      .find((r) => r.relationType === "sibling_group" && r.siblingGroupId != null);
+    return edge?.siblingGroupId ?? null;
   }
 
   /**

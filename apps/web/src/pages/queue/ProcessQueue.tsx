@@ -11,8 +11,10 @@
  * cursor to the next due item automatically, so a user can process ten mixed
  * sources/extracts/cards end to end WITHOUT ever returning to the list — including
  * grading a due card inline, never detouring to /review. A progress readout
- * ("3 / 12 · N left") and a presentational mode `Segmented` header frame the
- * session; finishing shows the "Queue clear" done state.
+ * ("3 / 12 · N left") and a mode `Segmented` header — whose selection is a real
+ * server-side ordering input threaded into `queue.list` (T076 auto-sort), not a
+ * presentational toggle — frame the session; finishing shows the "Queue clear"
+ * done state.
  *
  * Architecture (non-negotiable): the loop introduces NO new mutation path — the
  * T030 actions call the SAME typed `appApi.actOnQueueItem` (`queue.act`) /
@@ -49,7 +51,6 @@ import {
   isDesktop,
   type QueueActAction,
   type QueueItemSummary,
-  type QueueListResult,
   type QueueScheduleChoice,
   type ReviewCardView,
   type ReviewIntervalPreview,
@@ -67,7 +68,12 @@ import "./queue.css";
 import "./process-queue.css";
 import { useProcessShortcuts } from "./useProcessShortcuts";
 
-/** Presentational "which slice to process" mode (steering only — auto-postpone is M16). */
+/**
+ * The session mode (T076) — a SOFT ordering bias sent to `queue.list` as `mode`, not
+ * a client-side slice. `review` floats cards to the front, `read` floats reading
+ * items, `full` is neutral; BOTH types always stay in the deck (the old `modeIncludes`
+ * hard filter is gone), so switching mode RE-ORDERS the loop rather than slicing it.
+ */
 type SessionMode = "full" | "review" | "read";
 const MODES: readonly { id: SessionMode; label: string; icon: IconName }[] = [
   { id: "full", label: "Full", icon: "layers" },
@@ -147,29 +153,20 @@ function cardChipSignals(card: ReviewCardView): SchedulerSignals {
   };
 }
 
-/** Whether the current mode keeps this item in the loop (presentational steering). */
-function modeIncludes(mode: SessionMode, item: QueueItemSummary): boolean {
-  if (mode === "full") return true;
-  if (mode === "review") return item.type === "card";
-  // "read" → reading/processing items (sources/topics/extracts/tasks), not cards.
-  return item.type !== "card";
-}
-
 export function ProcessQueue() {
   const desktop = isDesktop();
   const navigate = useNavigate();
   const { select } = useSelection();
   // The route declares no `validateSearch`, so search is loosely typed — an
   // optional `asOf` date-scopes the due reads (the E2E drives a fixed clock) and an
-  // optional `mode` seeds the session slice.
+  // optional `mode` seeds the session ordering bias (T076).
   const search = useSearch({ strict: false }) as { asOf?: string; mode?: string };
   const asOf = typeof search.asOf === "string" ? search.asOf : undefined;
 
-  const [data, setData] = useState<QueueListResult | null>(null);
   const [mode, setMode] = useState<SessionMode>(
     search.mode === "review" || search.mode === "read" ? search.mode : "full",
   );
-  /** Index into the ordered, mode-filtered session list. */
+  /** Index into the ordered (T076-scored, jittered) session deck. */
   const [cursor, setCursor] = useState(0);
   /** How many items the user has processed this session (acted/scheduled/graded). */
   const [processed, setProcessed] = useState(0);
@@ -190,43 +187,52 @@ export function ProcessQueue() {
   /** Card ids already graded this session — the hard guard against a double grade. */
   const gradedRef = useRef<Set<string>>(new Set());
 
-  // The ordered session list: the read's deterministic priority-then-due sort, the
-  // stable seeded jitter (so the user isn't trapped in one topic), then the mode
-  // slice. Frozen for the session's lifetime via the initial fetch — the cursor
-  // walks THIS order; acting on an item just advances the cursor (we never re-read
-  // and reshuffle mid-session, which would yank the ground out from under the user).
+  // The ordered session list: the read's deterministic T076 SCORE order (which the
+  // `mode` already biases server-side), then the stable seeded jitter (so the user
+  // isn't trapped in one topic). The FULL mixed deck — `mode` re-orders it, never
+  // slices it (the old `modeIncludes` filter is gone), so both cards and reading items
+  // are always present. Frozen for the session's lifetime via the fetch — the cursor
+  // walks THIS order; acting on an item just advances the cursor (we never re-read and
+  // reshuffle mid-session, which would yank the ground out from under the user). A
+  // mode switch is the ONE deliberate re-fetch (the order changes, not the membership).
   const [order, setOrder] = useState<QueueItemSummary[]>([]);
 
   const total = order.length;
   const current = cursor < total ? order[cursor] : null;
   const done = total === 0 || cursor >= total;
   const isCard = current?.type === "card";
-  /** Items left to look at (this one + everything after). */
+  /** Items left to look at (this one + everything after) — the full mixed deck. */
   const remaining = Math.max(0, total - cursor);
 
-  // Read the latest mode without making `load` depend on it: switching mode
-  // re-slices the already-loaded items via `onModeChange` (no re-fetch), so a load
-  // triggered by the clock alone should use whatever mode is current.
+  // Read the latest mode without making `load` depend on it, so a load triggered by
+  // the clock alone uses whatever mode is current (a mode switch passes it explicitly).
   const modeRef = useRef(mode);
   modeRef.current = mode;
 
-  // Load the queue once on mount (and when the clock changes). The loop freezes the
-  // order at load so the cursor is stable; subsequent actions advance the cursor.
-  const load = useCallback(async () => {
-    if (!isDesktop()) return;
-    try {
-      const next = await appApi.listQueue(asOf ? { asOf } : undefined);
-      setData(next);
-      setError(null);
-      const jittered = jitterOrder(next.items);
-      setOrder(jittered.filter((i) => modeIncludes(modeRef.current, i)));
-      setCursor(0);
-      setProcessed(0);
-      gradedRef.current = new Set();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, [asOf]);
+  // Load the queue (on mount, when the clock changes, and on a mode switch). `mode`
+  // flows to `queue.list` as a SOFT ordering bias, so the loop reads the FULL mixed
+  // deck re-ordered for the mode — no client-side slice. The loop freezes that order
+  // at load so the cursor is stable; subsequent actions advance the cursor.
+  const load = useCallback(
+    async (modeOverride?: SessionMode) => {
+      if (!isDesktop()) return;
+      const activeMode = modeOverride ?? modeRef.current;
+      try {
+        const next = await appApi.listQueue({
+          ...(asOf ? { asOf } : {}),
+          mode: activeMode,
+        });
+        setError(null);
+        setOrder(jitterOrder(next.items));
+        setCursor(0);
+        setProcessed(0);
+        gradedRef.current = new Set();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [asOf],
+  );
 
   useEffect(() => {
     void load();
@@ -297,18 +303,18 @@ export function ProcessQueue() {
     setCursor((c) => c + 1);
   }, []);
 
-  /** Re-slice the frozen items when the mode changes (no re-fetch, no reshuffle). */
+  /**
+   * Re-order the loop when the mode changes by RE-REQUESTING `queue.list` with the new
+   * `mode` (the T076 score re-orders the same full mixed deck — `review` floats cards,
+   * `read` floats reading items — so this is a deliberate re-fetch, not a client-side
+   * slice). The deck membership is unchanged; only its order is.
+   */
   const onModeChange = useCallback(
     (next: SessionMode) => {
       setMode(next);
-      if (!data) return;
-      const jittered = jitterOrder(data.items);
-      setOrder(jittered.filter((i) => modeIncludes(next, i)));
-      setCursor(0);
-      setProcessed(0);
-      gradedRef.current = new Set();
+      void load(next);
     },
-    [data],
+    [load],
   );
 
   /**

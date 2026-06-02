@@ -10,7 +10,9 @@
  *    (`elements.due_at`) — the two distinct schedulers, kept separate in the read;
  *  - each row carries the correct `scheduler` tag (`fsrs` for cards, `attention`
  *    for the rest) + the matching signals;
- *  - rows are sorted by PRIORITY desc, then due date asc;
+ *  - rows are ordered by the T076 SCORING FUNCTION (priority dominant, then due/
+ *    retrievability/type + sibling/source/concept de-clumping, modulated by `mode`),
+ *    and each row carries the `siblingGroupId` + `sourceId` de-clumping keys;
  *  - `protected` is set for band-A items (the `--protected` accent bar);
  *  - type / status filters narrow correctly;
  *  - the budget gauge reads the daily review budget from settings.
@@ -354,5 +356,93 @@ describe("QueueQuery", () => {
     const { items, counts } = queue.list({ asOf: NOW });
     expect(items).toHaveLength(0);
     expect(counts.all).toBe(0);
+  });
+
+  it("T076: enriches each row with the de-clumping keys (sourceId + siblingGroupId)", () => {
+    const { sourceId, extractId, qaCardId } = buildDueSet();
+    const { items } = queue.list({ asOf: NOW });
+    const source = items.find((i) => i.id === sourceId);
+    const extract = items.find((i) => i.id === extractId);
+    const card = items.find((i) => i.id === qaCardId);
+    // A source's `sourceId` is itself; the extract + card belong to that source.
+    expect(source?.sourceId).toBe(sourceId);
+    expect(extract?.sourceId).toBe(sourceId);
+    expect(card?.sourceId).toBe(sourceId);
+    // The fixture cards have no sibling-group edge, so `siblingGroupId` is null;
+    // attention items never carry one.
+    expect(card?.siblingGroupId).toBeNull();
+    expect(source?.siblingGroupId).toBeNull();
+  });
+
+  it("T076: orders by the score (default `full` mode) — high-priority overdue floats first", () => {
+    const { sourceId, extractId } = buildDueSet();
+    const { items } = queue.list({ asOf: NOW });
+    // The B-priority extract (due today, not overdue) sits behind the A items.
+    expect(items[items.length - 1]?.id).toBe(extractId);
+    // The overdue A-priority source is at (or near) the front — score, not raw priority.
+    expect(items[0]?.priority).toBe(PRIORITY_LABEL_VALUE.A);
+    // `list()` with no `mode` defaults to `"full"` — same order as an explicit full.
+    const explicit = queue.list({ asOf: NOW, mode: "full" }).items.map((i) => i.id);
+    expect(items.map((i) => i.id)).toEqual(explicit);
+    expect(items.map((i) => i.id)).toContain(sourceId);
+  });
+
+  it("T076: `review` mode floats the card above an equally-scored source; `read` inverts (neither dropped)", () => {
+    // A due source and a due card at the SAME priority + same due day, with the card's
+    // retrievability pinned to ~0.5 (reviewed ~25.6 days ago at stability 2) so it
+    // equals the attention row's NEUTRAL retrievability — leaving ONLY the
+    // mode-modulated type weight to separate them, making the flip decisive.
+    const source = repos.sources.create({
+      title: "A read-mode source",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "active",
+    });
+    repos.elements.reschedule(source.element.id, iso("2026-05-30T06:00:00.000Z"));
+
+    const card = repos.review.createCard({
+      kind: "qa",
+      title: "A review-mode card",
+      priority: PRIORITY_LABEL_VALUE.B,
+      prompt: "Q?",
+      answer: "A.",
+      stage: "active_card",
+    });
+    repos.review.recordReview(card.element.id, {
+      rating: "good",
+      // ~25.6 days before NOW with stability 2 ⇒ R ≈ 0.50 (the neutral midpoint).
+      reviewedAt: iso("2026-05-04T22:24:00.000Z"),
+      responseMs: 3000,
+      prevState: "review",
+      nextState: "review",
+      nextStability: 2,
+      nextDifficulty: 5,
+      nextDueAt: iso("2026-05-30T06:00:00.000Z"),
+      elapsedDays: 25,
+      scheduledDays: 25,
+      reps: 2,
+      lapses: 0,
+      nextLearningSteps: 0,
+    });
+
+    const review = queue.list({ asOf: NOW, mode: "review" }).items.map((i) => i.id);
+    const read = queue.list({ asOf: NOW, mode: "read" }).items.map((i) => i.id);
+    // Both modes keep BOTH items (no hard filter — the old `modeIncludes` slice is gone).
+    expect(review).toEqual(expect.arrayContaining([card.element.id, source.element.id]));
+    expect(read).toEqual(expect.arrayContaining([card.element.id, source.element.id]));
+    // review floats the card ahead of the source; read floats the source ahead.
+    expect(review.indexOf(card.element.id)).toBeLessThan(review.indexOf(source.element.id));
+    expect(read.indexOf(source.element.id)).toBeLessThan(read.indexOf(card.element.id));
+  });
+
+  it("T076: the drill-down counts + budget gauge are unchanged by the mode", () => {
+    buildDueSet();
+    const full = queue.list({ asOf: NOW, mode: "full" });
+    const review = queue.list({ asOf: NOW, mode: "review" });
+    // Ordering changes; the merged set, counts, and budget are identical.
+    expect(review.counts).toEqual(full.counts);
+    expect(review.budget).toEqual(full.budget);
+    expect([...review.items].map((i) => i.id).sort()).toEqual(
+      [...full.items].map((i) => i.id).sort(),
+    );
   });
 });

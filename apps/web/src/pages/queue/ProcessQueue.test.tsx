@@ -47,6 +47,8 @@ const h = vi.hoisted(() => {
     sourceTitle: "On the Measure of Intelligence",
     author: "François Chollet",
     concept: null,
+    siblingGroupId: null,
+    sourceId: null,
     cardType: null,
     protected: false,
     due: "today",
@@ -353,5 +355,46 @@ describe("ProcessQueue", () => {
     await waitFor(() => expect(currentItemId()).toBe("source-1"));
     fireEvent.click(screen.getByTestId("process-action-open"));
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/source/$id", params: { id: "source-1" } });
+  });
+
+  it("T076: requests queue.list with mode `full` on mount", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    expect(h.listQueue).toHaveBeenCalledWith(expect.objectContaining({ mode: "full" }));
+  });
+
+  it("T076: switching the SessionMode re-requests queue.list with the new mode (soft re-order, not a slice)", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    h.listQueue.mockClear();
+
+    fireEvent.click(screen.getByTestId("process-mode-review"));
+    // The mode flows to the read as a soft ordering bias — a deliberate re-fetch.
+    await waitFor(() =>
+      expect(h.listQueue).toHaveBeenCalledWith(expect.objectContaining({ mode: "review" })),
+    );
+
+    fireEvent.click(screen.getByTestId("process-mode-read"));
+    await waitFor(() =>
+      expect(h.listQueue).toHaveBeenCalledWith(expect.objectContaining({ mode: "read" })),
+    );
+  });
+
+  it("T076: the 'N left' counter reflects the FULL mixed deck, not a type-filtered slice", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-progress");
+    // The seeded mock returns a card + a source + an extract (3 mixed items): the deck
+    // total is 3 and "N left" counts the full mixed remainder.
+    expect(screen.getByTestId("process-progress")).toHaveTextContent("1 / 3");
+    expect(screen.getByTestId("process-progress")).toHaveTextContent("3 left");
+
+    // Switching to review mode keeps the FULL deck (cards AND reading items) — the
+    // old `modeIncludes` hard filter is gone, so the total never drops to a 1-card slice.
+    fireEvent.click(screen.getByTestId("process-mode-review"));
+    await waitFor(() =>
+      expect(h.listQueue).toHaveBeenCalledWith(expect.objectContaining({ mode: "review" })),
+    );
+    await waitFor(() => expect(screen.getByTestId("process-progress")).toHaveTextContent("1 / 3"));
+    expect(screen.getByTestId("process-progress")).toHaveTextContent("3 left");
   });
 });

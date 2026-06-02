@@ -507,6 +507,13 @@ export interface QueueItemSummary {
   readonly author: string | null;
   /** A concept this row is a member of (T041 populates this; null until then). */
   readonly concept: string | null;
+  /**
+   * The sibling-group id (cards only), or `null` — a de-clumping key for the T076
+   * auto-sort (siblings are not placed adjacent). Non-cards are always `null`.
+   */
+  readonly siblingGroupId: string | null;
+  /** The owning source's id (provenance), or `null` — the same-source de-clumping key. */
+  readonly sourceId: string | null;
   /** Card kind (`qa`/`cloze`); null for non-cards. */
   readonly cardType: string | null;
   /** True for A-priority items (the `--protected` accent bar). */
@@ -546,6 +553,12 @@ export const QueueListRequestSchema = z.object({
   tag: z.string().trim().max(256).optional(),
   /** Keep only these lifecycle statuses. */
   statuses: z.array(z.enum(ELEMENT_STATUSES)).optional(),
+  /**
+   * The active session mode (T076) — a SOFT type up-weight on the auto-sort, not a
+   * filter. `review` floats cards, `read` floats reading items, `full` is neutral.
+   * Defaults to `"full"`. Both types always stay in the list; the mode re-orders them.
+   */
+  mode: z.enum(["full", "review", "read"]).optional(),
 });
 export type QueueListRequest = z.infer<typeof QueueListRequestSchema>;
 

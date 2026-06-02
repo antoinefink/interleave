@@ -704,14 +704,17 @@ export class DbService {
    * The unified, sorted, filtered due queue (T029). The {@link QueueQuery} merges
    * the two DISTINCT due reads (due cards via the FSRS `review_states.due_at` join;
    * due sources/topics/extracts/tasks via the attention `elements.due_at` read),
-   * decorates each row with its scheduler signals + meta, **sorts priority-then-due
-   * date**, applies the type/concept/status filters, and reads the daily review
-   * budget from {@link SettingsRepository} for the gauge. Read-only — no mutation,
-   * no `operation_log`. The two schedulers stay separate inside the read.
+   * decorates each row with its scheduler signals + meta, **orders by the T076
+   * scoring function** (priority/due/retrievability/type + sibling/source/concept
+   * de-clumping, modulated by the session `mode`), applies the type/concept/status
+   * filters, and reads the daily review budget from {@link SettingsRepository} for the
+   * gauge. Read-only — no mutation, no `operation_log`. The two schedulers stay
+   * separate inside the read.
    */
   listQueue(request: QueueListRequest): QueueListResult {
     const data = this.queueQuery.list({
       ...(request.asOf ? { asOf: request.asOf as IsoTimestamp } : {}),
+      ...(request.mode ? { mode: request.mode } : {}),
       filters: {
         ...(request.types ? { types: request.types } : {}),
         ...(request.concept ? { concept: request.concept } : {}),

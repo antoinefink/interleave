@@ -472,6 +472,32 @@ export class ElementRepository {
   }
 
   /**
+   * A BATCHED `card element id -> sibling group id` map built from ONE
+   * `sibling_group` relations read (T076). The review session resolves a card's
+   * group per card via {@link ReviewSessionService.siblingGroupOf}; doing that for
+   * every row of a large due-card set would be N+1, so the queue read builds this map
+   * once per `list()` and looks up each row. Mirrors the M6 shape: the
+   * `sibling_group` `element_relations` edge FROM the card carries the grouping
+   * `siblingGroupId`. A card with several edges keeps the first non-null group (a
+   * card belongs to one group). Read-only; mutates nothing.
+   */
+  liveSiblingGroupMap(): Map<ElementId, SiblingGroupId> {
+    const rows = this.db
+      .select()
+      .from(elementRelations)
+      .where(eq(elementRelations.relationType, "sibling_group"))
+      .all();
+    const byCard = new Map<ElementId, SiblingGroupId>();
+    for (const row of rows) {
+      const group = (row.siblingGroupId as SiblingGroupId | null) ?? null;
+      if (group == null) continue;
+      const cardId = row.fromElementId as ElementId;
+      if (!byCard.has(cardId)) byCard.set(cardId, group);
+    }
+    return byCard;
+  }
+
+  /**
    * Attach a tag (by name, created on demand) to an element + log `add_tag`,
    * atomically. Idempotent: re-tagging is a no-op on the join.
    */

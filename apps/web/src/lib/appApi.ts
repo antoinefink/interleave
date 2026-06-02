@@ -312,6 +312,10 @@ export interface QueueItemSummary {
   readonly author: string | null;
   /** A concept this row is a member of (T041 populates this; null until then). */
   readonly concept: string | null;
+  /** The sibling-group id (cards only), or `null` — the T076 de-clumping key. */
+  readonly siblingGroupId: string | null;
+  /** The owning source's id, or `null` — the T076 same-source de-clumping key. */
+  readonly sourceId: string | null;
   /** Card kind (`qa`/`cloze`); null for non-cards. */
   readonly cardType: string | null;
   /** True for A-priority items (the `--protected` accent bar). */
@@ -333,7 +337,10 @@ export interface QueueCounts {
   readonly protected: number;
 }
 
-/** Filters the queue read accepts (type/concept/tag/status). */
+/** The active session mode (T076) — a soft type up-weight on the auto-sort. */
+export type QueueSessionMode = "full" | "review" | "read";
+
+/** Filters the queue read accepts (type/concept/tag/status) + the session mode. */
 export interface QueueListRequest {
   /** "Now" the due reads compare against (ISO-8601); defaults to the server clock. */
   readonly asOf?: string;
@@ -343,6 +350,12 @@ export interface QueueListRequest {
   /** Tag filter, by tag name (T041). */
   readonly tag?: string;
   readonly statuses?: readonly string[];
+  /**
+   * The session mode (T076) — `review` floats cards, `read` floats reading items,
+   * `full` (default) is neutral. A SOFT ordering bias, not a filter: both types stay
+   * in the list; the mode only re-orders them.
+   */
+  readonly mode?: QueueSessionMode;
 }
 
 export interface QueueListResult {

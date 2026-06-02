@@ -56,3 +56,16 @@ export {
 } from "./card-scheduler";
 export { addDays, MS_PER_DAY } from "./date-util";
 export { isLeech, LEECH_LAPSE_THRESHOLD } from "./leech";
+export {
+  DECLUMP_MAX_PUSHDOWN,
+  DEFAULT_QUEUE_SCORE_WEIGHTS,
+  DUE_URGENCY_SATURATION_DAYS,
+  NEUTRAL_RETRIEVABILITY,
+  type QueueScoreContext,
+  type QueueScoreInput,
+  type QueueScoreOptions,
+  type QueueScoreWeights,
+  queueItemScore,
+  type SessionMode,
+  scoreQueueItems,
+} from "./queue-score";
