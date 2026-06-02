@@ -42,6 +42,12 @@ export {
   type UpdateCardBodyInput,
 } from "./card-edit-service";
 export {
+  type CardRetirementResult,
+  CardRetirementService,
+  type RetireCardInput,
+  type RetiredCard,
+} from "./card-retirement-service";
+export {
   CardService,
   type CreateCardFromExtractInput,
   type CreateCardResult,

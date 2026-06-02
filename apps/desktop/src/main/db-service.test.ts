@@ -2455,7 +2455,7 @@ describe("DbService — backup support (T047)", () => {
   it("getSchemaVersion returns the latest applied Drizzle migration tag", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
-    expect(svc.getSchemaVersion(MIGRATIONS_DIR)).toBe("0019_graceful_veda");
+    expect(svc.getSchemaVersion(MIGRATIONS_DIR)).toBe("0020_optimal_zombie");
     svc.close();
   });
 
@@ -2740,6 +2740,114 @@ describe("DbService — FSRS parameter optimization (T080)", () => {
     const second = new DbService();
     second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
     expect(second.getAppSettings().settings.fsrsParamsGlobal).toEqual(STEEP_W);
+    second.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cards.retire / cards.unretire / cards.retired (T082) — mature-card retirement.
+// ---------------------------------------------------------------------------
+
+describe("DbService — mature-card retirement (T082)", () => {
+  /** Author a card from a fresh source+extract (first-scheduled DUE); return its id. */
+  function seedDueCard(svc: DbService): string {
+    const { id: sourceId } = svc.importManualSource({
+      title: "On the Measure of Intelligence",
+      priority: "A",
+      body: "The definition paragraph.\n\nAnother paragraph.",
+    });
+    const blockId = (
+      svc.raw.sqlite
+        .prepare("SELECT stable_block_id AS b FROM document_blocks WHERE document_id = ? LIMIT 1")
+        .get(sourceId) as { b: string }
+    ).b;
+    const { extract } = svc.createExtraction({
+      sourceElementId: sourceId,
+      selectedText: "The definition paragraph.",
+      blockIds: [blockId],
+      startOffset: 0,
+      endOffset: 25,
+    });
+    const { card } = svc.createCard({
+      extractId: extract.id,
+      kind: "qa",
+      prompt: "What can be retired?",
+      answer: "A low-value mature card.",
+    });
+    return card.id;
+  }
+
+  it("retireCard flips the flag, drops the card from review, and is reversible (T082)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const cardId = seedDueCard(svc);
+    const asOf = "2099-01-01T00:00:00.000Z";
+
+    // Surfaceable before retiring.
+    expect(svc.repos.queue.dueCards(asOf as never).map((c) => c.id)).toContain(cardId);
+
+    const retired = svc.retireCard({ cardId });
+    expect(retired.card.retired).toBe(true);
+    // Gone from the due read (the flag, not the status).
+    expect(svc.repos.queue.dueCards(asOf as never).map((c) => c.id)).not.toContain(cardId);
+
+    // The inspector surfaces the retired state + the card is NOT soft-deleted.
+    const insp = svc.getInspectorData(cardId);
+    expect(insp.data?.review?.isRetired).toBe(true);
+    expect(insp.data?.element.status).not.toBe("deleted");
+
+    // Un-retire returns it to the deck.
+    const back = svc.unretireCard({ cardId });
+    expect(back.card.retired).toBe(false);
+    expect(svc.repos.queue.dueCards(asOf as never).map((c) => c.id)).toContain(cardId);
+    svc.close();
+  });
+
+  it("cardsRetired lists only live retired cards with stability + lineage (T082)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const retiredId = seedDueCard(svc);
+    const liveId = seedDueCard(svc);
+
+    expect(svc.cardsRetired().cards).toHaveLength(0);
+    svc.retireCard({ cardId: retiredId });
+
+    const list = svc.cardsRetired().cards;
+    expect(list).toHaveLength(1);
+    expect(list[0]?.id).toBe(retiredId);
+    expect(list.map((c) => c.id)).not.toContain(liveId);
+    expect(typeof list[0]?.stability).toBe("number");
+    // Lineage source title travels with the inventory row.
+    expect(list[0]?.sourceTitle).toBe("On the Measure of Intelligence");
+    svc.close();
+  });
+
+  it("the retired count is reflected in analytics (T082)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const cardId = seedDueCard(svc);
+    expect(svc.getAnalytics().retired).toBe(0);
+    svc.retireCard({ cardId });
+    expect(svc.getAnalytics().retired).toBe(1);
+    svc.close();
+  });
+
+  it("retired state SURVIVES a close + reopen (restart), preserving review state (T082)", () => {
+    const first = new DbService();
+    first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const cardId = seedDueCard(first);
+    const stateBefore = first.repos.review.findReviewState(cardId as never);
+    first.retireCard({ cardId });
+    first.close();
+
+    const second = new DbService();
+    second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(second.cardsRetired().cards.map((c) => c.id)).toContain(cardId);
+    expect(second.getInspectorData(cardId).data?.review?.isRetired).toBe(true);
+    // The FSRS memory state is intact across restart (retire never touched it).
+    const stateAfter = second.repos.review.findReviewState(cardId as never);
+    expect(stateAfter?.dueAt).toBe(stateBefore?.dueAt);
+    expect(stateAfter?.stability).toBe(stateBefore?.stability);
     second.close();
   });
 });

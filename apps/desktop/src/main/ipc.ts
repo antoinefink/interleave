@@ -25,7 +25,9 @@ import {
   CardsGenerateOcclusionRequestSchema,
   CardsImportAnkiRequestSchema,
   CardsMarkLeechRequestSchema,
+  CardsRetireRequestSchema,
   CardsSuspendRequestSchema,
+  CardsUnretireRequestSchema,
   CardsUpdateRequestSchema,
   ConceptsAssignRequestSchema,
   ConceptsCreateRequestSchema,
@@ -863,6 +865,20 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.cardsMarkLeech, (_event, rawRequest: unknown) => {
     const request = CardsMarkLeechRequestSchema.parse(rawRequest);
     return dbService.markLeechCard(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.cardsRetire, (_event, rawRequest: unknown) => {
+    const request = CardsRetireRequestSchema.parse(rawRequest);
+    return dbService.retireCard(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.cardsUnretire, (_event, rawRequest: unknown) => {
+    const request = CardsUnretireRequestSchema.parse(rawRequest);
+    return dbService.unretireCard(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.cardsRetired, () => {
+    return dbService.cardsRetired();
   });
 
   ipcMain.handle(IPC_CHANNELS.extractsUpdateStage, (_event, rawRequest: unknown) => {

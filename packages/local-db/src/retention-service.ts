@@ -32,6 +32,7 @@ import { rowToElement } from "./mappers";
 import { OperationLogRepository } from "./operation-log-repository";
 import { ReviewRepository } from "./review-repository";
 import { SettingsRepository } from "./settings-repository";
+import type { DbClient } from "./types";
 
 /** A card element + its `cards` side-table row, after a retention override write. */
 export interface RetentionCardResult {
@@ -138,8 +139,17 @@ export class RetentionService {
    * at this write choke point (so an override can never reach a self-retiring near-zero
    * target — T082's `is_retired` flag is the retirement mechanism, not this); `null`
    * clears the override (inherit concept/band/global). No new op type.
+   *
+   * An optional `tx` executor lets a CALLER run this write inside a LARGER
+   * transaction (T082's `retire` floor-clamps the override in the SAME transaction
+   * as the retirement flag flip) — when omitted the write opens its own transaction,
+   * so existing callers are unchanged.
    */
-  setCardRetention(cardElementId: ElementId, value: number | null): RetentionCardResult {
+  setCardRetention(
+    cardElementId: ElementId,
+    value: number | null,
+    tx?: DbClient,
+  ): RetentionCardResult {
     const card = this.review.findCardById(cardElementId);
     if (card?.element.type !== "card" || card.element.deletedAt) {
       throw new Error(`RetentionService.setCardRetention: card ${cardElementId} not found`);
@@ -149,15 +159,20 @@ export class RetentionService {
         ? null
         : Math.min(DESIRED_RETENTION_MAX, Math.max(DESIRED_RETENTION_MIN, value));
 
-    return this.db.transaction((tx) => {
-      const before = tx.select().from(cards).where(eq(cards.elementId, cardElementId)).get();
+    const write = (exec: DbClient): RetentionCardResult => {
+      const before = exec.select().from(cards).where(eq(cards.elementId, cardElementId)).get();
       const prev = before?.desiredRetention ?? null;
-      tx.update(cards)
+      exec
+        .update(cards)
         .set({ desiredRetention: next })
         .where(eq(cards.elementId, cardElementId))
         .run();
-      tx.update(elements).set({ updatedAt: nowIso() }).where(eq(elements.id, cardElementId)).run();
-      new OperationLogRepository(tx).append(tx, {
+      exec
+        .update(elements)
+        .set({ updatedAt: nowIso() })
+        .where(eq(elements.id, cardElementId))
+        .run();
+      new OperationLogRepository(exec).append(exec, {
         opType: "update_element",
         elementId: cardElementId,
         payload: {
@@ -166,14 +181,16 @@ export class RetentionService {
           prev: { desiredRetention: prev },
         },
       });
-      const row = tx.select().from(cards).where(eq(cards.elementId, cardElementId)).get();
-      const elementRow = tx.select().from(elements).where(eq(elements.id, cardElementId)).get();
+      const row = exec.select().from(cards).where(eq(cards.elementId, cardElementId)).get();
+      const elementRow = exec.select().from(elements).where(eq(elements.id, cardElementId)).get();
       if (!row || !elementRow) {
         throw new Error(
           `RetentionService.setCardRetention: card ${cardElementId} missing after write`,
         );
       }
       return { card: row, element: rowToElement(elementRow) };
-    });
+    };
+
+    return tx ? write(tx) : this.db.transaction((inner) => write(inner));
   }
 }

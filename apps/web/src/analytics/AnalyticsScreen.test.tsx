@@ -34,6 +34,7 @@ const h = vi.hoisted(() => {
     newExtracts: 9,
     deletions: 2,
     leeches: 1,
+    retired: 0,
     dayStreak: 5,
   };
   return { summary, getAnalytics: vi.fn(), navigateSpy: vi.fn() };

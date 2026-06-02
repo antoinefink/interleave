@@ -140,6 +140,23 @@ export function ReviewRepairBar({
     }
   }, [busy, saving, card.id, onCardRemoved]);
 
+  // Retire (T082) — a low-value mature card leaves active review gracefully (kept
+  // for reference, reversibly). Like suspend it drops the card from the deck +
+  // advances the session, but it is a distinct exit (the durable `is_retired` flag,
+  // not a status). Un-retire lives in the inspector + the maintenance inventory.
+  const retire = useCallback(async () => {
+    if (busy || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await appApi.retireCard({ cardId: card.id });
+      await onCardRemoved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setSaving(false);
+    }
+  }, [busy, saving, card.id, onCardRemoved]);
+
   const toggleFlag = useCallback(async () => {
     if (busy || saving) return;
     setSaving(true);
@@ -312,6 +329,17 @@ export function ReviewRepairBar({
         >
           <Icon name="pause" size={14} />
           Suspend
+        </button>
+        <button
+          type="button"
+          className="rv-repair__btn"
+          data-testid="review-repair-retire"
+          title="Retire (low-value, keep for reference)"
+          disabled={disabled}
+          onClick={() => void retire()}
+        >
+          <Icon name="archive" size={14} />
+          Retire
         </button>
         <button
           type="button"

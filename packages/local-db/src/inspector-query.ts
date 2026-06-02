@@ -75,6 +75,11 @@ export interface ReviewSummary {
   readonly fsrsState: string;
   readonly lastReviewedAt: string | null;
   readonly logCount: number;
+  /**
+   * Whether the card is currently RETIRED (T082) — out of active review but kept
+   * for reference. The inspector surfaces a Retire / Un-retire toggle from this.
+   */
+  readonly isRetired: boolean;
 }
 
 export interface SourceProvenance {
@@ -302,6 +307,7 @@ export class InspectorQuery {
           fsrsState: state.fsrsState,
           lastReviewedAt: state.lastReviewedAt,
           logCount,
+          isRetired: review.isCardRetired(id),
         };
       }
     } else {

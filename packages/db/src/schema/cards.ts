@@ -81,12 +81,37 @@ export const cards = sqliteTable(
      * reversible `is_retired` flag is).
      */
     desiredRetention: real("desired_retention"),
+    /**
+     * Durable RETIREMENT flag (T082). A low-value MATURE card (high stability, low
+     * priority, well-learned) can be RETIRED — it gracefully leaves active review
+     * without being deleted or losing its lineage/history. This flag is the SINGLE
+     * SOURCE OF TRUTH for "skip in the due/review reads": when `true` the card is
+     * dropped from `QueueRepository.dueCards` (and the review deck + due counts) by an
+     * explicit `cards` join + `is_retired = 0` predicate — a DIFFERENT mechanism from
+     * the `suspended` status exclusion (which filters on `elements.status`). Stored on
+     * the CARD side (a quality attribute like `is_leech`), NOT a new
+     * `ELEMENT_STATUSES` value — "retired" is a card-quality attribute, not a lifecycle
+     * stage, and a flag keeps the blast radius small (the card stays `active`/
+     * `scheduled` underneath so un-retire is a pure flag flip back into rotation at its
+     * existing `review_states.due_at`). Reversible + non-destructive (NEVER a soft
+     * delete); `review_states`/`review_logs`/lineage are preserved. A retired card is
+     * distinct from suspended ("temporarily out, will return") and deleted (trash):
+     * retire is "done with, kept for reference, low-value". `0`/`1` (SQLite boolean),
+     * `notNull` default `false` so existing cards are unchanged on upgrade
+     * (backfill-free). The optional low desired-retention override above can ALSO be
+     * set when retiring (a convenience interval-lengthener), but it is INDEPENDENT —
+     * the resolver clamps it to `[0.8, 0.97]` so it can never on its own remove a card
+     * from rotation; only THIS flag does.
+     */
+    isRetired: integer("is_retired", { mode: "boolean" }).notNull().default(false),
   },
   (table) => [
     check("cards_kind_check", inList(table.kind, CARD_KINDS)),
     index("cards_source_location_idx").on(table.sourceLocationId),
     // The leech cleanup view + analytics filter on the leech flag (T040).
     index("cards_is_leech_idx").on(table.isLeech),
+    // The retired-inventory view + the due-read join filter on the retirement flag (T082).
+    index("cards_is_retired_idx").on(table.isRetired),
   ],
 );
 

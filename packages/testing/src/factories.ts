@@ -28,6 +28,7 @@ import type { BlockId, ElementId, IsoTimestamp, SiblingGroupId } from "@interlea
 import { PRIORITY_LABEL_VALUE } from "@interleave/core";
 import type { InterleaveDatabase } from "@interleave/db";
 import {
+  CardRetirementService,
   type CardWithElement,
   type ExtractWithLocation,
   newSiblingGroupId,
@@ -184,6 +185,55 @@ export const DEMO_FIXTURES = {
       scheduledDays: 0,
       reps: 4,
       lapses: 4,
+      nextLearningSteps: 0,
+    },
+  ],
+  /**
+   * A retired card (T082): a low-value MATURE Q&A card (high stability, low B
+   * priority, well-learned) the user retired so it stops costing review time but is
+   * kept for reference. Seeded with two strong `good`/`easy` reviews → high stability,
+   * then the durable `cards.is_retired` flag is set, so the Retired-cards inventory +
+   * the analytics "Retired" metric have realistic data in dev/E2E without retiring one
+   * live. A retired card is SKIPPED by the due read, so it never competes in the deck.
+   */
+  retiredCard: {
+    title: "Skill-acquisition efficiency (retired)",
+    prompt: "What single phrase captures the essence of Chollet's intelligence measure?",
+    answer: "Skill-acquisition efficiency.",
+    priority: PRIORITY_LABEL_VALUE.D,
+  },
+  /** Two strong reviews → a high-stability mature card, then retired. */
+  retiredReviews: [
+    {
+      rating: "good" as const,
+      reviewedAt: "2026-04-01T08:00:00.000Z" as IsoTimestamp,
+      responseMs: 3000,
+      prevState: "new" as const,
+      nextState: "review" as const,
+      nextStability: 18.0,
+      nextDifficulty: 4.4,
+      nextDueAt: "2026-04-19T08:00:00.000Z" as IsoTimestamp,
+      elapsedDays: 0,
+      scheduledDays: 18,
+      reps: 1,
+      lapses: 0,
+      nextLearningSteps: 0,
+    },
+    {
+      rating: "easy" as const,
+      reviewedAt: "2026-04-19T08:00:00.000Z" as IsoTimestamp,
+      responseMs: 1800,
+      prevState: "review" as const,
+      nextState: "review" as const,
+      nextStability: 64.0,
+      nextDifficulty: 4.1,
+      // Far-future due so the mature retired card never heads the deck even if the
+      // flag were ignored; the flag is the real exclusion.
+      nextDueAt: "2026-06-22T08:00:00.000Z" as IsoTimestamp,
+      elapsedDays: 18,
+      scheduledDays: 64,
+      reps: 2,
+      lapses: 0,
       nextLearningSteps: 0,
     },
   ],
@@ -378,6 +428,8 @@ export interface DemoCollection {
   readonly clozeCard: CardWithElement;
   /** A Q&A card flagged a leech (≥4 lapses) — the cleanup view's seeded data (T040). */
   readonly leechCard: CardWithElement;
+  /** A retired mature Q&A card (`cards.is_retired`) — the retired-inventory seed (T082). */
+  readonly retiredCard: CardWithElement;
   readonly concepts: SeededConcepts;
   readonly siblingGroupId: SiblingGroupId;
   /**
@@ -555,6 +607,31 @@ export function seedDemoCollection(repos: Repositories, db: InterleaveDatabase):
   for (const review of f.leechReviews) {
     repos.review.recordReview(leechCard.element.id, review);
   }
+
+  // 7c) A retired card (T082): a low-value MATURE Q&A card from the same extract,
+  //     given two strong reviews → high stability, then RETIRED (the durable
+  //     `cards.is_retired` flag). It surfaces in the Retired-cards inventory + the
+  //     analytics "Retired" metric, and is SKIPPED by the due/review reads. Retire is
+  //     a distinct, reversible exit (not suspend, not delete) — un-retire restores it.
+  const retiredCard = repos.review.createCard({
+    kind: "qa",
+    title: f.retiredCard.title,
+    priority: f.retiredCard.priority,
+    prompt: f.retiredCard.prompt,
+    answer: f.retiredCard.answer,
+    parentId: extractId,
+    sourceId,
+    sourceLocationId: extract.location.id,
+    stage: "mature_card",
+  });
+  for (const review of f.retiredReviews) {
+    repos.review.recordReview(retiredCard.element.id, review);
+  }
+  // Retire it (the durable flag) and capture the post-retire card so the returned
+  // collection reflects `isRetired: true` for tests/seed echo.
+  const retiredCardAfter = new CardRetirementService(db).retire(retiredCard.element.id, {
+    reason: "Low-value, well-learned",
+  });
 
   // 8) Concepts (hierarchical) + membership edges, and tags on the extract. Built
   //    through the ConceptRepository (T041) — `createConcept` writes the
@@ -745,6 +822,7 @@ export function seedDemoCollection(repos: Repositories, db: InterleaveDatabase):
     qaCard,
     clozeCard,
     leechCard,
+    retiredCard: retiredCardAfter,
     concepts: { parentConceptId, childConceptId },
     siblingGroupId,
     occlusion: {

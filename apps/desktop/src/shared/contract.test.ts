@@ -25,7 +25,9 @@ import {
   CardsImportAnkiRequestSchema,
   type CardsImportAnkiResult,
   CardsMarkLeechRequestSchema,
+  CardsRetireRequestSchema,
   CardsSuspendRequestSchema,
+  CardsUnretireRequestSchema,
   CardsUpdateRequestSchema,
   ConceptsAssignRequestSchema,
   ConceptsCreateRequestSchema,
@@ -170,6 +172,9 @@ describe("IPC channels", () => {
         "cards:delete",
         "cards:flag",
         "cards:markLeech",
+        "cards:retire",
+        "cards:unretire",
+        "cards:retired",
         "cards:importAnki",
         "cards:exportAnki",
         "extracts:updateStage",
@@ -224,6 +229,28 @@ describe("IPC channels", () => {
     // T058: the renderer enqueues ONLY via `sources:importUrl` — there is no
     // generic `jobs:enqueue` channel.
     expect(Object.values(IPC_CHANNELS)).not.toContain("jobs:enqueue");
+  });
+});
+
+describe("Mature-card retirement schemas (T082)", () => {
+  it("accepts a retire request with an optional reason + lowRetention lever", () => {
+    expect(CardsRetireRequestSchema.parse({ cardId: "card-1" })).toEqual({ cardId: "card-1" });
+    const full = CardsRetireRequestSchema.parse({
+      cardId: "card-1",
+      reason: "Low-value",
+      lowRetention: true,
+    });
+    expect(full.reason).toBe("Low-value");
+    expect(full.lowRetention).toBe(true);
+  });
+
+  it("rejects a retire/unretire request without a cardId", () => {
+    expect(CardsRetireRequestSchema.safeParse({}).success).toBe(false);
+    expect(CardsUnretireRequestSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("accepts a minimal unretire request", () => {
+    expect(CardsUnretireRequestSchema.parse({ cardId: "card-1" })).toEqual({ cardId: "card-1" });
   });
 });
 

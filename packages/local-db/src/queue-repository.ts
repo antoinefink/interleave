@@ -12,7 +12,8 @@
  *
  * Soft-deleted elements are excluded from every query, and the two DUE reads
  * additionally exclude rows whose lifecycle status has taken them out of the queue
- * (`done` / `dismissed` / `suspended` / `deleted`) — see {@link QUEUE_EXCLUDED_STATUSES}.
+ * (`done` / `dismissed` / `suspended` / `deleted`) — see {@link QUEUE_EXCLUDED_STATUSES}
+ * — plus RETIRED cards (T082, the `cards.is_retired` flag, via a `cards` join).
  */
 
 import type {
@@ -22,7 +23,7 @@ import type {
   ElementType,
   IsoTimestamp,
 } from "@interleave/core";
-import { elements, type InterleaveDatabase, reviewStates } from "@interleave/db";
+import { cards, elements, type InterleaveDatabase, reviewStates } from "@interleave/db";
 import { and, asc, eq, gte, isNotNull, isNull, lte, notInArray } from "drizzle-orm";
 import { rowToElement } from "./mappers";
 
@@ -47,18 +48,29 @@ export class QueueRepository {
 
   /**
    * Cards due for FSRS review at or before `asOf`, soonest first. Joins
-   * `review_states` (the FSRS due time) to live, non-suspended `card` elements.
+   * `review_states` (the FSRS due time) to live, non-suspended `card` elements,
+   * and additionally joins `cards` to drop RETIRED cards (T082).
+   *
+   * Retirement is a DIFFERENT mechanism from the suspended exclusion: suspended
+   * filters on `elements.status` (in {@link QUEUE_EXCLUDED_STATUSES}), but
+   * `is_retired` is a flag on the `cards` side-table — so dropping a retired card
+   * needs an explicit `innerJoin(cards)` + `cards.is_retired = false` predicate, not
+   * another status. The review deck + the due counts read through here, so a retired
+   * card disappears from review automatically. (The attention reads are untouched —
+   * retirement is a card-only concern.)
    */
   dueCards(asOf: IsoTimestamp, limit?: number): Element[] {
     const base = this.db
       .select({ element: elements })
       .from(reviewStates)
       .innerJoin(elements, eq(elements.id, reviewStates.elementId))
+      .innerJoin(cards, eq(cards.elementId, elements.id))
       .where(
         and(
           eq(elements.type, "card"),
           isNull(elements.deletedAt),
           notInArray(elements.status, QUEUE_EXCLUDED_STATUSES as ElementStatus[]),
+          eq(cards.isRetired, false),
           isNotNull(reviewStates.dueAt),
           lte(reviewStates.dueAt, asOf),
         ),
@@ -110,18 +122,21 @@ export class QueueRepository {
    * FORWARD-looking "reviews due this week" count (T046). Unlike {@link dueCards}
    * (which counts only what is due NOW, `due_at <= asOf`), this counts upcoming
    * reviews in a window, so the balance banner can say "K reviews due this week".
-   * Excludes soft-deleted / done / dismissed / suspended cards (same queue filter).
+   * Excludes soft-deleted / done / dismissed / suspended / retired cards (same
+   * queue filter as {@link dueCards}, including the T082 `cards.is_retired` join).
    */
   dueCardsBetween(from: IsoTimestamp, to: IsoTimestamp): number {
     return this.db
       .select({ id: elements.id })
       .from(reviewStates)
       .innerJoin(elements, eq(elements.id, reviewStates.elementId))
+      .innerJoin(cards, eq(cards.elementId, elements.id))
       .where(
         and(
           eq(elements.type, "card"),
           isNull(elements.deletedAt),
           notInArray(elements.status, QUEUE_EXCLUDED_STATUSES as ElementStatus[]),
+          eq(cards.isRetired, false),
           isNotNull(reviewStates.dueAt),
           gte(reviewStates.dueAt, from),
           lte(reviewStates.dueAt, to),

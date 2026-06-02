@@ -25,6 +25,7 @@ const h = vi.hoisted(() => ({
   deleteCard: vi.fn(),
   flagCard: vi.fn(),
   markLeechCard: vi.fn(),
+  retireCard: vi.fn(),
   onOpenSource: vi.fn(),
   onCardUpdated: vi.fn(),
   onCardRemoved: vi.fn(),
@@ -41,6 +42,7 @@ vi.mock("../lib/appApi", async () => {
       deleteCard: h.deleteCard,
       flagCard: h.flagCard,
       markLeechCard: h.markLeechCard,
+      retireCard: h.retireCard,
     },
   };
 });
@@ -103,6 +105,7 @@ function summary(overrides: Partial<CardEditSummary> = {}): CardEditSummary {
     sourceId: "src-1",
     flagged: false,
     leech: false,
+    retired: false,
     deleted: false,
     ...overrides,
   };
@@ -139,6 +142,7 @@ beforeEach(() => {
   h.deleteCard.mockResolvedValue({ card: summary({ status: "deleted", deleted: true }) });
   h.flagCard.mockResolvedValue({ card: summary({ flagged: true }) });
   h.markLeechCard.mockResolvedValue({ card: summary({ leech: false }) });
+  h.retireCard.mockResolvedValue({ card: summary({ retired: true }) });
 });
 
 describe("ReviewRepairBar", () => {
@@ -250,6 +254,13 @@ describe("ReviewRepairBar", () => {
     renderBar();
     fireEvent.click(screen.getByTestId("review-repair-delete"));
     await waitFor(() => expect(h.deleteCard).toHaveBeenCalledWith({ cardId: "card-qa" }));
+    await waitFor(() => expect(h.onCardRemoved).toHaveBeenCalledTimes(1));
+  });
+
+  it("retires a card via appApi.retireCard and advances the session (T082)", async () => {
+    renderBar();
+    fireEvent.click(screen.getByTestId("review-repair-retire"));
+    await waitFor(() => expect(h.retireCard).toHaveBeenCalledWith({ cardId: "card-qa" }));
     await waitFor(() => expect(h.onCardRemoved).toHaveBeenCalledTimes(1));
   });
 

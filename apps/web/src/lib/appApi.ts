@@ -175,6 +175,8 @@ export interface ReviewSummary {
   readonly fsrsState: string;
   readonly lastReviewedAt: string | null;
   readonly logCount: number;
+  /** Whether the card is currently RETIRED (T082) — out of review, kept for reference. */
+  readonly isRetired: boolean;
 }
 
 /**
@@ -1383,6 +1385,8 @@ export interface CardSummary {
   readonly siblingGroupId: string;
   /** The audio-card clip reference (T075) when this is an audio card, else `null`. */
   readonly mediaRef: MediaRef | null;
+  /** Whether the card is currently RETIRED (T082); a fresh card is never retired. */
+  readonly isRetired: boolean;
 }
 
 export interface CardsCreateResult {
@@ -1442,6 +1446,8 @@ export interface CardEditSummary {
   readonly flagged: boolean;
   /** Whether the card is currently flagged a leech (auto after ≥4 lapses, or manual) (T040). */
   readonly leech: boolean;
+  /** Whether the card is currently RETIRED (T082) — out of active review, kept for reference. */
+  readonly retired: boolean;
   /** True after a soft delete. */
   readonly deleted: boolean;
 }
@@ -1494,6 +1500,56 @@ export interface CardsMarkLeechRequest {
 
 export interface CardsMarkLeechResult {
   readonly card: CardEditSummary;
+}
+
+// ---------------------------------------------------------------------------
+// cards.retire() / cards.unretire() / cards.retired()  (T082 — mature-card retirement)
+// ---------------------------------------------------------------------------
+
+export interface CardsRetireRequest {
+  readonly cardId: string;
+  /** Optional human reason (stored in the `update_element` op payload). */
+  readonly reason?: string;
+  /**
+   * When `true`, ALSO floor-clamp the per-card desired-retention override (a
+   * convenience interval-lengthener) — NOT the retirement mechanism. Default `false`.
+   */
+  readonly lowRetention?: boolean;
+}
+
+export interface CardsRetireResult {
+  readonly card: CardEditSummary;
+}
+
+export interface CardsUnretireRequest {
+  readonly cardId: string;
+}
+
+export interface CardsUnretireResult {
+  readonly card: CardEditSummary;
+}
+
+/** One retired card in the inventory/cleanup view (T082). */
+export interface RetiredCardSummary {
+  readonly id: string;
+  readonly kind: string;
+  readonly status: string;
+  readonly stage: string;
+  readonly priority: number;
+  readonly title: string;
+  readonly prompt: string | null;
+  readonly answer: string | null;
+  readonly cloze: string | null;
+  /** FSRS memory stability (days) — high for a mature, well-learned card. */
+  readonly stability: number;
+  readonly reps: number;
+  readonly lapses: number;
+  readonly sourceTitle: string | null;
+  readonly sourceLocationLabel: string | null;
+}
+
+export interface CardsRetiredResult {
+  readonly cards: readonly RetiredCardSummary[];
 }
 
 // ---------------------------------------------------------------------------
@@ -2326,6 +2382,8 @@ export interface AnalyticsGetResult {
   readonly newExtracts: number;
   readonly deletions: number;
   readonly leeches: number;
+  /** Cards currently RETIRED (live) — out of active review, kept for reference (T082). */
+  readonly retired: number;
   readonly dayStreak: number;
 }
 
@@ -2465,6 +2523,9 @@ export interface AppApi {
     delete(request: CardsDeleteRequest): Promise<CardsDeleteResult>;
     flag(request: CardsFlagRequest): Promise<CardsFlagResult>;
     markLeech(request: CardsMarkLeechRequest): Promise<CardsMarkLeechResult>;
+    retire(request: CardsRetireRequest): Promise<CardsRetireResult>;
+    unretire(request: CardsUnretireRequest): Promise<CardsUnretireResult>;
+    retired(): Promise<CardsRetiredResult>;
     importAnki(request: CardsImportAnkiRequest): Promise<CardsImportAnkiResult>;
     exportAnki(request: CardsExportAnkiRequest): Promise<CardsExportAnkiResult>;
   };
@@ -2935,6 +2996,25 @@ export const appApi = {
    */
   markLeechCard(request: CardsMarkLeechRequest): Promise<CardsMarkLeechResult> {
     return requireAppApi().cards.markLeech(request);
+  },
+  /**
+   * Retire a card (T082) — flip the durable `cards.is_retired` flag so a low-value
+   * mature card leaves active review gracefully (skipped by the due/review reads),
+   * reversibly. Logs `update_element`; never deletes; preserves history + lineage.
+   */
+  retireCard(request: CardsRetireRequest): Promise<CardsRetireResult> {
+    return requireAppApi().cards.retire(request);
+  },
+  /**
+   * Un-retire a card (T082) — clear `cards.is_retired`, returning the card to the
+   * normal due read at its existing due date. Logs `update_element`.
+   */
+  unretireCard(request: CardsUnretireRequest): Promise<CardsUnretireResult> {
+    return requireAppApi().cards.unretire(request);
+  },
+  /** The retired-card inventory (T082) — every LIVE retired card + memory + lineage. */
+  retiredCards(): Promise<CardsRetiredResult> {
+    return requireAppApi().cards.retired();
   },
   /**
    * Import an Anki `.apkg` deck as `card` elements under a per-deck `source` (T070),

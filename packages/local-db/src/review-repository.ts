@@ -37,7 +37,7 @@ import {
   reviewStates,
 } from "@interleave/db";
 import { isLeech } from "@interleave/scheduler";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { ElementRepository } from "./element-repository";
 import { newReviewLogId, nowIso } from "./ids";
 import { rowToElement, rowToReviewLog, rowToReviewState } from "./mappers";
@@ -481,6 +481,32 @@ export class ReviewRepository {
       .where(eq(cards.elementId, cardElementId))
       .get();
     return row?.isLeech ?? false;
+  }
+
+  /**
+   * Count of LIVE retired cards (T082) — the analytics/maintenance inventory badge.
+   * Joins `cards` (`is_retired = 1`) to live (non-deleted) `card` elements. Read-only.
+   */
+  countRetiredCards(): number {
+    return this.db
+      .select({ id: cards.elementId })
+      .from(cards)
+      .innerJoin(elements, eq(elements.id, cards.elementId))
+      .where(and(eq(cards.isRetired, true), isNull(elements.deletedAt)))
+      .all().length;
+  }
+
+  /**
+   * Whether a card is currently RETIRED (T082) — reads the durable `cards.is_retired`
+   * flag. Read-only; the inspector's retire/un-retire row uses it.
+   */
+  isCardRetired(cardElementId: ElementId): boolean {
+    const row = this.db
+      .select({ isRetired: cards.isRetired })
+      .from(cards)
+      .where(eq(cards.elementId, cardElementId))
+      .get();
+    return row?.isRetired ?? false;
   }
 
   /**

@@ -101,6 +101,8 @@ export interface AnalyticsSummary {
   readonly deletions: number;
   /** Cards currently flagged a leech (live). */
   readonly leeches: number;
+  /** Cards currently RETIRED (live) — out of active review, kept for reference (T082). */
+  readonly retired: number;
   /**
    * Consecutive days (ending on `asOf`'s local day) with ≥1 review — a cheap
    * streak from `reviewsByDay`. `0` when no review was graded today.
@@ -259,6 +261,9 @@ export class AnalyticsService {
     const dueCards = this.queue.dueCards(asOf).length;
     const dueTopics = this.queue.dueAttentionItems(asOf).length;
     const leeches = this.review.listLeechCards().length;
+    // Retired cards (T082) — out of active review, kept for reference. The
+    // maintenance inventory + analytics surface count them like leeches.
+    const retired = this.review.countRetiredCards();
 
     return {
       asOf,
@@ -273,6 +278,7 @@ export class AnalyticsService {
       newExtracts,
       deletions,
       leeches,
+      retired,
       dayStreak,
     };
   }

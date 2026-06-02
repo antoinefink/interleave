@@ -165,6 +165,10 @@ export function AnalyticsScreen() {
               <span className="an-metric__val">{formatCount(data.leeches)}</span>
               <span className="an-metric__label">Leeches</span>
             </div>
+            <div className="an-metric an-metric--sm" data-testid="metric-retired">
+              <span className="an-metric__val">{formatCount(data.retired)}</span>
+              <span className="an-metric__label">Retired</span>
+            </div>
           </div>
 
           {/* Reviews per day spark */}
@@ -219,6 +223,20 @@ export function AnalyticsScreen() {
                   <Icon name="trash" size={16} />
                   <span className="an-banner__title">
                     {data.deletions} item{data.deletions === 1 ? "" : "s"} deleted this window
+                  </span>
+                  <Icon name="chevronRight" size={14} />
+                </button>
+              ) : null}
+              {data.retired > 0 ? (
+                <button
+                  type="button"
+                  className="an-banner"
+                  data-testid="banner-retired"
+                  onClick={() => void navigate({ to: "/maintenance/retired" })}
+                >
+                  <Icon name="archive" size={16} />
+                  <span className="an-banner__title">
+                    {data.retired} retired card{data.retired === 1 ? "" : "s"} kept for reference
                   </span>
                   <Icon name="chevronRight" size={14} />
                 </button>

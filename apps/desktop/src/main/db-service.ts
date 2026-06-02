@@ -49,6 +49,7 @@ import {
   SchedulerService as AttentionScheduleService,
   AutoPostponeService,
   CardEditService,
+  CardRetirementService,
   CardService,
   createRepositories,
   type DocumentMark,
@@ -102,8 +103,13 @@ import type {
   CardsGenerateOcclusionResult,
   CardsMarkLeechRequest,
   CardsMarkLeechResult,
+  CardsRetiredResult,
+  CardsRetireRequest,
+  CardsRetireResult,
   CardsSuspendRequest,
   CardsSuspendResult,
+  CardsUnretireRequest,
+  CardsUnretireResult,
   CardsUpdateRequest,
   CardsUpdateResult,
   CatchUpPreview,
@@ -187,6 +193,7 @@ import type {
   RetentionSetConceptRequest,
   RetentionSetConceptResult,
   RetentionUpdatedResult,
+  RetiredCardSummary,
   ReviewCardRequest,
   ReviewCardResult,
   ReviewCardView,
@@ -313,6 +320,13 @@ export class DbService {
   private cardService: CardService | null = null;
   private occlusionService: OcclusionService | null = null;
   private cardEditService: CardEditService | null = null;
+  /**
+   * Mature-card retirement seam (T082) — flips the durable `cards.is_retired` flag
+   * (reversible, non-destructive) so a low-value mature card leaves active review,
+   * and reads the retired inventory. Card-only (FSRS); the flag is the sole source of
+   * truth for "skip in the due/review reads".
+   */
+  private cardRetirementService: CardRetirementService | null = null;
   private reviewSession: ReviewSessionService | null = null;
   /**
    * The retention RESOLVER seam (T079) — assembles the live {@link RetentionTargets}
@@ -530,6 +544,8 @@ export class DbService {
     // cards from a `media_fragment` image extract + its masks in one transaction.
     this.occlusionService = new OcclusionService(this.handle.db);
     this.cardEditService = new CardEditService(this.handle.db);
+    // Mature-card retirement (T082) — the reversible `cards.is_retired` flag.
+    this.cardRetirementService = new CardRetirementService(this.handle.db);
     // The sibling-aware review-session ordering seam (T039): chooses the next due
     // card and buries siblings (session-ordering ONLY — it writes nothing).
     this.reviewSession = new ReviewSessionService(this.handle.db);
@@ -572,6 +588,7 @@ export class DbService {
     this.extractReview = null;
     this.cardService = null;
     this.cardEditService = null;
+    this.cardRetirementService = null;
     this.reviewSession = null;
     this.retention = null;
     this.optimization = null;
@@ -2121,6 +2138,8 @@ export class DbService {
         sourceId: element.sourceId,
         siblingGroupId,
         mediaRef,
+        // A freshly authored card is never retired (T082).
+        isRetired: false,
       },
       sourceLocationId,
     };
@@ -2177,6 +2196,8 @@ export class DbService {
         siblingGroupId: c.siblingGroupId,
         // An occlusion card is never an audio card (the audio carrier is text-card only).
         mediaRef: null,
+        // A freshly generated card is never retired (T082).
+        isRetired: false,
       })),
     };
   }
@@ -2208,6 +2229,7 @@ export class DbService {
       answer: string | null;
       cloze: string | null;
       isLeech: boolean;
+      isRetired: boolean;
     };
   }): CardEditSummary {
     const { element, card } = result;
@@ -2227,6 +2249,8 @@ export class DbService {
       flagged: this.cardEdit.isFlagged(element.id),
       // The durable leech flag (T040) lives on the `cards` row.
       leech: card.isLeech,
+      // The durable retirement flag (T082) lives on the `cards` row.
+      retired: card.isRetired,
       deleted: element.deletedAt != null,
     };
   }
@@ -2327,6 +2351,76 @@ export class DbService {
         cloze: card.cloze,
         lapses: leech.lapses,
         reps: leech.reps,
+        sourceTitle,
+        sourceLocationLabel: location?.label ?? null,
+      };
+    });
+    return { cards };
+  }
+
+  /** The mature-card retirement seam (T082), bound to the open database. */
+  private get cardRetirement(): CardRetirementService {
+    if (!this.cardRetirementService) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.cardRetirementService;
+  }
+
+  /**
+   * Retire a card (T082) via {@link CardRetirementService.retire}: flips the durable
+   * `cards.is_retired` flag in ONE transaction, logging `update_element` (no new op
+   * type). The card drops out of the due/review reads by the flag (a `cards` join in
+   * `QueueRepository.dueCards`), while keeping its `review_states`/`review_logs`/
+   * lineage. Reversible; NEVER a soft delete. When `lowRetention` is set, also
+   * floor-clamps the per-card retention override (a convenience, not the mechanism).
+   */
+  retireCard(request: CardsRetireRequest): CardsRetireResult {
+    const result = this.cardRetirement.retire(request.cardId as ElementId, {
+      ...(request.reason !== undefined ? { reason: request.reason } : {}),
+      ...(request.lowRetention !== undefined ? { lowRetention: request.lowRetention } : {}),
+    });
+    return { card: this.toCardEditSummary(result) };
+  }
+
+  /**
+   * Un-retire a card (T082) via {@link CardRetirementService.unretire}: clears
+   * `cards.is_retired` (`update_element`), returning the card to the normal due read
+   * at its existing `review_states.due_at`.
+   */
+  unretireCard(request: CardsUnretireRequest): CardsUnretireResult {
+    const result = this.cardRetirement.unretire(request.cardId as ElementId);
+    return { card: this.toCardEditSummary(result) };
+  }
+
+  /**
+   * The retired-card inventory read (T082) — every LIVE retired card with its body +
+   * FSRS memory signals (stability/reps/lapses) + lineage source title/location.
+   * Composes {@link CardRetirementService.listRetired} (most-mature first) with each
+   * card's lineage. Read-only — no mutation, no `operation_log`.
+   */
+  cardsRetired(): CardsRetiredResult {
+    const retired = this.cardRetirement.listRetired();
+    const cards: RetiredCardSummary[] = retired.map((row) => {
+      const { element, card } = row;
+      const sourceLocationId = card.sourceLocationId as SourceLocationId | null;
+      const location = sourceLocationId
+        ? this.repos.sources.findLocationById(sourceLocationId)
+        : null;
+      const sourceEl = element.sourceId ? this.repos.elements.findById(element.sourceId) : null;
+      const sourceTitle = sourceEl && !sourceEl.deletedAt ? sourceEl.title : null;
+      return {
+        id: element.id,
+        kind: card.kind,
+        status: element.status,
+        stage: element.stage,
+        priority: element.priority,
+        title: element.title,
+        prompt: card.prompt,
+        answer: card.answer,
+        cloze: card.cloze,
+        stability: row.stability,
+        reps: row.reps,
+        lapses: row.lapses,
         sourceTitle,
         sourceLocationLabel: location?.label ?? null,
       };
@@ -3611,6 +3705,7 @@ export class DbService {
       newExtracts: summary.newExtracts,
       deletions: summary.deletions,
       leeches: summary.leeches,
+      retired: summary.retired,
       dayStreak: summary.dayStreak,
     };
   }

@@ -27,7 +27,9 @@ import type {
   CardsGenerateOcclusionRequest,
   CardsImportAnkiRequest,
   CardsMarkLeechRequest,
+  CardsRetireRequest,
   CardsSuspendRequest,
+  CardsUnretireRequest,
   CardsUpdateRequest,
   ConceptsAssignRequest,
   ConceptsCreateRequest,
@@ -230,6 +232,10 @@ const appApi: AppApi = {
     flag: (request: CardsFlagRequest) => ipcRenderer.invoke(IPC_CHANNELS.cardsFlag, request),
     markLeech: (request: CardsMarkLeechRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.cardsMarkLeech, request),
+    retire: (request: CardsRetireRequest) => ipcRenderer.invoke(IPC_CHANNELS.cardsRetire, request),
+    unretire: (request: CardsUnretireRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.cardsUnretire, request),
+    retired: () => ipcRenderer.invoke(IPC_CHANNELS.cardsRetired),
     importAnki: (request: CardsImportAnkiRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.cardsImportAnki, request),
     exportAnki: (request: CardsExportAnkiRequest) =>

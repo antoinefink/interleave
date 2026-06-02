@@ -269,6 +269,8 @@ export interface ReviewSummary {
   readonly lastReviewedAt: string | null;
   /** Total durable review-log rows recorded for this card. */
   readonly logCount: number;
+  /** Whether the card is currently RETIRED (T082) — out of review, kept for reference. */
+  readonly isRetired: boolean;
 }
 
 /** Source provenance shown when the element is (or belongs to) a source. */
@@ -2477,6 +2479,12 @@ export interface CardSummary {
    * an audio card was authored without a re-fetch.
    */
   readonly mediaRef: MediaRef | null;
+  /**
+   * Whether the card is currently RETIRED (T082) — a low-value mature card that has
+   * gracefully left active review (skipped by the due/review reads), reversibly. A
+   * freshly created card is never retired (`false`).
+   */
+  readonly isRetired: boolean;
 }
 
 export interface CardsCreateResult {
@@ -2590,6 +2598,8 @@ export interface CardEditSummary {
   readonly flagged: boolean;
   /** Whether the card is currently flagged a leech (auto after ≥4 lapses, or manual) (T040). */
   readonly leech: boolean;
+  /** Whether the card is currently RETIRED (T082) — out of active review, kept for reference. */
+  readonly retired: boolean;
   /** True after a soft delete. */
   readonly deleted: boolean;
 }
@@ -2671,6 +2681,86 @@ export type CardsMarkLeechRequest = z.infer<typeof CardsMarkLeechRequestSchema>;
 
 export interface CardsMarkLeechResult {
   readonly card: CardEditSummary;
+}
+
+// ---------------------------------------------------------------------------
+// cards.retire() / cards.unretire() / cards.retired()  (T082 — mature-card retirement)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mature-card retirement (T082). A low-value MATURE card (high stability, low
+ * priority, well-learned) can be RETIRED so it leaves active review gracefully —
+ * WITHOUT being deleted or losing its lineage/history — and a retired card is
+ * SKIPPED by the due/review reads. Retirement is REVERSIBLE (un-retire restores
+ * normal scheduling at the card's existing due date).
+ *
+ * The MAIN process runs {@link CardRetirementService} in ONE transaction per
+ * action, flipping the durable `cards.is_retired` flag (the SOLE source of truth
+ * for "leave active review" — a `cards` quality attribute like leech, NOT a new
+ * `ELEMENT_STATUSES` value), logging `update_element` (NO new op type). Retire ≠
+ * suspend ≠ delete: retire is "done with, kept for reference, low-value", a distinct
+ * reversible exit. `review_states`/`review_logs`/lineage are preserved (never a soft
+ * delete). FSRS / cards only — the attention reads are untouched.
+ */
+
+export const CardsRetireRequestSchema = z.object({
+  /** The card element id to retire. */
+  cardId: ElementIdSchema,
+  /** Optional human reason, stored in the `update_element` op payload (audit). */
+  reason: z.string().trim().max(2048).optional(),
+  /**
+   * When `true`, ALSO floor-clamp the card's per-card desired-retention override to
+   * `DESIRED_RETENTION_MIN` (a convenience interval-lengthener for an eventual
+   * un-retire) — NOT the retirement mechanism (the `is_retired` flag is). Default
+   * `false` (retire is a pure flag flip; the override is untouched).
+   */
+  lowRetention: z.boolean().optional(),
+});
+export type CardsRetireRequest = z.infer<typeof CardsRetireRequestSchema>;
+
+export interface CardsRetireResult {
+  readonly card: CardEditSummary;
+}
+
+export const CardsUnretireRequestSchema = z.object({
+  /** The card element id to un-retire (return to normal scheduling). */
+  cardId: ElementIdSchema,
+});
+export type CardsUnretireRequest = z.infer<typeof CardsUnretireRequestSchema>;
+
+export interface CardsUnretireResult {
+  readonly card: CardEditSummary;
+}
+
+/**
+ * One retired card in the inventory/cleanup view (T082) — the body + the memory
+ * signals (high stability, reps/lapses) that make it read as a low-value, well-learned
+ * card kept for reference, plus its lineage source.
+ */
+export interface RetiredCardSummary {
+  readonly id: string;
+  /** Card kind (`qa`/`cloze`). */
+  readonly kind: string;
+  readonly status: string;
+  readonly stage: string;
+  /** Numeric priority `0.0`–`1.0`; the UI derives the A/B/C/D label. */
+  readonly priority: number;
+  readonly title: string;
+  readonly prompt: string | null;
+  readonly answer: string | null;
+  readonly cloze: string | null;
+  /** FSRS memory stability (days) — high for a mature, well-learned card. */
+  readonly stability: number;
+  readonly reps: number;
+  readonly lapses: number;
+  /** Originating source title (lineage), or `null`. */
+  readonly sourceTitle: string | null;
+  /** Human-readable source location label (lineage), or `null`. */
+  readonly sourceLocationLabel: string | null;
+}
+
+export interface CardsRetiredResult {
+  readonly cards: RetiredCardSummary[];
 }
 
 // ---------------------------------------------------------------------------
@@ -3755,6 +3845,8 @@ export interface AnalyticsGetResult {
   readonly deletions: number;
   /** Cards currently flagged a leech. */
   readonly leeches: number;
+  /** Cards currently RETIRED (live) — out of active review, kept for reference (T082). */
+  readonly retired: number;
   /** Consecutive days (ending today) with ≥1 review. */
   readonly dayStreak: number;
 }
@@ -4123,6 +4215,26 @@ export interface AppApi {
      * after ≥4 lapses; this is the manual override.
      */
     markLeech(request: CardsMarkLeechRequest): Promise<CardsMarkLeechResult>;
+    /**
+     * Retire a card (T082) — flip the durable `cards.is_retired` flag so a low-value
+     * mature card leaves active review gracefully (skipped by the due/review reads),
+     * reversibly. Logs `update_element`; never deletes; preserves
+     * `review_states`/`review_logs`/lineage. Optionally also floor-clamps the per-card
+     * retention override (a convenience, NOT the retirement mechanism).
+     */
+    retire(request: CardsRetireRequest): Promise<CardsRetireResult>;
+    /**
+     * Un-retire a card (T082) — clear `cards.is_retired`, returning the card to the
+     * normal due read at its existing due date. Logs `update_element`. Independent of
+     * any low-retention override (which is cleared via `retention.setCard`).
+     */
+    unretire(request: CardsUnretireRequest): Promise<CardsUnretireResult>;
+    /**
+     * The retired-card inventory (T082) — every LIVE retired card with its body +
+     * memory signals (stability/reps/lapses) + lineage source, most-mature first.
+     * Read-only — no mutation, no `operation_log`.
+     */
+    retired(): Promise<CardsRetiredResult>;
     /**
      * Import an Anki `.apkg` deck (T070) — MAIN unwraps the ZIP, opens the embedded
      * `collection.anki2` (`better-sqlite3`), and authors the notes as `card` elements

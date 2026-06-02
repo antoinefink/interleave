@@ -35,6 +35,7 @@ import { ConceptsScreen } from "./concepts/ConceptsScreen";
 import { BrowseScreen } from "./library/BrowseScreen";
 import { LibraryScreen } from "./library/LibraryScreen";
 import { LeechCleanup } from "./maintenance/LeechCleanup";
+import { RetiredCards } from "./maintenance/RetiredCards";
 import { HomeScreen } from "./pages/home/HomeScreen";
 import { InboxScreen } from "./pages/inbox/InboxScreen";
 import { ProcessQueue } from "./pages/queue/ProcessQueue";
@@ -124,6 +125,19 @@ const leechCleanupRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/maintenance/leeches",
   component: LeechCleanup,
+});
+
+/**
+ * Retired-card inventory (T082) — the maintenance surface listing every card
+ * retired (the durable `cards.is_retired` flag) so a low-value mature card leaves
+ * active review gracefully, with Un-retire to restore it. Reads
+ * `appApi.retiredCards()` (read-only) and drives un-retire through `cards.unretire`;
+ * the renderer holds no retirement logic or SQL.
+ */
+const retiredCardsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/maintenance/retired",
+  component: RetiredCards,
 });
 
 /**
@@ -230,6 +244,7 @@ const routeTree = rootRoute.addChildren([
   extractRoute,
   reviewRoute,
   leechCleanupRoute,
+  retiredCardsRoute,
   searchRoute,
   libraryRoute,
   conceptsRoute,

@@ -69,6 +69,14 @@
   background: var(--warn-soft);
   color: var(--warn);
 }
+/* Retired marker (T082) — a low-value mature card that has left active review but
+   is kept for reference. Calm + muted (distinct from suspended) so it reads as
+   "out of rotation, intentionally" rather than an error/warning. */
+.badge--retired {
+  background: var(--surface-2);
+  color: var(--text-3);
+  border-color: var(--border);
+}
 
 /* priority badges */
 .prio {

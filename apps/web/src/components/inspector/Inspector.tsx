@@ -732,6 +732,67 @@ function ResolvedRetentionRow({ cardId }: { cardId: string }) {
   );
 }
 
+/**
+ * The card's RETIREMENT row (T082) — shows whether the card is currently retired and
+ * a Retire / Un-retire toggle. Retiring removes a low-value mature card from active
+ * review gracefully (reversibly), kept for reference; un-retiring returns it to the
+ * normal due read at its existing due date. Card-only; backed by `cards.retire` /
+ * `cards.unretire` (each `update_element`, never a delete). On success the inspector
+ * re-reads (`onChanged`) so the row + the header badge update without a reload.
+ */
+function RetirementRow({
+  cardId,
+  isRetired,
+  onChanged,
+}: {
+  cardId: string;
+  isRetired: boolean;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const toggle = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      if (isRetired) {
+        await appApi.unretireCard({ cardId });
+      } else {
+        await appApi.retireCard({ cardId });
+      }
+      onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, isRetired, cardId, onChanged]);
+  return (
+    <MetaRow k="Retirement">
+      <span data-testid="inspector-retired-state">
+        {isRetired ? "Retired (kept for reference)" : "Active"}
+      </span>{" "}
+      <button
+        type="button"
+        className="insp-add__btn"
+        data-testid="inspector-retire-toggle"
+        disabled={busy}
+        onClick={() => void toggle()}
+      >
+        <Icon name="archive" size={13} />
+        {isRetired ? "Un-retire" : "Retire"}
+      </button>
+      {error ? (
+        <span className="text-danger" data-testid="inspector-retire-error">
+          {" "}
+          · {error}
+        </span>
+      ) : null}
+    </MetaRow>
+  );
+}
+
 /** The full metadata view for one inspected element. */
 function InspectorBody({
   data,
@@ -779,6 +840,12 @@ function InspectorBody({
           <div className="insp-head__row">
             <Prio priority={element.priority} />
             <Status status={element.status} />
+            {review?.isRetired ? (
+              <span className="badge badge--retired" data-testid="inspector-retired-badge">
+                <Icon name="archive" size={11} />
+                Retired
+              </span>
+            ) : null}
             <SchedulerChip scheduler={scheduler} />
           </div>
         </div>
@@ -986,6 +1053,13 @@ function InspectorBody({
             <MetaRow k="Reviews">{review.logCount}</MetaRow>
             <MetaRow k="Last review">{fmtDate(review.lastReviewedAt)}</MetaRow>
             {element.type === "card" ? <ResolvedRetentionRow cardId={element.id} /> : null}
+            {element.type === "card" ? (
+              <RetirementRow
+                cardId={element.id}
+                isRetired={review.isRetired}
+                onChanged={onOrganizeChanged}
+              />
+            ) : null}
           </div>
         </div>
       )}

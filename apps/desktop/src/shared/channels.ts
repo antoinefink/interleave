@@ -67,6 +67,12 @@ export const IPC_CHANNELS = {
   cardsDelete: "cards:delete",
   cardsFlag: "cards:flag",
   cardsMarkLeech: "cards:markLeech",
+  // Mature-card retirement (T082). `cards:retire`/`cards:unretire` flip the durable
+  // `cards.is_retired` flag (reversible, non-destructive); `cards:retired` reads the
+  // live retired-card inventory. A retired card is skipped by the due/review reads.
+  cardsRetire: "cards:retire",
+  cardsUnretire: "cards:unretire",
+  cardsRetired: "cards:retired",
   cardsImportAnki: "cards:importAnki",
   cardsExportAnki: "cards:exportAnki",
   extractsUpdateStage: "extracts:updateStage",
