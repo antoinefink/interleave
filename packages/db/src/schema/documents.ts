@@ -54,6 +54,15 @@ export const documentBlocks = sqliteTable(
      * (a pure widening — no backfill; existing rows stay `null`).
      */
     page: integer("page"),
+    /**
+     * The media START TIMESTAMP (milliseconds) this block belongs to, for MEDIA
+     * sources (video/audio transcripts, T073). One transcript cue → one paragraph
+     * block tagged with its cue start; `null` for the title heading, the
+     * transcript-less placeholder, and every non-media body. The canonical
+     * block→time map the timestamp read-point + the T074 clip path read (a pure
+     * widening — no backfill; existing rows stay `null`).
+     */
+    timestampMs: integer("timestamp_ms"),
   },
   (table) => [
     uniqueIndex("document_blocks_stable_idx").on(table.documentId, table.stableBlockId),

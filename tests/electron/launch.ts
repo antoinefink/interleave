@@ -156,6 +156,20 @@ export interface LaunchOptions {
    * `INTERLEAVE_EPUB_IMPORT_PATH` escape. Defaults unset (a real picker).
    */
   readonly ankiImportPath?: string;
+  /**
+   * Stub the native MEDIA file picker (T073) to return this absolute path, so the
+   * media-import E2E can drive import deterministically without a real dialog. Sets
+   * `INTERLEAVE_MEDIA_IMPORT_PATH` (honored only in the unpackaged build), mirroring the
+   * `INTERLEAVE_EPUB_IMPORT_PATH` escape. Defaults unset (a real picker).
+   */
+  readonly mediaImportPath?: string;
+  /**
+   * Stub the native SUBTITLES (sidecar) picker (T073) to return this absolute path, so
+   * the media-import E2E can attach a transcript deterministically. Sets
+   * `INTERLEAVE_SUBTITLES_PATH` (honored only in the unpackaged build). Defaults unset
+   * (the second picker is cancelled → a transcript-less import).
+   */
+  readonly subtitlesPath?: string;
 }
 
 /**
@@ -189,6 +203,8 @@ export async function launchApp(
         ? { INTERLEAVE_HIGHLIGHTS_IMPORT_PATH: options.highlightsImportPath }
         : {}),
       ...(options.ankiImportPath ? { INTERLEAVE_ANKI_IMPORT_PATH: options.ankiImportPath } : {}),
+      ...(options.mediaImportPath ? { INTERLEAVE_MEDIA_IMPORT_PATH: options.mediaImportPath } : {}),
+      ...(options.subtitlesPath ? { INTERLEAVE_SUBTITLES_PATH: options.subtitlesPath } : {}),
       // Suppress the first-run onboarding overlay unless a spec opts in, so it
       // never covers the UI in the feature specs (all start empty). See main/index.ts.
       ...(options.showOnboarding ? {} : { INTERLEAVE_SUPPRESS_ONBOARDING: "1" }),

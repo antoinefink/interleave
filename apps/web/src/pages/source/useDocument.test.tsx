@@ -61,7 +61,10 @@ function getResult(text: string, blockId: string): DocumentsGetResult {
     },
     extractedBlockIds: [],
     sourceFormat: null,
+    mediaSource: null,
+    mediaKind: null,
     blockPages: {},
+    blockTimestamps: {},
   };
 }
 

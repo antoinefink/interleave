@@ -21,6 +21,7 @@ import { DbService } from "./db-service";
 import { registerIpcHandlers } from "./ipc";
 import { createJobApplyHandlers } from "./job-apply-handlers";
 import { JobRunner } from "./job-runner";
+import { registerMediaProtocol, registerMediaSchemePrivileges } from "./media-protocol";
 import { installApplicationMenu } from "./menu";
 import { resolveMigrationsDir } from "./migrations";
 import { resolveNativeBinding } from "./native-binding";
@@ -175,6 +176,11 @@ function bootstrap(): void {
     registerRendererProtocol(rendererDir);
   }
 
+  // 4b) The privileged `media://` protocol (T073) — streams a LOCAL media source's
+  //     vault bytes to the reader's `<video>`/`<audio>` with HTTP Range support, in
+  //     BOTH dev and production (a video reader needs it under the Vite dev server too).
+  registerMediaProtocol(dbService, paths.assetsDir);
+
   // 5) Native application menu (T048) — standard macOS menu + Edit clipboard roles
   //    (so the editor chords work) + Help → "Keyboard shortcuts" (⌘/) opening the
   //    in-app cheat sheet via a one-way main → renderer event.
@@ -188,6 +194,9 @@ function bootstrap(): void {
 if (!devServerUrl) {
   registerRendererSchemePrivileges();
 }
+// The `media://` scheme (T073) must ALSO be registered as privileged before ready —
+// in dev AND production (a video reader streams from it under the Vite dev server too).
+registerMediaSchemePrivileges();
 
 // Enforce a single instance so two processes never open the same SQLite file.
 const gotLock = app.requestSingleInstanceLock();

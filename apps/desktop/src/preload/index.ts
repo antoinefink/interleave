@@ -71,6 +71,7 @@ import type {
   SettingsUpdateRequest,
   SourcesAcceptOcrRequest,
   SourcesExtractRegionRequest,
+  SourcesGetMediaDataRequest,
   SourcesGetOcrRequest,
   SourcesGetPdfDataRequest,
   SourcesGetRegionImageRequest,
@@ -79,6 +80,7 @@ import type {
   SourcesImportHighlightsRequest,
   SourcesImportManualRequest,
   SourcesImportMarkdownTextRequest,
+  SourcesImportMediaRequest,
   SourcesImportPdfRequest,
   SourcesImportUrlRequest,
   SourcesRunOcrRequest,
@@ -138,6 +140,10 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.sourcesPickImportFile, request),
     importEpub: (request: SourcesImportEpubRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.sourcesImportEpub, request),
+    importMedia: (request: SourcesImportMediaRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.sourcesImportMedia, request),
+    getMediaData: (request: SourcesGetMediaDataRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.sourcesGetMediaData, request),
     importDocument: (request: SourcesImportDocumentRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.sourcesImportDocument, request),
     importMarkdownText: (request: SourcesImportMarkdownTextRequest) =>

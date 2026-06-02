@@ -56,6 +56,7 @@ export function rowToSource(row: SourceRow): Source {
     accessedAt: row.accessedAt,
     snapshotKey: row.snapshotKey,
     reasonAdded: row.reasonAdded,
+    mediaKind: (row.mediaKind as Source["mediaKind"]) ?? null,
   };
 }
 

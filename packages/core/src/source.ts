@@ -38,7 +38,22 @@ export interface Source {
   snapshotKey: string | null;
   /** Why the user added this source (free text), aiding later triage. */
   reasonAdded: string | null;
+  /**
+   * The MEDIA discriminator (T073): `"video"`/`"audio"` for a local media file
+   * streamed into the vault, `"youtube"` for a referenced YouTube embed (no local
+   * bytes), and `null` for every non-media source. The authoritative signal the
+   * media reader keys off (NOT a snapshot-key derivation).
+   */
+  mediaKind: MediaKind | null;
 }
+
+/**
+ * The kind of media a `source` is (T073) — the `sources.media_kind` discriminator.
+ * `"video"`/`"audio"` denote a local file whose original bytes live in the asset
+ * vault; `"youtube"` denotes a referenced YouTube embed (the canonical URL is the
+ * reference — the bytes are NOT downloaded).
+ */
+export type MediaKind = "video" | "audio" | "youtube";
 
 /** The ProseMirror schema version a stored document was authored against. */
 export type DocumentSchemaVersion = number;

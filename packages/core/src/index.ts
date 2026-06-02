@@ -191,7 +191,7 @@ export {
   TOPIC_INTERVAL_OPTIONS,
 } from "./settings";
 // Source provenance + editable document body (./source).
-export type { Document, DocumentSchemaVersion, Source } from "./source";
+export type { Document, DocumentSchemaVersion, MediaKind, Source } from "./source";
 // Source reference (the refblock) — citation formatter, one source of truth (./source-ref).
 export type { FormattedSourceRef, SourceRef } from "./source-ref";
 export { EMPTY_SOURCE_REF, formatSourceRef } from "./source-ref";

@@ -46,16 +46,31 @@ export interface UseDocumentResult {
    */
   readonly extractedBlockIds: readonly string[];
   /**
-   * The source body format (T064) — `"pdf"` for a paginated PDF source (the reader
-   * swaps in the PDF reading mode), else `null`. Loaded with the document.
+   * The source body format — `"pdf"` for a paginated PDF source (T064), `"video"`
+   * for a media source (T073, the `MediaReader`), else `null`. Loaded with the doc.
    */
-  readonly sourceFormat: "pdf" | null;
+  readonly sourceFormat: "pdf" | "video" | null;
+  /**
+   * For a MEDIA source (T073): `"local"` (a `media://` vault stream) or `"youtube"`
+   * (an IFrame embed); `null` for non-media sources.
+   */
+  readonly mediaSource: "local" | "youtube" | null;
+  /**
+   * For a LOCAL media source (T073): `"video"`/`"audio"`; `null` otherwise.
+   */
+  readonly mediaKind: "video" | "audio" | null;
   /**
    * For a PAGINATED (PDF) source: the block→page map (stable block id → 1-based
    * page), so the PDF reader sets a page read-point + derives the page of a
    * selected block. Empty for non-paginated bodies.
    */
   readonly blockPages: Readonly<Record<string, number>>;
+  /**
+   * For a MEDIA source (T073): the block→time map (stable block id → cue start ms),
+   * so the media reader seeks to a cue + persists a timestamp read-point. Empty for
+   * non-media bodies.
+   */
+  readonly blockTimestamps: Readonly<Record<string, number>>;
   /** The persisted plain-text mirror most recently loaded/saved. */
   readonly plainText: string;
   /** Whether a save is in flight. */
@@ -87,8 +102,11 @@ export function useDocument(elementId: string | null | undefined): UseDocumentRe
   const [initialDoc, setInitialDoc] = useState<unknown>(null);
   const [currentDoc, setCurrentDoc] = useState<unknown>(null);
   const [extractedBlockIds, setExtractedBlockIds] = useState<readonly string[]>([]);
-  const [sourceFormat, setSourceFormat] = useState<"pdf" | null>(null);
+  const [sourceFormat, setSourceFormat] = useState<"pdf" | "video" | null>(null);
+  const [mediaSource, setMediaSource] = useState<"local" | "youtube" | null>(null);
+  const [mediaKind, setMediaKind] = useState<"video" | "audio" | null>(null);
   const [blockPages, setBlockPages] = useState<Readonly<Record<string, number>>>({});
+  const [blockTimestamps, setBlockTimestamps] = useState<Readonly<Record<string, number>>>({});
   const [plainText, setPlainText] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -136,7 +154,10 @@ export function useDocument(elementId: string | null | undefined): UseDocumentRe
         setCurrentDoc(loaded);
         setExtractedBlockIds(result.extractedBlockIds);
         setSourceFormat(result.sourceFormat ?? null);
+        setMediaSource(result.mediaSource ?? null);
+        setMediaKind(result.mediaKind ?? null);
         setBlockPages(result.blockPages ?? {});
+        setBlockTimestamps(result.blockTimestamps ?? {});
         setPlainText(doc?.plainText ?? "");
         setStatus("ready");
       })
@@ -257,7 +278,10 @@ export function useDocument(elementId: string | null | undefined): UseDocumentRe
     currentDoc,
     extractedBlockIds,
     sourceFormat,
+    mediaSource,
+    mediaKind,
     blockPages,
+    blockTimestamps,
     plainText,
     saving,
     error,

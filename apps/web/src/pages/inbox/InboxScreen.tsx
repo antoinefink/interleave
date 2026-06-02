@@ -66,11 +66,17 @@ const IMPORT_OPTS: {
   label: string;
   hint: string;
   /** When set, clicking opens the matching modal / picker (or routes to Settings). */
-  action?: "manual" | "url" | "capture" | "pdf" | "file";
+  action?: "manual" | "url" | "capture" | "pdf" | "file" | "media";
 }[] = [
   { icon: "link", label: "Paste URL", hint: "Fetch & clean the page", action: "url" },
   { icon: "paste", label: "Paste text", hint: "Plain text", action: "manual" },
   { icon: "source", label: "Import PDF", hint: "Read a PDF incrementally", action: "pdf" },
+  {
+    icon: "media",
+    label: "Import media",
+    hint: "Video / audio, watched incrementally",
+    action: "media",
+  },
   {
     icon: "library",
     label: "Import file",
@@ -95,6 +101,20 @@ function pdfImportMessage(error: unknown): string {
   const sep = raw.indexOf(":");
   const code = sep > 0 ? raw.slice(0, sep).trim() : "";
   return codes[code] ?? "Could not import that PDF.";
+}
+
+/** Map a thrown media-import `code: message` error line to a friendly message (T073). */
+function mediaImportMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const codes: Record<string, string> = {
+    not_media: "That file is not a supported video or audio file.",
+    too_large: "That media file is too large to import.",
+    unreadable: "That media file could not be read.",
+    youtube_unavailable: "That YouTube video is unavailable (private, removed, or region-locked).",
+  };
+  const sep = raw.indexOf(":");
+  const code = sep > 0 ? raw.slice(0, sep).trim() : "";
+  return codes[code] ?? "Could not import that media.";
 }
 
 /** A single left-list row for one inbox source. */
@@ -428,6 +448,46 @@ export function InboxScreen() {
     }
   }, [busy, refresh]);
 
+  // Import a local media file (T073) — MAIN opens the native picker (filtered to
+  // video/audio), then an OPTIONAL second picker for a sidecar `.vtt`/`.srt`
+  // transcript, then streams the original into the vault + parses the transcript +
+  // creates an `inbox` source. On success refresh + select it; a typed
+  // MediaImportError surfaces a friendly message; a cancelled media picker is a no-op.
+  const onImportMedia = useCallback(async () => {
+    if (!isDesktop() || busy) return;
+    setBusy(true);
+    try {
+      const picked = await appApi.pickImportFile({ kind: "media" });
+      if ("cancelled" in picked || picked.paths.length === 0) {
+        setBusy(false);
+        return;
+      }
+      const mediaPath = picked.paths[0];
+      if (!mediaPath) {
+        setBusy(false);
+        return;
+      }
+      // Optional sidecar transcript — the user may cancel this second picker; that is
+      // fine (the media imports transcript-less). Failures here never block the import.
+      let subtitlesPath: string | null = null;
+      try {
+        const subs = await appApi.pickImportFile({ kind: "subtitles" });
+        if (!("cancelled" in subs) && subs.paths[0]) subtitlesPath = subs.paths[0];
+      } catch {
+        subtitlesPath = null;
+      }
+      const result = await appApi.importMediaSource({ path: mediaPath, subtitlesPath });
+      if (result.status === "imported") {
+        await refresh(result.id);
+        setError(null);
+      }
+    } catch (e) {
+      setError(mediaImportMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, refresh]);
+
   const onTriage = useCallback(
     async (kind: "accept" | "keepForLater" | "delete") => {
       if (!selId || busy) return;
@@ -526,6 +586,7 @@ export function InboxScreen() {
               o.action === "url" ||
               o.action === "capture" ||
               o.action === "pdf" ||
+              o.action === "media" ||
               o.action === "file";
             const onClick =
               o.action === "url"
@@ -534,12 +595,14 @@ export function InboxScreen() {
                   ? () => setModalOpen(true)
                   : o.action === "pdf"
                     ? () => void onImportPdf()
-                    : o.action === "file"
-                      ? () => setFileModalOpen(true)
-                      : o.action === "capture"
-                        ? // Route to the Settings "Browser capture" pairing card (T062).
-                          () => void navigate({ to: "/settings", hash: "browser-capture" })
-                        : undefined;
+                    : o.action === "media"
+                      ? () => void onImportMedia()
+                      : o.action === "file"
+                        ? () => setFileModalOpen(true)
+                        : o.action === "capture"
+                          ? // Route to the Settings "Browser capture" pairing card (T062).
+                            () => void navigate({ to: "/settings", hash: "browser-capture" })
+                          : undefined;
             return (
               <button
                 key={o.label}

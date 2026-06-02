@@ -1,0 +1,15 @@
+﻿WEBVTT
+
+NOTE a header note
+
+00:00:01.000 --> 00:00:04.000
+Hello <c.colorE5E5E5>world</c>
+
+00:00:03.500 --> 00:00:06.000
+<i>Overlapping</i> cue
+
+00:00:07.000 --> 00:00:07.000
+   
+
+00:00:08.000 --> 00:00:11.000
+Third line here

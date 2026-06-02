@@ -565,7 +565,7 @@ export type SourcesImportPdfResult =
 
 /** Pick a local file for an import `kind` (T067) — MAIN opens the native picker. */
 export interface PickImportFileRequest {
-  readonly kind: "epub" | "markdown" | "html" | "highlights" | "anki";
+  readonly kind: "epub" | "markdown" | "html" | "highlights" | "anki" | "media" | "subtitles";
 }
 
 /** The picker result (T067) — chosen path(s), or a non-error cancellation. */
@@ -587,6 +587,38 @@ export type SourcesImportEpubResult = {
   readonly chapterCount: number;
   readonly item: InboxItemSummary;
 };
+
+/** Import a local media file (T073) — the renderer passes a chosen path + optional sidecar. */
+export interface SourcesImportMediaRequest {
+  readonly path: string;
+  readonly subtitlesPath?: string | null;
+  readonly priority?: PriorityLabelInput;
+  readonly reasonAdded?: string;
+}
+
+/** The media-import result (T073) — the new source + inbox summary + discriminator. */
+export type SourcesImportMediaResult = {
+  readonly status: "imported";
+  readonly id: string;
+  readonly item: InboxItemSummary;
+  readonly mediaKind: "video" | "audio" | "youtube";
+  readonly hasTranscript: boolean;
+};
+
+/** Request a media source's playable data (T073). */
+export interface SourcesGetMediaDataRequest {
+  readonly elementId: string;
+}
+
+/** The media playable-data result (T073) — `media://` URL (local) or YouTube id. */
+export interface SourcesGetMediaDataResult {
+  readonly mediaSource: "local" | "youtube";
+  readonly mediaKind: "video" | "audio" | null;
+  readonly mediaUrl: string | null;
+  readonly mime: string | null;
+  readonly youtubeId: string | null;
+  readonly durationMs: number | null;
+}
 
 /** Import a local `.md`/`.html` file (T068) — the renderer passes a chosen path + format. */
 export interface SourcesImportDocumentRequest {
@@ -923,16 +955,33 @@ export interface DocumentsGetResult {
    */
   readonly extractedBlockIds: readonly string[];
   /**
-   * The source body format (T064) — `"pdf"` for a paginated PDF source (the reader
-   * swaps in the PDF reading mode), else `null` (the ordinary editor body).
+   * The source body format — `"pdf"` for a paginated PDF source (T064, the PDF
+   * reading mode), `"video"` for a media source (T073, the `MediaReader`), else
+   * `null` (the ordinary editor body).
    */
-  readonly sourceFormat: "pdf" | null;
+  readonly sourceFormat: "pdf" | "video" | null;
+  /**
+   * For a MEDIA source (T073): `"local"` (a vault asset played via `media://`) or
+   * `"youtube"` (an IFrame embed); `null` for non-media sources.
+   */
+  readonly mediaSource: "local" | "youtube" | null;
+  /**
+   * For a LOCAL media source (T073): `"video"`/`"audio"`; `null` for a YouTube source
+   * and every non-media source.
+   */
+  readonly mediaKind: "video" | "audio" | null;
   /**
    * For a PAGINATED (PDF) source: the block→page map (stable block id → 1-based
    * page) off `document_blocks.page`, so the reader sets a page read-point + derives
    * the page of a selected block. Empty for non-paginated bodies.
    */
   readonly blockPages: Readonly<Record<string, number>>;
+  /**
+   * For a MEDIA source (T073): the block→time map (stable block id → cue start ms)
+   * off `document_blocks.timestamp_ms`, so the reader seeks to a cue + persists a
+   * timestamp read-point. Empty for non-media bodies.
+   */
+  readonly blockTimestamps: Readonly<Record<string, number>>;
 }
 
 /** One stable block descriptor (T016), derived renderer-side via `toBlockInputs`. */
@@ -1955,6 +2004,8 @@ export interface AppApi {
     getPdfData(request: SourcesGetPdfDataRequest): Promise<SourcesGetPdfDataResult>;
     pickImportFile(request: PickImportFileRequest): Promise<PickImportFileResult>;
     importEpub(request: SourcesImportEpubRequest): Promise<SourcesImportEpubResult>;
+    importMedia(request: SourcesImportMediaRequest): Promise<SourcesImportMediaResult>;
+    getMediaData(request: SourcesGetMediaDataRequest): Promise<SourcesGetMediaDataResult>;
     importDocument(request: SourcesImportDocumentRequest): Promise<SourcesImportDocumentResult>;
     importMarkdownText(
       request: SourcesImportMarkdownTextRequest,
@@ -2220,6 +2271,19 @@ export const appApi = {
    */
   importEpubSource(request: SourcesImportEpubRequest): Promise<SourcesImportEpubResult> {
     return requireAppApi().sources.importEpub(request);
+  },
+  /**
+   * Import a LOCAL media file into an inbox source (T073) — the renderer passes a media
+   * path chosen via {@link pickImportFile} (kind `media`) + an optional sidecar subtitle
+   * path; MAIN reads + streams the original into the vault + parses the transcript. A
+   * thrown `MediaImportError` (a `code: message` line) surfaces a friendly message.
+   */
+  importMediaSource(request: SourcesImportMediaRequest): Promise<SourcesImportMediaResult> {
+    return requireAppApi().sources.importMedia(request);
+  },
+  /** Serve a media source's playable data (T073) — `media://` URL or YouTube id. */
+  getMediaData(request: SourcesGetMediaDataRequest): Promise<SourcesGetMediaDataResult> {
+    return requireAppApi().sources.getMediaData(request);
   },
   /**
    * Import a local `.md`/`.html` file into an inbox source (T068) — the renderer passes

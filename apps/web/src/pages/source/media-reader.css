@@ -1,0 +1,158 @@
+/**
+ * Media reading mode styles (T073). A control bar, the player (a black-stage
+ * `<video>` or a compact `<audio>` / the YouTube IFrame), and — when a transcript
+ * exists — a scrollable cue pane beside it (the playing cue is highlighted; each cue
+ * seeks the player). Calm, dense, design-token-driven (no hard-coded colors).
+ */
+
+.media-reader {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.media-reader-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.media-reader-time {
+  margin-left: auto;
+  font-size: var(--t-sm);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.media-reader-error {
+  padding: 8px 16px;
+  color: var(--danger);
+  font-size: var(--t-sm);
+}
+
+.media-reader-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.media-reader-body--split {
+  flex-direction: row;
+}
+
+.media-reader-player {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: var(--surface-2);
+}
+
+.media-reader-video,
+.media-reader-iframe {
+  width: 100%;
+  max-width: 880px;
+  max-height: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border: none;
+  border-radius: var(--r-md);
+}
+
+.media-reader-audio {
+  width: 100%;
+  max-width: 640px;
+}
+
+.media-reader-loading,
+.media-reader-noscript {
+  padding: 24px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  text-align: center;
+}
+
+.media-reader-noscript {
+  align-self: center;
+  max-width: 360px;
+  margin: auto;
+}
+
+.media-reader-transcript {
+  flex: 0 0 340px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.media-reader-transcript-head {
+  padding: 10px 16px;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+}
+
+.media-reader-cues {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+}
+
+.media-reader-cue {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.media-reader-cue:hover {
+  background: var(--surface-2);
+}
+
+.media-reader-cue--active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.media-reader-cue-time {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--t-xs);
+  padding-top: 1px;
+}
+
+.media-reader-cue--active .media-reader-cue-time {
+  color: var(--accent-text);
+}
+
+.media-reader-cue-text {
+  flex: 1;
+  min-width: 0;
+}

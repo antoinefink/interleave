@@ -9,6 +9,7 @@
  */
 
 import type { Job, JobJsonValue } from "@interleave/core";
+import { isYouTubeUrl } from "@interleave/importers";
 import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import {
   AnalyticsGetRequestSchema,
@@ -78,6 +79,7 @@ import {
   SettingsUpdateRequestSchema,
   SourcesAcceptOcrRequestSchema,
   SourcesExtractRegionRequestSchema,
+  SourcesGetMediaDataRequestSchema,
   SourcesGetOcrRequestSchema,
   SourcesGetPdfDataRequestSchema,
   SourcesGetRegionImageRequestSchema,
@@ -86,6 +88,7 @@ import {
   SourcesImportHighlightsRequestSchema,
   SourcesImportManualRequestSchema,
   SourcesImportMarkdownTextRequestSchema,
+  SourcesImportMediaRequestSchema,
   SourcesImportPdfRequestSchema,
   SourcesImportUrlRequestSchema,
   type SourcesImportUrlResult,
@@ -112,6 +115,7 @@ import { EpubImportError } from "./epub-import-service";
 import { HighlightImportError } from "./highlight-import-service";
 import type { UrlImportJobPayload } from "./job-apply-handlers";
 import type { JobRunner } from "./job-runner";
+import { MediaImportError } from "./media-import-service";
 import type { AppPaths } from "./paths";
 import { PdfImportError } from "./pdf-import-service";
 import { UrlImportError } from "./url-import-service";
@@ -255,6 +259,26 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   // `ImportUrlModal` catch already handles.
   ipcMain.handle(IPC_CHANNELS.sourcesImportUrl, async (_event, rawRequest: unknown) => {
     const request = SourcesImportUrlRequestSchema.parse(rawRequest);
+    // YouTube routing fork (T073): "Paste URL" stays the ONE web-import entry point,
+    // but a YouTube URL is a VIDEO source, not a Readability article — route it to the
+    // media importer (oEmbed metadata + best-effort on-device captions; no bytes
+    // downloaded), bypassing the `url_import` worker job. The result is the SAME
+    // discriminated `"imported"` shape the URL path returns, so the renderer is unchanged.
+    if (isYouTubeUrl(request.url)) {
+      try {
+        const media = await dbService.importMediaFromYouTube({
+          url: request.url,
+          ...(request.priority ? { priority: request.priority } : {}),
+          ...(request.reasonAdded !== undefined ? { reasonAdded: request.reasonAdded } : {}),
+        });
+        return { status: "imported", id: media.id, item: media.item } as SourcesImportUrlResult;
+      } catch (err) {
+        if (err instanceof MediaImportError) {
+          throw new Error(`${err.code}: ${err.message}`);
+        }
+        throw err;
+      }
+    }
     const runner = requireRunner();
     const payload: UrlImportJobPayload = {
       url: request.url,
@@ -350,6 +374,38 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
       }
       throw err;
     }
+  });
+
+  // Import a local media file (T073) — the renderer resolved the chosen media path
+  // (and optional sidecar subtitles path) via `sources.pickImportFile`. MAIN reads +
+  // validates + streams the original into the vault + parses the (optional) transcript
+  // + creates an `inbox` source. A thrown `MediaImportError` is re-thrown as a
+  // `code: message` line so the inbox chip can map the `code` to a friendly message
+  // (mirrors the PDF/EPUB path).
+  ipcMain.handle(IPC_CHANNELS.sourcesImportMedia, async (_event, rawRequest: unknown) => {
+    const request = SourcesImportMediaRequestSchema.parse(rawRequest);
+    try {
+      return await dbService.importMedia({
+        path: request.path,
+        ...(request.subtitlesPath !== undefined ? { subtitlesPath: request.subtitlesPath } : {}),
+        ...(request.priority ? { priority: request.priority } : {}),
+        ...(request.reasonAdded !== undefined ? { reasonAdded: request.reasonAdded } : {}),
+      });
+    } catch (err) {
+      if (err instanceof MediaImportError) {
+        throw new Error(`${err.code}: ${err.message}`);
+      }
+      throw err;
+    }
+  });
+
+  // Serve a media source's playable data to the renderer (T073). For a local source it
+  // returns the privileged `media://<id>` URL (streamed by the protocol handler) + the
+  // mime/duration; for a YouTube source it returns the video id. MAIN owns the path; the
+  // renderer passes only an element id. Read-only.
+  ipcMain.handle(IPC_CHANNELS.sourcesGetMediaData, (_event, rawRequest: unknown) => {
+    const request = SourcesGetMediaDataRequestSchema.parse(rawRequest);
+    return dbService.getMediaData(request);
   });
 
   // Import a local `.md`/`.html` file (T068) — the renderer resolved the chosen path
@@ -555,7 +611,7 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
    */
   async function pickImportFilePaths(
     event: Electron.IpcMainInvokeEvent,
-    kind: "epub" | "markdown" | "html" | "highlights" | "anki",
+    kind: "epub" | "markdown" | "html" | "highlights" | "anki" | "media" | "subtitles",
   ): Promise<string[]> {
     // Per-kind picker config (extensions + the E2E env escape). Only EPUB is wired in
     // T067; the other kinds land with T068–T070 (they reuse this same picker).
@@ -594,6 +650,35 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
         // must not advertise it (the service rejects a non-.apkg with a typed error).
         exts: ["apkg"],
         env: "INTERLEAVE_ANKI_IMPORT_PATH",
+      },
+      media: {
+        title: "Import media",
+        name: "Video / Audio",
+        // Keep in lockstep with MediaImportService VIDEO_EXTS/AUDIO_EXTS so the
+        // picker advertises exactly the set the service accepts.
+        exts: [
+          "mp4",
+          "webm",
+          "mov",
+          "mkv",
+          "m4v",
+          "ogv",
+          "m4a",
+          "mp3",
+          "wav",
+          "aac",
+          "oga",
+          "ogg",
+          "flac",
+          "opus",
+        ],
+        env: "INTERLEAVE_MEDIA_IMPORT_PATH",
+      },
+      subtitles: {
+        title: "Choose a transcript",
+        name: "Subtitles",
+        exts: ["vtt", "srt"],
+        env: "INTERLEAVE_SUBTITLES_PATH",
       },
     };
     const { title, name, exts, env } = config[kind];

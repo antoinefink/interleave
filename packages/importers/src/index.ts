@@ -73,6 +73,7 @@ export {
 export { extractHtmlTitle, htmlFileToProseMirrorDoc } from "./html-file";
 export { htmlToProseMirrorDoc } from "./html-to-prosemirror";
 export { markdownToProseMirrorDoc, proseMirrorDocToMarkdown } from "./markdown";
+export { MEDIA_PROBE_BYTES, probeMediaDurationMs } from "./media-metadata";
 export {
   aggregateOcrWords,
   type OcrResult,
@@ -95,3 +96,24 @@ export {
   SANITIZE_ALLOWED_TAGS,
   sanitizeArticleHtml,
 } from "./sanitize";
+export {
+  parseTranscript,
+  type TranscriptCue,
+  type TranscriptFormat,
+} from "./transcript";
+export {
+  NO_TRANSCRIPT_PLACEHOLDER,
+  type TranscriptToProseMirrorInput,
+  transcriptToProseMirrorDoc,
+} from "./transcript-to-prosemirror";
+export {
+  discoverCaptionTrackUrl,
+  type FetchLike,
+  fetchYouTubeMetadata,
+  isYouTubeUrl,
+  parseYouTubeId,
+  YouTubeImportError,
+  type YouTubeImportErrorCode,
+  type YouTubeMeta,
+  youTubeWatchUrl,
+} from "./youtube";

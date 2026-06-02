@@ -944,7 +944,9 @@ export interface SourcesGetPdfDataResult {
  * single command serves every file kind so it is defined ONCE.
  */
 export const PickImportFileRequestSchema = z.object({
-  kind: z.enum(["epub", "markdown", "html", "highlights", "anki"]),
+  // `media` + `subtitles` (T073) extend the shared picker: `media` filters to the
+  // video/audio extensions, `subtitles` to `.vtt`/`.srt` (the optional sidecar).
+  kind: z.enum(["epub", "markdown", "html", "highlights", "anki", "media", "subtitles"]),
 });
 export type PickImportFileRequest = z.infer<typeof PickImportFileRequestSchema>;
 
@@ -979,6 +981,73 @@ export type SourcesImportEpubResult = {
   readonly chapterCount: number;
   readonly item: InboxItemSummary;
 };
+
+// ---------------------------------------------------------------------------
+// sources.importMedia() / sources.getMediaData()  (T073 — local/YouTube media)
+// ---------------------------------------------------------------------------
+
+/**
+ * Import a LOCAL media file as an inbox `source` (T073). After the renderer has a
+ * chosen media path (via {@link PickImportFileRequestSchema} with kind `media`) — and
+ * optionally a sidecar `.vtt`/`.srt` path (kind `subtitles`) — it calls this with the
+ * path(s); MAIN reads the bytes, streams `original.<ext>` into the vault, parses the
+ * (optional) transcript, and creates the source in one transaction. A large video never
+ * crosses the IPC bridge as a payload; only the path does. YouTube rides the existing
+ * `sources.importUrl` path (the service auto-routes when the URL is a YouTube URL).
+ */
+export const SourcesImportMediaRequestSchema = z.object({
+  path: z.string().min(1),
+  /** Optional ABSOLUTE path to a sidecar `.vtt`/`.srt` transcript. */
+  subtitlesPath: z.string().min(1).nullable().optional(),
+  /** Coarse A/B/C/D priority; defaults `C` main-side so new media never dominates. */
+  priority: PriorityLabelSchema.optional(),
+  reasonAdded: z.string().trim().max(2048).optional(),
+});
+export type SourcesImportMediaRequest = z.infer<typeof SourcesImportMediaRequestSchema>;
+
+/**
+ * The media-import result. `"imported"` carries the new source + inbox summary +
+ * the media discriminator + whether a transcript was produced; discriminated on
+ * `status` so future arms can be added without a breaking change.
+ */
+export type SourcesImportMediaResult = {
+  readonly status: "imported";
+  readonly id: string;
+  readonly item: InboxItemSummary;
+  /** `"video"`/`"audio"` (a local file) or `"youtube"`. */
+  readonly mediaKind: "video" | "audio" | "youtube";
+  /** Whether a transcript body was produced (vs the placeholder). */
+  readonly hasTranscript: boolean;
+};
+
+/**
+ * Serve a media source's playable data to the renderer (T073). For a LOCAL source MAIN
+ * resolves the vault path; the renderer's `<video>`/`<audio>` plays the privileged
+ * `media://<elementId>` URL (streamed with HTTP Range support — the bytes are NOT
+ * buffered over IPC), so this returns `mediaSource: "local"` + the mime/duration. For a
+ * YOUTUBE source it returns `mediaSource: "youtube"` + the video id (the renderer uses
+ * the IFrame embed; no bytes). The renderer passes only an element id; MAIN owns the
+ * path. Read-only.
+ */
+export const SourcesGetMediaDataRequestSchema = z.object({
+  elementId: ElementIdSchema,
+});
+export type SourcesGetMediaDataRequest = z.infer<typeof SourcesGetMediaDataRequestSchema>;
+
+export interface SourcesGetMediaDataResult {
+  /** `"local"` (a vault asset, played via `media://`) or `"youtube"` (an IFrame embed). */
+  readonly mediaSource: "local" | "youtube";
+  /** `"video"`/`"audio"` for a local source, else `null`. */
+  readonly mediaKind: "video" | "audio" | null;
+  /** The privileged `media://<elementId>` URL for a local source, else `null`. */
+  readonly mediaUrl: string | null;
+  /** The MIME type of the local media, else `null`. */
+  readonly mime: string | null;
+  /** The YouTube video id for a youtube source, else `null`. */
+  readonly youtubeId: string | null;
+  /** The media duration in ms (local source), else `null`. */
+  readonly durationMs: number | null;
+}
 
 // ---------------------------------------------------------------------------
 // sources.importDocument() / importMarkdownText() / documents.exportMarkdown()
@@ -1562,12 +1631,25 @@ export interface DocumentsGetResult {
    */
   readonly extractedBlockIds: readonly string[];
   /**
-   * The source body format (T064). `"pdf"` for a paginated PDF source (the reader
-   * swaps in the `pdfjs-dist` PDF reading mode), else `null` (the ordinary
-   * editor body). Derived main-side from the presence of a `.pdf` `snapshotKey` /
-   * a `source_pdf` asset.
+   * The source body format. `"pdf"` for a paginated PDF source (T064 — the reader
+   * swaps in the `pdfjs-dist` PDF reading mode), `"video"` for a media source (T073 —
+   * the reader swaps in the `MediaReader` `<video>`/`<audio>`/YouTube IFrame), else
+   * `null` (the ordinary editor body). The PDF case derives from a `.pdf` snapshot;
+   * the media case derives from `sources.media_kind != null` (the authoritative
+   * media discriminator — a transcript-less YouTube source has no distinctive snapshot).
    */
-  readonly sourceFormat: "pdf" | null;
+  readonly sourceFormat: "pdf" | "video" | null;
+  /**
+   * For a MEDIA source (T073): `"local"` (a vault asset, played via `media://`) or
+   * `"youtube"` (an IFrame embed). `null` for non-media sources. Derived from
+   * `sources.media_kind`.
+   */
+  readonly mediaSource: "local" | "youtube" | null;
+  /**
+   * For a LOCAL media source (T073): `"video"` or `"audio"` (so the reader picks the
+   * right element); `null` for a YouTube source and every non-media source.
+   */
+  readonly mediaKind: "video" | "audio" | null;
   /**
    * For a PAGINATED source (PDF, T064): the block→page map (stable block id →
    * 1-based page) read off `document_blocks.page`, so the reader can set a
@@ -1575,6 +1657,14 @@ export interface DocumentsGetResult {
    * extract's `source_locations.page`. Empty for non-paginated bodies.
    */
   readonly blockPages: Readonly<Record<string, number>>;
+  /**
+   * For a MEDIA source (T073): the block→time map (stable block id → cue start ms)
+   * read off `document_blocks.timestamp_ms`, so the reader can seek the player to a
+   * cue, highlight the playing cue, and persist a timestamp read-point. Empty for
+   * non-media bodies (a transcript-less media source has only the title heading,
+   * which carries no timestamp).
+   */
+  readonly blockTimestamps: Readonly<Record<string, number>>;
 }
 
 /**
@@ -3261,6 +3351,18 @@ export interface AppApi {
      * creates the book→chapter lineage tree in one transaction.
      */
     importEpub(request: SourcesImportEpubRequest): Promise<SourcesImportEpubResult>;
+    /**
+     * Import a LOCAL media file into an `inbox` source (T073) — the renderer passes a
+     * path chosen via {@link pickImportFile} (kind `media`) + an optional `subtitles`
+     * sidecar path; MAIN reads + validates the bytes, streams `original.<ext>` into the
+     * vault, parses the (optional) transcript, and creates the source in one transaction.
+     */
+    importMedia(request: SourcesImportMediaRequest): Promise<SourcesImportMediaResult>;
+    /**
+     * Serve a media source's playable data to the renderer (T073) — `media://` URL +
+     * mime/duration for a LOCAL source, or the YouTube video id for a YOUTUBE source.
+     */
+    getMediaData(request: SourcesGetMediaDataRequest): Promise<SourcesGetMediaDataResult>;
     /**
      * Import a local `.md`/`.html` file into an `inbox` source (T068) — MAIN reads +
      * parses the bytes (Markdown via `markdown-it`, HTML via sanitize+HTML→PM) and

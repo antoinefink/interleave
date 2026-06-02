@@ -40,6 +40,12 @@ export interface DocumentBlockInput {
    * read. The renderer's plain document saves omit it (→ `null`, unchanged).
    */
   readonly page?: number | null;
+  /**
+   * The media START TIMESTAMP (ms) for a MEDIA (T073) transcript cue block;
+   * `null`/omitted for non-media bodies. Forwarded so a re-save of a media body
+   * keeps the block→time map the timestamp read-point + clip path read.
+   */
+  readonly timestampMs?: number | null;
 }
 
 /** Arguments to create/replace a document body + its blocks. */
@@ -155,6 +161,9 @@ export class DocumentRepository {
             // Preserve the page mapping for paginated (PDF) blocks; `null` for the
             // HTML/text path (its block inputs never set `page`).
             page: block.page ?? null,
+            // Preserve the cue-time mapping for media (T073) transcript blocks; `null`
+            // for non-media bodies (their block inputs never set `timestampMs`).
+            timestampMs: block.timestampMs ?? null,
           })
           .run();
       }

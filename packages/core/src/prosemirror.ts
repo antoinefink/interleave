@@ -192,6 +192,15 @@ export interface ProseMirrorBlock {
    * compatible — `createWithDocumentWithin` writes `block.page ?? null`.
    */
   readonly page?: number | null;
+  /**
+   * The media START TIMESTAMP (milliseconds) this block belongs to, for MEDIA
+   * sources (video/audio transcripts, T073) → persisted to
+   * `document_blocks.timestamp_ms`. One cue paragraph carries its cue start;
+   * omitted/`null` for the title heading, the transcript-less placeholder, and
+   * every non-media body. Backward compatible — `createWithDocumentWithin` writes
+   * `block.timestampMs ?? null`.
+   */
+  readonly timestampMs?: number | null;
 }
 
 /** The full result of converting pasted plain text. */

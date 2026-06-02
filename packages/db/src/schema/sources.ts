@@ -38,6 +38,17 @@ export const sources = sqliteTable(
     snapshotKey: text("snapshot_key"),
     /** Why the user added this source (free text), aiding later triage. */
     reasonAdded: text("reason_added"),
+    /**
+     * The MEDIA discriminator (T073): `"video"`/`"audio"` for a local media file
+     * (its bytes are in the vault), `"youtube"` for a referenced YouTube embed (no
+     * local bytes), and `null` for every non-media source. This — not a snapshot-key
+     * derivation — is the authoritative signal `documents.get` reads to return
+     * `sourceFormat: "video"` + `mediaSource`/`mediaKind`, so the reader can reliably
+     * pick `<video>` vs the YouTube IFrame even for a transcript-less YouTube source
+     * that has neither a vault asset nor a distinctive snapshot key. Pure widening,
+     * no backfill (existing rows get `null`).
+     */
+    mediaKind: text("media_kind"),
   },
   (table) => [
     // T061: the canonical-URL duplicate-detection lookup. Non-unique by design —

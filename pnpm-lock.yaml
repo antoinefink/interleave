@@ -317,6 +317,9 @@ importers:
       sanitize-html:
         specifier: ^2.17.4
         version: 2.17.4
+      subsrt-ts:
+        specifier: ^2.1.2
+        version: 2.1.2
     devDependencies:
       '@types/markdown-it':
         specifier: ^14.1.2
@@ -3610,6 +3613,10 @@ packages:
 
   strnum@1.1.2:
     resolution: {integrity: sha512-vrN+B7DBIoTTZjnPNewwhx6cBA/H+IS7rfW68n7XxC1y7uoiGQBxaKzqucGUgavX15dJgiGztLJ8vxuEzwqBdA==}
+
+  subsrt-ts@2.1.2:
+    resolution: {integrity: sha512-45yNlK42Z0pz4lAaNYbR5P60M2jmHl+gfAaiJxDIXsXXqoE7TkDCzl/00HgWyZXKkdIU6s8FiNtRvrlOZb+5Qg==}
+    hasBin: true
 
   sumchecker@3.0.1:
     resolution: {integrity: sha512-MvjXzkz/BOfyVDkG0oFOtBxHX2u3gKbMHIF/dXblZsgD3BWOFLmHovIpZY7BykJdAjcqRCBi1WYBNdEC9yI7vg==}
@@ -7194,6 +7201,8 @@ snapshots:
   strip-json-comments@2.0.1: {}
 
   strnum@1.1.2: {}
+
+  subsrt-ts@2.1.2: {}
 
   sumchecker@3.0.1:
     dependencies:

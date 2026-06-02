@@ -74,6 +74,8 @@ import {
   SettingsUpdateRequestSchema,
   SourcesAcceptOcrRequestSchema,
   SourcesExtractRegionRequestSchema,
+  SourcesGetMediaDataRequestSchema,
+  type SourcesGetMediaDataResult,
   SourcesGetOcrRequestSchema,
   SourcesGetPdfDataRequestSchema,
   SourcesGetRegionImageRequestSchema,
@@ -85,6 +87,8 @@ import {
   type SourcesImportHighlightsResult,
   SourcesImportManualRequestSchema,
   SourcesImportMarkdownTextRequestSchema,
+  SourcesImportMediaRequestSchema,
+  type SourcesImportMediaResult,
   SourcesImportPdfRequestSchema,
   type SourcesImportPdfResult,
   type SourcesImportUrlRequest,
@@ -123,6 +127,8 @@ describe("IPC channels", () => {
         "sources:getPdfData",
         "sources:pickImportFile",
         "sources:importEpub",
+        "sources:importMedia",
+        "sources:getMediaData",
         "sources:importDocument",
         "sources:importMarkdownText",
         "sources:importHighlights",
@@ -331,6 +337,9 @@ describe("EPUB import schemas (T067)", () => {
   it("PickImportFileRequestSchema accepts the known kinds + rejects others", () => {
     expect(PickImportFileRequestSchema.parse({ kind: "epub" }).kind).toBe("epub");
     expect(PickImportFileRequestSchema.parse({ kind: "anki" }).kind).toBe("anki");
+    // T073 extends the picker with the media + subtitles kinds.
+    expect(PickImportFileRequestSchema.parse({ kind: "media" }).kind).toBe("media");
+    expect(PickImportFileRequestSchema.parse({ kind: "subtitles" }).kind).toBe("subtitles");
     expect(() => PickImportFileRequestSchema.parse({ kind: "pdf" })).toThrow();
     expect(() => PickImportFileRequestSchema.parse({})).toThrow();
   });
@@ -372,6 +381,80 @@ describe("EPUB import schemas (T067)", () => {
     expect(result.status).toBe("imported");
     expect(result.bookId).toBe("el_book");
     expect(result.chapterCount).toBe(3);
+  });
+});
+
+describe("Media import schemas (T073)", () => {
+  it("SourcesImportMediaRequestSchema requires a path + optional sidecar/priority/reason", () => {
+    const parsed = SourcesImportMediaRequestSchema.parse({
+      path: "/tmp/talk.mp4",
+      subtitlesPath: "/tmp/talk.vtt",
+      priority: "B",
+      reasonAdded: "a lecture",
+    });
+    expect(parsed.path).toBe("/tmp/talk.mp4");
+    expect(parsed.subtitlesPath).toBe("/tmp/talk.vtt");
+    expect(parsed.priority).toBe("B");
+    // The sidecar is optional + nullable; the path is required + non-empty.
+    expect(SourcesImportMediaRequestSchema.parse({ path: "/x.mp4" }).subtitlesPath).toBeUndefined();
+    expect(
+      SourcesImportMediaRequestSchema.parse({ path: "/x.mp4", subtitlesPath: null }).subtitlesPath,
+    ).toBeNull();
+    expect(() => SourcesImportMediaRequestSchema.parse({ path: "" })).toThrow();
+    expect(() =>
+      SourcesImportMediaRequestSchema.parse({ path: "/x.mp4", priority: "Z" }),
+    ).toThrow();
+  });
+
+  it("SourcesImportMediaResult round-trips the imported shape", () => {
+    const result: SourcesImportMediaResult = {
+      status: "imported",
+      id: "el_media",
+      item: {
+        id: "el_media",
+        type: "source",
+        status: "inbox",
+        stage: "raw_source",
+        priority: 0.4,
+        title: "A Talk",
+        srcType: "Manual note",
+        author: null,
+        accessedAt: "2026-06-01T00:00:00.000Z",
+        charCount: 10,
+        previewSnippet: "A Talk",
+      },
+      mediaKind: "video",
+      hasTranscript: true,
+    };
+    expect(result.status).toBe("imported");
+    expect(result.mediaKind).toBe("video");
+    expect(result.hasTranscript).toBe(true);
+  });
+
+  it("SourcesGetMediaDataRequestSchema requires an elementId", () => {
+    expect(SourcesGetMediaDataRequestSchema.parse({ elementId: "el_1" }).elementId).toBe("el_1");
+    expect(() => SourcesGetMediaDataRequestSchema.parse({})).toThrow();
+  });
+
+  it("SourcesGetMediaDataResult round-trips both local + youtube shapes", () => {
+    const local: SourcesGetMediaDataResult = {
+      mediaSource: "local",
+      mediaKind: "video",
+      mediaUrl: "media://el_media",
+      mime: "video/mp4",
+      youtubeId: null,
+      durationMs: 1000,
+    };
+    const youtube: SourcesGetMediaDataResult = {
+      mediaSource: "youtube",
+      mediaKind: null,
+      mediaUrl: null,
+      mime: null,
+      youtubeId: "dQw4w9WgXcQ",
+      durationMs: null,
+    };
+    expect(local.mediaUrl).toBe("media://el_media");
+    expect(youtube.youtubeId).toBe("dQw4w9WgXcQ");
   });
 });
 

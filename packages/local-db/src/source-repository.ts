@@ -23,6 +23,7 @@ import type {
   ElementStatus,
   ElementType,
   IsoTimestamp,
+  MediaKind,
   PlainTextConversion,
   Priority,
   RegionRect,
@@ -66,6 +67,12 @@ export interface CreateSourceInput {
   readonly accessedAt?: IsoTimestamp | null;
   readonly snapshotKey?: string | null;
   readonly reasonAdded?: string | null;
+  /**
+   * The MEDIA discriminator (T073): `"video"`/`"audio"` (a local media file) or
+   * `"youtube"` (a referenced embed); `null`/omitted for every non-media source.
+   * The media-import service sets it at create time; the media reader keys off it.
+   */
+  readonly mediaKind?: MediaKind | null;
 }
 
 /** The element + provenance pair returned when a source is created/read. */
@@ -233,6 +240,7 @@ export class SourceRepository {
         accessedAt: input.accessedAt ?? null,
         snapshotKey: input.snapshotKey ?? null,
         reasonAdded: input.reasonAdded ?? null,
+        mediaKind: input.mediaKind ?? null,
       };
       tx.insert(sources)
         .values({ ...source })
@@ -286,6 +294,7 @@ export class SourceRepository {
       accessedAt: input.accessedAt ?? null,
       snapshotKey: input.snapshotKey ?? null,
       reasonAdded: input.reasonAdded ?? null,
+      mediaKind: input.mediaKind ?? null,
     };
     const { element, blockCount } = this.insertElementWithDocument(tx, {
       type: "source",
@@ -424,6 +433,8 @@ export class SourceRepository {
           stableBlockId: block.stableBlockId,
           // The 1-based page for a paginated (PDF, T064) block; `null` otherwise.
           page: block.page ?? null,
+          // The cue start ms for a media (T073) transcript block; `null` otherwise.
+          timestampMs: block.timestampMs ?? null,
         })
         .run();
     }

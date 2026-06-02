@@ -41,6 +41,7 @@ import {
   raisePriority,
 } from "@interleave/core";
 import { type DbHandle, migrateDatabase, openDatabase } from "@interleave/db";
+import { parseYouTubeId } from "@interleave/importers";
 import {
   SchedulerService as AttentionScheduleService,
   CardEditService,
@@ -170,6 +171,8 @@ import type {
   SourcesAcceptOcrResult,
   SourcesExtractRegionRequest,
   SourcesExtractRegionResult,
+  SourcesGetMediaDataRequest,
+  SourcesGetMediaDataResult,
   SourcesGetOcrRequest,
   SourcesGetOcrResult,
   SourcesGetPdfDataRequest,
@@ -179,6 +182,7 @@ import type {
   SourcesImportEpubResult,
   SourcesImportManualRequest,
   SourcesImportManualResult,
+  SourcesImportMediaResult,
   SourcesImportPdfResult,
   SourcesRunOcrRequest,
   SourcesRunOcrResult,
@@ -225,6 +229,7 @@ import {
 import { EpubImportService } from "./epub-import-service";
 import { type HighlightImportResult, HighlightImportService } from "./highlight-import-service";
 import type { JobRunner } from "./job-runner";
+import { MediaImportService } from "./media-import-service";
 import { OcrService } from "./ocr-service";
 import { PdfImportService } from "./pdf-import-service";
 import { PdfRegionService } from "./pdf-region-service";
@@ -298,6 +303,14 @@ export class DbService {
    */
   private epubImport: EpubImportService | null = null;
   /**
+   * The media-import orchestrator (T073) — stream a local video/audio file into the
+   * vault + parse an optional transcript, OR fetch a YouTube URL's metadata/captions
+   * on-device (no bytes downloaded), creating an `inbox` source either way. Built
+   * lazily on first read (it needs `assetsDir` + the `assetVaultService` + the URL
+   * fetch impl, all available after open()).
+   */
+  private mediaImport: MediaImportService | null = null;
+  /**
    * The Markdown/HTML document-import + Markdown-export orchestrator (T068) — parse a
    * local `.md`/`.html` (or pasted Markdown) into an `inbox` source, and serialize a
    * stored document back to a `.md` in the `exports/` vault. Built lazily on first
@@ -354,6 +367,8 @@ export class DbService {
   private nativeBinding: string | undefined = undefined;
   /** DEV/E2E-only: permit loopback/private hosts in URL import (see open()). */
   private allowLoopbackImport = false;
+  /** TEST-only: the media-import YouTube fetch override (defaults to Node `fetch`). */
+  private mediaFetchImpl: typeof fetch | undefined = undefined;
   private migrated = false;
 
   /** Whether the database handle is currently open. */
@@ -384,6 +399,14 @@ export class DbService {
       exportsDir?: string | undefined;
       /** DEV/E2E-only: permit loopback/private hosts in URL import (the SSRF guard escape). */
       allowLoopbackImport?: boolean | undefined;
+      /**
+       * The HTTP-fetch implementation the media-import service (T073) uses for the
+       * YouTube oEmbed/caption requests. Defaults to the Node global `fetch`;
+       * injectable so a test can supply a recorded fake — no live network. Production
+       * never sets it. (The media service owns the only network call; the DB service
+       * itself stays network-free — see the import-path guard test.)
+       */
+      mediaFetchImpl?: typeof fetch | undefined;
     } = {},
   ): void {
     if (this.handle) return;
@@ -395,6 +418,7 @@ export class DbService {
     this.exportsDir = options.exportsDir ?? null;
     this.nativeBinding = options.nativeBinding;
     this.allowLoopbackImport = options.allowLoopbackImport ?? false;
+    this.mediaFetchImpl = options.mediaFetchImpl;
     this.repositories = createRepositories(this.handle.db);
     this.inspector = new InspectorQuery(this.repositories);
     this.lineage = new LineageQuery(this.repositories);
@@ -457,6 +481,7 @@ export class DbService {
     this.assetVault = null;
     this.pdfImport = null;
     this.epubImport = null;
+    this.mediaImport = null;
     this.documentImport = null;
     this.highlightImport = null;
     this.ankiImport = null;
@@ -468,6 +493,7 @@ export class DbService {
     this.exportsDir = null;
     this.nativeBinding = undefined;
     this.allowLoopbackImport = false;
+    this.mediaFetchImpl = undefined;
     this.migrated = false;
   }
 
@@ -961,6 +987,125 @@ export class DbService {
   }
 
   /**
+   * The media-import orchestrator (T073), lazily built on first read against the open
+   * DB + repos + the vault `assetsDir` + the `assetVaultService` (so a local file
+   * streams in) + the Node global `fetch` (so a YouTube URL fetches metadata/captions
+   * on-device). Throws a clear error if `assetsDir` was not provided — mirrors
+   * {@link pdfImportService}.
+   */
+  get mediaImportService(): MediaImportService {
+    if (this.mediaImport) return this.mediaImport;
+    const repositories = this.repos;
+    if (!this.assetsDir) {
+      throw new Error(
+        "DbService: media import requires an assets directory — call open() with { assetsDir }",
+      );
+    }
+    this.mediaImport = new MediaImportService({
+      db: this.require().db,
+      repositories,
+      assetsDir: this.assetsDir,
+      assetVault: this.assetVaultService,
+      ...(this.mediaFetchImpl ? { fetchImpl: this.mediaFetchImpl } : {}),
+    });
+    return this.mediaImport;
+  }
+
+  /**
+   * Import a LOCAL media file (T073) — the IPC handler has already resolved the chosen
+   * absolute `path` (and optional `subtitlesPath`) via the MAIN file picker. Delegates
+   * to {@link MediaImportService.importFromFile}; a thrown `MediaImportError` propagates
+   * to the IPC layer (rejected invoke → the inbox chip's friendly-message catch).
+   */
+  async importMedia(input: {
+    path: string;
+    subtitlesPath?: string | null;
+    priority?: PriorityLabel;
+    reasonAdded?: string | null;
+  }): Promise<SourcesImportMediaResult> {
+    const result = await this.mediaImportService.importFromFile({
+      filePath: input.path,
+      ...(input.subtitlesPath !== undefined ? { subtitlesPath: input.subtitlesPath } : {}),
+      ...(input.priority ? { priority: input.priority } : {}),
+      ...(input.reasonAdded !== undefined ? { reasonAdded: input.reasonAdded } : {}),
+    });
+    return {
+      status: "imported",
+      id: result.id,
+      item: result.item,
+      mediaKind: result.mediaKind,
+      hasTranscript: result.hasTranscript,
+    };
+  }
+
+  /**
+   * Import a YouTube URL (T073) — the routing fork on `sources.importUrl`. The URL IPC
+   * handler detects a YouTube URL and calls this instead of enqueuing a Readability
+   * `url_import` job. Delegates to {@link MediaImportService.importFromYouTube}; a thrown
+   * `MediaImportError` propagates to the IPC layer.
+   */
+  async importMediaFromYouTube(input: {
+    url: string;
+    priority?: PriorityLabel;
+    reasonAdded?: string | null;
+  }): Promise<SourcesImportMediaResult> {
+    const result = await this.mediaImportService.importFromYouTube(input);
+    return {
+      status: "imported",
+      id: result.id,
+      item: result.item,
+      mediaKind: result.mediaKind,
+      hasTranscript: result.hasTranscript,
+    };
+  }
+
+  /**
+   * Serve a media source's playable data to the renderer (T073). For a LOCAL source it
+   * returns the privileged `media://<elementId>` URL (the renderer's `<video>`/`<audio>`
+   * streams it with Range support — bytes never buffered over IPC) + the mime/duration;
+   * for a YOUTUBE source it returns the video id (the renderer uses the IFrame embed).
+   * Read-only; the renderer passes only an element id (MAIN owns the vault path).
+   */
+  getMediaData(request: SourcesGetMediaDataRequest): Promise<SourcesGetMediaDataResult> {
+    const elementId = request.elementId as ElementId;
+    const provenance = this.repos.sources.findById(elementId)?.source ?? null;
+    const mediaKind = provenance?.mediaKind ?? null;
+    if (mediaKind === "youtube") {
+      const youtubeId = provenance?.canonicalUrl ? parseYouTubeId(provenance.canonicalUrl) : null;
+      return Promise.resolve({
+        mediaSource: "youtube",
+        mediaKind: null,
+        mediaUrl: null,
+        mime: null,
+        youtubeId,
+        durationMs: null,
+      });
+    }
+    if (mediaKind === "video" || mediaKind === "audio") {
+      // The original media asset carries the mime + duration; the bytes stream over the
+      // privileged `media://<elementId>` protocol (registered in main).
+      const asset = this.repos.assets.listForElementByKind(elementId, mediaKind)[0] ?? null;
+      return Promise.resolve({
+        mediaSource: "local",
+        mediaKind,
+        mediaUrl: `media://${elementId}`,
+        mime: asset?.mime ?? null,
+        youtubeId: null,
+        durationMs: asset?.durationMs ?? null,
+      });
+    }
+    // Not a media source.
+    return Promise.resolve({
+      mediaSource: "local",
+      mediaKind: null,
+      mediaUrl: null,
+      mime: null,
+      youtubeId: null,
+      durationMs: null,
+    });
+  }
+
+  /**
    * The Markdown/HTML import + Markdown-export orchestrator (T068), lazily built on
    * first read against the open DB + repos + the vault `assetsDir` + the `exportsDir`.
    * Throws a clear error if either dir was not provided — mirrors
@@ -1445,23 +1590,48 @@ export class DbService {
     const elementId = request.elementId as ElementId;
     const doc = this.repos.documents.findById(elementId);
     if (!doc) {
-      return { document: null, extractedBlockIds: [], sourceFormat: null, blockPages: {} };
+      return {
+        document: null,
+        extractedBlockIds: [],
+        sourceFormat: null,
+        mediaSource: null,
+        mediaKind: null,
+        blockPages: {},
+        blockTimestamps: {},
+      };
     }
     // Derive the source's already-extracted block ids from its child extracts'
     // source locations (lineage stays main-side; the reader only DISPLAYS them in
     // M3). Distinct + stable-ordered so the reader can mark `mark.extracted`.
     const extractedBlockIds = this.collectExtractedBlockIds(elementId);
-    // Paginated-source detection (T064): a `.pdf` snapshot key marks a PDF source.
-    // The block→page map is read off `document_blocks.page` so the reader can set a
-    // page read-point + derive the page of a selected block for the extract anchor.
-    const snapshotKey = this.repos.sources.findById(elementId)?.source.snapshotKey ?? null;
+    // Source-format detection. PDF (T064): a `.pdf` snapshot key. MEDIA (T073): the
+    // authoritative `sources.media_kind` discriminator (NOT a snapshot derivation —
+    // a transcript-less YouTube source has neither a vault asset nor a distinctive
+    // snapshot key). The two never overlap (a PDF has no `media_kind`).
+    const provenance = this.repos.sources.findById(elementId)?.source ?? null;
+    const snapshotKey = provenance?.snapshotKey ?? null;
+    const dbMediaKind = provenance?.mediaKind ?? null;
     const isPdf = typeof snapshotKey === "string" && snapshotKey.toLowerCase().endsWith(".pdf");
+    const isMedia = dbMediaKind != null;
+
     const blockPages: Record<string, number> = {};
+    const blockTimestamps: Record<string, number> = {};
     if (isPdf) {
+      // The block→page map (T064) so the reader can set a page read-point + derive
+      // the page of a selected block for the extract anchor.
       for (const block of this.repos.documents.listBlocks(elementId)) {
         if (typeof block.page === "number") blockPages[block.stableBlockId] = block.page;
       }
+    } else if (isMedia) {
+      // The block→time map (T073) so the reader can seek to a cue, highlight the
+      // playing cue, and persist a timestamp read-point.
+      for (const block of this.repos.documents.listBlocks(elementId)) {
+        if (typeof block.timestampMs === "number") {
+          blockTimestamps[block.stableBlockId] = block.timestampMs;
+        }
+      }
     }
+
     return {
       document: {
         prosemirrorJson: doc.prosemirrorJson,
@@ -1470,8 +1640,13 @@ export class DbService {
         updatedAt: doc.updatedAt,
       },
       extractedBlockIds,
-      sourceFormat: isPdf ? "pdf" : null,
+      sourceFormat: isPdf ? "pdf" : isMedia ? "video" : null,
+      // `media_kind === "youtube"` → an IFrame embed; `"video"`/`"audio"` → a local
+      // `media://` stream. `null` for non-media sources.
+      mediaSource: isMedia ? (dbMediaKind === "youtube" ? "youtube" : "local") : null,
+      mediaKind: dbMediaKind === "video" || dbMediaKind === "audio" ? dbMediaKind : null,
       blockPages,
+      blockTimestamps,
     };
   }
 
