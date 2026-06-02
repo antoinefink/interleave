@@ -91,6 +91,7 @@ import {
   ReviewPreviewRequestSchema,
   ReviewSessionNextRequestSchema,
   SearchQueryRequestSchema,
+  SemanticContradictionsRequestSchema,
   SemanticDownloadModelRequestSchema,
   SemanticReindexRequestSchema,
   SemanticRelatedRequestSchema,
@@ -1074,6 +1075,11 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.semanticRelated, (_event, rawRequest: unknown) => {
     const request = SemanticRelatedRequestSchema.parse(rawRequest);
     return dbService.semanticRelated(request);
+  });
+  // Contradiction detection (T089) — derived, heuristic, suggestive possible-conflict flags.
+  ipcMain.handle(IPC_CHANNELS.semanticContradictions, (_event, rawRequest: unknown) => {
+    const request = SemanticContradictionsRequestSchema.parse(rawRequest);
+    return dbService.semanticContradictions(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.libraryBrowse, (_event, rawRequest: unknown) => {

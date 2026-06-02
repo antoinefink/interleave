@@ -24,6 +24,7 @@
 
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ConflictSection } from "../components/ConflictSection";
 import { Icon } from "../components/Icon";
 import { FsrsStats, Prio, SchedulerChip, Stage } from "../components/inspector/primitives";
 import { RefBlock } from "../components/RefBlock";
@@ -514,6 +515,13 @@ export function ReviewScreen() {
                             {...(card.sourceLocationLabel ? { onOpenSource: openSource } : {})}
                           />
                         ) : null}
+                        {/* Possible-conflict flags (T089) — shown ONLY post-reveal so
+                            they can't leak the answer; suggestive, never authoritative. */}
+                        <ConflictSection
+                          elementId={card.id}
+                          variant="inline"
+                          onOpen={(id) => select(id)}
+                        />
                       </div>
                     ) : null}
                   </>
@@ -574,6 +582,13 @@ export function ReviewScreen() {
                             {...(card.sourceLocationLabel ? { onOpenSource: openSource } : {})}
                           />
                         ) : null}
+                        {/* Possible-conflict flags (T089) — shown ONLY post-reveal so
+                            they can't leak the answer; suggestive, never authoritative. */}
+                        <ConflictSection
+                          elementId={card.id}
+                          variant="inline"
+                          onOpen={(id) => select(id)}
+                        />
                       </div>
                     ) : null}
                   </>

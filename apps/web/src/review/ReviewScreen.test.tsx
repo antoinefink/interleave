@@ -139,6 +139,7 @@ const h = vi.hoisted(() => {
     getInspectorData: vi.fn(),
     suspendCard: vi.fn(),
     deleteCard: vi.fn(),
+    semanticContradictions: vi.fn(),
     qaCard,
     clozeCard,
     leechCard,
@@ -159,6 +160,8 @@ vi.mock("../lib/appApi", async () => {
       getInspectorData: h.getInspectorData,
       suspendCard: h.suspendCard,
       deleteCard: h.deleteCard,
+      // T089 conflict surface (post-reveal) — default to no flags in these tests.
+      semanticContradictions: h.semanticContradictions,
     },
   };
 });
@@ -197,6 +200,7 @@ beforeEach(() => {
   // ignores their return value (it only awaits, then calls `onCardRemoved`).
   h.suspendCard.mockResolvedValue({});
   h.deleteCard.mockResolvedValue({});
+  h.semanticContradictions.mockResolvedValue({ flags: [] });
   h.reviewGrade.mockResolvedValue({
     reviewLog: {
       id: "rl_1",

@@ -82,6 +82,7 @@ import type {
   ReviewPreviewRequest,
   ReviewSessionNextRequest,
   SearchQueryRequest,
+  SemanticContradictionsRequest,
   SemanticDownloadModelRequest,
   SemanticReindexRequest,
   SemanticRelatedRequest,
@@ -333,6 +334,8 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.semanticDownloadModel, request ?? {}),
     related: (request: SemanticRelatedRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.semanticRelated, request),
+    contradictions: (request: SemanticContradictionsRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.semanticContradictions, request),
   },
   library: {
     browse: (request?: LibraryBrowseRequest) =>

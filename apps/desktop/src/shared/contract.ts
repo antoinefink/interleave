@@ -3846,6 +3846,56 @@ export interface SemanticRelatedResult {
 }
 
 // ---------------------------------------------------------------------------
+// semantic.contradictions()  (T089 — DERIVED, HEURISTIC, SUGGESTIVE conflict flags)
+// ---------------------------------------------------------------------------
+
+/**
+ * Contradiction-detection request (T089). Validates `{ elementId }`. The result
+ * ({@link SemanticContradictionsResult}) is a DERIVED, HEURISTIC read over the T087
+ * `vec0` neighbors + the `sources` provenance dates (via lineage) — no op-log, no
+ * persisted "conflict" relation, no lineage mutation, never authoritative. Returns
+ * empty flags when semantics are off / `vec0` is absent (the surface hides). No raw
+ * vectors cross IPC.
+ */
+export const SemanticContradictionsRequestSchema = z.object({
+  elementId: ElementIdSchema,
+});
+export type SemanticContradictionsRequest = z.infer<typeof SemanticContradictionsRequestSchema>;
+
+/** An opposing/superseding signal a possible-conflict flag carries. */
+export const ContradictionReasonSchema = z.enum(["negation", "numeric", "recency"]);
+export type ContradictionReason = z.infer<typeof ContradictionReasonSchema>;
+
+/**
+ * One possible-conflict flag for the calm "possible conflict" surface. Carries the
+ * conflicting (`other`) element's id/type/title + its source reference, the queried
+ * element's own source reference (the side-by-side compare), and the heuristic's
+ * reasons/severity/newerSide. `severity` is NEVER `"high"` — the whole thing is
+ * suggestive ("possible conflict — review", never "conflict").
+ */
+export interface ContradictionFlagView {
+  readonly otherId: string;
+  readonly otherType: SearchableType;
+  readonly otherTitle: string;
+  /** The conflicting neighbor's source reference (refblock), or `null`. */
+  readonly otherRef: SourceRef | null;
+  /** The queried element's own source reference, for the side-by-side compare. */
+  readonly selfRef: SourceRef | null;
+  readonly reasons: readonly ContradictionReason[];
+  readonly severity: "low" | "medium";
+  /**
+   * `self` when the queried element's source is the newer one, `other` when the
+   * neighbor's is, `null` when the recency signal did not fire.
+   */
+  readonly newerSide: "self" | "other" | null;
+}
+
+export interface SemanticContradictionsResult {
+  /** The possible-conflict flags — empty when semantics are off / nothing conflicts. */
+  readonly flags: readonly ContradictionFlagView[];
+}
+
+// ---------------------------------------------------------------------------
 // library.browse()  (Library route — the facet-driven browse-everything read)
 // ---------------------------------------------------------------------------
 
@@ -4863,6 +4913,15 @@ export interface AppApi {
      * false`) when semantics are off. No raw vectors cross IPC.
      */
     related(request: SemanticRelatedRequest): Promise<SemanticRelatedResult>;
+    /**
+     * Possible-conflict flags for an element (T089) — a DERIVED, HEURISTIC,
+     * SUGGESTIVE read: highly-similar `vec0` neighbors that ALSO carry an opposing/
+     * superseding signal (negation, numeric divergence, a newer source). Never
+     * authoritative — it never edits/suspends/reschedules; it writes nothing (no
+     * op-log, no relation). Returns empty flags when semantics are off / `vec0` is
+     * absent (the surface hides). No raw vectors cross IPC.
+     */
+    contradictions(request: SemanticContradictionsRequest): Promise<SemanticContradictionsResult>;
   };
   readonly library: {
     /**

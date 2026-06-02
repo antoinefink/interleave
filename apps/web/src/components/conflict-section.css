@@ -1,0 +1,117 @@
+/* ConflictSection (T089) — the calm "possible conflict" surface.
+ * Restrained, suggestive, NOT alarming: a small amber chip that expands into a
+ * side-by-side compare, never a blocking modal. Tokens only (light + dark). */
+
+.conflict-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.conflict-inline {
+  margin-top: 12px;
+}
+
+.conflict-flag {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.conflict-flag__chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.conflict-flag__chip:hover {
+  filter: brightness(0.98);
+}
+
+.conflict-flag__label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.conflict-flag__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-weight: 400;
+}
+
+.conflict-flag__compare {
+  padding: 10px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.conflict-flag__explain {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+.conflict-flag__sides {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.conflict-flag__side {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.conflict-flag__side-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3, var(--text-2));
+}
+
+.conflict-flag__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.conflict-flag__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.conflict-flag__action:hover {
+  border-color: var(--border-strong, var(--border));
+  color: var(--text);
+}
+
+.conflict-flag__action--dismiss {
+  margin-left: auto;
+}

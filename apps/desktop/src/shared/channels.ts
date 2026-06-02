@@ -128,6 +128,8 @@ export const IPC_CHANNELS = {
   semanticDownloadModel: "semantic:downloadModel",
   // Related-item suggestions (T088) — DERIVED similar/duplicate/prereq/sibling reads.
   semanticRelated: "semantic:related",
+  // Contradiction detection (T089) — DERIVED, HEURISTIC, SUGGESTIVE possible-conflict flags.
+  semanticContradictions: "semantic:contradictions",
   libraryBrowse: "library:browse",
   readPointGet: "readPoint:get",
   readPointSet: "readPoint:set",

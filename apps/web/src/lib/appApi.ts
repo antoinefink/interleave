@@ -2442,6 +2442,38 @@ export interface SemanticRelatedResult {
 }
 
 // ---------------------------------------------------------------------------
+// semantic.contradictions()  (T089 — DERIVED, HEURISTIC, SUGGESTIVE conflict flags)
+// ---------------------------------------------------------------------------
+
+export interface SemanticContradictionsRequest {
+  readonly elementId: string;
+}
+
+/** An opposing/superseding signal a possible-conflict flag carries. */
+export type ContradictionReason = "negation" | "numeric" | "recency";
+
+/**
+ * One possible-conflict flag (T089). Carries the conflicting (`other`) element's
+ * id/type/title + its source reference, the queried element's own source reference,
+ * and the heuristic's reasons/severity/newerSide. `severity` is NEVER "high" — the
+ * surface is suggestive ("possible conflict — review", never "conflict").
+ */
+export interface ContradictionFlagView {
+  readonly otherId: string;
+  readonly otherType: SearchableType;
+  readonly otherTitle: string;
+  readonly otherRef: SourceRef | null;
+  readonly selfRef: SourceRef | null;
+  readonly reasons: readonly ContradictionReason[];
+  readonly severity: "low" | "medium";
+  readonly newerSide: "self" | "other" | null;
+}
+
+export interface SemanticContradictionsResult {
+  readonly flags: readonly ContradictionFlagView[];
+}
+
+// ---------------------------------------------------------------------------
 // library.browse()  (Library route — the facet-driven browse-everything read)
 // ---------------------------------------------------------------------------
 
@@ -2874,6 +2906,7 @@ export interface AppApi {
     reindex(request?: SemanticReindexRequest): Promise<SemanticReindexResult>;
     downloadModel(request?: SemanticDownloadModelRequest): Promise<SemanticDownloadModelResult>;
     related(request: SemanticRelatedRequest): Promise<SemanticRelatedResult>;
+    contradictions(request: SemanticContradictionsRequest): Promise<SemanticContradictionsResult>;
   };
   readonly library: {
     browse(request?: LibraryBrowseRequest): Promise<LibraryBrowseResult>;
@@ -3606,6 +3639,21 @@ export const appApi = {
       });
     }
     return window.appApi.semantic.related(request);
+  },
+  /**
+   * Possible-conflict flags for an element (T089) — DERIVED, HEURISTIC, SUGGESTIVE:
+   * highly-similar `vec0` neighbors that ALSO carry an opposing/superseding signal
+   * (negation, numeric divergence, a newer source). Never authoritative; it edits
+   * nothing. Outside desktop (or with no semantic bridge / semantics off) it degrades
+   * to an empty result so the conflict surface simply never appears.
+   */
+  semanticContradictions(
+    request: SemanticContradictionsRequest,
+  ): Promise<SemanticContradictionsResult> {
+    if (!isDesktop() || !window.appApi?.semantic?.contradictions) {
+      return Promise.resolve({ flags: [] });
+    }
+    return window.appApi.semantic.contradictions(request);
   },
   /**
    * The facet-driven "browse everything" read behind `/library`. DISTINCT from

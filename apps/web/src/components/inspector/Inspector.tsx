@@ -40,6 +40,7 @@ import {
 } from "../../lib/appApi";
 import { useNavigateToLocation } from "../../reader/navigateToLocation";
 import { useSelection } from "../../shell/selection";
+import { ConflictSection } from "../ConflictSection";
 import { Icon } from "../Icon";
 import { RefBlock } from "../RefBlock";
 import "./inspector.css";
@@ -1218,6 +1219,14 @@ function InspectorBody({
       {/* Related (T088): derived similar/duplicate/prereq/sibling suggestions over
           the vec0 store + concept lineage. Read-only — no relations written. */}
       <RelatedSection elementId={element.id} onSelect={onSelect} />
+
+      {/* Possible conflicts (T089): derived, HEURISTIC, SUGGESTIVE flags — highly-
+          similar neighbors that also carry an opposing/superseding signal. Never
+          authoritative; writes nothing. In the inspector it is always safe to show
+          (no hidden-answer face to leak). Hides when nothing conflicts. */}
+      {(element.type === "card" || element.type === "extract") && (
+        <ConflictSection elementId={element.id} onOpen={onSelect} />
+      )}
 
       {/* Review metadata (cards only). */}
       {review && (

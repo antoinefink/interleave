@@ -77,6 +77,20 @@ export {
   renderClozePrompt,
   serializeCloze,
 } from "./cloze";
+// Contradiction detection (T089) — pure heuristic flag over similar+opposing pairs (./contradiction).
+export type {
+  ContradictionFlag,
+  ContradictionPair,
+  ContradictionReason,
+  ContradictionSide,
+} from "./contradiction";
+export {
+  CONTRADICTION_NUMERIC_TOLERANCE,
+  CONTRADICTION_RECENCY_GAP_YEARS,
+  CONTRADICTION_SIMILARITY_MIN,
+  detectContradictions,
+  NEGATION_CUES,
+} from "./contradiction";
 // The universal element + lineage neighbours (./element).
 export type {
   ClipWindow,

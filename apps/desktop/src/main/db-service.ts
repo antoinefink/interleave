@@ -228,6 +228,8 @@ import type {
   SearchQueryRequest,
   SearchQueryResult,
   SearchResult,
+  SemanticContradictionsRequest,
+  SemanticContradictionsResult,
   SemanticReindexRequest,
   SemanticReindexResult,
   SemanticRelatedItem,
@@ -304,6 +306,7 @@ import {
   CAPTURE_PORT_KEY,
   CAPTURE_TOKEN_KEY,
 } from "./capture-pairing";
+import { ContradictionService } from "./contradiction-service";
 import {
   type DocumentImportResult,
   DocumentImportService,
@@ -499,6 +502,12 @@ export class DbService {
    * search queries. Left `null` until first use.
    */
   private embedding: EmbeddingService | null = null;
+  /**
+   * The contradiction-detection service (T089), built lazily against the open DB.
+   * A DERIVED, HEURISTIC, SUGGESTIVE read over the `vec0` neighbors + the `sources`
+   * provenance dates (via lineage) — it writes nothing. Left `null` until first use.
+   */
+  private contradiction: ContradictionService | null = null;
   /**
    * Whether `sqlite-vec` `vec0` is loaded AND functional on this connection (T087) —
    * set at open() from the FUNCTIONAL smoke test (`vecFunctional`), NOT from
@@ -1875,6 +1884,51 @@ export class DbService {
       similarity: item.similarity ?? null,
       kind: item.kind,
       ref: item.ref ?? null,
+    };
+  }
+
+  /**
+   * The contradiction-detection service (T089), lazily built against the open DB.
+   * Reuses {@link embeddingService}'s `buildText` (the exact text that was embedded)
+   * + the shared `resolveSourceRef` so the heuristic compares the same content
+   * keyword + semantic search index and the same lineage the refblock uses. A
+   * DERIVED, HEURISTIC read — it writes nothing.
+   */
+  private get contradictionService(): ContradictionService {
+    if (this.contradiction) return this.contradiction;
+    this.contradiction = new ContradictionService({
+      repositories: this.repos,
+      buildText: (id) => this.embeddingService.buildText(id),
+      resolveRef: (id) => resolveSourceRef(this.repos, id),
+      vecAvailable: this.vecAvailable,
+      semanticEnabled: () => this.repos.settings.getAppSettings().semanticSearchEnabled,
+    });
+    return this.contradiction;
+  }
+
+  /**
+   * Possible-conflict flags for an element (T089) — a DERIVED, HEURISTIC, SUGGESTIVE
+   * read: highly-similar `vec0` neighbors that ALSO carry an opposing/superseding
+   * signal (negation, numeric divergence, a newer source). NEVER authoritative — it
+   * never edits/suspends/reschedules, writes NO `operation_log`, persists NO
+   * "conflict" relation, and never mutates lineage. Returns empty flags when
+   * semantics are off / `vec0` is absent (the renderer hides the surface). No raw
+   * vectors cross IPC. The flags re-derive from the persisted vectors + lineage after
+   * an app restart.
+   */
+  semanticContradictions(request: SemanticContradictionsRequest): SemanticContradictionsResult {
+    const flags = this.contradictionService.findForElement(request.elementId as ElementId);
+    return {
+      flags: flags.map((f) => ({
+        otherId: f.otherId,
+        otherType: f.otherType,
+        otherTitle: f.otherTitle,
+        otherRef: f.otherRef,
+        selfRef: f.selfRef,
+        reasons: f.reasons,
+        severity: f.severity,
+        newerSide: f.newerSide,
+      })),
     };
   }
 

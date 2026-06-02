@@ -75,6 +75,7 @@ import {
   ReviewPreviewRequestSchema,
   ReviewSessionNextRequestSchema,
   SearchQueryRequestSchema,
+  SemanticContradictionsRequestSchema,
   SemanticReindexRequestSchema,
   SemanticRelatedRequestSchema,
   SemanticSearchModeSchema,
@@ -224,6 +225,7 @@ describe("IPC channels", () => {
         "semantic:reindex",
         "semantic:downloadModel",
         "semantic:related",
+        "semantic:contradictions",
         "library:browse",
         "readPoint:get",
         "readPoint:set",
@@ -2229,6 +2231,15 @@ describe("Semantic search schemas (T087)", () => {
     expect(() => SemanticRelatedRequestSchema.parse({ elementId: "" })).toThrow();
     expect(() => SemanticRelatedRequestSchema.parse({ elementId: "el-1", limit: 0 })).toThrow();
     expect(() => SemanticRelatedRequestSchema.parse({ elementId: "el-1", limit: 999 })).toThrow();
+  });
+
+  it("SemanticContradictionsRequestSchema validates { elementId } (T089)", () => {
+    expect(SemanticContradictionsRequestSchema.parse({ elementId: "el-1" })).toEqual({
+      elementId: "el-1",
+    });
+    // A required, non-empty element id; nothing else.
+    expect(() => SemanticContradictionsRequestSchema.parse({})).toThrow();
+    expect(() => SemanticContradictionsRequestSchema.parse({ elementId: "" })).toThrow();
   });
 });
 
