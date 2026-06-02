@@ -737,3 +737,97 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ---------- Related items (T088 — derived suggestions) ---------- */
+.related-bucket {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+.related-bucket:last-child {
+  margin-bottom: 0;
+}
+.related-bucket__label {
+  font-size: var(--t-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  margin-bottom: 2px;
+}
+.related-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--r-sm);
+}
+.related-row__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  text-align: left;
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+.related-row__main:hover {
+  background: var(--surface-2);
+}
+.related-row__main:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.related-row__title {
+  font-size: var(--t-sm);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.related-row__sim {
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+  color: var(--text-3);
+  flex: none;
+}
+.related-row__badge {
+  flex: none;
+  font-size: var(--t-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-radius: var(--r-pill, 999px);
+  padding: 1px 6px;
+}
+.related-row--duplicate .related-row__title {
+  color: var(--text);
+}
+.related-row__dismiss {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+}
+.related-row__dismiss:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.related-row__dismiss:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}

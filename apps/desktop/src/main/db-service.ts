@@ -77,6 +77,8 @@ import {
   QueueActionService,
   QueueQuery,
   RecoveryModeService,
+  type RelatedItem,
+  type RelatedResult,
   type Repositories,
   RetentionService,
   type ReviewOutcome,
@@ -228,6 +230,9 @@ import type {
   SearchResult,
   SemanticReindexRequest,
   SemanticReindexResult,
+  SemanticRelatedItem,
+  SemanticRelatedRequest,
+  SemanticRelatedResult,
   SemanticSearchMode,
   SemanticSearchRequest,
   SemanticSearchResult,
@@ -1830,6 +1835,47 @@ export class DbService {
    */
   async semanticDownloadModel(): Promise<{ downloaded: boolean }> {
     return this.embeddingService.downloadModel();
+  }
+
+  /**
+   * Related-item suggestions for an element (T088) — a DERIVED read over the T087
+   * `vec0` store + the concept lineage: similar extracts, possible duplicates,
+   * prerequisite (ancestor) concepts, and sibling sources. No new relation types,
+   * no `operation_log` writes, no lineage mutation. Degrades gracefully: the vector
+   * buckets are empty (with `semanticAvailable: false`) when semantics are off /
+   * `vec0` is absent / the element isn't embedded, while the concept + sibling
+   * buckets still resolve from lineage. No raw vectors cross IPC.
+   */
+  semanticRelated(request: SemanticRelatedRequest): SemanticRelatedResult {
+    const settings = this.repos.settings.getAppSettings();
+    const semanticEnabled = settings.semanticSearchEnabled && this.vecAvailable;
+    const result: RelatedResult = this.repos.related.related(request.elementId as ElementId, {
+      semanticEnabled,
+      ...(request.limit !== undefined ? { limit: request.limit } : {}),
+    });
+    return {
+      similar: result.similar.map((i) => this.toRelatedItem(i)),
+      duplicates: result.duplicates.map((i) => this.toRelatedItem(i)),
+      prerequisiteConcepts: result.prerequisiteConcepts.map((c) => ({
+        id: c.id,
+        name: c.name,
+        level: c.level,
+      })),
+      siblingSources: result.siblingSources.map((i) => this.toRelatedItem(i)),
+      semanticAvailable: result.semanticAvailable,
+    };
+  }
+
+  /** Map a local-db {@link RelatedItem} to the IPC {@link SemanticRelatedItem} (no vectors). */
+  private toRelatedItem(item: RelatedItem): SemanticRelatedItem {
+    return {
+      id: item.id,
+      type: item.type,
+      title: item.title,
+      similarity: item.similarity ?? null,
+      kind: item.kind,
+      ref: item.ref ?? null,
+    };
   }
 
   /**

@@ -93,6 +93,7 @@ import {
   SearchQueryRequestSchema,
   SemanticDownloadModelRequestSchema,
   SemanticReindexRequestSchema,
+  SemanticRelatedRequestSchema,
   SemanticSearchRequestSchema,
   SettingsGetAllRequestSchema,
   SettingsGetRequestSchema,
@@ -1068,6 +1069,11 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.semanticDownloadModel, (_event, rawRequest: unknown) => {
     SemanticDownloadModelRequestSchema.parse(rawRequest ?? {});
     return dbService.semanticDownloadModel();
+  });
+  // Related-item suggestions (T088) — derived similar/duplicate/prereq/sibling reads.
+  ipcMain.handle(IPC_CHANNELS.semanticRelated, (_event, rawRequest: unknown) => {
+    const request = SemanticRelatedRequestSchema.parse(rawRequest);
+    return dbService.semanticRelated(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.libraryBrowse, (_event, rawRequest: unknown) => {

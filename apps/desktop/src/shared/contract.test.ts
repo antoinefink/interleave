@@ -76,6 +76,7 @@ import {
   ReviewSessionNextRequestSchema,
   SearchQueryRequestSchema,
   SemanticReindexRequestSchema,
+  SemanticRelatedRequestSchema,
   SemanticSearchModeSchema,
   SemanticSearchRequestSchema,
   SemanticStatusRequestSchema,
@@ -222,6 +223,7 @@ describe("IPC channels", () => {
         "semantic:status",
         "semantic:reindex",
         "semantic:downloadModel",
+        "semantic:related",
         "library:browse",
         "readPoint:get",
         "readPoint:set",
@@ -2212,6 +2214,21 @@ describe("Semantic search schemas (T087)", () => {
     expect(SemanticSearchModeSchema.parse("fts")).toBe("fts");
     expect(SemanticSearchModeSchema.parse("disabled")).toBe("disabled");
     expect(() => SemanticSearchModeSchema.parse("keyword")).toThrow();
+  });
+
+  it("SemanticRelatedRequestSchema validates { elementId, limit? } (T088)", () => {
+    expect(SemanticRelatedRequestSchema.parse({ elementId: "el-1" })).toEqual({
+      elementId: "el-1",
+    });
+    expect(SemanticRelatedRequestSchema.parse({ elementId: "el-1", limit: 8 })).toEqual({
+      elementId: "el-1",
+      limit: 8,
+    });
+    // A required, bounded element id; a bounded optional limit.
+    expect(() => SemanticRelatedRequestSchema.parse({})).toThrow();
+    expect(() => SemanticRelatedRequestSchema.parse({ elementId: "" })).toThrow();
+    expect(() => SemanticRelatedRequestSchema.parse({ elementId: "el-1", limit: 0 })).toThrow();
+    expect(() => SemanticRelatedRequestSchema.parse({ elementId: "el-1", limit: 999 })).toThrow();
   });
 });
 

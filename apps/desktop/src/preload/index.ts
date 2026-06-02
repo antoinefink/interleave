@@ -84,6 +84,7 @@ import type {
   SearchQueryRequest,
   SemanticDownloadModelRequest,
   SemanticReindexRequest,
+  SemanticRelatedRequest,
   SemanticSearchRequest,
   SemanticStatusRequest,
   // review.leeches() / concepts.list() / tags.list() take no request payload.
@@ -330,6 +331,8 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.semanticReindex, request ?? {}),
     downloadModel: (request?: SemanticDownloadModelRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.semanticDownloadModel, request ?? {}),
+    related: (request: SemanticRelatedRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.semanticRelated, request),
   },
   library: {
     browse: (request?: LibraryBrowseRequest) =>

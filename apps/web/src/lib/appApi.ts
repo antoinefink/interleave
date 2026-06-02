@@ -2400,6 +2400,48 @@ export interface SemanticDownloadModelResult {
 }
 
 // ---------------------------------------------------------------------------
+// semantic.related()  (T088 — DERIVED related-item suggestions for the inspector)
+// ---------------------------------------------------------------------------
+
+export interface SemanticRelatedRequest {
+  readonly elementId: string;
+  readonly limit?: number;
+}
+
+/** A related element (a similar extract, a possible duplicate, or a sibling source). */
+export interface SemanticRelatedItem {
+  readonly id: string;
+  readonly type: SearchableType;
+  readonly title: string;
+  /** A 0..1 similarity from the `vec0` distance when vector-ranked, else `null`. */
+  readonly similarity: number | null;
+  /** `similar` for a near neighbor, `duplicate` for a below-threshold near-identical one. */
+  readonly kind: "similar" | "duplicate";
+  /** The originating source reference (refblock), or `null`. */
+  readonly ref: SourceRef | null;
+}
+
+/** A prerequisite/ancestor concept + its hierarchy level (0 = a direct member). */
+export interface SemanticRelatedConcept {
+  readonly id: string;
+  readonly name: string;
+  readonly level: number;
+}
+
+/**
+ * The four DERIVED related buckets + whether the vector buckets ran. When
+ * `semanticAvailable` is `false` the `similar`/`duplicates` buckets are empty while
+ * the concept + sibling buckets still resolve from lineage (the graceful degrade).
+ */
+export interface SemanticRelatedResult {
+  readonly similar: readonly SemanticRelatedItem[];
+  readonly duplicates: readonly SemanticRelatedItem[];
+  readonly prerequisiteConcepts: readonly SemanticRelatedConcept[];
+  readonly siblingSources: readonly SemanticRelatedItem[];
+  readonly semanticAvailable: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // library.browse()  (Library route — the facet-driven browse-everything read)
 // ---------------------------------------------------------------------------
 
@@ -2831,6 +2873,7 @@ export interface AppApi {
     status(request?: SemanticStatusRequest): Promise<SemanticStatusResult>;
     reindex(request?: SemanticReindexRequest): Promise<SemanticReindexResult>;
     downloadModel(request?: SemanticDownloadModelRequest): Promise<SemanticDownloadModelResult>;
+    related(request: SemanticRelatedRequest): Promise<SemanticRelatedResult>;
   };
   readonly library: {
     browse(request?: LibraryBrowseRequest): Promise<LibraryBrowseResult>;
@@ -3544,6 +3587,25 @@ export const appApi = {
       return Promise.resolve({ downloaded: false });
     }
     return window.appApi.semantic.downloadModel(request);
+  },
+  /**
+   * Related-item suggestions for an element (T088) — similar extracts / possible
+   * duplicates / prerequisite concepts / sibling sources, derived on read from the
+   * `vec0` store + the concept lineage. Outside desktop (or with no semantic
+   * bridge) it degrades to an empty result with `semanticAvailable: false` so the
+   * inspector panel never crashes.
+   */
+  semanticRelated(request: SemanticRelatedRequest): Promise<SemanticRelatedResult> {
+    if (!isDesktop() || !window.appApi?.semantic?.related) {
+      return Promise.resolve({
+        similar: [],
+        duplicates: [],
+        prerequisiteConcepts: [],
+        siblingSources: [],
+        semanticAvailable: false,
+      });
+    }
+    return window.appApi.semantic.related(request);
   },
   /**
    * The facet-driven "browse everything" read behind `/library`. DISTINCT from

@@ -223,6 +223,15 @@ export {
   RecoveryModeService,
   type VacationPreview,
 } from "./recovery-mode-service";
+export {
+  DUPLICATE_DISTANCE_THRESHOLD,
+  distanceToSimilarity,
+  type RelatedConcept,
+  type RelatedItem,
+  type RelatedOptions,
+  type RelatedResult,
+  RelatedService,
+} from "./related-service";
 export { type RetentionCardResult, RetentionService } from "./retention-service";
 export {
   type CardWithElement,
@@ -323,6 +332,12 @@ export interface Repositories {
   readonly embeddings: import("./embedding-repository").EmbeddingRepository;
   /** The FTS+vec fusion layer (T087) — fuses keyword + semantic hits, FTS-only degrade. */
   readonly semanticSearch: import("./semantic-search-repository").SemanticSearchRepository;
+  /**
+   * The DERIVED related-item suggestions (T088) — similar extracts / possible
+   * duplicates / prerequisite concepts / sibling sources over the `vec0` store +
+   * the concept lineage. NO op-log, NO new relation types — a read-only surface.
+   */
+  readonly related: import("./related-service").RelatedService;
 }
 
 import type { InterleaveDatabase } from "@interleave/db";
@@ -338,11 +353,13 @@ import { OcclusionMasksRepository } from "./occlusion-masks-repository";
 import { OcrPagesRepository } from "./ocr-pages-repository";
 import { OperationLogRepository } from "./operation-log-repository";
 import { QueueRepository } from "./queue-repository";
+import { RelatedService } from "./related-service";
 import { ReviewRepository } from "./review-repository";
 import { SearchRepository } from "./search-repository";
 import { SemanticSearchRepository } from "./semantic-search-repository";
 import { SettingsRepository } from "./settings-repository";
 import { SourceDedupQuery } from "./source-dedup-query";
+import { resolveSourceRef } from "./source-ref-query";
 import { SourceRepository } from "./source-repository";
 import { SourceYieldQuery } from "./source-yield-query";
 import { TrashRepository } from "./trash-query";
@@ -372,14 +389,16 @@ export function createRepositories(
   const assets = new AssetRepository(db);
   const search = new SearchRepository(db);
   const embeddings = new EmbeddingRepository(db, options.vecAvailable ?? false);
-  return {
-    elements: new ElementRepository(db),
+  const elements = new ElementRepository(db);
+  const concepts = new ConceptRepository(db);
+  const repos: Repositories = {
+    elements,
     documents: new DocumentRepository(db),
     sources: new SourceRepository(db),
     review: new ReviewRepository(db),
     queue: new QueueRepository(db),
     search,
-    concepts: new ConceptRepository(db),
+    concepts,
     assets,
     settings: new SettingsRepository(db),
     operationLog: new OperationLogRepository(db),
@@ -393,5 +412,16 @@ export function createRepositories(
     extractStagnation: new ExtractStagnationQuery(db),
     embeddings,
     semanticSearch: new SemanticSearchRepository(search, embeddings),
+    // Built last: it resolves an item's refblock through the SAME `resolveSourceRef`
+    // the inspector/review/library use (needs the assembled repos), so it captures
+    // `repos` for the lazy ref resolution. It is a DERIVED read — no op-log.
+    related: undefined as unknown as RelatedService,
   };
+  (repos as { related: RelatedService }).related = new RelatedService({
+    elements,
+    concepts,
+    embeddings,
+    resolveRef: (id) => resolveSourceRef(repos, id),
+  });
+  return repos;
 }

@@ -3794,6 +3794,58 @@ export interface SemanticDownloadModelResult {
 }
 
 // ---------------------------------------------------------------------------
+// semantic.related()  (T088 — DERIVED related-item suggestions)
+// ---------------------------------------------------------------------------
+
+/**
+ * Related-item suggestions for an element (T088). Validates `{ elementId, limit? }`.
+ * The result ({@link SemanticRelatedResult}) is a DERIVED read over the T087 `vec0`
+ * store + the `concept_membership` / `concepts.parentConceptId` lineage — no new
+ * `RELATION_TYPES`, no `element_relations` writes, no `operation_log` entries. No
+ * raw vectors cross IPC (only ids/titles/similarities).
+ */
+export const SemanticRelatedRequestSchema = z.object({
+  elementId: ElementIdSchema,
+  limit: z.number().int().min(1).max(50).optional(),
+});
+export type SemanticRelatedRequest = z.infer<typeof SemanticRelatedRequestSchema>;
+
+/** A related element (a similar extract, a possible duplicate, or a sibling source). */
+export interface SemanticRelatedItem {
+  readonly id: string;
+  readonly type: SearchableType;
+  readonly title: string;
+  /** A 0..1 similarity from the `vec0` distance when vector-ranked, else `null`. */
+  readonly similarity: number | null;
+  /** `similar` for a near neighbor, `duplicate` for a below-threshold near-identical one. */
+  readonly kind: "similar" | "duplicate";
+  /** The originating source reference (refblock), or `null` when unresolvable. */
+  readonly ref: SourceRef | null;
+}
+
+/** A prerequisite/ancestor concept + its hierarchy level (0 = a direct member). */
+export interface SemanticRelatedConcept {
+  readonly id: string;
+  readonly name: string;
+  /** 0 = a direct member concept; 1+ = an ancestor (more general → learn first). */
+  readonly level: number;
+}
+
+/**
+ * The four DERIVED buckets + whether the vector buckets actually ran. When
+ * `semanticAvailable` is `false` (semantics off / `vec0` absent / not embedded) the
+ * `similar`/`duplicates` buckets are empty while the concept + sibling buckets still
+ * resolve from lineage — the graceful degrade.
+ */
+export interface SemanticRelatedResult {
+  readonly similar: readonly SemanticRelatedItem[];
+  readonly duplicates: readonly SemanticRelatedItem[];
+  readonly prerequisiteConcepts: readonly SemanticRelatedConcept[];
+  readonly siblingSources: readonly SemanticRelatedItem[];
+  readonly semanticAvailable: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // library.browse()  (Library route — the facet-driven browse-everything read)
 // ---------------------------------------------------------------------------
 
@@ -4803,6 +4855,14 @@ export interface AppApi {
      * deterministic embedder offline — search stays FTS-only until it resolves.
      */
     downloadModel(request?: SemanticDownloadModelRequest): Promise<SemanticDownloadModelResult>;
+    /**
+     * Related-item suggestions for an element (T088) — DERIVED similar extracts /
+     * possible duplicates / prerequisite concepts / sibling sources over the `vec0`
+     * store + the concept lineage. No new relation types, no op-log, no lineage
+     * mutation; degrades to the lineage-only buckets (with `semanticAvailable:
+     * false`) when semantics are off. No raw vectors cross IPC.
+     */
+    related(request: SemanticRelatedRequest): Promise<SemanticRelatedResult>;
   };
   readonly library: {
     /**

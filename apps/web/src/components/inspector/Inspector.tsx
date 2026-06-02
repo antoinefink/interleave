@@ -35,6 +35,8 @@ import {
   type LineageItem,
   type LineageNode,
   type PriorityLabel as PriorityLabelType,
+  type SemanticRelatedItem,
+  type SemanticRelatedResult,
 } from "../../lib/appApi";
 import { useNavigateToLocation } from "../../reader/navigateToLocation";
 import { useSelection } from "../../shell/selection";
@@ -793,6 +795,160 @@ function RetirementRow({
   );
 }
 
+/** One clickable related-item row (a similar extract, a duplicate, or a sibling source). */
+function RelatedRow({
+  item,
+  onSelect,
+}: {
+  item: SemanticRelatedItem;
+  onSelect: (id: string) => void;
+}) {
+  const isDuplicate = item.kind === "duplicate";
+  // A local "dismiss" so a flagged duplicate can be hidden for this session. A
+  // PERSISTED "not a duplicate" mark is DEFERRED to a later task (T088 surfaces,
+  // it never mutates lineage / writes a relation) — see the section docblock.
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  const pct = item.similarity != null ? `${Math.round(item.similarity * 100)}%` : null;
+  return (
+    <div
+      className={`related-row${isDuplicate ? " related-row--duplicate" : ""}`}
+      data-testid={isDuplicate ? "related-duplicate-row" : "related-similar-row"}
+      data-element-id={item.id}
+    >
+      <button
+        type="button"
+        className="related-row__main"
+        data-testid="related-row-select"
+        onClick={() => onSelect(item.id)}
+        title={item.title}
+      >
+        <TypeIcon type={item.type} />
+        <span className="related-row__title">{item.title || "Untitled"}</span>
+        {isDuplicate ? (
+          <span className="related-row__badge" data-testid="related-duplicate-badge">
+            possible duplicate
+          </span>
+        ) : null}
+        {pct ? <span className="related-row__sim">{pct}</span> : null}
+      </button>
+      {isDuplicate ? (
+        <button
+          type="button"
+          className="related-row__dismiss"
+          data-testid="related-duplicate-dismiss"
+          aria-label="Dismiss duplicate suggestion"
+          title="Dismiss (this session)"
+          onClick={() => setDismissed(true)}
+        >
+          <Icon name="x" size={13} />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Related section (T088) — DERIVED similar extracts / possible duplicates /
+ * prerequisite concepts / sibling sources for the selected element, fetched through
+ * the typed `semantic.related` bridge. Everything is a read-only suggestion over the
+ * `vec0` store + the concept lineage — no relations are written, no lineage mutated.
+ *
+ * Graceful degrade: when `semanticAvailable` is false (semantics off / not embedded)
+ * the vector buckets (similar/duplicates) hide and a calm "enable semantic search"
+ * hint shows, while the concept + sibling-source buckets STILL resolve from lineage.
+ * Pure UI: one command, no SQL/vectors in React.
+ */
+export function RelatedSection({
+  elementId,
+  onSelect,
+}: {
+  elementId: string;
+  onSelect: (id: string) => void;
+}) {
+  const [related, setRelated] = useState<SemanticRelatedResult | null>(null);
+
+  useEffect(() => {
+    if (!isDesktop()) return;
+    let cancelled = false;
+    appApi
+      .semanticRelated({ elementId })
+      .then((res) => {
+        if (!cancelled) setRelated(res);
+      })
+      .catch(() => {
+        if (!cancelled) setRelated(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [elementId]);
+
+  if (!related) return null;
+
+  const { similar, duplicates, prerequisiteConcepts, siblingSources, semanticAvailable } = related;
+  const hasAnything =
+    similar.length > 0 ||
+    duplicates.length > 0 ||
+    prerequisiteConcepts.length > 0 ||
+    siblingSources.length > 0;
+
+  // Nothing to show AND semantics are on with nothing nearby → skip the section
+  // entirely (keep the inspector calm). When semantics are OFF we still show the
+  // hint so the user knows similarity suggestions exist behind the setting.
+  if (!hasAnything && semanticAvailable) return null;
+
+  return (
+    <div className="insp-sec" data-testid="related-section">
+      <div className="insp-sec__title">Related</div>
+
+      {duplicates.length > 0 ? (
+        <div className="related-bucket" data-testid="related-duplicates">
+          <div className="related-bucket__label">Possible duplicates</div>
+          {duplicates.map((item) => (
+            <RelatedRow key={item.id} item={item} onSelect={onSelect} />
+          ))}
+        </div>
+      ) : null}
+
+      {similar.length > 0 ? (
+        <div className="related-bucket" data-testid="related-similar">
+          <div className="related-bucket__label">Similar extracts</div>
+          {similar.map((item) => (
+            <RelatedRow key={item.id} item={item} onSelect={onSelect} />
+          ))}
+        </div>
+      ) : null}
+
+      {prerequisiteConcepts.length > 0 ? (
+        <div className="related-bucket" data-testid="related-prereqs">
+          <div className="related-bucket__label">Prerequisite concepts</div>
+          <div className="tag-list">
+            {prerequisiteConcepts.map((c) => (
+              <ConceptTag key={c.id} name={c.name} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {siblingSources.length > 0 ? (
+        <div className="related-bucket" data-testid="related-siblings">
+          <div className="related-bucket__label">Sibling sources</div>
+          {siblingSources.map((item) => (
+            <RelatedRow key={item.id} item={item} onSelect={onSelect} />
+          ))}
+        </div>
+      ) : null}
+
+      {!semanticAvailable ? (
+        <p className="insp-empty" data-testid="related-degrade-hint">
+          Enable semantic search in Settings for similarity suggestions.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 /** The full metadata view for one inspected element. */
 function InspectorBody({
   data,
@@ -1058,6 +1214,10 @@ function InspectorBody({
           <LineageTree nodes={lineage.nodes} onPick={onPickLineageNode} />
         </div>
       )}
+
+      {/* Related (T088): derived similar/duplicate/prereq/sibling suggestions over
+          the vec0 store + concept lineage. Read-only — no relations written. */}
+      <RelatedSection elementId={element.id} onSelect={onSelect} />
 
       {/* Review metadata (cards only). */}
       {review && (
