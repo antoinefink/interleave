@@ -84,6 +84,13 @@ export const IPC_CHANNELS = {
   conceptsAssign: "concepts:assign",
   conceptsUnassign: "concepts:unassign",
   conceptsMembers: "concepts:members",
+  // Desired retention by priority band / concept / card (T079).
+  retentionGet: "retention:get",
+  retentionSetBand: "retention:setBand",
+  retentionSetBandEnabled: "retention:setBandEnabled",
+  retentionSetConcept: "retention:setConcept",
+  retentionSetCard: "retention:setCard",
+  retentionResolveFor: "retention:resolveFor",
   tagsList: "tags:list",
   tagsAdd: "tags:add",
   tagsRemove: "tags:remove",

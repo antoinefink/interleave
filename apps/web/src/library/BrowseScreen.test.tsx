@@ -101,6 +101,7 @@ const h = vi.hoisted(() => {
     // drill-down `byConcept` count below, so a test can prove the filterbar chip
     // reads the filter-scoped count, not this global total.
     memberCount: 9,
+    desiredRetention: null,
   };
   const counts = {
     all: 3,

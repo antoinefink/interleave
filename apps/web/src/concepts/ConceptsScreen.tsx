@@ -70,6 +70,70 @@ function depthOf(concept: ConceptNode, byId: Map<string, ConceptNode>): number {
   return depth;
 }
 
+/** Inclusive UI bounds for desired retention (mirrors `@interleave/core`). */
+const DESIRED_RETENTION_MIN = 0.8;
+const DESIRED_RETENTION_MAX = 0.97;
+
+/**
+ * Per-concept FSRS desired-retention target editor (T079). A concept with no stored
+ * target INHERITS the band/global default — the control shows "Inherit" until the user
+ * sets one. Cards in this concept then schedule against the target (the strictest among
+ * a card's concepts wins). Persists through `retention.setConcept` (which also bumps the
+ * per-card scheduler cache); `onChanged` re-reads the concept list so the value sticks.
+ */
+function ConceptRetentionEditor({
+  conceptId,
+  target,
+  onChanged,
+}: {
+  conceptId: string;
+  target: number | null;
+  onChanged: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const set = useCallback(
+    async (next: number | null) => {
+      setBusy(true);
+      try {
+        await appApi.setRetentionConcept({ conceptId, target: next });
+        onChanged();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [conceptId, onChanged],
+  );
+  const pct = target === null ? null : Math.round(target * 100);
+  return (
+    <div className="cm-retention" data-testid="concept-retention">
+      <span className="cm-retention__label">Retention</span>
+      <input
+        type="range"
+        min={Math.round(DESIRED_RETENTION_MIN * 100)}
+        max={Math.round(DESIRED_RETENTION_MAX * 100)}
+        step={1}
+        value={pct ?? Math.round(DESIRED_RETENTION_MAX * 100)}
+        disabled={busy}
+        data-testid="concept-retention-slider"
+        onChange={(e) => void set(Number(e.target.value) / 100)}
+        className="cm-retention__range"
+      />
+      <span className="cm-retention__value" data-testid="concept-retention-value">
+        {pct === null ? "Inherit" : `${pct}%`}
+      </span>
+      <button
+        type="button"
+        data-testid="concept-retention-reset"
+        disabled={busy || target === null}
+        onClick={() => void set(null)}
+        className="cm-retention__reset"
+      >
+        Reset
+      </button>
+    </div>
+  );
+}
+
 export function ConceptsScreen() {
   const desktop = isDesktop();
   const navigate = useNavigate();
@@ -81,19 +145,25 @@ export function ConceptsScreen() {
   const [membersLoading, setMembersLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load the concept list once (hierarchy filterbar + graph + by-volume rail).
-  useEffect(() => {
+  // Load the concept list (hierarchy filterbar + graph + by-volume rail). Extracted
+  // so the per-concept retention editor (T079) can refresh it after a target write.
+  const loadConcepts = useCallback(async () => {
     if (!isDesktop()) return;
     setLoading(true);
-    void appApi
-      .listConcepts()
-      .then((res) => {
-        setConcepts(res.concepts);
-        setError(null);
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setLoading(false));
+    try {
+      const res = await appApi.listConcepts();
+      setConcepts(res.concepts);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void loadConcepts();
+  }, [loadConcepts]);
 
   // Whenever a concept is selected, drill into its members through the bridge.
   useEffect(() => {
@@ -244,6 +314,11 @@ export function ConceptsScreen() {
                   {members.length} member{members.length === 1 ? "" : "s"}
                 </span>
               </div>
+              <ConceptRetentionEditor
+                conceptId={selected.id}
+                target={selected.desiredRetention}
+                onChanged={() => void loadConcepts()}
+              />
               <div className="cm-members__list">
                 {membersLoading && members.length === 0 ? (
                   <p className="lib-loading" data-testid="concepts-members-loading">

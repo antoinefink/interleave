@@ -70,6 +70,12 @@ import {
   QueueVacationRequestSchema,
   ReadPointGetRequestSchema,
   ReadPointSetRequestSchema,
+  RetentionGetRequestSchema,
+  RetentionResolveForRequestSchema,
+  RetentionSetBandEnabledRequestSchema,
+  RetentionSetBandRequestSchema,
+  RetentionSetCardRequestSchema,
+  RetentionSetConceptRequestSchema,
   ReviewCardRequestSchema,
   ReviewGradeRequestSchema,
   ReviewLeechesRequestSchema,
@@ -929,6 +935,36 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.conceptsMembers, (_event, rawRequest: unknown) => {
     const request = ConceptsMembersRequestSchema.parse(rawRequest);
     return dbService.conceptMembers(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.retentionGet, () => {
+    RetentionGetRequestSchema.parse(undefined);
+    return dbService.getRetention();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.retentionSetBand, (_event, rawRequest: unknown) => {
+    const request = RetentionSetBandRequestSchema.parse(rawRequest);
+    return dbService.setRetentionBand(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.retentionSetBandEnabled, (_event, rawRequest: unknown) => {
+    const request = RetentionSetBandEnabledRequestSchema.parse(rawRequest);
+    return dbService.setRetentionBandEnabled(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.retentionSetConcept, (_event, rawRequest: unknown) => {
+    const request = RetentionSetConceptRequestSchema.parse(rawRequest);
+    return dbService.setRetentionConcept(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.retentionSetCard, (_event, rawRequest: unknown) => {
+    const request = RetentionSetCardRequestSchema.parse(rawRequest);
+    return dbService.setRetentionCard(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.retentionResolveFor, (_event, rawRequest: unknown) => {
+    const request = RetentionResolveForRequestSchema.parse(rawRequest);
+    return dbService.resolveRetentionFor(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.tagsList, () => {

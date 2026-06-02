@@ -54,6 +54,8 @@ const FALLBACK_SETTINGS: AppSettings = {
   keyboardLayout: "qwerty",
   theme: "dark",
   displayName: "",
+  retentionByBand: {},
+  retentionByBandEnabled: false,
 };
 
 /** Max length of the display name (mirrors `@interleave/core` `DISPLAY_NAME_MAX`). */
@@ -71,6 +73,10 @@ function priorityToLabel(priority: number): PriorityLabel {
   if (v >= 0.25) return "C";
   return "D";
 }
+
+/** Inclusive UI bounds for desired retention (mirrors `@interleave/core`). */
+const DESIRED_RETENTION_MIN = 0.8;
+const DESIRED_RETENTION_MAX = 0.97;
 
 const TOPIC_INTERVAL_OPTIONS = [3, 7, 14, 30] as const;
 const KEYBOARD_LAYOUTS: { value: AppSettings["keyboardLayout"]; label: string }[] = [
@@ -176,6 +182,69 @@ function Toggle({
         }
       />
     </button>
+  );
+}
+
+/**
+ * One A/B/C/D band's desired-retention control (T079). A band with no stored target
+ * INHERITS the global default — the slider shows that effective value and a muted
+ * "inherits" note; nudging the slider sets a per-band override, and a "Reset" link
+ * clears it back to inherit. The hint reads "shorter/longer intervals" relative to
+ * the global so the user understands the load trade-off.
+ */
+function RetentionBandRow({
+  band,
+  target,
+  global,
+  enabled,
+  onSet,
+}: {
+  band: "A" | "B" | "C" | "D";
+  target: number | undefined;
+  global: number;
+  enabled: boolean;
+  onSet: (band: "A" | "B" | "C" | "D", target: number | null) => void;
+}) {
+  const effective = target ?? global;
+  const pct = Math.round(effective * 100);
+  const inherits = target === undefined;
+  const delta = Math.round((effective - global) * 100);
+  const hint =
+    delta === 0 ? "matches global" : delta > 0 ? "shorter intervals" : "longer intervals";
+  return (
+    <SettingRow
+      label={`Band ${band}`}
+      hint={inherits ? "Inherits the global default" : `${hint} than global`}
+    >
+      <div className="flex items-center gap-2.5">
+        <input
+          type="range"
+          min={Math.round(DESIRED_RETENTION_MIN * 100)}
+          max={Math.round(DESIRED_RETENTION_MAX * 100)}
+          step={1}
+          value={pct}
+          disabled={!enabled}
+          data-testid={`setting-retention-band-${band}`}
+          onChange={(e) => onSet(band, Number(e.target.value) / 100)}
+          className="w-32 accent-accent disabled:opacity-40"
+        />
+        <span
+          data-testid={`setting-retention-band-${band}-value`}
+          className="w-12 text-right font-mono font-semibold text-accent-text text-sm"
+        >
+          {pct}%
+        </span>
+        <button
+          type="button"
+          data-testid={`setting-retention-band-${band}-reset`}
+          disabled={!enabled || inherits}
+          onClick={() => onSet(band, null)}
+          className="text-text-3 text-xs hover:text-text disabled:opacity-30"
+        >
+          Reset
+        </button>
+      </div>
+    </SettingRow>
   );
 }
 
@@ -315,6 +384,59 @@ export function Settings() {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
+
+  /**
+   * Toggle the per-priority/per-concept retention feature (T079) through the typed
+   * `retention.setBandEnabled` command (which also invalidates the per-card scheduler
+   * cache), then re-read the full settings so the resolved targets reflect the change.
+   */
+  const setRetentionEnabled = useCallback(async (enabled: boolean) => {
+    setSettings((prev) => (prev ? { ...prev, retentionByBandEnabled: enabled } : prev));
+    try {
+      await appApi.setRetentionBandEnabled({ enabled });
+      const { settings: confirmed } = await appApi.getAppSettings();
+      setSettings(confirmed);
+      setSavedAt(new Date().toISOString());
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  /**
+   * Set/clear one priority-band desired-retention target (T079). `target === null`
+   * clears the override (the band inherits the global default). Persists through the
+   * typed `retention.setBand` command (which bumps the per-card scheduler cache), then
+   * re-reads the full settings so the band map + the implied intervals reflect it.
+   */
+  const setRetentionBand = useCallback(
+    async (band: "A" | "B" | "C" | "D", target: number | null) => {
+      setSettings((prev) => {
+        if (!prev) return prev;
+        const nextBand = { ...prev.retentionByBand };
+        if (target === null) delete nextBand[band];
+        else nextBand[band] = target;
+        return { ...prev, retentionByBand: nextBand };
+      });
+      try {
+        const { retention } = await appApi.setRetentionBand({ band, target });
+        setSettings((prev) =>
+          prev
+            ? {
+                ...prev,
+                retentionByBand: retention.byBand,
+                retentionByBandEnabled: retention.byBandEnabled,
+              }
+            : prev,
+        );
+        setSavedAt(new Date().toISOString());
+        setError(null);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [],
+  );
 
   if (!desktop) {
     return (
@@ -478,6 +600,29 @@ export function Settings() {
             onChange={(value) => void patch({ balanceWarnings: value })}
           />
         </SettingRow>
+      </SectionPanel>
+
+      <SectionPanel title="Retention by priority">
+        <SettingRow
+          label="Per-priority retention"
+          hint="Hold high-value (A) cards to a higher target and let low-value (D) cards drift — protecting fragile memory while trimming daily load. Off = one global retention for every card."
+        >
+          <Toggle
+            name="setting-retention-by-band"
+            checked={s.retentionByBandEnabled}
+            onChange={(value) => void setRetentionEnabled(value)}
+          />
+        </SettingRow>
+        {PRIORITY_LABELS.map((band) => (
+          <RetentionBandRow
+            key={band}
+            band={band}
+            target={s.retentionByBand[band]}
+            global={s.defaultDesiredRetention}
+            enabled={s.retentionByBandEnabled}
+            onSet={(b, t) => void setRetentionBand(b, t)}
+          />
+        ))}
       </SectionPanel>
 
       <SectionPanel title="Interface">

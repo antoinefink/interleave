@@ -179,6 +179,7 @@ export type { ReviewLog, ReviewState } from "./review";
 export type { AppSettings, KeyboardLayout, ThemePreference } from "./settings";
 export {
   appSettingsFromStored,
+  coerceRetentionByBand,
   coerceSettingsPatch,
   coerceSettingValue,
   DAILY_REVIEW_BUDGET_MAX,

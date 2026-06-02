@@ -60,6 +60,42 @@
   min-height: 0;
   padding: 8px;
 }
+/* Per-concept FSRS retention target editor (T079). */
+.cm-retention {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.cm-retention__label {
+  font-size: var(--t-sm);
+  color: var(--text-2);
+  font-weight: 500;
+}
+.cm-retention__range {
+  width: 120px;
+  accent-color: var(--accent);
+}
+.cm-retention__value {
+  width: 56px;
+  text-align: right;
+  font-size: var(--t-sm);
+  font-weight: 600;
+  color: var(--accent-text);
+  font-variant-numeric: tabular-nums;
+}
+.cm-retention__reset {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+.cm-retention__reset:hover:not(:disabled) {
+  color: var(--text);
+}
+.cm-retention__reset:disabled {
+  opacity: 0.3;
+}
 
 /* member row leading layout (type icon + title/meta) */
 .cm-member__main {

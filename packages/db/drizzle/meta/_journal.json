@@ -127,6 +127,13 @@
       "when": 1780392809078,
       "tag": "0017_tough_whistler",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1780403259381,
+      "tag": "0018_early_puma",
+      "breakpoints": true
     }
   ]
 }

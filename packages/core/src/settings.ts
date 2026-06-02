@@ -79,6 +79,24 @@ export interface AppSettings {
   readonly keyboardLayout: KeyboardLayout;
   readonly theme: ThemePreference;
   readonly displayName: string;
+  /**
+   * Per-priority-band desired-retention targets (T079). When
+   * {@link retentionByBandEnabled} is `true`, the FSRS resolver
+   * (`@interleave/scheduler` `resolveDesiredRetention`) holds A/B/C/D cards at
+   * these per-band targets instead of the single {@link defaultDesiredRetention}.
+   * A PARTIAL map: a MISSING band inherits `defaultDesiredRetention` (so the
+   * default `{}` is a clean no-op, and it tracks a user-changed global). Each
+   * present value is clamped to the retention bounds; unknown labels are dropped.
+   */
+  readonly retentionByBand: Partial<Record<PriorityLabel, number>>;
+  /**
+   * Master switch for per-priority/per-concept retention (T079). When `false`,
+   * the resolver ignores bands AND concepts — only a per-card override and the
+   * global default apply (a clean revert to T036 single-retention behavior).
+   * Per-concept targets (stored on the `concept` element) additionally engage the
+   * resolver when present, independent of this flag.
+   */
+  readonly retentionByBandEnabled: boolean;
 }
 
 /**
@@ -97,6 +115,8 @@ export const SETTINGS_KEYS = {
   keyboardLayout: "ui.keyboardLayout",
   theme: "ui.theme",
   displayName: "ui.displayName",
+  retentionByBand: "review.retentionByBand",
+  retentionByBandEnabled: "review.retentionByBand.enabled",
 } as const satisfies Record<keyof AppSettings, string>;
 
 /**
@@ -116,6 +136,11 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   keyboardLayout: "qwerty",
   theme: "dark",
   displayName: "",
+  // Default to an EMPTY map (every band inherits `defaultDesiredRetention`) — a
+  // filled `{ A:0.9, … }` literal would NOT track a user-changed global (the const
+  // is static). An absent band = inherit, which stays correct dynamically (T079).
+  retentionByBand: {},
+  retentionByBandEnabled: false,
 };
 
 /** Inclusive UI bounds for the daily review budget slider. */
@@ -153,6 +178,29 @@ function clampInt(value: number, min: number, max: number): number {
 
 function clampRange(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+/** The four A/B/C/D band labels, as a runtime set for the retention-map coercion. */
+const RETENTION_BAND_LABELS: readonly PriorityLabel[] = ["A", "B", "C", "D"];
+
+/**
+ * Coerce an arbitrary stored value into a valid {@link AppSettings.retentionByBand}
+ * map (T079): keep only the four known A/B/C/D labels whose value is a finite
+ * number, clamp each present value to the retention bounds, and DROP everything
+ * else. An absent label means "inherit the global default" — it is never stored as
+ * a duplicate of global. A non-object yields `{}` (the no-op default).
+ */
+export function coerceRetentionByBand(raw: unknown): Partial<Record<PriorityLabel, number>> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  const source = raw as Record<string, unknown>;
+  const out: Partial<Record<PriorityLabel, number>> = {};
+  for (const label of RETENTION_BAND_LABELS) {
+    const value = source[label];
+    if (isFiniteNumber(value)) {
+      out[label] = clampRange(value, DESIRED_RETENTION_MIN, DESIRED_RETENTION_MAX);
+    }
+  }
+  return out;
 }
 
 /** Type guard for {@link KeyboardLayout}. */
@@ -215,6 +263,12 @@ export function coerceSettingValue<K extends keyof AppSettings>(
       return (
         typeof raw === "string" ? raw.trim().slice(0, DISPLAY_NAME_MAX) : fallback
       ) as AppSettings[K];
+    case "retentionByBand":
+      // Keep only known A/B/C/D labels with finite, in-bounds values (T079); an
+      // absent label inherits global, so a malformed map degrades to `{}`.
+      return coerceRetentionByBand(raw) as AppSettings[K];
+    case "retentionByBandEnabled":
+      return (typeof raw === "boolean" ? raw : fallback) as AppSettings[K];
     default:
       return fallback;
   }
@@ -256,6 +310,11 @@ export function appSettingsFromStored(stored: Readonly<Record<string, unknown>>)
     keyboardLayout: coerceSettingValue("keyboardLayout", stored[SETTINGS_KEYS.keyboardLayout]),
     theme: coerceSettingValue("theme", stored[SETTINGS_KEYS.theme]),
     displayName: coerceSettingValue("displayName", stored[SETTINGS_KEYS.displayName]),
+    retentionByBand: coerceSettingValue("retentionByBand", stored[SETTINGS_KEYS.retentionByBand]),
+    retentionByBandEnabled: coerceSettingValue(
+      "retentionByBandEnabled",
+      stored[SETTINGS_KEYS.retentionByBandEnabled],
+    ),
   };
 }
 

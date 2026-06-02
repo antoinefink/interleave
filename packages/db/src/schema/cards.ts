@@ -70,6 +70,17 @@ export const cards = sqliteTable(
      * state). A remediated card can be un-leeched. `0`/`1` (SQLite boolean).
      */
     isLeech: integer("is_leech", { mode: "boolean" }).notNull().default(false),
+    /**
+     * Optional per-card FSRS desired-retention OVERRIDE (T079), a probability in
+     * `[DESIRED_RETENTION_MIN, DESIRED_RETENTION_MAX]`, or `null` = inherit the
+     * concept/band/global target. When finite it WINS over every other rule in the
+     * resolver (clamped, so it can never reach a self-retiring near-zero target).
+     * `null`-default so existing cards are unchanged on upgrade (backfill-free).
+     * T082 REUSES this column as an optional, floor-clamped interval-lengthening
+     * lever (a *low* override) — it is NOT the retirement mechanism (T082's
+     * reversible `is_retired` flag is).
+     */
+    desiredRetention: real("desired_retention"),
   },
   (table) => [
     check("cards_kind_check", inList(table.kind, CARD_KINDS)),

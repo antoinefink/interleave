@@ -182,6 +182,7 @@ export {
   RecoveryModeService,
   type VacationPreview,
 } from "./recovery-mode-service";
+export { type RetentionCardResult, RetentionService } from "./retention-service";
 export {
   type CardWithElement,
   type CreateCardInput,

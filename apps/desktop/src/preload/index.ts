@@ -63,6 +63,11 @@ import type {
   QueueVacationRequest,
   ReadPointGetRequest,
   ReadPointSetRequest,
+  RetentionResolveForRequest,
+  RetentionSetBandEnabledRequest,
+  RetentionSetBandRequest,
+  RetentionSetCardRequest,
+  RetentionSetConceptRequest,
   ReviewCardRequest,
   ReviewGradeRequest,
   ReviewPreviewRequest,
@@ -258,6 +263,19 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.conceptsUnassign, request),
     members: (request: ConceptsMembersRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.conceptsMembers, request),
+  },
+  retention: {
+    get: () => ipcRenderer.invoke(IPC_CHANNELS.retentionGet),
+    setBand: (request: RetentionSetBandRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.retentionSetBand, request),
+    setBandEnabled: (request: RetentionSetBandEnabledRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.retentionSetBandEnabled, request),
+    setConcept: (request: RetentionSetConceptRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.retentionSetConcept, request),
+    setCard: (request: RetentionSetCardRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.retentionSetCard, request),
+    resolveFor: (request: RetentionResolveForRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.retentionResolveFor, request),
   },
   tags: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.tagsList),

@@ -682,6 +682,56 @@ function ExportAnkiSection({
   );
 }
 
+/** Human label for which rule resolved a card's retention (T079). */
+const RETENTION_SOURCE_LABEL: Record<string, string> = {
+  card: "per-card override",
+  concept: "concept target",
+  band: "priority band",
+  global: "global default",
+};
+
+/**
+ * The card's RESOLVED FSRS desired-retention target + which rule won (T079) — a
+ * read-only inspector row backed by `retention.resolveFor`. FSRS schedules the card
+ * against this value; the source tells the user WHY (per-card override → concept →
+ * band → global). Card-only; re-fetched when the inspected card changes.
+ */
+function ResolvedRetentionRow({ cardId }: { cardId: string }) {
+  const [target, setTarget] = useState<number | null>(null);
+  const [source, setSource] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await appApi.resolveRetentionFor({ cardId });
+        if (cancelled) return;
+        setTarget(result.target);
+        setSource(result.source);
+      } catch {
+        if (!cancelled) {
+          setTarget(null);
+          setSource(null);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [cardId]);
+  if (target === null) return null;
+  return (
+    <MetaRow k="Target retention">
+      <span data-testid="inspector-resolved-retention">{Math.round(target * 100)}%</span>
+      {source ? (
+        <span className="text-text-3" data-testid="inspector-resolved-retention-source">
+          {" "}
+          · {RETENTION_SOURCE_LABEL[source] ?? source}
+        </span>
+      ) : null}
+    </MetaRow>
+  );
+}
+
 /** The full metadata view for one inspected element. */
 function InspectorBody({
   data,
@@ -935,6 +985,7 @@ function InspectorBody({
             <MetaRow k="Lapses">{review.lapses}</MetaRow>
             <MetaRow k="Reviews">{review.logCount}</MetaRow>
             <MetaRow k="Last review">{fmtDate(review.lastReviewedAt)}</MetaRow>
+            {element.type === "card" ? <ResolvedRetentionRow cardId={element.id} /> : null}
           </div>
         </div>
       )}

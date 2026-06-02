@@ -79,6 +79,7 @@ const h = vi.hoisted(() => {
     parentConceptId: null,
     childCount: 0,
     memberCount: 2,
+    desiredRetention: null,
   };
   return {
     sourceHit,

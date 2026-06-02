@@ -41,6 +41,8 @@ describe("AppSettings defaults", () => {
       keyboardLayout: "ui.keyboardLayout",
       theme: "ui.theme",
       displayName: "ui.displayName",
+      retentionByBand: "review.retentionByBand",
+      retentionByBandEnabled: "review.retentionByBand.enabled",
     });
   });
 
@@ -119,6 +121,27 @@ describe("coerceSettingValue", () => {
       DEFAULT_APP_SETTINGS.trashRetentionDays,
     );
   });
+
+  it("coerces the per-band retention map: clamp present bands, drop unknown labels (T079)", () => {
+    // In-bounds bands kept; out-of-range clamped; unknown labels + non-numbers dropped.
+    expect(
+      coerceSettingValue("retentionByBand", { A: 0.93, B: 0.5, C: "x", E: 0.9, D: 0.999 }),
+    ).toEqual({ A: 0.93, B: DESIRED_RETENTION_MIN, D: DESIRED_RETENTION_MAX });
+    // A missing band is NOT stored as a duplicate of global — it simply inherits.
+    expect(coerceSettingValue("retentionByBand", { A: 0.91 })).toEqual({ A: 0.91 });
+    // A non-object degrades to the empty (no-op) default.
+    expect(coerceSettingValue("retentionByBand", "nope")).toEqual({});
+    expect(coerceSettingValue("retentionByBand", null)).toEqual({});
+    expect(coerceSettingValue("retentionByBand", [0.9])).toEqual({});
+  });
+
+  it("keeps a real boolean for retentionByBandEnabled, else falls back (T079)", () => {
+    expect(coerceSettingValue("retentionByBandEnabled", true)).toBe(true);
+    expect(coerceSettingValue("retentionByBandEnabled", false)).toBe(false);
+    expect(coerceSettingValue("retentionByBandEnabled", "true")).toBe(
+      DEFAULT_APP_SETTINGS.retentionByBandEnabled,
+    );
+  });
 });
 
 describe("type guards", () => {
@@ -160,6 +183,8 @@ describe("stored ↔ model round-trip", () => {
       keyboardLayout: "dvorak",
       theme: "light",
       displayName: "Ada Lovelace",
+      retentionByBand: {},
+      retentionByBandEnabled: false,
     });
   });
 
@@ -184,6 +209,8 @@ describe("stored ↔ model round-trip", () => {
       keyboardLayout: "vim" as const,
       theme: "light" as const,
       displayName: "Ada Lovelace",
+      retentionByBand: { A: 0.93, D: 0.85 },
+      retentionByBandEnabled: true,
     };
     const reloaded = appSettingsFromStored(settingsPatchToStored(original));
     expect(reloaded).toEqual(original);

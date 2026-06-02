@@ -64,6 +64,7 @@ import {
   QueueQuery,
   RecoveryModeService,
   type Repositories,
+  RetentionService,
   type ReviewOutcome,
   ReviewSessionService,
   resolveSourceRef,
@@ -160,6 +161,16 @@ import type {
   ReadPointSetRequest,
   ReadPointSetResult,
   RecoveryApplyResult,
+  RetentionGetResult,
+  RetentionResolveForRequest,
+  RetentionResolveForResult,
+  RetentionSetBandEnabledRequest,
+  RetentionSetBandRequest,
+  RetentionSetCardRequest,
+  RetentionSetCardResult,
+  RetentionSetConceptRequest,
+  RetentionSetConceptResult,
+  RetentionUpdatedResult,
   ReviewCardRequest,
   ReviewCardResult,
   ReviewCardView,
@@ -285,7 +296,22 @@ export class DbService {
   private occlusionService: OcclusionService | null = null;
   private cardEditService: CardEditService | null = null;
   private reviewSession: ReviewSessionService | null = null;
-  private scheduler: CardSchedulerService | null = null;
+  /**
+   * The retention RESOLVER seam (T079) — assembles the live {@link RetentionTargets}
+   * (settings bands + per-concept targets) and resolves a card's effective FSRS target,
+   * and writes the per-card override. The per-card scheduler factory + the `retention.*`
+   * IPC route through this. Card-only (the attention scheduler is untouched).
+   */
+  private retention: RetentionService | null = null;
+  /**
+   * The per-card FSRS scheduler CACHE (T079), keyed by ROUNDED resolved retention so we
+   * build at most ~one `CardSchedulerService` per distinct target (not per card). A
+   * settings/target write bumps {@link schedulerCacheGen}, which clears this so the next
+   * grade/preview re-resolves against the new targets. Replaces the single T036 scheduler.
+   */
+  private schedulerCache: Map<string, CardSchedulerService> | null = null;
+  /** Cache generation — bumped on a retention write to invalidate {@link schedulerCache}. */
+  private schedulerCacheGen = 0;
   /**
    * The ATTENTION-scheduler APPLY seam (T028) — explicit tomorrow / next-week /
    * next-month / manual scheduling for non-card attention items, distinct from the
@@ -473,14 +499,13 @@ export class DbService {
     // The sibling-aware review-session ordering seam (T039): chooses the next due
     // card and buries siblings (session-ordering ONLY — it writes nothing).
     this.reviewSession = new ReviewSessionService(this.handle.db);
-    // The FSRS card scheduler (T036) — one instance per open DB, reading the
-    // `defaultDesiredRetention` setting (T011) as its first-class retention input.
-    // FSRS schedules CARDS ONLY; sources/topics/extracts stay on the separate
-    // attention scheduler (AttentionScheduleService / QueueActionService /
-    // ExtractService), never here.
-    this.scheduler = new CardSchedulerService({
-      desiredRetention: this.repositories.settings.getAppSettings().defaultDesiredRetention,
-    });
+    // The retention RESOLVER (T079) + the per-card FSRS scheduler CACHE — generalizing
+    // the single T036 scheduler. FSRS schedules CARDS ONLY against each card's RESOLVED
+    // desired-retention target (per-card override → concept → priority band → global);
+    // sources/topics/extracts stay on the separate attention scheduler, never here.
+    this.retention = new RetentionService(this.handle.db);
+    this.schedulerCache = new Map();
+    this.schedulerCacheGen = 0;
     // The attention-scheduler APPLY seam (T028): the only place explicit
     // tomorrow/next-week/next-month/manual scheduling for non-card attention items
     // is persisted. Cards are rejected here (the two-scheduler split holds).
@@ -510,7 +535,9 @@ export class DbService {
     this.cardService = null;
     this.cardEditService = null;
     this.reviewSession = null;
-    this.scheduler = null;
+    this.retention = null;
+    this.schedulerCache = null;
+    this.schedulerCacheGen = 0;
     this.attentionScheduler = null;
     this.undoService = null;
     this.urlImport = null;
@@ -2267,12 +2294,148 @@ export class DbService {
     return { cards };
   }
 
-  /** The FSRS card scheduler (T036), bound to the open database. */
-  private get cardScheduler(): CardSchedulerService {
-    if (!this.scheduler) {
+  /** The retention RESOLVER seam (T079), bound to the open database. */
+  private get retentionService(): RetentionService {
+    if (!this.retention) {
       throw new Error("DbService: database is not open");
     }
-    return this.scheduler;
+    return this.retention;
+  }
+
+  /**
+   * Build (or reuse) the FSRS card scheduler for ONE card (T079) — the seam every FSRS
+   * call routes through. Resolves the card's effective desired-retention target via the
+   * {@link RetentionService} (per-card override → concept name → priority band → global)
+   * and constructs/CACHES a {@link CardSchedulerService} for that target, keyed by the
+   * ROUNDED retention (to `0.001`) so we build at most ~one scheduler per distinct
+   * target, not per card. A `retention.*` write bumps {@link schedulerCacheGen}, which
+   * the cache key embeds, so the next grade/preview re-resolves against the new targets.
+   *
+   * THE TWO-SCHEDULER SPLIT holds: this constructs the FSRS card scheduler only; the
+   * attention scheduler is never reached here. The renderer is unchanged — it still
+   * calls `review.grade`/`review.preview`; only the resolution behind them changes.
+   */
+  private schedulerForCard(cardElementId: ElementId): CardSchedulerService {
+    if (!this.schedulerCache) {
+      throw new Error("DbService: database is not open");
+    }
+    const { target } = this.retentionService.resolveForCard(cardElementId);
+    // Round to 0.001 so near-identical targets share one cached scheduler; embed the
+    // cache generation so a settings/target write invalidates every cached scheduler.
+    const rounded = Math.round(target * 1000) / 1000;
+    const key = `${this.schedulerCacheGen}:${rounded}`;
+    const cached = this.schedulerCache.get(key);
+    if (cached) return cached;
+    const scheduler = new CardSchedulerService({ desiredRetention: rounded });
+    this.schedulerCache.set(key, scheduler);
+    return scheduler;
+  }
+
+  /**
+   * Invalidate the per-card scheduler cache (T079) after a retention target change so
+   * the next grade/preview rebuilds against the new resolved targets. Cheap — a counter
+   * bump; the cache lazily rebuilds. Called by every `retention.*` write path.
+   */
+  private bumpSchedulerCache(): void {
+    this.schedulerCacheGen += 1;
+  }
+
+  // -------------------------------------------------------------------------
+  // retention.*  (T079 — desired retention by priority band / concept / card)
+  // -------------------------------------------------------------------------
+
+  /**
+   * The current desired-retention targets (T079): the global default, the per-band
+   * enable flag + A/B/C/D band map (from {@link AppSettings}), and every LIVE concept
+   * with its per-concept target (from {@link ConceptRepository.listConcepts}). Read-only.
+   */
+  getRetention(): RetentionGetResult {
+    const settings = this.repos.settings.getAppSettings();
+    const byConcept = this.repos.concepts.listConcepts().map((c) => ({
+      conceptId: c.id,
+      name: c.name,
+      target: c.desiredRetention,
+    }));
+    return {
+      global: settings.defaultDesiredRetention,
+      byBandEnabled: settings.retentionByBandEnabled,
+      byBand: settings.retentionByBand,
+      byConcept,
+    };
+  }
+
+  /**
+   * Set/clear one priority-band desired-retention target (T079) → a
+   * `settings.updateAppSettings` write of the merged `retentionByBand` map (settings
+   * have no op). Bumps the per-card scheduler cache so the next grade/preview re-resolves.
+   * Returns the refreshed full read.
+   */
+  setRetentionBand(request: RetentionSetBandRequest): RetentionUpdatedResult {
+    const current = this.repos.settings.getAppSettings().retentionByBand;
+    const nextBand: Partial<Record<PriorityLabel, number>> = { ...current };
+    if (request.target === null) {
+      delete nextBand[request.band];
+    } else {
+      nextBand[request.band] = request.target;
+    }
+    this.repos.settings.updateAppSettings({ retentionByBand: nextBand });
+    this.bumpSchedulerCache();
+    return { retention: this.getRetention() };
+  }
+
+  /**
+   * Enable/disable the per-band retention feature (T079) → a `settings.updateAppSettings`
+   * write. Bumps the scheduler cache; returns the refreshed full read.
+   */
+  setRetentionBandEnabled(request: RetentionSetBandEnabledRequest): RetentionUpdatedResult {
+    this.repos.settings.updateAppSettings({ retentionByBandEnabled: request.enabled });
+    this.bumpSchedulerCache();
+    return { retention: this.getRetention() };
+  }
+
+  /**
+   * Set/clear one concept's per-concept target (T079) → `concepts.desired_retention` +
+   * an `update_element` audit on the concept element, in one transaction (clamped at the
+   * repo write). Bumps the scheduler cache. Returns the concept's stored target.
+   */
+  setRetentionConcept(request: RetentionSetConceptRequest): RetentionSetConceptResult {
+    const concept = this.repos.concepts.setConceptRetention(
+      request.conceptId as ElementId,
+      request.target,
+    );
+    this.bumpSchedulerCache();
+    return {
+      concept: { conceptId: concept.id, name: concept.name, target: concept.desiredRetention },
+    };
+  }
+
+  /**
+   * Set/clear a card's per-card override (T079) → `cards.desired_retention` + an
+   * `update_element` audit on the card element, in one transaction (floor-clamped at the
+   * service so it can never reach a self-retiring near-zero target). Bumps the scheduler
+   * cache so the NEXT grade schedules against the new override.
+   */
+  setRetentionCard(request: RetentionSetCardRequest): RetentionSetCardResult {
+    const { card } = this.retentionService.setCardRetention(
+      request.cardId as ElementId,
+      request.target,
+    );
+    this.bumpSchedulerCache();
+    return { cardId: card.elementId, target: card.desiredRetention ?? null };
+  }
+
+  /**
+   * Resolve a card's effective desired-retention target + which rule won (T079) — the
+   * debug/inspector read. Returns `{ null, null }` for a non-card / unknown id. Read-only.
+   */
+  resolveRetentionFor(request: RetentionResolveForRequest): RetentionResolveForResult {
+    const cardId = request.cardId as ElementId;
+    const card = this.repos.review.findCardById(cardId);
+    if (card?.element.type !== "card" || card.element.deletedAt) {
+      return { target: null, source: null };
+    }
+    const { target, source } = this.retentionService.resolveForCard(cardId);
+    return { target, source };
   }
 
   /**
@@ -2292,7 +2455,7 @@ export class DbService {
     if (card?.element.type !== "card" || card.element.deletedAt) return null;
     const state = this.repos.review.findReviewState(cardElementId);
     if (!state) return null;
-    return this.cardScheduler.previewIntervals(state, asOf);
+    return this.schedulerForCard(cardElementId).previewIntervals(state, asOf);
   }
 
   /**
@@ -2322,7 +2485,12 @@ export class DbService {
     if (!state) {
       throw new Error(`DbService.gradeCard: review state for card ${cardElementId} missing`);
     }
-    const outcome: ReviewOutcome = this.cardScheduler.gradeCard(state, rating, asOf, responseMs);
+    const outcome: ReviewOutcome = this.schedulerForCard(cardElementId).gradeCard(
+      state,
+      rating,
+      asOf,
+      responseMs,
+    );
     // First real review promotes a parked draft card into active rotation
     // (`card_draft → active_card`) in the SAME transaction as the review log, so the
     // first review is atomic (no durable review log on a card still flagged draft).
@@ -2749,7 +2917,12 @@ export class DbService {
       ...(request.parentConceptId ? { parentConceptId: request.parentConceptId as ElementId } : {}),
     });
     return {
-      concept: { id: concept.id, name: concept.name, parentConceptId: concept.parentConceptId },
+      concept: {
+        id: concept.id,
+        name: concept.name,
+        parentConceptId: concept.parentConceptId,
+        desiredRetention: concept.desiredRetention,
+      },
     };
   }
 
@@ -2765,6 +2938,7 @@ export class DbService {
         parentConceptId: c.parentConceptId,
         childCount: c.childCount,
         memberCount: c.memberCount,
+        desiredRetention: c.desiredRetention,
       })),
     };
   }
@@ -3077,9 +3251,12 @@ export class DbService {
     if (!element || element.deletedAt) return null;
     return {
       elementId: id,
-      concepts: this.repos.concepts
-        .conceptsForElement(id)
-        .map((c) => ({ id: c.id, name: c.name, parentConceptId: c.parentConceptId })),
+      concepts: this.repos.concepts.conceptsForElement(id).map((c) => ({
+        id: c.id,
+        name: c.name,
+        parentConceptId: c.parentConceptId,
+        desiredRetention: c.desiredRetention,
+      })),
       tags: this.repos.elements.listTags(id),
     };
   }

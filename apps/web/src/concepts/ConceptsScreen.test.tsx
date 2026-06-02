@@ -50,6 +50,7 @@ const h = vi.hoisted(() => {
     parentConceptId: null,
     childCount: 1,
     memberCount: 0,
+    desiredRetention: null,
   };
   const child: ConceptNode = {
     id: "c-child",
@@ -57,6 +58,7 @@ const h = vi.hoisted(() => {
     parentConceptId: "c-root",
     childCount: 0,
     memberCount: 2,
+    desiredRetention: null,
   };
   const sourceMember: ConceptMemberSummary = {
     id: "src-1",

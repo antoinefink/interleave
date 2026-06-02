@@ -339,6 +339,10 @@ export const DEMO_FIXTURES = {
     "source.defaultPriority": PRIORITY_LABEL_VALUE.C,
     "ui.keyboardLayout": "qwerty",
     "ui.theme": "dark",
+    // Per-priority/per-concept retention (T079) enabled with one A-band target so the
+    // demo shows high-value cards held to a higher target (shorter intervals).
+    "review.retentionByBand.enabled": true,
+    "review.retentionByBand": { A: 0.93 },
   },
 } as const;
 
@@ -565,6 +569,9 @@ export function seedDemoCollection(repos: Repositories, db: InterleaveDatabase):
   const childConceptId = childConcept.id;
   repos.concepts.assignConcept(sourceId, childConceptId);
   repos.concepts.assignConcept(extractId, childConceptId);
+  // A per-concept retention target (T079) so the demo shows a fragile concept held to a
+  // higher target than the global default (the strictest concept among a card's wins).
+  repos.concepts.setConceptRetention(childConceptId, 0.94);
   for (const tag of f.tags) {
     repos.elements.addTag(extractId, tag);
   }

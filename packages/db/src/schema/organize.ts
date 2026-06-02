@@ -17,6 +17,7 @@ import {
   check,
   index,
   primaryKey,
+  real,
   sqliteTable,
   text,
   uniqueIndex,
@@ -40,6 +41,24 @@ export const concepts = sqliteTable(
       onDelete: "set null",
     }),
     name: text("name").notNull(),
+    /**
+     * Per-concept FSRS desired-retention target (T079), a probability in
+     * `[DESIRED_RETENTION_MIN, DESIRED_RETENTION_MAX]`, or `null` = inherit the
+     * band/global default. Read by the per-card scheduler factory: a card in this
+     * concept schedules against this target instead of its priority-band/global
+     * one. `null`-default so existing concepts are unchanged on upgrade
+     * (backfill-free). The resolver collapses duplicate concept NAMES to the
+     * HIGHEST target, so a fragile concept is never under-protected.
+     */
+    desiredRetention: real("desired_retention"),
+    /**
+     * Per-concept FSRS parameter set (T080) — a JSON-encoded `number[]` (the 21-weight
+     * FSRS-6 `w` vector), or `null` = inherit the global preset / ts-fsrs `default_w`.
+     * Stored here (the queryable store the scheduler reads) so an optimized per-concept
+     * preset reaches `schedulerForCard`. Added in this T079 `0018` migration so T080 adds
+     * no second `concepts` migration; written only by T080's optimization apply.
+     */
+    fsrsParams: text("fsrs_params"),
   },
   (table) => [index("concepts_parent_idx").on(table.parentConceptId)],
 );

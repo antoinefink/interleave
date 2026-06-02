@@ -96,6 +96,17 @@ export interface AppSettings {
    * server account; this is purely the on-device identity label.
    */
   readonly displayName: string;
+  /**
+   * Per-priority-band FSRS desired-retention targets (T079) — a partial A/B/C/D map.
+   * A MISSING band inherits {@link defaultDesiredRetention}. Engaged only when
+   * {@link retentionByBandEnabled}.
+   */
+  readonly retentionByBand: Partial<Record<"A" | "B" | "C" | "D", number>>;
+  /**
+   * Master switch for per-priority/per-concept retention (T079). When `false`, only a
+   * per-card override + the global default apply (a clean revert to T036).
+   */
+  readonly retentionByBandEnabled: boolean;
 }
 
 export interface SettingsGetAllResult {
@@ -1829,6 +1840,8 @@ export interface ConceptSummary {
   readonly id: string;
   readonly name: string;
   readonly parentConceptId: string | null;
+  /** Per-concept FSRS desired-retention target (T079), or `null` = inherit. */
+  readonly desiredRetention: number | null;
 }
 
 /** A concept node for the filterbar/map: the concept + its cheap derived counts. */
@@ -1840,6 +1853,8 @@ export interface ConceptNode {
   readonly childCount: number;
   /** Number of LIVE elements that are members of this concept. */
   readonly memberCount: number;
+  /** Per-concept FSRS desired-retention target (T079), or `null` = inherit. */
+  readonly desiredRetention: number | null;
 }
 
 /** A tag with its live usage count (for the library filterbar). */
@@ -1876,6 +1891,68 @@ export interface ConceptMemberSummary {
 
 export interface ConceptsMembersResult {
   readonly members: readonly ConceptMemberSummary[];
+}
+
+// ---------------------------------------------------------------------------
+// retention.*  (T079 — desired retention by priority band / concept / card)
+// ---------------------------------------------------------------------------
+
+/** Which rule resolved a card's effective retention (the inspector/debug read). */
+export type RetentionSource = "card" | "concept" | "band" | "global";
+
+/** One concept's per-concept retention target (for the `retention.get` read). */
+export interface RetentionConceptTarget {
+  readonly conceptId: string;
+  readonly name: string;
+  readonly target: number | null;
+}
+
+export interface RetentionGetResult {
+  readonly global: number;
+  readonly byBandEnabled: boolean;
+  readonly byBand: Partial<Record<"A" | "B" | "C" | "D", number>>;
+  readonly byConcept: readonly RetentionConceptTarget[];
+}
+
+export interface RetentionSetBandRequest {
+  readonly band: "A" | "B" | "C" | "D";
+  readonly target: number | null;
+}
+
+export interface RetentionSetBandEnabledRequest {
+  readonly enabled: boolean;
+}
+
+export interface RetentionUpdatedResult {
+  readonly retention: RetentionGetResult;
+}
+
+export interface RetentionSetConceptRequest {
+  readonly conceptId: string;
+  readonly target: number | null;
+}
+
+export interface RetentionSetConceptResult {
+  readonly concept: RetentionConceptTarget | null;
+}
+
+export interface RetentionSetCardRequest {
+  readonly cardId: string;
+  readonly target: number | null;
+}
+
+export interface RetentionSetCardResult {
+  readonly cardId: string;
+  readonly target: number | null;
+}
+
+export interface RetentionResolveForRequest {
+  readonly cardId: string;
+}
+
+export interface RetentionResolveForResult {
+  readonly target: number | null;
+  readonly source: RetentionSource | null;
 }
 
 /** The element's organize state after an assign/unassign/tag mutation. */
@@ -2300,6 +2377,14 @@ export interface AppApi {
     assign(request: ConceptsAssignRequest): Promise<ConceptsAssignResult>;
     unassign(request: ConceptsUnassignRequest): Promise<ConceptsUnassignResult>;
     members(request: ConceptsMembersRequest): Promise<ConceptsMembersResult>;
+  };
+  readonly retention: {
+    get(): Promise<RetentionGetResult>;
+    setBand(request: RetentionSetBandRequest): Promise<RetentionUpdatedResult>;
+    setBandEnabled(request: RetentionSetBandEnabledRequest): Promise<RetentionUpdatedResult>;
+    setConcept(request: RetentionSetConceptRequest): Promise<RetentionSetConceptResult>;
+    setCard(request: RetentionSetCardRequest): Promise<RetentionSetCardResult>;
+    resolveFor(request: RetentionResolveForRequest): Promise<RetentionResolveForResult>;
   };
   readonly tags: {
     list(): Promise<TagsListResult>;
@@ -2835,6 +2920,44 @@ export const appApi = {
    */
   conceptMembers(request: ConceptsMembersRequest): Promise<ConceptsMembersResult> {
     return requireAppApi().concepts.members(request);
+  },
+  /**
+   * The current desired-retention targets (T079) — global, per-band enable + map, and
+   * each live concept's per-concept target. Read-only.
+   */
+  getRetention(): Promise<RetentionGetResult> {
+    return requireAppApi().retention.get();
+  },
+  /** Set/clear one priority-band target (T079) → settings write; refreshed read. */
+  setRetentionBand(request: RetentionSetBandRequest): Promise<RetentionUpdatedResult> {
+    return requireAppApi().retention.setBand(request);
+  },
+  /** Enable/disable the per-band feature (T079) → settings write; refreshed read. */
+  setRetentionBandEnabled(
+    request: RetentionSetBandEnabledRequest,
+  ): Promise<RetentionUpdatedResult> {
+    return requireAppApi().retention.setBandEnabled(request);
+  },
+  /**
+   * Set/clear one concept's per-concept target (T079) → `concepts.desired_retention`
+   * + `update_element`. Returns the concept's stored target.
+   */
+  setRetentionConcept(request: RetentionSetConceptRequest): Promise<RetentionSetConceptResult> {
+    return requireAppApi().retention.setConcept(request);
+  },
+  /**
+   * Set/clear a card's per-card override (T079) → `cards.desired_retention` +
+   * `update_element` (floor-clamped). Card-only.
+   */
+  setRetentionCard(request: RetentionSetCardRequest): Promise<RetentionSetCardResult> {
+    return requireAppApi().retention.setCard(request);
+  },
+  /**
+   * Debug/inspector read (T079): the resolved effective target for one card + which
+   * rule won. Read-only.
+   */
+  resolveRetentionFor(request: RetentionResolveForRequest): Promise<RetentionResolveForResult> {
+    return requireAppApi().retention.resolveFor(request);
   },
   /** All tags with their live usage count (T041) — the library filterbar. */
   listTags(): Promise<TagsListResult> {

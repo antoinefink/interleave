@@ -22,10 +22,16 @@
  */
 
 import type { ElementId, RelationId } from "@interleave/core";
-import { PRIORITY_LABEL_VALUE } from "@interleave/core";
+import {
+  DESIRED_RETENTION_MAX,
+  DESIRED_RETENTION_MIN,
+  PRIORITY_LABEL_VALUE,
+} from "@interleave/core";
 import { concepts, elementRelations, elements, type InterleaveDatabase } from "@interleave/db";
 import { and, eq, isNull } from "drizzle-orm";
 import { ElementRepository } from "./element-repository";
+import { nowIso } from "./ids";
+import { OperationLogRepository } from "./operation-log-repository";
 
 /** Arguments to create a new concept. */
 export interface CreateConceptInput {
@@ -40,6 +46,12 @@ export interface ConceptSummary {
   readonly id: ElementId;
   readonly name: string;
   readonly parentConceptId: ElementId | null;
+  /**
+   * Per-concept FSRS desired-retention target (T079), or `null` = inherit the
+   * band/global default. Surfaced so the inspector / concept editor can show + edit
+   * it; the per-card scheduler factory reads it via {@link retentionTargets}.
+   */
+  readonly desiredRetention: number | null;
 }
 
 /**
@@ -55,6 +67,8 @@ export interface ConceptNode {
   readonly childCount: number;
   /** Number of LIVE (not soft-deleted) elements that are members of this concept. */
   readonly memberCount: number;
+  /** Per-concept FSRS desired-retention target (T079), or `null` = inherit. */
+  readonly desiredRetention: number | null;
 }
 
 export class ConceptRepository {
@@ -101,9 +115,10 @@ export class ConceptRepository {
         title: name,
       });
       // 2) The concepts side-table row (the hierarchy link) — same transaction.
+      // `desiredRetention`/`fsrsParams` default to `null` (inherit) on create.
       tx.insert(concepts).values({ id: element.id, name, parentConceptId }).run();
 
-      return { id: element.id, name, parentConceptId };
+      return { id: element.id, name, parentConceptId, desiredRetention: null };
     });
   }
 
@@ -115,6 +130,7 @@ export class ConceptRepository {
       id: row.id as ElementId,
       name: row.name,
       parentConceptId: (row.parentConceptId as ElementId | null) ?? null,
+      desiredRetention: row.desiredRetention ?? null,
     };
   }
 
@@ -223,6 +239,86 @@ export class ConceptRepository {
         parentConceptId: (row.parentConceptId as ElementId | null) ?? null,
         childCount: childCounts.get(id) ?? 0,
         memberCount: memberCounts.get(id) ?? 0,
+        desiredRetention: row.desiredRetention ?? null,
+      };
+    });
+  }
+
+  /**
+   * The per-concept FSRS desired-retention targets for the live DB (T079), keyed by
+   * concept NAME (matching `QueueQuery`'s name-based concept filter and the resolver's
+   * `byConcept` key type). Only LIVE concepts with a finite `desired_retention` appear.
+   *
+   * A concept NAME need not be unique (`queue-query.ts` documents this — multiple live
+   * concepts can share a name). When several live concepts share a name with different
+   * targets, they collapse DETERMINISTICALLY to the HIGHEST target among them
+   * (`Math.max` by name) — never last-write-wins, which is order-dependent and could
+   * silently under-protect a fragile concept. This keeps the resolver's "strictest
+   * concept wins" rule consistent (the resolver also takes the highest among a card's
+   * concepts). Read-only — appends no op.
+   */
+  retentionTargets(): Record<string, number> {
+    const liveConceptIds = new Set(
+      this.db
+        .select({ id: elements.id })
+        .from(elements)
+        .where(and(eq(elements.type, "concept"), isNull(elements.deletedAt)))
+        .all()
+        .map((r) => r.id as ElementId),
+    );
+    const out: Record<string, number> = {};
+    for (const row of this.db.select().from(concepts).all()) {
+      if (!liveConceptIds.has(row.id as ElementId)) continue;
+      const target = row.desiredRetention;
+      if (typeof target !== "number" || !Number.isFinite(target)) continue;
+      // Aggregate by NAME with Math.max so duplicate names collapse deterministically
+      // to the strictest target (never order-dependent last-write-wins).
+      const existing = out[row.name];
+      out[row.name] = existing === undefined ? target : Math.max(existing, target);
+    }
+    return out;
+  }
+
+  /**
+   * Set (or clear) a concept's per-concept FSRS desired-retention target (T079) — the
+   * `concepts.desired_retention` column — in ONE transaction, logging `update_element`
+   * on the OWNING `concept` element (the audit record; the column is the queryable
+   * store the scheduler reads). A finite `value` is CLAMPED to the retention bounds at
+   * this write choke point so a corrupt value can never reach the store; `null` clears
+   * the override (inherit band/global). No new op type. Returns the refreshed summary.
+   */
+  setConceptRetention(conceptId: ElementId, value: number | null): ConceptSummary {
+    const conceptEl = this.elementRepo.findById(conceptId);
+    if (!conceptEl || conceptEl.deletedAt || conceptEl.type !== "concept") {
+      throw new Error(`ConceptRepository.setConceptRetention: concept ${conceptId} not found`);
+    }
+    const next =
+      value === null || !Number.isFinite(value)
+        ? null
+        : Math.min(DESIRED_RETENTION_MAX, Math.max(DESIRED_RETENTION_MIN, value));
+
+    return this.db.transaction((tx) => {
+      const before = tx.select().from(concepts).where(eq(concepts.id, conceptId)).get();
+      const prev = before?.desiredRetention ?? null;
+      tx.update(concepts).set({ desiredRetention: next }).where(eq(concepts.id, conceptId)).run();
+      // Stamp + audit on the concept ELEMENT (no new op type — the column is the store).
+      tx.update(elements).set({ updatedAt: nowIso() }).where(eq(elements.id, conceptId)).run();
+      new OperationLogRepository(tx).append(tx, {
+        opType: "update_element",
+        elementId: conceptId,
+        payload: { id: conceptId, desiredRetention: next, prev: { desiredRetention: prev } },
+      });
+      const row = tx.select().from(concepts).where(eq(concepts.id, conceptId)).get();
+      if (!row) {
+        throw new Error(
+          `ConceptRepository.setConceptRetention: concept ${conceptId} missing after write`,
+        );
+      }
+      return {
+        id: row.id as ElementId,
+        name: row.name,
+        parentConceptId: (row.parentConceptId as ElementId | null) ?? null,
+        desiredRetention: row.desiredRetention ?? null,
       };
     });
   }

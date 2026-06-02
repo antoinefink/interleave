@@ -2997,6 +2997,8 @@ export interface ConceptSummary {
   readonly id: string;
   readonly name: string;
   readonly parentConceptId: string | null;
+  /** Per-concept FSRS desired-retention target (T079), or `null` = inherit. */
+  readonly desiredRetention: number | null;
 }
 
 /** A concept node for the filterbar/map: the concept + its cheap derived counts. */
@@ -3008,6 +3010,8 @@ export interface ConceptNode {
   readonly childCount: number;
   /** Number of LIVE (not soft-deleted) elements that are members of this concept. */
   readonly memberCount: number;
+  /** Per-concept FSRS desired-retention target (T079), or `null` = inherit. */
+  readonly desiredRetention: number | null;
 }
 
 /** A tag with its live usage count (for the library filterbar). */
@@ -3107,6 +3111,98 @@ export interface ConceptMemberSummary {
 
 export interface ConceptsMembersResult {
   readonly members: readonly ConceptMemberSummary[];
+}
+
+// ---------------------------------------------------------------------------
+// retention.*  (T079 — desired retention by priority band / concept / card)
+//
+// A card's FSRS desired-retention target is RESOLVED from an ordered rule set
+// (per-card override → concept target → priority-band target → global default).
+// The bands + enable flag live in `AppSettings` (settings, no op); per-concept
+// targets on `concepts.desired_retention` (update_element); the per-card override
+// on `cards.desired_retention` (update_element). FSRS schedules each card against
+// its resolved target. CARD-ONLY — the attention scheduler is untouched.
+// ---------------------------------------------------------------------------
+
+/** A resolved desired-retention target as a probability in the supported band. */
+const RetentionTargetSchema = z.number().min(DESIRED_RETENTION_MIN).max(DESIRED_RETENTION_MAX);
+
+/** Which rule resolved a card's effective retention (the inspector/debug read). */
+export type RetentionSource = "card" | "concept" | "band" | "global";
+
+/** One concept's per-concept retention target (for the `retention.get` read). */
+export interface RetentionConceptTarget {
+  readonly conceptId: string;
+  readonly name: string;
+  /** The per-concept target, or `null` = inherit the band/global default. */
+  readonly target: number | null;
+}
+
+/** `retention.get()` takes no arguments. */
+export const RetentionGetRequestSchema = z.void();
+
+export interface RetentionGetResult {
+  /** The global default (`settings.defaultDesiredRetention`). */
+  readonly global: number;
+  /** Whether the per-band feature is enabled. */
+  readonly byBandEnabled: boolean;
+  /** The per-band targets (a partial A/B/C/D map; an absent band inherits global). */
+  readonly byBand: Partial<Record<PriorityLabelInput, number>>;
+  /** Every live concept with its per-concept target (or `null` = inherit). */
+  readonly byConcept: readonly RetentionConceptTarget[];
+}
+
+export const RetentionSetBandRequestSchema = z.object({
+  band: PriorityLabelSchema,
+  /** The band target, or `null` to clear (inherit global). */
+  target: RetentionTargetSchema.nullable(),
+});
+export type RetentionSetBandRequest = z.infer<typeof RetentionSetBandRequestSchema>;
+
+export const RetentionSetBandEnabledRequestSchema = z.object({
+  enabled: z.boolean(),
+});
+export type RetentionSetBandEnabledRequest = z.infer<typeof RetentionSetBandEnabledRequestSchema>;
+
+/** Both band writes return the refreshed full retention read. */
+export interface RetentionUpdatedResult {
+  readonly retention: RetentionGetResult;
+}
+
+export const RetentionSetConceptRequestSchema = z.object({
+  conceptId: ElementIdSchema,
+  /** The per-concept target, or `null` to clear (inherit). */
+  target: RetentionTargetSchema.nullable(),
+});
+export type RetentionSetConceptRequest = z.infer<typeof RetentionSetConceptRequestSchema>;
+
+export interface RetentionSetConceptResult {
+  readonly concept: RetentionConceptTarget | null;
+}
+
+export const RetentionSetCardRequestSchema = z.object({
+  cardId: ElementIdSchema,
+  /** The per-card override, or `null` to clear (inherit). */
+  target: RetentionTargetSchema.nullable(),
+});
+export type RetentionSetCardRequest = z.infer<typeof RetentionSetCardRequestSchema>;
+
+export interface RetentionSetCardResult {
+  /** The card's stored override after the write (or `null` = inherit). */
+  readonly cardId: string;
+  readonly target: number | null;
+}
+
+export const RetentionResolveForRequestSchema = z.object({
+  cardId: ElementIdSchema,
+});
+export type RetentionResolveForRequest = z.infer<typeof RetentionResolveForRequestSchema>;
+
+export interface RetentionResolveForResult {
+  /** The resolved effective target, or `null` when the id is not a live card. */
+  readonly target: number | null;
+  /** Which rule won, or `null` when the id is not a live card. */
+  readonly source: RetentionSource | null;
 }
 
 /** `tags.list()` takes no arguments. */
@@ -3950,6 +4046,36 @@ export interface AppApi {
      * by `ConceptRepository.elementsForConcept`, enriched per element. Read-only.
      */
     members(request: ConceptsMembersRequest): Promise<ConceptsMembersResult>;
+  };
+  readonly retention: {
+    /**
+     * The current desired-retention targets (T079) — the global default, the per-band
+     * enable flag + A/B/C/D band map, and every live concept's per-concept target.
+     * Read-only.
+     */
+    get(): Promise<RetentionGetResult>;
+    /**
+     * Set/clear one priority-band target (T079) → a `settings.updateAppSettings` write
+     * (settings have no op). Returns the refreshed full read.
+     */
+    setBand(request: RetentionSetBandRequest): Promise<RetentionUpdatedResult>;
+    /** Enable/disable the per-band feature (T079) → settings write. Refreshed read. */
+    setBandEnabled(request: RetentionSetBandEnabledRequest): Promise<RetentionUpdatedResult>;
+    /**
+     * Set/clear one concept's per-concept target (T079) → `concepts.desired_retention`
+     * + `update_element` audit, in one transaction. Returns the concept's stored target.
+     */
+    setConcept(request: RetentionSetConceptRequest): Promise<RetentionSetConceptResult>;
+    /**
+     * Set/clear a card's per-card override (T079) → `cards.desired_retention` +
+     * `update_element` audit, in one transaction (clamped to the floor). Card-only.
+     */
+    setCard(request: RetentionSetCardRequest): Promise<RetentionSetCardResult>;
+    /**
+     * Debug/inspector read (T079): the resolved effective target for one card + which
+     * rule won (card override / concept / band / global). Read-only.
+     */
+    resolveFor(request: RetentionResolveForRequest): Promise<RetentionResolveForResult>;
   };
   readonly tags: {
     /** All tags with their live usage count (T041) — the library filterbar. Read-only. */

@@ -67,7 +67,12 @@ describe("ConceptRepository.createConcept", () => {
 
     // The concepts side-table row exists with the same id.
     const summary = concepts.findById(concept.id);
-    expect(summary).toEqual({ id: concept.id, name: "Cognition", parentConceptId: null });
+    expect(summary).toEqual({
+      id: concept.id,
+      name: "Cognition",
+      parentConceptId: null,
+      desiredRetention: null,
+    });
 
     // It logged `create_element` (the closed op set — no `create_concept`).
     const ops = opLog.listForElement(concept.id);
@@ -383,5 +388,56 @@ describe("ConceptRepository concept-node lifecycle (soft-delete + purge)", () =>
     trash.emptyTrash();
 
     expect(handle.db.select().from(conceptsTable).all()).toHaveLength(0);
+  });
+});
+
+describe("ConceptRepository per-concept retention (T079)", () => {
+  it("setConceptRetention writes the column, logs update_element, and surfaces on findById", () => {
+    const concept = concepts.createConcept({ name: "Fragile" });
+    expect(concepts.findById(concept.id)?.desiredRetention).toBeNull();
+
+    const updated = concepts.setConceptRetention(concept.id, 0.93);
+    expect(updated.desiredRetention).toBeCloseTo(0.93, 6);
+    expect(concepts.findById(concept.id)?.desiredRetention).toBeCloseTo(0.93, 6);
+
+    // Logged as `update_element` on the concept element (the closed op set).
+    const ops = opLog.listForElement(concept.id);
+    expect(ops.some((o) => o.opType === "update_element")).toBe(true);
+
+    // Clearing it back to inherit.
+    const cleared = concepts.setConceptRetention(concept.id, null);
+    expect(cleared.desiredRetention).toBeNull();
+  });
+
+  it("clamps a stored per-concept target to the supported band (choke point)", () => {
+    const concept = concepts.createConcept({ name: "Clamped" });
+    expect(concepts.setConceptRetention(concept.id, 0.01).desiredRetention).toBe(0.8);
+    expect(concepts.setConceptRetention(concept.id, 1.5).desiredRetention).toBe(0.97);
+  });
+
+  it("retentionTargets() keys by NAME and collapses duplicate names to the HIGHEST target", () => {
+    const lowDup = concepts.createConcept({ name: "Shared" });
+    const highDup = concepts.createConcept({ name: "Shared" });
+    const other = concepts.createConcept({ name: "Other" });
+    const noTarget = concepts.createConcept({ name: "NoTarget" });
+    concepts.setConceptRetention(lowDup.id, 0.85);
+    concepts.setConceptRetention(highDup.id, 0.94);
+    concepts.setConceptRetention(other.id, 0.9);
+    void noTarget; // left at null = inherit → absent from the map
+
+    const targets = concepts.retentionTargets();
+    // Deterministic: the two "Shared" concepts collapse to the HIGHEST (0.94), never
+    // order-dependent last-write-wins (which could under-protect a fragile concept).
+    expect(targets.Shared).toBeCloseTo(0.94, 6);
+    expect(targets.Other).toBeCloseTo(0.9, 6);
+    expect(targets).not.toHaveProperty("NoTarget");
+  });
+
+  it("retentionTargets() drops a soft-deleted concept", () => {
+    const concept = concepts.createConcept({ name: "Gone" });
+    concepts.setConceptRetention(concept.id, 0.92);
+    expect(concepts.retentionTargets().Gone).toBeCloseTo(0.92, 6);
+    elements.softDelete(concept.id);
+    expect(concepts.retentionTargets()).not.toHaveProperty("Gone");
   });
 });

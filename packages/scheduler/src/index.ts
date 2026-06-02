@@ -98,3 +98,11 @@ export {
   type VacationPlan,
   type VacationSuspendItem,
 } from "./recovery-modes";
+export {
+  type RetentionResolution,
+  type RetentionResolveInput,
+  type RetentionSource,
+  type RetentionTargets,
+  resolveDesiredRetention,
+  resolveDesiredRetentionDetailed,
+} from "./retention";

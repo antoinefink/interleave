@@ -23,6 +23,7 @@ const ROOT: ConceptNode = {
   parentConceptId: null,
   childCount: 1,
   memberCount: 1,
+  desiredRetention: null,
 };
 const CHILD: ConceptNode = {
   id: "c-child",
@@ -30,6 +31,7 @@ const CHILD: ConceptNode = {
   parentConceptId: "c-root",
   childCount: 0,
   memberCount: 5,
+  desiredRetention: null,
 };
 const CONCEPTS = [ROOT, CHILD] as const;
 

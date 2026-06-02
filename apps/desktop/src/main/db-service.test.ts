@@ -380,6 +380,8 @@ describe("DbService", () => {
       keyboardLayout: "dvorak",
       theme: "light",
       displayName: "",
+      retentionByBand: {},
+      retentionByBandEnabled: false,
     });
     second.close();
   });
@@ -2452,7 +2454,7 @@ describe("DbService — backup support (T047)", () => {
   it("getSchemaVersion returns the latest applied Drizzle migration tag", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
-    expect(svc.getSchemaVersion(MIGRATIONS_DIR)).toBe("0017_tough_whistler");
+    expect(svc.getSchemaVersion(MIGRATIONS_DIR)).toBe("0018_early_puma");
     svc.close();
   });
 
@@ -2503,5 +2505,129 @@ describe("DbService — backup support (T047)", () => {
       fs.rmSync(snapDir, { recursive: true, force: true });
       svc.close();
     }
+  });
+});
+
+describe("DbService — desired retention by priority/concept (T079)", () => {
+  let dir: string;
+  let dbPath: string;
+  const ASOF = "2026-06-15T00:00:00.000Z";
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "interleave-retention-"));
+    dbPath = path.join(dir, "app.sqlite");
+  });
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Author a `qa` card and force a MATURED review state (so `good` gives a multi-day interval). */
+  function maturedCard(svc: DbService, priority: number): string {
+    const { element } = svc.repos.review.createCard({
+      kind: "qa",
+      title: "Matured",
+      priority,
+      prompt: "Q",
+      answer: "A",
+    });
+    svc.raw.sqlite
+      .prepare(
+        `UPDATE review_states SET stability = 30, difficulty = 5, reps = 5, fsrs_state = 'review',
+         last_reviewed_at = '2026-05-16T00:00:00.000Z', due_at = ? WHERE element_id = ?`,
+      )
+      .run(ASOF, element.id);
+    return element.id;
+  }
+
+  const intervalDays = (svc: DbService, cardId: string): number => {
+    const { reviewState } = svc.gradeCard(cardId as never, "good", 1000, ASOF);
+    return (Date.parse(reviewState.dueAt ?? ASOF) - Date.parse(ASOF)) / 86_400_000;
+  };
+
+  it("a per-card override changes the scheduled interval on the next grade (higher → shorter)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const high = maturedCard(svc, 0.375);
+    const low = maturedCard(svc, 0.375);
+    svc.setRetentionCard({ cardId: high, target: 0.95 });
+    svc.setRetentionCard({ cardId: low, target: 0.85 });
+
+    // Higher resolved target → shorter interval (the resolved retention reaches FSRS).
+    expect(intervalDays(svc, high)).toBeLessThan(intervalDays(svc, low));
+    svc.close();
+  });
+
+  it("resolves by priority band, by concept membership, and clamps a below-floor override UP", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    svc.updateAppSettings({
+      defaultDesiredRetention: 0.9,
+      retentionByBandEnabled: true,
+      retentionByBand: { A: 0.93 },
+    });
+
+    // Band: an A-priority card with no concept/override resolves to the A band.
+    const bandCard = maturedCard(svc, 0.875);
+    expect(svc.resolveRetentionFor({ cardId: bandCard })).toEqual({ target: 0.93, source: "band" });
+
+    // Concept: setting a concept target + assigning it wins over the band.
+    const conceptCard = maturedCard(svc, 0.875);
+    const created = svc.createConcept({ name: "Fragile" });
+    svc.setRetentionConcept({ conceptId: created.concept.id, target: 0.96 });
+    svc.assignConcept({ elementId: conceptCard, conceptId: created.concept.id });
+    expect(svc.resolveRetentionFor({ cardId: conceptCard })).toEqual({
+      target: 0.96,
+      source: "concept",
+    });
+
+    // A below-floor per-card override is clamped UP to the floor (cannot self-retire).
+    const overrideCard = maturedCard(svc, 0.125);
+    svc.setRetentionCard({ cardId: overrideCard, target: 0.01 });
+    expect(svc.resolveRetentionFor({ cardId: overrideCard })).toEqual({
+      target: 0.8,
+      source: "card",
+    });
+    svc.close();
+  });
+
+  it("retention.setConcept logs update_element and changes the resolved target", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const card = maturedCard(svc, 0.375);
+    const created = svc.createConcept({ name: "Fragile" });
+    svc.assignConcept({ elementId: card, conceptId: created.concept.id });
+
+    // Before: inherits global (no per-concept target yet).
+    expect(svc.resolveRetentionFor({ cardId: card }).source).toBe("global");
+
+    svc.setRetentionConcept({ conceptId: created.concept.id, target: 0.94 });
+    const ops = svc.repos.operationLog.listForElement(created.concept.id as never);
+    expect(ops.some((o) => o.opType === "update_element")).toBe(true);
+    expect(svc.resolveRetentionFor({ cardId: card })).toEqual({ target: 0.94, source: "concept" });
+    svc.close();
+  });
+
+  it("targets + the resolved scheduling SURVIVE a close + reopen (restart)", () => {
+    const first = new DbService();
+    first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    first.updateAppSettings({ retentionByBandEnabled: true, retentionByBand: { A: 0.93 } });
+    const card = maturedCard(first, 0.875);
+    const created = first.createConcept({ name: "Durable" });
+    first.setRetentionConcept({ conceptId: created.concept.id, target: 0.95 });
+    first.close();
+
+    const second = new DbService();
+    second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    // The band target persisted.
+    const retention = second.getRetention();
+    expect(retention.byBandEnabled).toBe(true);
+    expect(retention.byBand.A).toBeCloseTo(0.93, 6);
+    // The per-concept target persisted + still resolves for an A-band card.
+    expect(second.resolveRetentionFor({ cardId: card })).toEqual({ target: 0.93, source: "band" });
+    expect(
+      second.getRetention().byConcept.find((c) => c.conceptId === created.concept.id)?.target,
+    ).toBeCloseTo(0.95, 6);
+    second.close();
   });
 });
