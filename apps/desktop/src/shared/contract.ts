@@ -25,6 +25,9 @@ import {
   DISPLAY_NAME_MAX,
   ELEMENT_STATUSES,
   ELEMENT_TYPES,
+  EMBEDDING_API_KEY_MAX,
+  EMBEDDING_MODEL_ID_MAX,
+  EMBEDDING_PROVIDERS,
   IMPORT_BALANCE_FACTOR_MAX,
   IMPORT_BALANCE_FACTOR_MIN,
   JOB_STATUSES,
@@ -176,6 +179,14 @@ export const SettingsPatchSchema = z
     theme: z.enum(THEMES),
     /** The local vault owner's display name (trimmed + capped main-side). */
     displayName: z.string().max(DISPLAY_NAME_MAX),
+    // Semantic search (T087): the on/off switch, provider, the user's own API key
+    // (validated/coerced main-side), the active model id, and the model-downloaded
+    // flag. The key is stored in SQLite settings only — never our server.
+    semanticSearchEnabled: z.boolean(),
+    embeddingProvider: z.enum(EMBEDDING_PROVIDERS),
+    embeddingApiKey: z.string().max(EMBEDDING_API_KEY_MAX),
+    embeddingModelId: z.string().max(EMBEDDING_MODEL_ID_MAX),
+    embeddingModelDownloaded: z.boolean(),
   })
   .partial()
   .strict();
@@ -3715,6 +3726,74 @@ export interface SearchQueryResult {
 }
 
 // ---------------------------------------------------------------------------
+// semantic.*  (T087 — on-device semantic search: FTS + sqlite-vec fusion)
+// ---------------------------------------------------------------------------
+
+/** The retrieval mode that actually ran, so the UI labels "keyword only" honestly. */
+export const SemanticSearchModeSchema = z.enum(["semantic", "fts", "disabled"]);
+export type SemanticSearchMode = z.infer<typeof SemanticSearchModeSchema>;
+
+/**
+ * A fused search result row. EXTENDS the full {@link SearchResult} shape (so the
+ * library renders a semantic row identically to a keyword row — same scheduler
+ * chip, due badge, refblock) and adds `semantic` (whether a vector neighbor
+ * produced it, so the UI labels purely-semantic "related" rows) + `vecDistance`.
+ * NO raw vectors cross IPC — only ids/titles/snippets/distances.
+ */
+export interface SemanticSearchResultRow extends SearchResult {
+  /** Whether a vector neighbor contributed this hit (label it "related" in the UI). */
+  readonly semantic: boolean;
+  /** The `vec0` distance (lower nearer), or `null` for a pure keyword hit. */
+  readonly vecDistance: number | null;
+}
+
+export const SemanticSearchRequestSchema = z.object({
+  q: z.string().max(512),
+  type: SearchableTypeSchema.optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+export type SemanticSearchRequest = z.infer<typeof SemanticSearchRequestSchema>;
+
+export interface SemanticSearchResult {
+  readonly results: readonly SemanticSearchResultRow[];
+  /** Which retrieval ran — `disabled`/`fts` tell the UI to show "keyword only". */
+  readonly mode: SemanticSearchMode;
+}
+
+export const SemanticStatusRequestSchema = z.object({});
+export type SemanticStatusRequest = z.infer<typeof SemanticStatusRequestSchema>;
+
+export interface SemanticStatusResult {
+  readonly enabled: boolean;
+  /** Whether `sqlite-vec` `vec0` is loaded + functional (the FTS-only degrade gate). */
+  readonly vecAvailable: boolean;
+  readonly modelDownloaded: boolean;
+  /** How many live searchable elements are embedded. */
+  readonly embedded: number;
+  /** The total live searchable corpus (the "N of M embedded" denominator). */
+  readonly total: number;
+  readonly modelId: string;
+}
+
+export const SemanticReindexRequestSchema = z.object({
+  onlyMissing: z.boolean().optional(),
+});
+export type SemanticReindexRequest = z.infer<typeof SemanticReindexRequestSchema>;
+
+export interface SemanticReindexResult {
+  /** How many `embed` jobs were enqueued (observe progress via `jobs.subscribe`). */
+  readonly enqueued: number;
+}
+
+export const SemanticDownloadModelRequestSchema = z.object({});
+export type SemanticDownloadModelRequest = z.infer<typeof SemanticDownloadModelRequestSchema>;
+
+export interface SemanticDownloadModelResult {
+  /** Whether the local model is ready (`embeddingModelDownloaded` is now `true`). */
+  readonly downloaded: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // library.browse()  (Library route — the facet-driven browse-everything read)
 // ---------------------------------------------------------------------------
 
@@ -4702,6 +4781,28 @@ export interface AppApi {
      * never issues SQL — it calls this typed command.
      */
     query(request: SearchQueryRequest): Promise<SearchQueryResult>;
+  };
+  readonly semantic: {
+    /**
+     * Fused semantic + FTS search (T087). Embeds the query on-device via the
+     * background runner and fuses the `sqlite-vec` KNN with the FTS hits, so
+     * conceptually-related material surfaces without a keyword match. OFF BY
+     * DEFAULT: when semantics are disabled / the model is absent / `vec0` failed to
+     * load, it degrades to FTS-only and `mode` reports which retrieval ran. No raw
+     * vectors cross IPC.
+     */
+    search(request: SemanticSearchRequest): Promise<SemanticSearchResult>;
+    /** Index coverage + on/off/downloaded state for the Settings + library affordances. */
+    status(request?: SemanticStatusRequest): Promise<SemanticStatusResult>;
+    /** Build the index — enqueue `embed` jobs; observe progress via `jobs.subscribe`. */
+    reindex(request?: SemanticReindexRequest): Promise<SemanticReindexResult>;
+    /**
+     * Pre-warm the local embedding model on first enable (T087) and flip
+     * `embeddingModelDownloaded = true`. The default local model `fastembed`-caches
+     * itself on its first worker job, so this warms that load and degrades to the
+     * deterministic embedder offline — search stays FTS-only until it resolves.
+     */
+    downloadModel(request?: SemanticDownloadModelRequest): Promise<SemanticDownloadModelResult>;
   };
   readonly library: {
     /**

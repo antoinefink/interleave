@@ -110,6 +110,50 @@ export interface AppSettings {
    * core stays dependency-free).
    */
   readonly fsrsParamsGlobal: number[] | null;
+  /**
+   * On-device semantic search master switch (T087). `false` by default — when off,
+   * `/search` runs FTS-only, no embeddings are generated, and the vector index is
+   * dormant. Turning it on (after the local model is downloaded) lets the search
+   * fuse FTS + `sqlite-vec` KNN so conceptually-related material surfaces without a
+   * keyword match. Off-by-default + graceful degrade are load-bearing invariants.
+   */
+  readonly semanticSearchEnabled: boolean;
+  /**
+   * Which embedder computes vectors (T087): `"local"` runs a bundled/downloaded
+   * on-device model in the DB-free worker (the default, fully offline); `"api"`
+   * calls the user's OWN embedding endpoint with {@link embeddingApiKey} — the key
+   * lives only here in SQLite, the only network call is to the provider the user
+   * configured, never our server.
+   */
+  readonly embeddingProvider: "local" | "api";
+  /**
+   * The user's OWN embedding-API key (T087), used only when {@link embeddingProvider}
+   * is `"api"`. Stored in SQLite settings on the user's own device. The load-bearing
+   * invariant: it is NEVER sent to OUR server — the only network call it authorizes
+   * is to the provider the user configured. It is injected into the worker job
+   * payload OUT-OF-BAND at post time (never persisted to a `jobs` row); the Settings
+   * panel reads it back (masked) only so the user can edit it on their own machine.
+   * Empty by default.
+   */
+  readonly embeddingApiKey: string;
+  /**
+   * The active embedding model id (T087), e.g. `"local:all-MiniLM-L6-v2"` or
+   * `"openai:text-embedding-3-small"`. The model id + its dim are stored per
+   * embedding row so KNN refuses to mix vectors of different models; switching the
+   * model re-embeds. One active model at a time in T087.
+   */
+  readonly embeddingModelId: string;
+  /**
+   * First-run state for the local model (T087): `false` until the one-time
+   * download-on-first-enable completes. The default real `all-MiniLM-L6-v2` model is
+   * fetched + cached on disk (into `INTERLEAVE_MODEL_DIR`) by the worker's `fastembed`
+   * on its first load; `EmbeddingService.downloadModel` pre-warms that load and flips
+   * this `true`. Until then, semantic search stays FTS-only with a "Downloading
+   * model…" affordance (and the worker falls back to the deterministic embedder if
+   * the fetch is unavailable, so the feature still degrades cleanly rather than
+   * hanging).
+   */
+  readonly embeddingModelDownloaded: boolean;
 }
 
 /**
@@ -131,7 +175,24 @@ export const SETTINGS_KEYS = {
   retentionByBand: "review.retentionByBand",
   retentionByBandEnabled: "review.retentionByBand.enabled",
   fsrsParamsGlobal: "review.fsrsParamsGlobal",
+  semanticSearchEnabled: "semantic.enabled",
+  embeddingProvider: "semantic.provider",
+  embeddingApiKey: "semantic.apiKey",
+  embeddingModelId: "semantic.modelId",
+  embeddingModelDownloaded: "semantic.modelDownloaded",
 } as const satisfies Record<keyof AppSettings, string>;
+
+/**
+ * The default on-device embedding model id (T087). The shipped default is the REAL
+ * `all-MiniLM-L6-v2` (384-dim) ONNX sentence-transformer, run in the DB-free worker
+ * via `fastembed` — it produces TRUE semantic vectors (conceptual matches without a
+ * shared keyword). The id is stored per embedding row so a model switch re-embeds and
+ * KNN refuses to mix spaces. When the real model cannot load (offline first run, an
+ * `onnxruntime` ABI miss, the dev/Vitest path that bundles no model), the worker
+ * degrades to a deterministic feature-hashing fallback recorded under a DISTINCT id
+ * (`local:minilm-hash-384`, `FALLBACK_MODEL_ID`) so the two spaces are never KNN-mixed.
+ */
+export const DEFAULT_EMBEDDING_MODEL_ID = "local:all-MiniLM-L6-v2";
 
 /**
  * The defaults used when a setting has never been written. A brand-new database
@@ -158,7 +219,30 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   // `null` = inherit ts-fsrs `default_w` (the T036 behavior) until the optimization
   // flow explicitly applies a fitted preset. Never auto-filled (T080).
   fsrsParamsGlobal: null,
+  // Semantic search (T087) — OFF BY DEFAULT. When off, `/search` is FTS-only, no
+  // embeddings run, and the vector index is dormant. The local provider + the
+  // canonical default model id; the user's own API key is empty until they opt in.
+  semanticSearchEnabled: false,
+  embeddingProvider: "local",
+  embeddingApiKey: "",
+  embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
+  embeddingModelDownloaded: false,
 };
+
+/** The valid embedding-provider values (the `semantic.provider` setting). */
+export const EMBEDDING_PROVIDERS = ["local", "api"] as const;
+export type EmbeddingProvider = (typeof EMBEDDING_PROVIDERS)[number];
+
+/** Type guard for {@link EmbeddingProvider}. */
+export function isEmbeddingProvider(value: unknown): value is EmbeddingProvider {
+  return typeof value === "string" && (EMBEDDING_PROVIDERS as readonly string[]).includes(value);
+}
+
+/** Maximum length of the user's embedding-API key (chars). */
+export const EMBEDDING_API_KEY_MAX = 512;
+
+/** Maximum length of the active model id (chars). */
+export const EMBEDDING_MODEL_ID_MAX = 128;
 
 /** The FSRS-6 weight-vector length (`default_w` is 21 numbers in ts-fsrs@5.4.1). */
 export const FSRS_PARAM_VECTOR_LENGTH = 21;
@@ -308,6 +392,25 @@ export function coerceSettingValue<K extends keyof AppSettings>(
       // A finite 21-number array, else `null` (inherit `default_w`); the full
       // FSRS validity is enforced at the OptimizationService write (T080).
       return coerceFsrsParams(raw) as AppSettings[K];
+    case "semanticSearchEnabled":
+      return (typeof raw === "boolean" ? raw : fallback) as AppSettings[K];
+    case "embeddingProvider":
+      return (isEmbeddingProvider(raw) ? raw : fallback) as AppSettings[K];
+    case "embeddingApiKey":
+      // A bounded string; a non-string degrades to the empty default so a corrupt
+      // value never reaches the worker's provider call.
+      return (
+        typeof raw === "string" ? raw.slice(0, EMBEDDING_API_KEY_MAX) : fallback
+      ) as AppSettings[K];
+    case "embeddingModelId":
+      // A non-empty bounded string, else the canonical default model id.
+      return (
+        typeof raw === "string" && raw.trim().length > 0
+          ? raw.trim().slice(0, EMBEDDING_MODEL_ID_MAX)
+          : fallback
+      ) as AppSettings[K];
+    case "embeddingModelDownloaded":
+      return (typeof raw === "boolean" ? raw : fallback) as AppSettings[K];
     default:
       return fallback;
   }
@@ -357,6 +460,23 @@ export function appSettingsFromStored(stored: Readonly<Record<string, unknown>>)
     fsrsParamsGlobal: coerceSettingValue(
       "fsrsParamsGlobal",
       stored[SETTINGS_KEYS.fsrsParamsGlobal],
+    ),
+    semanticSearchEnabled: coerceSettingValue(
+      "semanticSearchEnabled",
+      stored[SETTINGS_KEYS.semanticSearchEnabled],
+    ),
+    embeddingProvider: coerceSettingValue(
+      "embeddingProvider",
+      stored[SETTINGS_KEYS.embeddingProvider],
+    ),
+    embeddingApiKey: coerceSettingValue("embeddingApiKey", stored[SETTINGS_KEYS.embeddingApiKey]),
+    embeddingModelId: coerceSettingValue(
+      "embeddingModelId",
+      stored[SETTINGS_KEYS.embeddingModelId],
+    ),
+    embeddingModelDownloaded: coerceSettingValue(
+      "embeddingModelDownloaded",
+      stored[SETTINGS_KEYS.embeddingModelDownloaded],
     ),
   };
 }

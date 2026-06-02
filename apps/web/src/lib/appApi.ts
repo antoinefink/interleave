@@ -114,6 +114,16 @@ export interface AppSettings {
    * directly — it applies a suggestion via `optimization.apply`.
    */
   readonly fsrsParamsGlobal: number[] | null;
+  /** On-device semantic search master switch (T087) — OFF BY DEFAULT. */
+  readonly semanticSearchEnabled: boolean;
+  /** Which embedder computes vectors (T087): `local` (on-device) or `api` (user's own key). */
+  readonly embeddingProvider: "local" | "api";
+  /** The user's OWN embedding-API key (T087); stored on-device only, never our server. */
+  readonly embeddingApiKey: string;
+  /** The active embedding model id (T087). */
+  readonly embeddingModelId: string;
+  /** First-run state for the local model (T087). */
+  readonly embeddingModelDownloaded: boolean;
 }
 
 export interface SettingsGetAllResult {
@@ -2336,6 +2346,60 @@ export interface SearchQueryResult {
 }
 
 // ---------------------------------------------------------------------------
+// semantic.*  (T087 — on-device semantic search: FTS + sqlite-vec fusion)
+// ---------------------------------------------------------------------------
+
+/** Which retrieval actually ran — `disabled`/`fts` mean the UI shows "keyword only". */
+export type SemanticSearchMode = "semantic" | "fts" | "disabled";
+
+/**
+ * A fused search result row — EXTENDS the full {@link SearchResult} shape (so the
+ * library renders it identically to a keyword row) + `semantic`/`vecDistance`.
+ */
+export interface SemanticSearchResultRow extends SearchResult {
+  /** Whether a vector neighbor contributed this hit (label it "related"). */
+  readonly semantic: boolean;
+  readonly vecDistance: number | null;
+}
+
+export interface SemanticSearchRequest {
+  readonly q: string;
+  readonly type?: SearchableType;
+  readonly limit?: number;
+}
+
+export interface SemanticSearchResult {
+  readonly results: readonly SemanticSearchResultRow[];
+  readonly mode: SemanticSearchMode;
+}
+
+/** `semantic.status()` takes no payload. */
+export type SemanticStatusRequest = Record<string, never>;
+
+export interface SemanticStatusResult {
+  readonly enabled: boolean;
+  readonly vecAvailable: boolean;
+  readonly modelDownloaded: boolean;
+  readonly embedded: number;
+  readonly total: number;
+  readonly modelId: string;
+}
+
+export interface SemanticReindexRequest {
+  readonly onlyMissing?: boolean;
+}
+
+export interface SemanticReindexResult {
+  readonly enqueued: number;
+}
+
+export type SemanticDownloadModelRequest = Record<string, never>;
+
+export interface SemanticDownloadModelResult {
+  readonly downloaded: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // library.browse()  (Library route — the facet-driven browse-everything read)
 // ---------------------------------------------------------------------------
 
@@ -2761,6 +2825,12 @@ export interface AppApi {
   };
   readonly search: {
     query(request: SearchQueryRequest): Promise<SearchQueryResult>;
+  };
+  readonly semantic: {
+    search(request: SemanticSearchRequest): Promise<SemanticSearchResult>;
+    status(request?: SemanticStatusRequest): Promise<SemanticStatusResult>;
+    reindex(request?: SemanticReindexRequest): Promise<SemanticReindexResult>;
+    downloadModel(request?: SemanticDownloadModelRequest): Promise<SemanticDownloadModelResult>;
   };
   readonly library: {
     browse(request?: LibraryBrowseRequest): Promise<LibraryBrowseResult>;
@@ -3427,6 +3497,53 @@ export const appApi = {
    */
   searchQuery(request: SearchQueryRequest): Promise<SearchQueryResult> {
     return requireAppApi().search.query(request);
+  },
+  /**
+   * Fused semantic + FTS search (T087). On-device: embeds the query via the
+   * background runner and fuses the `sqlite-vec` KNN with the FTS hits, so
+   * conceptually-related material surfaces without a keyword match. OFF BY DEFAULT:
+   * degrades to FTS-only when disabled / model absent / `vec0` unavailable, with
+   * `mode` reporting which retrieval ran. Outside the desktop shell, returns an
+   * empty disabled result.
+   */
+  semanticSearch(request: SemanticSearchRequest): Promise<SemanticSearchResult> {
+    if (!isDesktop() || !window.appApi?.semantic) {
+      return Promise.resolve({ results: [], mode: "disabled" });
+    }
+    return window.appApi.semantic.search(request);
+  },
+  /** Semantic-index status (T087) — on/off, vec availability, "N of M embedded". */
+  semanticStatus(request?: SemanticStatusRequest): Promise<SemanticStatusResult> {
+    if (!isDesktop() || !window.appApi?.semantic) {
+      return Promise.resolve({
+        enabled: false,
+        vecAvailable: false,
+        modelDownloaded: false,
+        embedded: 0,
+        total: 0,
+        modelId: "",
+      });
+    }
+    return window.appApi.semantic.status(request);
+  },
+  /** Build the semantic index (T087) — enqueue embed jobs; observe via `subscribeJobs`. */
+  semanticReindex(request?: SemanticReindexRequest): Promise<SemanticReindexResult> {
+    if (!isDesktop() || !window.appApi?.semantic) {
+      return Promise.resolve({ enqueued: 0 });
+    }
+    return window.appApi.semantic.reindex(request);
+  },
+  /**
+   * Pre-warm the local embedding model on first enable (T087) and flip
+   * `embeddingModelDownloaded`. A no-op `{ downloaded: false }` outside desktop.
+   */
+  semanticDownloadModel(
+    request?: SemanticDownloadModelRequest,
+  ): Promise<SemanticDownloadModelResult> {
+    if (!isDesktop() || !window.appApi?.semantic) {
+      return Promise.resolve({ downloaded: false });
+    }
+    return window.appApi.semantic.downloadModel(request);
   },
   /**
    * The facet-driven "browse everything" read behind `/library`. DISTINCT from

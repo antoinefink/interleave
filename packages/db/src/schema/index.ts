@@ -16,6 +16,7 @@
 export * from "./cards";
 export * from "./documents";
 export * from "./elements";
+export * from "./embeddings";
 export * from "./jobs";
 export * from "./occlusion";
 export * from "./ocr";

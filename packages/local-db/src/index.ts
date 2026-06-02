@@ -84,6 +84,15 @@ export {
   type UpdateElementInput,
 } from "./element-repository";
 export {
+  type EmbeddableType,
+  type Embedding,
+  EmbeddingRepository,
+  type EmbeddingStats,
+  type KnnHit,
+  type KnnOptions,
+  type UpsertEmbeddingInput,
+} from "./embedding-repository";
+export {
   EXTRACT_STAGES,
   type ExtractActionResult,
   ExtractService,
@@ -238,6 +247,13 @@ export {
   SearchRepository,
   toMatchExpression,
 } from "./search-repository";
+export {
+  type FusedHit,
+  type FusedSearchOptions,
+  type FusedSearchResult,
+  RRF_K,
+  SemanticSearchRepository,
+} from "./semantic-search-repository";
 export { SettingsRepository } from "./settings-repository";
 export {
   SourceDedupQuery,
@@ -303,6 +319,10 @@ export interface Repositories {
   readonly sourceYield: import("./source-yield-query").SourceYieldQuery;
   /** The extract-stagnation scan (T084) — extracts that keep returning without progressing. */
   readonly extractStagnation: import("./extract-stagnation-query").ExtractStagnationQuery;
+  /** The on-device semantic-search vector store (T087) — `sqlite-vec` KNN, NO op-log. */
+  readonly embeddings: import("./embedding-repository").EmbeddingRepository;
+  /** The FTS+vec fusion layer (T087) — fuses keyword + semantic hits, FTS-only degrade. */
+  readonly semanticSearch: import("./semantic-search-repository").SemanticSearchRepository;
 }
 
 import type { InterleaveDatabase } from "@interleave/db";
@@ -311,6 +331,7 @@ import { AssetRepository } from "./asset-repository";
 import { ConceptRepository } from "./concept-repository";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
+import { EmbeddingRepository } from "./embedding-repository";
 import { ExtractStagnationQuery } from "./extract-stagnation-query";
 import { JobsRepository } from "./jobs-repository";
 import { OcclusionMasksRepository } from "./occlusion-masks-repository";
@@ -319,25 +340,45 @@ import { OperationLogRepository } from "./operation-log-repository";
 import { QueueRepository } from "./queue-repository";
 import { ReviewRepository } from "./review-repository";
 import { SearchRepository } from "./search-repository";
+import { SemanticSearchRepository } from "./semantic-search-repository";
 import { SettingsRepository } from "./settings-repository";
 import { SourceDedupQuery } from "./source-dedup-query";
 import { SourceRepository } from "./source-repository";
 import { SourceYieldQuery } from "./source-yield-query";
 import { TrashRepository } from "./trash-query";
 
+/** Options for {@link createRepositories}. */
+export interface CreateRepositoriesOptions {
+  /**
+   * Whether `sqlite-vec` `vec0` is loaded AND functional on this connection
+   * (T087) — the caller passes `vecFunctional(sqlite)` (the functional smoke test,
+   * not mere resolvability). Threaded into the `EmbeddingRepository` so it knows
+   * whether the `element_vectors` table exists; when `false`, KNN returns `[]` and
+   * embed upserts no-op, so search degrades cleanly to FTS-only. Default `false`.
+   */
+  readonly vecAvailable?: boolean;
+}
+
 /**
  * Build all repositories against one Drizzle client. Called by the Electron
- * main/DB service after it opens + migrates the database.
+ * main/DB service after it opens + migrates the database. `options.vecAvailable`
+ * gates the semantic-search store (T087); omit it (or pass `false`) and the
+ * embedding repo is dormant (FTS-only).
  */
-export function createRepositories(db: InterleaveDatabase): Repositories {
+export function createRepositories(
+  db: InterleaveDatabase,
+  options: CreateRepositoriesOptions = {},
+): Repositories {
   const assets = new AssetRepository(db);
+  const search = new SearchRepository(db);
+  const embeddings = new EmbeddingRepository(db, options.vecAvailable ?? false);
   return {
     elements: new ElementRepository(db),
     documents: new DocumentRepository(db),
     sources: new SourceRepository(db),
     review: new ReviewRepository(db),
     queue: new QueueRepository(db),
-    search: new SearchRepository(db),
+    search,
     concepts: new ConceptRepository(db),
     assets,
     settings: new SettingsRepository(db),
@@ -350,5 +391,7 @@ export function createRepositories(db: InterleaveDatabase): Repositories {
     occlusionMasks: new OcclusionMasksRepository(db),
     sourceYield: new SourceYieldQuery(db),
     extractStagnation: new ExtractStagnationQuery(db),
+    embeddings,
+    semanticSearch: new SemanticSearchRepository(search, embeddings),
   };
 }

@@ -38,6 +38,8 @@ export interface AppPaths {
   readonly exportsDir: string;
   /** Backups directory (`backups/`). */
   readonly backupsDir: string;
+  /** Local embedding-model directory (`models/`, T087) — the worker resolves the model here. */
+  readonly modelsDir: string;
 }
 
 /**
@@ -65,6 +67,7 @@ export function computeAppPaths(dataDir: string): AppPaths {
     assetsDir: path.join(dataDir, "assets"),
     exportsDir: path.join(dataDir, "exports"),
     backupsDir: path.join(dataDir, "backups"),
+    modelsDir: path.join(dataDir, "models"),
   };
 }
 
@@ -80,6 +83,7 @@ export function ensureVaultSkeleton(paths: AppPaths): AppPaths {
     path.join(paths.assetsDir, "media"),
     paths.exportsDir,
     paths.backupsDir,
+    paths.modelsDir,
   ];
   for (const dir of dirs) {
     fs.mkdirSync(dir, { recursive: true });

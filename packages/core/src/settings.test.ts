@@ -44,7 +44,18 @@ describe("AppSettings defaults", () => {
       retentionByBand: "review.retentionByBand",
       retentionByBandEnabled: "review.retentionByBand.enabled",
       fsrsParamsGlobal: "review.fsrsParamsGlobal",
+      semanticSearchEnabled: "semantic.enabled",
+      embeddingProvider: "semantic.provider",
+      embeddingApiKey: "semantic.apiKey",
+      embeddingModelId: "semantic.modelId",
+      embeddingModelDownloaded: "semantic.modelDownloaded",
     });
+  });
+
+  it("ships semantic search OFF by default with the local provider", () => {
+    expect(DEFAULT_APP_SETTINGS.semanticSearchEnabled).toBe(false);
+    expect(DEFAULT_APP_SETTINGS.embeddingProvider).toBe("local");
+    expect(DEFAULT_APP_SETTINGS.embeddingModelDownloaded).toBe(false);
   });
 
   it("buries siblings by default", () => {
@@ -187,6 +198,12 @@ describe("stored ↔ model round-trip", () => {
       retentionByBand: {},
       retentionByBandEnabled: false,
       fsrsParamsGlobal: null,
+      // Unset semantic keys fall back to the OFF-by-default local-provider defaults.
+      semanticSearchEnabled: false,
+      embeddingProvider: "local",
+      embeddingApiKey: "",
+      embeddingModelId: "local:all-MiniLM-L6-v2",
+      embeddingModelDownloaded: false,
     });
   });
 
@@ -215,6 +232,12 @@ describe("stored ↔ model round-trip", () => {
       retentionByBandEnabled: true,
       // A valid 21-number FSRS-6 `w` vector round-trips through the JSON store (T080).
       fsrsParamsGlobal: Array.from({ length: 21 }, (_, i) => 0.1 + i * 0.01),
+      // Semantic search settings (T087) round-trip through the JSON store too.
+      semanticSearchEnabled: true,
+      embeddingProvider: "api" as const,
+      embeddingApiKey: "sk-user-own-key",
+      embeddingModelId: "openai:text-embedding-3-small",
+      embeddingModelDownloaded: true,
     };
     const reloaded = appSettingsFromStored(settingsPatchToStored(original));
     expect(reloaded).toEqual(original);

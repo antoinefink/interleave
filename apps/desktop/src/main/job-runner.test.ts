@@ -216,4 +216,63 @@ describe("JobRunner", () => {
     await until(() => fake.posted.some((r) => r.jobId === stuck.id));
     runner.stop();
   });
+
+  it("getJobSecrets injects a secret into the POSTED payload but NEVER persists it (T087 key leak guard)", async () => {
+    const fake = new FakeWorker();
+    // The "live" secret the provider reads — mutated mid-run to prove it is read
+    // at POST time (a runtime key change is picked up without a restart/re-enqueue).
+    let liveKey = "sk-first";
+    const runner = new JobRunner({
+      jobsRepo,
+      applyHandlers: { embed: () => ({ ok: true }) },
+      workerPath: "(unused)",
+      fork: () => fake,
+      // Mirror the index.ts wiring: only `embed` jobs get the key, read live.
+      getJobSecrets: (job) => (job.type === "embed" ? { apiKey: liveKey } : {}),
+    });
+    runner.start();
+
+    const job = runner.enqueue("embed", { text: "hello", provider: "api", persist: true });
+
+    // The PERSISTED row must NOT carry the key (the whole point of the fix).
+    const stored = jobsRepo.findById(job.id);
+    expect((stored?.payload as { apiKey?: string }).apiKey).toBeUndefined();
+    expect((stored?.payload as { text?: string }).text).toBe("hello");
+
+    // The POSTED payload (worker-bound, transient) DOES carry the live key.
+    await until(() => fake.last !== undefined);
+    expect((fake.last?.payload as { apiKey?: string }).apiKey).toBe("sk-first");
+    expect((fake.last?.payload as { text?: string }).text).toBe("hello");
+
+    // Finish the first job, change the key, run a second job: the NEW key is posted.
+    fake.reply({ kind: "result", jobId: job.id, data: null });
+    await until(() => jobsRepo.findById(job.id)?.status === "succeeded");
+    liveKey = "sk-second";
+    const job2 = runner.enqueue("embed", { text: "world", provider: "api", persist: true });
+    await until(() => fake.posted.some((r) => r.jobId === job2.id));
+    const posted2 = fake.posted.find((r) => r.jobId === job2.id);
+    expect((posted2?.payload as { apiKey?: string }).apiKey).toBe("sk-second");
+    // And the second persisted row is still secret-free.
+    expect((jobsRepo.findById(job2.id)?.payload as { apiKey?: string }).apiKey).toBeUndefined();
+
+    runner.stop();
+  });
+
+  it("getJobSecrets adds nothing for a job type that needs no secret", async () => {
+    const fake = new FakeWorker();
+    const runner = new JobRunner({
+      jobsRepo,
+      applyHandlers: { url_import: () => ({ status: "imported", id: "s" }) },
+      workerPath: "(unused)",
+      fork: () => fake,
+      getJobSecrets: (job) => (job.type === "embed" ? { apiKey: "sk" } : {}),
+    });
+    runner.start();
+    runner.enqueue("url_import", { url: "https://x.test" });
+    await until(() => fake.last !== undefined);
+    // A url_import post carries exactly its payload — no injected secret.
+    expect(fake.last?.payload).toEqual({ url: "https://x.test" });
+    expect((fake.last?.payload as { apiKey?: string }).apiKey).toBeUndefined();
+    runner.stop();
+  });
 });

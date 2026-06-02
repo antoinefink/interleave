@@ -11,14 +11,34 @@
  * tests still exercise the real schema + pragmas.
  */
 
-import { type DbHandle, migrateDatabase, openDatabase } from "@interleave/db";
+import {
+  type DbHandle,
+  loadVectorExtension,
+  migrateDatabase,
+  openDatabase,
+  vecFunctional,
+} from "@interleave/db";
 
 /**
  * Open a fresh in-memory SQLite database with all M1 migrations applied. Callers
  * MUST close `handle.sqlite` when done (e.g. in `afterEach`).
+ *
+ * T087: it ALSO loads `sqlite-vec` and runs the functional smoke test, passing
+ * `vecFunctional(sqlite)` to the guarded migrator. On a healthy host (CI/dev) the
+ * `element_vectors` `vec0` table is created and the semantic tests run; on an
+ * ABI-mismatched / extension-absent host `vecFunctional` is `false`, the vec0
+ * step is skipped, and the rest of the schema migrates normally (FTS-only) — the
+ * semantic tests then `it.skipIf(!vecFunctional(...))` so the suite stays green.
  */
 export function createInMemoryDb(): DbHandle {
   const handle = openDatabase(":memory:");
-  migrateDatabase(handle.db);
+  loadVectorExtension(handle.sqlite);
+  const vecAvailable = vecFunctional(handle.sqlite);
+  migrateDatabase(handle.db, { vecAvailable });
   return handle;
+}
+
+/** Whether `sqlite-vec` `vec0` is loaded AND functional on `handle`. Tests gate on this. */
+export function isVecAvailable(handle: DbHandle): boolean {
+  return vecFunctional(handle.sqlite);
 }

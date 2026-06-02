@@ -86,6 +86,9 @@ export type {
   ReadPoint,
   RegionRect,
 } from "./element";
+// On-device embedding primitives — vector dim, the local embedder, the row type (./embedding).
+export type { EmbeddableType, Embedding } from "./embedding";
+export { EMBEDDABLE_TYPES, EMBEDDING_DIM, embedTextLocal } from "./embedding";
 // Canonical enums — derived union types (./enums).
 export type {
   AssetKind,
@@ -185,7 +188,7 @@ export { plainTextToProseMirrorDoc } from "./prosemirror";
 // FSRS card review state + durable logs — cards only (./review).
 export type { ReviewLog, ReviewState } from "./review";
 // User/domain settings — the typed model scheduling + UI read (./settings).
-export type { AppSettings, KeyboardLayout, ThemePreference } from "./settings";
+export type { AppSettings, EmbeddingProvider, KeyboardLayout, ThemePreference } from "./settings";
 export {
   appSettingsFromStored,
   coerceFsrsParams,
@@ -195,10 +198,15 @@ export {
   DAILY_REVIEW_BUDGET_MAX,
   DAILY_REVIEW_BUDGET_MIN,
   DEFAULT_APP_SETTINGS,
+  DEFAULT_EMBEDDING_MODEL_ID,
   DESIRED_RETENTION_MAX,
   DESIRED_RETENTION_MIN,
   DISPLAY_NAME_MAX,
+  EMBEDDING_API_KEY_MAX,
+  EMBEDDING_MODEL_ID_MAX,
+  EMBEDDING_PROVIDERS,
   FSRS_PARAM_VECTOR_LENGTH,
+  isEmbeddingProvider,
   isKeyboardLayout,
   isThemePreference,
   KEYBOARD_LAYOUTS,

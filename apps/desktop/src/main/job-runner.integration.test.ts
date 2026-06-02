@@ -134,6 +134,7 @@ function makeRunner(svc: DbService, worker: WorkerHandle): JobRunner {
       getUrlImportService: () => svc.urlImportService,
       getAssetVaultService: () => svc.assetVaultService,
       getOcrService: () => svc.ocrService,
+      getEmbeddingService: () => svc.embeddingService,
     }),
     workerPath: "(unused)",
     fork: () => worker,

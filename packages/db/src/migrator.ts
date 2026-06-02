@@ -1,18 +1,85 @@
 /**
- * Migration runner (T006).
+ * Migration runner (T006; vec-guarded for T087).
  *
  * Applies the generated Drizzle migrations (from `MIGRATIONS_DIR`) to a SQLite
  * database. The Electron main process (T007) calls {@link migrateDatabase} on
  * startup to bring the local DB up to date safely; the dev scripts call it to
  * build a database from empty. Using Drizzle's own migrator keeps the journal
  * (`__drizzle_migrations`) consistent with `drizzle-kit generate`.
+ *
+ * ## The `vec0` guard (T087)
+ *
+ * The on-device semantic-search vector store lives in a `sqlite-vec` `vec0` virtual
+ * table (`element_vectors`). `vec0` is a RUNTIME-LOADED extension that may be absent
+ * (or loaded-but-non-functional on an ABI-mismatched host), so `CREATE VIRTUAL
+ * TABLE … USING vec0(…)` throws when vec is not available — and Drizzle's stock
+ * `migrate(...)` applies EVERY journaled `.sql` unconditionally, with no per-step
+ * hook. (The FTS5 `0002` precedent does not hit this because better-sqlite3 ships
+ * `ENABLE_FTS5` compiled in; `vec0` is loaded at runtime.)
+ *
+ * The journaled `*_semantic_vec0.sql` is therefore intentionally a NO-OP comment
+ * file: Drizzle records it as applied on EVERY host (so the journal stays
+ * consistent), but it creates nothing. The real `element_vectors` DDL lives in
+ * {@link applyVecMigration} and is run by this wrapper ONLY when `vecAvailable` is
+ * `true` (the caller passes `vecFunctional(sqlite)` — the functional smoke test,
+ * not mere resolvability). On an extension-absent / ABI-mismatched host the table
+ * is simply never created, all other migrations apply, and `pnpm test` stays green
+ * with FTS-only coverage. Creating `element_vectors` is idempotent
+ * (`IF NOT EXISTS`), so re-running on an already-migrated DB where vec is now
+ * available is safe.
  */
 
+import { EMBEDDING_DIM } from "@interleave/core";
+import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import type { InterleaveDatabase } from "./client";
 import { MIGRATIONS_DIR } from "./paths";
 
-/** Run all pending migrations against the given Drizzle client. */
-export function migrateDatabase(db: InterleaveDatabase, migrationsFolder = MIGRATIONS_DIR): void {
-  migrate(db, { migrationsFolder });
+/** Options for {@link migrateDatabase}. */
+export interface MigrateOptions {
+  readonly migrationsFolder?: string;
+  /**
+   * Whether `sqlite-vec` is loaded AND functional on this connection (T087). Pass
+   * `vecFunctional(sqlite)` — the round-trip smoke test, NOT `loadVectorExtension`
+   * returning. When `true`, the `element_vectors` `vec0` table is created; when
+   * `false`/omitted, the vec0 step is skipped and the rest of the schema migrates
+   * normally (FTS-only). Default `false` so a caller that never loaded vec (most
+   * tests) does not attempt the `vec0` DDL.
+   */
+  readonly vecAvailable?: boolean;
+}
+
+/**
+ * Run all pending migrations against the given Drizzle client. When `vecAvailable`
+ * is `true`, additionally create the `sqlite-vec` `element_vectors` table (the
+ * guarded vec0 step). Back-compat: a bare `migrateDatabase(db)` or
+ * `migrateDatabase(db, "folder")` still works.
+ */
+export function migrateDatabase(
+  db: InterleaveDatabase,
+  options: MigrateOptions | string = {},
+): void {
+  const opts: MigrateOptions =
+    typeof options === "string" ? { migrationsFolder: options } : options;
+  migrate(db, { migrationsFolder: opts.migrationsFolder ?? MIGRATIONS_DIR });
+  if (opts.vecAvailable) {
+    applyVecMigration(db);
+  }
+}
+
+/**
+ * Create the `sqlite-vec` `element_vectors` virtual table (T087). Idempotent
+ * (`IF NOT EXISTS`). The dim is the shared {@link EMBEDDING_DIM} constant — the
+ * column DDL and the constant move together if a different-dim model is ever
+ * chosen. MUST only be called on a connection where `vecFunctional(sqlite)` is
+ * `true` (the caller's responsibility); otherwise `CREATE VIRTUAL TABLE … USING
+ * vec0` throws. Kept OUT of the journaled migration so the stock unconditional
+ * migrator never runs it on a vec-absent host.
+ */
+export function applyVecMigration(db: InterleaveDatabase): void {
+  db.run(
+    sql.raw(
+      `CREATE VIRTUAL TABLE IF NOT EXISTS element_vectors USING vec0(embedding float[${EMBEDDING_DIM}])`,
+    ),
+  );
 }

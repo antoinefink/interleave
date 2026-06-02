@@ -1,0 +1,21 @@
+-- T087 — Semantic search: the `sqlite-vec` `element_vectors` (`vec0`) virtual table.
+--
+-- INTENTIONAL NO-OP in this journaled file. Drizzle's stock migrator applies every
+-- journaled `.sql` UNCONDITIONALLY, with no per-migration feature check — but a
+-- `CREATE VIRTUAL TABLE … USING vec0(…)` THROWS on a connection where the runtime-
+-- loaded `sqlite-vec` extension is absent or non-functional (the
+-- better-sqlite3-12-vs-SQLite-3.45 ABI trap, where `loadExtension` succeeds but
+-- `vec0` registers no functions). The FTS5 `0002` precedent does not hit this
+-- because better-sqlite3 ships `ENABLE_FTS5` compiled in; `vec0` is loaded at
+-- runtime and may be absent.
+--
+-- So this file creates NOTHING (it is recorded "applied" on every host to keep the
+-- Drizzle journal consistent), and the real `element_vectors` DDL lives in
+-- `@interleave/db`'s `applyVecMigration(db)`, run by the guarded `migrateDatabase`
+-- wrapper ONLY when `vecFunctional(sqlite)` is true (the functional smoke test, not
+-- mere resolvability). On a vec-absent / ABI-mismatched host the table is never
+-- created, all other migrations apply, and the suite stays green FTS-only.
+--
+-- The created table is: CREATE VIRTUAL TABLE element_vectors USING vec0(embedding float[384]);
+-- (dim = @interleave/core EMBEDDING_DIM — the column DDL and the constant move together.)
+SELECT 1;

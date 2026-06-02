@@ -46,6 +46,11 @@ packages/db/.dev/
 *.sqlite-wal
 *.sqlite-shm
 
+# On-device embedding model cache (T087): `fastembed` downloads the real
+# all-MiniLM-L6-v2 ONNX model + tokenizer into its default `local_cache/` (or
+# `INTERLEAVE_MODEL_DIR`) on first run — a transient, re-downloadable artifact, never committed.
+local_cache/
+
 # Logs
 *.log
 npm-debug.log*

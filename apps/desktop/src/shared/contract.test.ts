@@ -75,6 +75,10 @@ import {
   ReviewPreviewRequestSchema,
   ReviewSessionNextRequestSchema,
   SearchQueryRequestSchema,
+  SemanticReindexRequestSchema,
+  SemanticSearchModeSchema,
+  SemanticSearchRequestSchema,
+  SemanticStatusRequestSchema,
   SettingKeySchema,
   SettingsGetRequestSchema,
   SettingsPatchSchema,
@@ -214,6 +218,10 @@ describe("IPC channels", () => {
         "tags:add",
         "tags:remove",
         "search:query",
+        "semantic:search",
+        "semantic:status",
+        "semantic:reindex",
+        "semantic:downloadModel",
         "library:browse",
         "readPoint:get",
         "readPoint:set",
@@ -2166,6 +2174,44 @@ describe("Search request schema (T042)", () => {
     expect(() => SearchQueryRequestSchema.parse({ q: "x", limit: 999 })).toThrow();
     expect(() => SearchQueryRequestSchema.parse({ q: "x".repeat(513) })).toThrow();
     expect(() => SearchQueryRequestSchema.parse({})).toThrow();
+  });
+});
+
+describe("Semantic search schemas (T087)", () => {
+  it("SemanticSearchRequestSchema accepts a query + optional type/limit and rejects bad values", () => {
+    expect(SemanticSearchRequestSchema.parse({ q: "spaced repetition" })).toEqual({
+      q: "spaced repetition",
+    });
+    expect(SemanticSearchRequestSchema.parse({ q: "x", type: "extract", limit: 20 })).toEqual({
+      q: "x",
+      type: "extract",
+      limit: 20,
+    });
+    // Only searchable types; bounded limit; bounded query length.
+    expect(() => SemanticSearchRequestSchema.parse({ q: "x", type: "topic" })).toThrow();
+    expect(() => SemanticSearchRequestSchema.parse({ q: "x", limit: 0 })).toThrow();
+    expect(() => SemanticSearchRequestSchema.parse({ q: "x", limit: 999 })).toThrow();
+    expect(() => SemanticSearchRequestSchema.parse({ q: "x".repeat(513) })).toThrow();
+    expect(() => SemanticSearchRequestSchema.parse({})).toThrow();
+  });
+
+  it("SemanticReindexRequestSchema accepts an optional onlyMissing flag", () => {
+    expect(SemanticReindexRequestSchema.parse({})).toEqual({});
+    expect(SemanticReindexRequestSchema.parse({ onlyMissing: true })).toEqual({
+      onlyMissing: true,
+    });
+    expect(() => SemanticReindexRequestSchema.parse({ onlyMissing: "yes" })).toThrow();
+  });
+
+  it("SemanticStatusRequestSchema takes an empty payload", () => {
+    expect(SemanticStatusRequestSchema.parse({})).toEqual({});
+  });
+
+  it("SemanticSearchModeSchema is the closed semantic/fts/disabled set", () => {
+    expect(SemanticSearchModeSchema.parse("semantic")).toBe("semantic");
+    expect(SemanticSearchModeSchema.parse("fts")).toBe("fts");
+    expect(SemanticSearchModeSchema.parse("disabled")).toBe("disabled");
+    expect(() => SemanticSearchModeSchema.parse("keyword")).toThrow();
   });
 });
 

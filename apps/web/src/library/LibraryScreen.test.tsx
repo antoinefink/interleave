@@ -88,6 +88,11 @@ const h = vi.hoisted(() => {
     navigateSpy: vi.fn(),
     searchQuery: vi.fn(),
     listConcepts: vi.fn(),
+    // Semantic search (T087) — default OFF so these tests exercise the FTS path.
+    semanticStatus: vi.fn(),
+    semanticSearch: vi.fn(),
+    semanticReindex: vi.fn(),
+    subscribeJobs: vi.fn(),
   };
 });
 
@@ -103,6 +108,10 @@ vi.mock("../lib/appApi", async () => {
     appApi: {
       searchQuery: h.searchQuery,
       listConcepts: h.listConcepts,
+      semanticStatus: h.semanticStatus,
+      semanticSearch: h.semanticSearch,
+      semanticReindex: h.semanticReindex,
+      subscribeJobs: h.subscribeJobs,
     },
   };
 });
@@ -119,6 +128,18 @@ beforeEach(() => {
     counts: { byConcept: { "concept-1": 2 } },
   });
   h.listConcepts.mockResolvedValue({ concepts: [h.concept] });
+  // Semantic search OFF by default → the library uses the FTS `searchQuery` path.
+  h.semanticStatus.mockResolvedValue({
+    enabled: false,
+    vecAvailable: false,
+    modelDownloaded: false,
+    embedded: 0,
+    total: 0,
+    modelId: "",
+  });
+  h.semanticSearch.mockResolvedValue({ results: [], mode: "disabled" });
+  h.semanticReindex.mockResolvedValue({ enqueued: 0 });
+  h.subscribeJobs.mockReturnValue(() => {});
 });
 
 describe("LibraryScreen", () => {
@@ -128,6 +149,45 @@ describe("LibraryScreen", () => {
     // The concept list loads for the filterbar/map.
     await waitFor(() => expect(h.listConcepts).toHaveBeenCalled());
     expect(h.searchQuery).not.toHaveBeenCalled();
+  });
+
+  it("shows the 'Build index (N of M embedded)' affordance when semantics are enabled but the index is incomplete, and reindexes on click (T087)", async () => {
+    // Semantics ON + vec available, but only 1 of 3 elements embedded.
+    h.semanticStatus.mockResolvedValue({
+      enabled: true,
+      vecAvailable: true,
+      modelDownloaded: true,
+      embedded: 1,
+      total: 3,
+      modelId: "local:all-MiniLM-L6-v2",
+    });
+    render(<LibraryScreen />);
+
+    const button = await screen.findByTestId("library-build-index");
+    expect(button.textContent).toContain("1 of 3 embedded");
+
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect(h.semanticReindex).toHaveBeenCalledWith(
+        expect.objectContaining({ onlyMissing: false }),
+      ),
+    );
+  });
+
+  it("hides the Build-index affordance once everything is embedded (T087)", async () => {
+    h.semanticStatus.mockResolvedValue({
+      enabled: true,
+      vecAvailable: true,
+      modelDownloaded: true,
+      embedded: 3,
+      total: 3,
+      modelId: "local:all-MiniLM-L6-v2",
+    });
+    render(<LibraryScreen />);
+    // The no-query prompt is shown, but with the index complete there is no button.
+    expect(await screen.findByTestId("library-prompt")).toBeTruthy();
+    await waitFor(() => expect(h.semanticStatus).toHaveBeenCalled());
+    expect(screen.queryByTestId("library-build-index")).toBeNull();
   });
 
   it("searches (debounced) on input and renders grouped, highlighted results", async () => {

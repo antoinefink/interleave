@@ -317,6 +317,28 @@
   font-size: var(--t-sm);
   max-width: 320px;
 }
+/* "Build index (N of M embedded)" affordance in the enabled-but-empty state (T087) */
+.lib-build-index {
+  margin-top: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 12px;
+  border-radius: var(--r-md);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+.lib-build-index:hover {
+  background: var(--surface-2);
+}
+.lib-build-index:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 
 /* concept map tab (kit `.graph`/`.gnode`) */
 .lib-map {
@@ -432,6 +454,13 @@
 .lib-error {
   padding: 8px;
   color: var(--danger);
+  font-size: var(--t-sm);
+}
+
+/* Semantic-search mode hint (T087) — calm, secondary, above the result groups. */
+.lib-hint {
+  padding: 6px 8px 10px;
+  color: var(--text-3);
   font-size: var(--t-sm);
 }
 

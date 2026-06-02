@@ -19,6 +19,7 @@
       "!**/playwright-report",
       "!**/blob-report",
       "!**/.vite",
+      "!**/local_cache",
       "!**/*.tsbuildinfo",
       "!pnpm-lock.yaml",
       "!design/kit",

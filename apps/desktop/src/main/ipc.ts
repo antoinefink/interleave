@@ -91,6 +91,9 @@ import {
   ReviewPreviewRequestSchema,
   ReviewSessionNextRequestSchema,
   SearchQueryRequestSchema,
+  SemanticDownloadModelRequestSchema,
+  SemanticReindexRequestSchema,
+  SemanticSearchRequestSchema,
   SettingsGetAllRequestSchema,
   SettingsGetRequestSchema,
   SettingsUpdateManyRequestSchema,
@@ -1047,6 +1050,24 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.searchQuery, (_event, rawRequest: unknown) => {
     const request = SearchQueryRequestSchema.parse(rawRequest);
     return dbService.search(request);
+  });
+
+  // Semantic search (T087) — fused FTS + sqlite-vec. Async (the query embed rides
+  // the runner with a short timeout); degrades to FTS-only when off/absent.
+  ipcMain.handle(IPC_CHANNELS.semanticSearch, (_event, rawRequest: unknown) => {
+    const request = SemanticSearchRequestSchema.parse(rawRequest);
+    return dbService.semanticSearch(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.semanticStatus, () => {
+    return dbService.semanticStatus();
+  });
+  ipcMain.handle(IPC_CHANNELS.semanticReindex, (_event, rawRequest: unknown) => {
+    const request = SemanticReindexRequestSchema.parse(rawRequest ?? {});
+    return dbService.semanticReindex(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.semanticDownloadModel, (_event, rawRequest: unknown) => {
+    SemanticDownloadModelRequestSchema.parse(rawRequest ?? {});
+    return dbService.semanticDownloadModel();
   });
 
   ipcMain.handle(IPC_CHANNELS.libraryBrowse, (_event, rawRequest: unknown) => {

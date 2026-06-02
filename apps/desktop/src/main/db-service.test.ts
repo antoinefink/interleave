@@ -383,6 +383,11 @@ describe("DbService", () => {
       retentionByBand: {},
       retentionByBandEnabled: false,
       fsrsParamsGlobal: null,
+      semanticSearchEnabled: false,
+      embeddingProvider: "local",
+      embeddingApiKey: "",
+      embeddingModelId: "local:all-MiniLM-L6-v2",
+      embeddingModelDownloaded: false,
     });
     second.close();
   });
@@ -2595,7 +2600,7 @@ describe("DbService — backup support (T047)", () => {
   it("getSchemaVersion returns the latest applied Drizzle migration tag", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
-    expect(svc.getSchemaVersion(MIGRATIONS_DIR)).toBe("0020_optimal_zombie");
+    expect(svc.getSchemaVersion(MIGRATIONS_DIR)).toBe("0022_semantic_vec0");
     svc.close();
   });
 

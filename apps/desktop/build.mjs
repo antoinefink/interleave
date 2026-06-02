@@ -140,6 +140,130 @@ function stageTesseract() {
 }
 
 /**
+ * Stage `fastembed` + its prebuilt `onnxruntime-node` native addon next to the
+ * worker bundle so the DB-free `embed` job (T087) can compute REAL on-device
+ * MiniLM embeddings offline.
+ *
+ * Same constraint as tesseract: the packaged app ships NO `node_modules`, and the
+ * worker keeps `fastembed`/`onnxruntime-node` EXTERNAL (the native `.node` addon
+ * cannot be inlined by esbuild). We copy a SELF-CONTAINED tree into
+ * `dist/resources/fastembed/node_modules/` (the pnpm peer dir of `fastembed`, laid
+ * out as a real `node_modules` so its requires — `onnxruntime-node`, the tokenizer
+ * addon — resolve). `embedding-model.ts` loads it from this staged path via a
+ * DYNAMIC require. This dir is packaged by the `dist/**` glob and `asarUnpack`'d (a
+ * `.node`/`.onnx` cannot be read from inside the asar) — see electron-builder.yml.
+ *
+ * The ~23 MB MiniLM model itself is NOT bundled — `fastembed` downloads it on first
+ * enable into the app-data `models/` dir (`INTERLEAVE_MODEL_DIR`) and caches it on
+ * disk across restarts (the download-on-first-enable UX the spec documents). A no-op
+ * (with a warning) if `fastembed` is not installed — the worker then falls back to
+ * the deterministic embedder.
+ */
+function stageFastEmbed() {
+  const stageDir = path.join(distDir, "resources", "fastembed");
+  rmSync(stageDir, { recursive: true, force: true });
+
+  let feEntry;
+  try {
+    // `fastembed`'s `exports` map blocks `./package.json`, so resolve its main entry
+    // (`lib/cjs/index.js`) and walk up to the package root instead.
+    feEntry = require.resolve("fastembed");
+  } catch {
+    console.warn(
+      "[desktop] stageFastEmbed: `fastembed` not installed — packaged worker will use the\n" +
+        "          deterministic embedding fallback. Run `pnpm --filter @interleave/desktop add fastembed`.",
+    );
+    return;
+  }
+  // …/.pnpm/fastembed@<v>/node_modules/fastembed/lib/cjs/index.js → the package root
+  // is the dir holding `package.json`; its parent `node_modules` is the self-contained
+  // peer tree (fastembed + onnxruntime-node + the tokenizer addon).
+  let feDir = path.dirname(feEntry);
+  while (feDir !== path.dirname(feDir) && !existsSync(path.join(feDir, "package.json"))) {
+    feDir = path.dirname(feDir);
+  }
+  const stagedNodeModules = path.join(stageDir, "node_modules");
+  mkdirSync(stagedNodeModules, { recursive: true });
+
+  // pnpm's store is NESTED: each package's transitive deps live in its OWN
+  // `.pnpm/<pkg>@<v>/node_modules/` peer dir (NOT flat under fastembed), and the same
+  // dep can appear at several versions. Recursively walk the dependency graph from
+  // `fastembed`, copying every reachable package's REAL dir into the staged tree —
+  // hoisting to the top-level `node_modules` when the name is free, else NESTING under
+  // the requiring package (so conflicting versions stay isolated, exactly like a real
+  // install). This produces a self-contained tree a plain `require` resolves offline.
+  collectPnpmGraph(feDir, stagedNodeModules);
+}
+
+/**
+ * Recursively stage a package + its full transitive dependency graph from the pnpm
+ * store into `topNodeModules` (a real, hoisted `node_modules` layout). For each
+ * package, its deps are resolved through pnpm's `.pnpm/<pkg>@<v>/node_modules/` peer
+ * layout (walk up from the package dir to the `node_modules` that holds the dep),
+ * then placed at top-level if that name+version is free, else NESTED under the
+ * requiring package's own `node_modules` to keep conflicting versions isolated.
+ */
+function collectPnpmGraph(rootPkgDir, topNodeModules) {
+  const fs = require("node:fs");
+  // Track which version of each top-level name we've hoisted (name → version).
+  const hoisted = new Map();
+
+  /** Resolve a dep `name` required from `fromPkgDir` via the pnpm peer layout. */
+  const resolveDep = (fromPkgDir, name) => {
+    let dir = fromPkgDir;
+    while (dir !== path.dirname(dir)) {
+      const candidate = path.join(dir, "node_modules", name);
+      if (existsSync(path.join(candidate, "package.json"))) return fs.realpathSync(candidate);
+      dir = path.dirname(dir);
+    }
+    return null;
+  };
+
+  const readPkg = (dir) => {
+    try {
+      return JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
+    } catch {
+      return null;
+    }
+  };
+
+  /** Place `srcReal` (a package dir) into `destNm/<name>`, then recurse its deps. */
+  const place = (srcReal, destNm, visited) => {
+    const pkg = readPkg(srcReal);
+    if (!pkg?.name) return;
+    if (visited.has(srcReal)) return; // already placed on this branch (cycle guard)
+    const dest = path.join(destNm, pkg.name);
+    if (!existsSync(dest)) {
+      cpSync(srcReal, dest, { recursive: true, dereference: true });
+    }
+    const branch = new Set(visited).add(srcReal);
+    const deps = { ...(pkg.dependencies ?? {}), ...(pkg.optionalDependencies ?? {}) };
+    for (const depName of Object.keys(deps)) {
+      const depReal = resolveDep(srcReal, depName);
+      if (!depReal) continue; // optional/absent — skip (native fallback covers it)
+      const depPkg = readPkg(depReal);
+      if (!depPkg?.version) continue;
+      const top = hoisted.get(depName);
+      if (top === undefined) {
+        // Free at top-level — hoist it there.
+        hoisted.set(depName, depPkg.version);
+        place(depReal, topNodeModules, branch);
+      } else if (top === depPkg.version) {
+        // Same version already hoisted — ensure its own subtree is staged.
+        place(depReal, topNodeModules, branch);
+      } else {
+        // Version conflict — nest under THIS package's node_modules.
+        place(depReal, path.join(dest, "node_modules"), branch);
+      }
+    }
+  };
+
+  const rootPkg = readPkg(rootPkgDir);
+  if (rootPkg?.name) hoisted.set(rootPkg.name, rootPkg.version);
+  place(rootPkgDir, topNodeModules, new Set());
+}
+
+/**
  * Stage the built renderer next to the compiled main (T050).
  *
  * In a packaged app `app.isPackaged` is true and `index.ts` resolves the renderer
@@ -192,8 +316,22 @@ async function run() {
       // DYNAMIC require from the STAGED `dist/resources/tesseract/node_modules`
       // (its node worker-thread script must be a real file on disk, so it cannot be
       // inlined). `stageTesseract()` copies that self-contained tree.
+      //
+      // `fastembed` (+ its native `onnxruntime-node` addon, T087) is kept EXTERNAL
+      // for the SAME reason: the prebuilt onnxruntime `.node` binary must be a real
+      // file on disk and cannot be inlined. The worker loads it by a DYNAMIC require
+      // from the STAGED `dist/resources/fastembed/node_modules` tree that
+      // `stageFastEmbed()` copies. `onnxruntime-node`/`onnxruntime-common` are listed
+      // so esbuild never tries to follow fastembed's transitive native requires.
       ...common,
-      external: [...external, "tesseract.js", "tesseract.js-core"],
+      external: [
+        ...external,
+        "tesseract.js",
+        "tesseract.js-core",
+        "fastembed",
+        "onnxruntime-node",
+        "onnxruntime-common",
+      ],
       entryPoints: [path.join(here, "src", "worker", "job-worker.ts")],
       outfile: path.join(distDir, "job-worker.cjs"),
     },
@@ -201,6 +339,7 @@ async function run() {
 
   stageMigrations();
   stageTesseract();
+  stageFastEmbed();
 
   if (watch) {
     const contexts = await Promise.all(targets.map((t) => esbuild.context(t)));
@@ -216,7 +355,7 @@ async function run() {
 
   await Promise.all(targets.map((t) => esbuild.build(t)));
   console.log(
-    "[desktop] built main.cjs + preload.cjs + job-worker.cjs + drizzle/ + resources/tesseract/",
+    "[desktop] built main.cjs + preload.cjs + job-worker.cjs + drizzle/ + resources/tesseract/ + resources/fastembed/",
   );
 }
 

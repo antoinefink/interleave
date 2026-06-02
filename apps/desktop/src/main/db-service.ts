@@ -43,7 +43,13 @@ import {
   priorityToLabel,
   raisePriority,
 } from "@interleave/core";
-import { type DbHandle, migrateDatabase, openDatabase } from "@interleave/db";
+import {
+  type DbHandle,
+  loadVectorExtension,
+  migrateDatabase,
+  openDatabase,
+  vecFunctional,
+} from "@interleave/db";
 import { parseYouTubeId } from "@interleave/importers";
 import {
   SchedulerService as AttentionScheduleService,
@@ -220,6 +226,13 @@ import type {
   SearchQueryRequest,
   SearchQueryResult,
   SearchResult,
+  SemanticReindexRequest,
+  SemanticReindexResult,
+  SemanticSearchMode,
+  SemanticSearchRequest,
+  SemanticSearchResult,
+  SemanticSearchResultRow,
+  SemanticStatusResult,
   SettingsGetAllResult,
   SettingsGetResult,
   SettingsUpdateManyResult,
@@ -291,6 +304,7 @@ import {
   DocumentImportService,
   type MarkdownExportResult,
 } from "./document-import-service";
+import { EmbeddingService } from "./embedding-service";
 import { EpubImportService } from "./epub-import-service";
 import { type HighlightImportResult, HighlightImportService } from "./highlight-import-service";
 import type { JobRunner } from "./job-runner";
@@ -475,6 +489,19 @@ export class DbService {
    */
   private ocr: OcrService | null = null;
   /**
+   * The semantic-embedding service (T087), built lazily against the open DB + the
+   * runner. UPSERTs worker-computed vectors into the `sqlite-vec` store and embeds
+   * search queries. Left `null` until first use.
+   */
+  private embedding: EmbeddingService | null = null;
+  /**
+   * Whether `sqlite-vec` `vec0` is loaded AND functional on this connection (T087) —
+   * set at open() from the FUNCTIONAL smoke test (`vecFunctional`), NOT from
+   * `loadVectorExtension` returning. When `false`, semantic search degrades to
+   * FTS-only and the `element_vectors` table is never created.
+   */
+  private vecAvailable = false;
+  /**
    * The background-runner reference (T058), injected by the bootstrap AFTER the
    * runner is constructed (it is built against this open DB). The OCR service uses
    * it to enqueue an `ocr` job; left `null` for contract-only tests that never OCR.
@@ -532,19 +559,40 @@ export class DbService {
        * itself stays network-free — see the import-path guard test.)
        */
       mediaFetchImpl?: typeof fetch | undefined;
+      /**
+       * Absolute path to the packaged `sqlite-vec` `vec0` binary (T087). When set,
+       * it is loaded explicitly (the `app.asar.unpacked` path the desktop main
+       * resolves); when omitted, the installed npm package resolves the host binary
+       * (dev/Vitest). Load failure / a non-functional `vec0` degrades to FTS-only.
+       */
+      vecBinaryPath?: string | undefined;
     } = {},
   ): void {
     if (this.handle) return;
     this.handle = options.nativeBinding
       ? openDatabase(dbPath, { nativeBinding: options.nativeBinding })
       : openDatabase(dbPath);
-    migrateDatabase(this.handle.db, options.migrationsDir);
+    // T087: load `sqlite-vec` BETWEEN open and migrate, and set `vecAvailable` from
+    // the FUNCTIONAL smoke test (NOT `loadVectorExtension` returning) — so a
+    // loaded-but-non-functional `vec0` (the better-sqlite3-12 ↔ sqlite-vec ABI trap)
+    // degrades to FTS-only instead of throwing on first query. The `element_vectors`
+    // `vec0` migration then only runs when `vecAvailable` is already known true.
+    try {
+      loadVectorExtension(this.handle.sqlite, options.vecBinaryPath);
+      this.vecAvailable = vecFunctional(this.handle.sqlite);
+    } catch {
+      this.vecAvailable = false;
+    }
+    migrateDatabase(this.handle.db, {
+      ...(options.migrationsDir ? { migrationsFolder: options.migrationsDir } : {}),
+      vecAvailable: this.vecAvailable,
+    });
     this.assetsDir = options.assetsDir ?? null;
     this.exportsDir = options.exportsDir ?? null;
     this.nativeBinding = options.nativeBinding;
     this.allowLoopbackImport = options.allowLoopbackImport ?? false;
     this.mediaFetchImpl = options.mediaFetchImpl;
-    this.repositories = createRepositories(this.handle.db);
+    this.repositories = createRepositories(this.handle.db, { vecAvailable: this.vecAvailable });
     this.inspector = new InspectorQuery(this.repositories);
     this.lineage = new LineageQuery(this.repositories);
     this.queue = new QueueQuery(this.repositories);
@@ -1685,6 +1733,175 @@ export class DbService {
   }
 
   /**
+   * The semantic-embedding service (T087), lazily built against the open DB + the
+   * runner + the settings repo. Returns the SAME instance every call. The apply
+   * handler reaches it via `getEmbeddingService` (its `applyResult` needs no runner);
+   * the IPC reindex/search paths use the runner to enqueue.
+   */
+  get embeddingService(): EmbeddingService {
+    if (this.embedding) return this.embedding;
+    this.embedding = new EmbeddingService({
+      db: this.require().db,
+      repositories: this.repos,
+      getRunner: () => {
+        if (!this.runner) {
+          throw new Error(
+            "DbService: embed enqueue requires a background runner — setRunner() first",
+          );
+        }
+        return this.runner;
+      },
+      getSettings: () => this.repos.settings.getAppSettings(),
+    });
+    return this.embedding;
+  }
+
+  // -------------------------------------------------------------------------
+  // semantic.*  (T087 — on-device semantic search)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Fused semantic + FTS search (T087). Embeds the query via the runner
+   * (`embedQuery` — a transient `persist:false` embed job, recovered from a
+   * main-side map, with a short timeout so `/search` never hangs), runs the
+   * `SemanticSearchRepository` fusion, and enriches each hit with the same row
+   * metadata `search()` produces. Degrades to FTS-only (never throws) when
+   * semantics are off / the model is absent / `vec0` failed to load / the query
+   * embed timed out. The `mode` tells the UI which retrieval actually ran.
+   */
+  async semanticSearch(request: SemanticSearchRequest): Promise<SemanticSearchResult> {
+    const settings = this.repos.settings.getAppSettings();
+    const enabled = settings.semanticSearchEnabled && this.vecAvailable;
+
+    // Embed the query only when semantics can run (else FTS-only, no job enqueued).
+    const queryVector = enabled ? await this.embeddingService.embedQuery(request.q) : null;
+
+    const fused = this.repos.semanticSearch.search(request.q, {
+      semanticEnabled: enabled,
+      ...(queryVector ? { queryVector } : {}),
+      ...(request.type ? { type: request.type } : {}),
+      ...(request.limit !== undefined ? { limit: request.limit } : {}),
+    });
+
+    const results = fused.hits
+      .map((hit) => this.enrichFusedHit(hit))
+      .filter((r): r is SemanticSearchResultRow => r !== null);
+
+    const mode: SemanticSearchMode = !enabled
+      ? "disabled"
+      : fused.mode === "semantic"
+        ? "semantic"
+        : "fts";
+    return { results, mode };
+  }
+
+  /** Index-coverage + state for the Settings toggle + the library "N of M embedded" affordance. */
+  semanticStatus(): SemanticStatusResult {
+    const settings = this.repos.settings.getAppSettings();
+    const stats = this.repos.embeddings.stats();
+    return {
+      enabled: settings.semanticSearchEnabled,
+      vecAvailable: this.vecAvailable,
+      modelDownloaded: settings.embeddingModelDownloaded,
+      embedded: stats.embedded,
+      total: stats.total,
+      modelId: stats.modelId ?? settings.embeddingModelId,
+    };
+  }
+
+  /**
+   * Build the semantic index (T087): enqueue `embed` jobs for every live source/
+   * extract/card that needs (re-)embedding. The renderer observes progress via the
+   * existing `jobs.subscribe`. A no-op (0) when semantics are off / `vec0` is absent.
+   */
+  semanticReindex(request: SemanticReindexRequest): SemanticReindexResult {
+    return this.embeddingService.reindexAll({
+      ...(request.onlyMissing !== undefined ? { onlyMissing: request.onlyMissing } : {}),
+    });
+  }
+
+  /**
+   * Download the local embedding model on first enable (T087). The default local
+   * provider runs the real `all-MiniLM-L6-v2` ONNX model, which `fastembed` streams
+   * into the worker's `INTERLEAVE_MODEL_DIR` cache on first use; this seam pre-warms
+   * that load and flips `embeddingModelDownloaded = true` once it resolves (it
+   * degrades to the deterministic embedder offline). See
+   * {@link EmbeddingService.downloadModel} for the mechanism + tradeoff.
+   */
+  async semanticDownloadModel(): Promise<{ downloaded: boolean }> {
+    return this.embeddingService.downloadModel();
+  }
+
+  /**
+   * Enqueue an `embed` job for a freshly created/edited element (T087) — the
+   * post-commit auto-embed seam. Fire-and-forget + gated on `semanticSearchEnabled`
+   * inside the service; a no-op when off. Swallows errors so a mutation's response
+   * never depends on the (async, off-main) index update.
+   */
+  private autoEmbed(elementId: ElementId): void {
+    if (!this.vecAvailable) return;
+    if (!this.runner) return;
+    try {
+      this.embeddingService.enqueueElement(elementId);
+    } catch (error) {
+      console.warn("[db-service] auto-embed enqueue failed (non-fatal):", error);
+    }
+  }
+
+  /**
+   * Enrich a fused hit into a full {@link SemanticSearchResultRow}, reusing the SAME
+   * lineage/scheduler/due enrichment as `search()` so a semantic row renders
+   * identically to a keyword row in the library (just labeled "related" when it came
+   * purely from the vector side).
+   */
+  private enrichFusedHit(hit: {
+    id: string;
+    type: "source" | "extract" | "card";
+    title: string;
+    snippet: string;
+    ftsScore?: number;
+    vecDistance?: number;
+    source: "fts" | "semantic" | "both";
+  }): SemanticSearchResultRow | null {
+    const element = this.repos.elements.findById(hit.id as ElementId);
+    if (!element || element.deletedAt) return null;
+    const { sourceTitle, sourceLocationLabel } = this.refMetaForElement(element.id);
+    const inspectorData = this.inspectorQuery.get(element.id);
+    const summary = this.queueQuery.summaryFor(element.id);
+    const scheduler = inspectorData?.scheduler ?? {
+      kind: "attention" as const,
+      retrievability: null,
+      stability: null,
+      difficulty: null,
+      reps: null,
+      lapses: null,
+      fsrsState: null,
+      stage: element.stage,
+      postponed: 0,
+      lastProcessedAt: element.updatedAt ?? null,
+    };
+    return {
+      id: element.id,
+      type: hit.type,
+      // A purely-semantic hit has no FTS title/snippet — fall back to the element row.
+      title: hit.title || element.title,
+      snippet: hit.snippet,
+      score: hit.ftsScore ?? 0,
+      priority: element.priority,
+      priorityLabel: priorityToLabel(element.priority),
+      concept: this.conceptForElement(element.id),
+      sourceTitle,
+      sourceLocationLabel,
+      dueAt: summary?.dueAt ?? element.dueAt ?? null,
+      scheduler,
+      due: summary?.due ?? "soon",
+      dueLabel: summary?.dueLabel ?? "Scheduled",
+      semantic: hit.source === "semantic" || hit.source === "both",
+      vecDistance: hit.vecDistance ?? null,
+    };
+  }
+
+  /**
    * Enqueue OCR for a text-free PDF page (T066). The renderer ships the page PNG it
    * already rendered (the same render path the reader/region crop use); MAIN writes
    * it to the vault (`sources/<id>/ocr/page-N.png`) and enqueues an `ocr` job
@@ -1981,6 +2198,11 @@ export class DbService {
           }
         : {}),
     });
+    // T087 auto-embed: re-embed the owning source AFTER the document write committed
+    // (inside `documents.upsert`'s own tx) — never inside that tx (embedding is async
+    // + off-main and must not ride the write transaction). The content hash skips an
+    // unchanged body.
+    this.autoEmbed(request.elementId as ElementId);
     return {
       document: {
         prosemirrorJson: saved.prosemirrorJson,
@@ -2078,6 +2300,9 @@ export class DbService {
       priority,
     });
 
+    // T087 auto-embed the new extract (post-commit, fire-and-forget, gated on the setting).
+    this.autoEmbed(element.id);
+
     return {
       extract: {
         id: element.id,
@@ -2162,6 +2387,8 @@ export class DbService {
           ? { mediaRef: null }
           : {}),
     });
+    // T087 auto-embed the new card (post-commit, fire-and-forget, gated on the setting).
+    this.autoEmbed(element.id);
     return {
       card: {
         id: element.id,

@@ -82,6 +82,10 @@ import type {
   ReviewPreviewRequest,
   ReviewSessionNextRequest,
   SearchQueryRequest,
+  SemanticDownloadModelRequest,
+  SemanticReindexRequest,
+  SemanticSearchRequest,
+  SemanticStatusRequest,
   // review.leeches() / concepts.list() / tags.list() take no request payload.
   SettingsGetRequest,
   SettingsUpdateManyRequest,
@@ -316,6 +320,16 @@ const appApi: AppApi = {
   },
   search: {
     query: (request: SearchQueryRequest) => ipcRenderer.invoke(IPC_CHANNELS.searchQuery, request),
+  },
+  semantic: {
+    search: (request: SemanticSearchRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.semanticSearch, request),
+    status: (request?: SemanticStatusRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.semanticStatus, request ?? {}),
+    reindex: (request?: SemanticReindexRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.semanticReindex, request ?? {}),
+    downloadModel: (request?: SemanticDownloadModelRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.semanticDownloadModel, request ?? {}),
   },
   library: {
     browse: (request?: LibraryBrowseRequest) =>

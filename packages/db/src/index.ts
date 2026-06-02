@@ -25,6 +25,12 @@ export {
   openDatabase,
   type SqliteDatabase,
 } from "./client";
-export { migrateDatabase } from "./migrator";
+export { applyVecMigration, type MigrateOptions, migrateDatabase } from "./migrator";
 export { DEV_DB_PATH, MIGRATIONS_DIR, PACKAGE_ROOT } from "./paths";
 export * from "./schema";
+export {
+  loadVectorExtension,
+  resolveHostVecBinaryPath,
+  vecFunctional,
+  vectorToBlob,
+} from "./vec";

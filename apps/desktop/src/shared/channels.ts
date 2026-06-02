@@ -121,6 +121,11 @@ export const IPC_CHANNELS = {
   tagsAdd: "tags:add",
   tagsRemove: "tags:remove",
   searchQuery: "search:query",
+  // Semantic search (T087) — fused FTS + sqlite-vec, status, reindex.
+  semanticSearch: "semantic:search",
+  semanticStatus: "semantic:status",
+  semanticReindex: "semantic:reindex",
+  semanticDownloadModel: "semantic:downloadModel",
   libraryBrowse: "library:browse",
   readPointGet: "readPoint:get",
   readPointSet: "readPoint:set",

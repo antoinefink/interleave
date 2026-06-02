@@ -69,6 +69,9 @@ describe("schema migration", () => {
       "element_relations",
       "element_tags",
       "elements",
+      // T087 embedding bookkeeping (the `element_vectors` vec0 table is created
+      // only when sqlite-vec is functional, via the guarded migrator — not here).
+      "embeddings",
       "jobs",
       "occlusion_masks",
       "ocr_pages",

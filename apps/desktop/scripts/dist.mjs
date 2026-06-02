@@ -55,6 +55,11 @@ function main() {
       console.log("\n[dist] native/better_sqlite3.node present — skipping rebuild.");
     }
 
+    // 2b) Vendor + verify the sqlite-vec vec0 loadable extension (T087). Runs the
+    //     functional smoke test against the shipped binary and FAILS the build on an
+    //     ABI mismatch, so a packaged app never ships a non-functional vec0.
+    run("node", ["scripts/vendor-sqlite-vec.mjs"]);
+
     // 3) main.cjs + preload.cjs + dist/drizzle + dist/renderer.
     run("node", ["build.mjs"]);
   } else {

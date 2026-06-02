@@ -70,6 +70,18 @@ export type JobApplyHandler = (
 export type JobApplyHandlers = Partial<Record<JobType, JobApplyHandler>>;
 
 /**
+ * An out-of-band secret provider (T087). Returns a small JSON object of secret
+ * fields to MERGE into a job's payload AT POST TIME ONLY — these fields are NEVER
+ * written to the persisted `jobs` row. This is the side-channel discipline the
+ * fork-env vars (`INTERLEAVE_ASSETS_DIR`/`INTERLEAVE_MODEL_DIR`) use for absolute
+ * paths, applied to the far-more-sensitive user embedding-API key: it is read LIVE
+ * from SQLite settings on every post (so a runtime key change is picked up without
+ * an app restart) and injected into the worker request, but the persisted payload
+ * stays secret-free. Returns `{}` / `undefined` for a job that needs no secret.
+ */
+export type JobSecretsProvider = (job: Job) => Record<string, JobJsonValue> | undefined;
+
+/**
  * The minimal worker-handle surface the runner needs. The real implementation
  * wraps Electron's `utilityProcess`; a unit test injects a fake (no real child
  * process) via the `fork` factory.
@@ -100,6 +112,22 @@ export interface JobRunnerDeps {
    * do not read it, so a runner built without it stays harmless.
    */
   readonly assetsDir?: string;
+  /**
+   * The local embedding-model directory (`<dataDir>/models`), passed to the forked
+   * worker via `INTERLEAVE_MODEL_DIR` (T087) so a DB-free `embed` job can resolve a
+   * real ONNX model path — the same fork-env seam as `INTERLEAVE_ASSETS_DIR`, one
+   * more var. Optional: the default deterministic embedder reads no model from it,
+   * so a runner built without it stays harmless.
+   */
+  readonly modelDir?: string;
+  /**
+   * Out-of-band per-job secret provider (T087). When set, the runner calls it at
+   * POST time and merges the returned fields into the worker request payload — the
+   * persisted `jobs` row never holds them. Used to thread the user's embedding-API
+   * key to the DB-free worker WITHOUT writing it to a restart-safe job payload (the
+   * same secret-keeping discipline as the `INTERLEAVE_ASSETS_DIR` fork-env var).
+   */
+  readonly getJobSecrets?: JobSecretsProvider;
   /** Optional fork factory override (a fake worker for unit tests). */
   readonly fork?: WorkerForkFactory;
   /** Max in-flight jobs (fixed small concurrency); defaults to {@link DEFAULT_CONCURRENCY}. */
@@ -135,12 +163,20 @@ function backoffMs(attempts: number, baseMs: number): number {
  * is chosen over the job `payload` deliberately — the absolute vault root must
  * NEVER be written to a persisted, restart-safe `jobs` row.
  */
-function defaultFork(workerPath: string, assetsDir?: string): WorkerForkFactory {
+function defaultFork(workerPath: string, assetsDir?: string, modelDir?: string): WorkerForkFactory {
   return () => {
-    const child = assetsDir
-      ? utilityProcess.fork(workerPath, [], {
-          env: { ...process.env, INTERLEAVE_ASSETS_DIR: assetsDir },
-        })
+    // Thread the fork-env seam: the vault root (OCR, T066) + the model dir (embed,
+    // T087). The absolute roots NEVER land in a persisted `jobs` row.
+    const env =
+      assetsDir || modelDir
+        ? {
+            ...process.env,
+            ...(assetsDir ? { INTERLEAVE_ASSETS_DIR: assetsDir } : {}),
+            ...(modelDir ? { INTERLEAVE_MODEL_DIR: modelDir } : {}),
+          }
+        : undefined;
+    const child = env
+      ? utilityProcess.fork(workerPath, [], { env })
       : utilityProcess.fork(workerPath);
     return {
       postMessage: (request) => child.postMessage(request),
@@ -165,6 +201,7 @@ export class JobRunner {
   private readonly jobsRepo: JobsRepository;
   private readonly applyHandlers: JobApplyHandlers;
   private readonly forkFactory: WorkerForkFactory;
+  private readonly getJobSecrets: JobSecretsProvider | undefined;
   private readonly concurrency: number;
   private readonly retryBackoffBaseMs: number;
   /** Emits `"job:update"` with a {@link Job} snapshot on every state change. */
@@ -179,7 +216,8 @@ export class JobRunner {
   constructor(deps: JobRunnerDeps) {
     this.jobsRepo = deps.jobsRepo;
     this.applyHandlers = deps.applyHandlers;
-    this.forkFactory = deps.fork ?? defaultFork(deps.workerPath, deps.assetsDir);
+    this.forkFactory = deps.fork ?? defaultFork(deps.workerPath, deps.assetsDir, deps.modelDir);
+    this.getJobSecrets = deps.getJobSecrets;
     this.concurrency = deps.concurrency ?? DEFAULT_CONCURRENCY;
     this.retryBackoffBaseMs = deps.retryBackoffBaseMs ?? RETRY_BACKOFF_BASE_MS;
   }
@@ -285,8 +323,32 @@ export class JobRunner {
       if (!job) break;
       this.inFlight.add(job.id);
       this.emit(job);
-      this.worker.postMessage({ jobId: job.id, type: job.type, payload: job.payload });
+      // Merge any out-of-band secrets (e.g. the embedding-API key) into the payload
+      // sent to the worker — read LIVE here, NEVER from / written back to the
+      // persisted `jobs` row, so a runtime key change is picked up and the secret
+      // never lands on disk.
+      this.worker.postMessage({
+        jobId: job.id,
+        type: job.type,
+        payload: this.payloadWithSecrets(job),
+      });
     }
+  }
+
+  /**
+   * Build the worker-bound payload for a job: the persisted payload, with any
+   * out-of-band secrets merged LAST (so a live secret wins over a stale/absent
+   * payload field). The returned object is a transient copy — the persisted
+   * `job.payload` is untouched and never carries the secret.
+   */
+  private payloadWithSecrets(job: Job): JobJsonValue {
+    const secrets = this.getJobSecrets?.(job);
+    if (!secrets || Object.keys(secrets).length === 0) return job.payload;
+    const base =
+      job.payload && typeof job.payload === "object" && !Array.isArray(job.payload)
+        ? job.payload
+        : {};
+    return { ...base, ...secrets };
   }
 
   private handleWorkerMessage(message: WorkerMessage): void {

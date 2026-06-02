@@ -33,10 +33,18 @@ import {
   isDesktop,
   type SearchableType,
   type SearchResult,
+  type SemanticSearchMode,
 } from "../lib/appApi";
 import "./library.css";
 
 type Tab = "results" | "map";
+
+/**
+ * A library row: the FTS {@link SearchResult} OR a fused semantic row (the same
+ * shape + a `semantic` flag for the "related" label). Modeled as `SearchResult`
+ * with an optional `semantic` so the existing row/detail rendering is unchanged.
+ */
+type LibraryRow = SearchResult & { readonly semantic?: boolean };
 
 /** The three searchable types, in display order, with their group titles. */
 const TYPE_GROUPS: readonly { type: SearchableType; title: string }[] = [
@@ -89,7 +97,7 @@ export function LibraryScreen() {
   const [conceptFilter, setConceptFilter] = useState<string | null>(null);
   const [priorityFilter, setPriorityFilter] = useState<PriorityLetter | null>(null);
 
-  const [results, setResults] = useState<readonly SearchResult[]>([]);
+  const [results, setResults] = useState<readonly LibraryRow[]>([]);
   // DRILL-DOWN per-concept counts (keyed by concept id), scoped to the active
   // keyword + type — so the concept chip number matches the narrowed result list,
   // NOT the global ConceptNode.memberCount.
@@ -98,6 +106,14 @@ export function LibraryScreen() {
   const [selId, setSelId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Semantic search (T087): whether on-device semantics are enabled, and which
+  // retrieval the last query actually ran (so the UI labels "keyword only" honestly).
+  const [semanticEnabled, setSemanticEnabled] = useState(false);
+  const [searchMode, setSearchMode] = useState<SemanticSearchMode>("fts");
+  // The live "N of M embedded" index progress (drives the enabled-but-empty
+  // "Build index" affordance, per the T087 spec) + an in-flight reindex guard.
+  const [semanticIndex, setSemanticIndex] = useState({ embedded: 0, total: 0 });
+  const [reindexing, setReindexing] = useState(false);
 
   // Debounce the raw input into the query that actually hits the bridge.
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -117,6 +133,52 @@ export function LibraryScreen() {
       .then((res) => setConcepts(res.concepts))
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
+
+  // Read whether on-device semantic search is enabled (T087) so the query effect
+  // picks the fused `semantic.search` path; re-checked when the embed jobs run (a
+  // freshly-built index becomes usable) and when the window regains focus (the
+  // Settings toggle lives on another route).
+  const refreshSemantic = useCallback(async () => {
+    if (!isDesktop()) return;
+    try {
+      const status = await appApi.semanticStatus();
+      setSemanticEnabled(status.enabled && status.vecAvailable);
+      setSemanticIndex({ embedded: status.embedded, total: status.total });
+    } catch {
+      setSemanticEnabled(false);
+    }
+  }, []);
+
+  // Build the on-device index (T087): enqueue `embed` jobs for everything that
+  // needs (re-)embedding; progress is observed via the existing `jobs.subscribe`
+  // (which calls `refreshSemantic` per `embed` job), so the readout updates live.
+  // Pure UI — one command + the shared subscription; no model/SQL in React.
+  const onReindex = useCallback(async () => {
+    if (!isDesktop() || reindexing) return;
+    setReindexing(true);
+    try {
+      await appApi.semanticReindex({ onlyMissing: false });
+      await refreshSemantic();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setReindexing(false);
+    }
+  }, [reindexing, refreshSemantic]);
+  useEffect(() => {
+    void refreshSemantic();
+    const onFocus = () => void refreshSemantic();
+    window.addEventListener("focus", onFocus);
+    const unsubscribe = isDesktop()
+      ? appApi.subscribeJobs((job) => {
+          if (job.type === "embed") void refreshSemantic();
+        })
+      : undefined;
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      unsubscribe?.();
+    };
+  }, [refreshSemantic]);
 
   // Run the search whenever the query or the type/concept filters change.
   useEffect(() => {
@@ -138,6 +200,35 @@ export function LibraryScreen() {
     }
     let cancelled = false;
     setLoading(true);
+
+    // Semantic path (T087): when on-device semantics are enabled AND no
+    // concept/priority facet is active (the fused KNN path doesn't take those
+    // facets), use `semantic.search` so conceptually-related material surfaces
+    // without a keyword match. The concept-chip counts come from the FTS path, so
+    // when semantics run we clear them (the fused list is not concept-faceted).
+    // Otherwise — or when a facet is active — use the FTS keyword search unchanged.
+    const useSemantic = semanticEnabled && !conceptFilter && !priorityFilter;
+    if (useSemantic) {
+      void appApi
+        .semanticSearch({ q, ...(typeFilter ? { type: typeFilter } : {}) })
+        .then((res) => {
+          if (cancelled) return;
+          setResults(res.results);
+          setConceptCounts({});
+          setSearchMode(res.mode);
+          setError(null);
+        })
+        .catch((e) => {
+          if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
     void appApi
       .searchQuery({
         q,
@@ -151,6 +242,7 @@ export function LibraryScreen() {
         // Guarded by the SAME cancelled flag as setResults so an out-of-order
         // response can never leave the chip counts pointing at a different query.
         setConceptCounts(res.counts.byConcept);
+        setSearchMode(semanticEnabled ? "fts" : "disabled");
         setError(null);
       })
       .catch((e) => {
@@ -162,7 +254,7 @@ export function LibraryScreen() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery, typeFilter, conceptFilter, priorityFilter]);
+  }, [debouncedQuery, typeFilter, conceptFilter, priorityFilter, semanticEnabled]);
 
   // The result list IS the backend-narrowed set. The Priority facet is now applied
   // MAIN-side (threaded as `priorityLabel` into the FTS query), so the drill-down
@@ -342,6 +434,19 @@ export function LibraryScreen() {
                     {error}
                   </p>
                 ) : null}
+                {/* Semantic-search affordance (T087): a calm one-liner telling the
+                    user which retrieval ran. Only shown once there is a query. */}
+                {debouncedQuery.trim().length > 0 ? (
+                  searchMode === "semantic" ? (
+                    <div className="lib-hint" data-testid="library-semantic-on">
+                      Semantic search on — results include conceptually related items.
+                    </div>
+                  ) : !semanticEnabled ? (
+                    <div className="lib-hint" data-testid="library-semantic-off">
+                      Keyword search · enable semantic search in Settings to find related material.
+                    </div>
+                  ) : null
+                ) : null}
                 {debouncedQuery.trim().length === 0 ? (
                   <div className="lib-empty" data-testid="library-prompt">
                     <div className="lib-empty__icon">
@@ -351,6 +456,23 @@ export function LibraryScreen() {
                     <p className="lib-empty__body">
                       Find any source, extract, or card by title, body, prompt, answer, or tag.
                     </p>
+                    {/* Semantic index affordance (T087): when on-device semantics are
+                        enabled but not everything is embedded yet, offer a one-click
+                        "Build index (N of M embedded)" that enqueues the embed jobs and
+                        updates live off `jobs.subscribe`. Pure UI — one command. */}
+                    {semanticEnabled && semanticIndex.embedded < semanticIndex.total ? (
+                      <button
+                        type="button"
+                        className="lib-build-index"
+                        data-testid="library-build-index"
+                        disabled={reindexing}
+                        onClick={() => void onReindex()}
+                      >
+                        {reindexing
+                          ? "Building index…"
+                          : `Build index (${semanticIndex.embedded} of ${semanticIndex.total} embedded)`}
+                      </button>
+                    ) : null}
                   </div>
                 ) : loading && visible.length === 0 ? (
                   <p className="lib-loading" data-testid="library-loading">
@@ -391,6 +513,16 @@ export function LibraryScreen() {
                             <div style={{ minWidth: 0 }}>
                               <div className="result__title">
                                 {highlight(r.title, debouncedQuery)}
+                                {r.semantic ? (
+                                  <span
+                                    className="badge badge--soft"
+                                    data-testid="library-related-badge"
+                                    title="Surfaced by meaning, not just keywords"
+                                    style={{ marginLeft: 8 }}
+                                  >
+                                    related
+                                  </span>
+                                ) : null}
                               </div>
                               <div className="result__meta">
                                 {r.concept ? <ConceptTag name={r.concept} /> : null}

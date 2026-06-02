@@ -15,6 +15,7 @@
 
 import type { JobJsonValue } from "@interleave/core";
 import type { AssetVaultService } from "./asset-vault-service";
+import type { EmbeddingService, EmbedJobPayload, EmbedResultData } from "./embedding-service";
 import type { JobApplyHandlers } from "./job-runner";
 import type { OcrJobPayload, OcrResultData, OcrService } from "./ocr-service";
 import type { UrlImportService } from "./url-import-service";
@@ -44,6 +45,8 @@ export interface JobApplyHandlerDeps {
   readonly getAssetVaultService: () => AssetVaultService;
   /** The OCR service (T066) — persists the worker's recognized text into `ocr_pages`. */
   readonly getOcrService: () => OcrService;
+  /** The embedding service (T087) — UPSERTs the worker's vector OR recovers a query vector. */
+  readonly getEmbeddingService: () => EmbeddingService;
 }
 
 /**
@@ -73,8 +76,24 @@ export interface JobApplyHandlerDeps {
  * a cross-process redesign that no current invariant requires.
  */
 export function createJobApplyHandlers(deps: JobApplyHandlerDeps): JobApplyHandlers {
-  const { getUrlImportService, getAssetVaultService, getOcrService } = deps;
+  const { getUrlImportService, getAssetVaultService, getOcrService, getEmbeddingService } = deps;
   return {
+    /**
+     * Apply an `embed` worker result (T087) — the SINGLE `embed` handler. It
+     * delegates to `EmbeddingService.applyResult`, which branches on
+     * `job.payload.persist`: the normal INDEX path UPSERTs the vector into the
+     * `sqlite-vec` store (idempotent by element — at-least-once safe); the
+     * transient QUERY path (`persist:false`) recovers the vector into a main-side
+     * map WITHOUT upserting (and drops it if the query was abandoned on timeout).
+     * There is exactly ONE `embed` handler — both paths are this same function.
+     * Embeddings append NO `operation_log` (a derived index).
+     */
+    embed: (job, resultData) => {
+      const payload = job.payload as unknown as EmbedJobPayload;
+      const result = resultData as unknown as EmbedResultData;
+      const summary = getEmbeddingService().applyResult(payload, result, job.id);
+      return summary as unknown as JobJsonValue;
+    },
     /**
      * Persist a worker OCR result (T066): UPSERT the recognized text into the
      * `ocr_pages` layer (status `suggested`) + write the durable `ocr/page-N.json`

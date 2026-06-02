@@ -26,6 +26,7 @@
 import { type OptimizerHistory, suggestParameters } from "@interleave/scheduler";
 import type { ParentPort } from "electron";
 import { fetchImportablePage, UrlFetchError } from "../main/url-fetch";
+import { computeEmbedding, EmbedError, type EmbedJobPayload } from "./embedding-model";
 import { type WorkerMessage, WorkerRequestSchema } from "./messages";
 import { recognizePageImage, resolveVaultImagePath } from "./ocr";
 
@@ -156,6 +157,26 @@ function runFsrsOptimize(jobId: string, payload: FsrsOptimizePayload): void {
   });
 }
 
+/**
+ * Execute one `embed` job (T087): compute the element/query embedding OFF the main
+ * thread (the deterministic on-device model by default, or the user's OWN API
+ * endpoint when `provider === "api"`) and post the vector back. MAIN writes it into
+ * the `sqlite-vec` store (single writer). The worker stays DB-FREE — it imports NO
+ * `@interleave/db`/`better-sqlite3`/`sqlite-vec`, only the pure model compute. The
+ * payload's `persist` flag (the transient query path) is passed THROUGH untouched —
+ * it lives in the job payload, so MAIN's single `embed` apply handler reads it.
+ */
+async function runEmbed(jobId: string, payload: EmbedJobPayload): Promise<void> {
+  post({ kind: "progress", jobId, progress: { ratio: 0.2, note: "embedding" } });
+  const result = await computeEmbedding(payload);
+  post({ kind: "progress", jobId, progress: { ratio: 0.95, note: "done" } });
+  post({
+    kind: "result",
+    jobId,
+    data: { vector: result.vector, modelId: result.modelId, dim: result.dim },
+  });
+}
+
 /** Dispatch one validated request to its job-execution function. */
 async function dispatch(jobId: string, type: string, payload: unknown): Promise<void> {
   try {
@@ -165,6 +186,9 @@ async function dispatch(jobId: string, type: string, payload: unknown): Promise<
         return;
       case "ocr":
         await runOcr(jobId, payload as OcrPayload);
+        return;
+      case "embed":
+        await runEmbed(jobId, payload as EmbedJobPayload);
         return;
       case "fsrs_optimize":
         runFsrsOptimize(jobId, payload as FsrsOptimizePayload);
@@ -192,7 +216,7 @@ async function dispatch(jobId: string, type: string, payload: unknown): Promise<
         return;
     }
   } catch (err) {
-    if (err instanceof UrlFetchError) {
+    if (err instanceof UrlFetchError || err instanceof EmbedError) {
       post({ kind: "error", jobId, code: err.code, message: err.message });
       return;
     }

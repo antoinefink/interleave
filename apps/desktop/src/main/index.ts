@@ -18,6 +18,7 @@ import { app, BrowserWindow } from "electron";
 import { CaptureController } from "./capture-controller";
 import { setCaptureEnabled } from "./capture-pairing";
 import { DbService } from "./db-service";
+import { embedJobSecrets } from "./embedding-service";
 import { registerIpcHandlers } from "./ipc";
 import { createJobApplyHandlers } from "./job-apply-handlers";
 import { JobRunner } from "./job-runner";
@@ -27,6 +28,7 @@ import { resolveMigrationsDir } from "./migrations";
 import { resolveNativeBinding } from "./native-binding";
 import { initAppPaths } from "./paths";
 import { registerRendererProtocol, registerRendererSchemePrivileges } from "./renderer-protocol";
+import { resolveSqliteVecBinary } from "./sqlite-vec-binding";
 import { createMainWindow } from "./window";
 
 /** Single DB service instance for the app's lifetime. */
@@ -69,6 +71,10 @@ function bootstrap(): void {
     assetsDir: paths.assetsDir,
     // The exports-root the Markdown-export service (T068) writes `.md` files into.
     exportsDir: paths.exportsDir,
+    // The packaged `sqlite-vec` `vec0` binary (T087), asar-unpacked like the
+    // better-sqlite3 addon. Undefined in dev → the npm package resolves the host
+    // binary; a load failure / non-functional vec0 degrades cleanly to FTS-only.
+    vecBinaryPath: resolveSqliteVecBinary(distDir),
     // DEV/E2E-only SSRF-guard escape: the URL-import E2E serves its article
     // fixture from a 127.0.0.1 server (the guard normally blocks loopback). Honor
     // INTERLEAVE_ALLOW_LOOPBACK_IMPORT ONLY in an unpackaged build, mirroring the
@@ -146,11 +152,22 @@ function bootstrap(): void {
       // The OCR apply (T066) persists the worker's recognized text into the
       // `ocr_pages` layer + the durable vault json, through the open DB.
       getOcrService: () => dbService.ocrService,
+      // The embed apply (T087) UPSERTs the worker's vector into the sqlite-vec
+      // store (index path) or recovers a query vector (transient query path).
+      getEmbeddingService: () => dbService.embeddingService,
     }),
     workerPath: path.join(distDir, "job-worker.cjs"),
     // The vault root the OCR worker resolves its page-image path against (T066),
     // passed via the worker's env (never a persisted job payload).
     assetsDir: paths.assetsDir,
+    // The model dir the embed worker (T087) resolves a real ONNX model from, via
+    // the same fork-env seam (`INTERLEAVE_MODEL_DIR`).
+    modelDir: paths.modelsDir,
+    // Out-of-band secret seam (T087): the user's embedding-API key is read LIVE
+    // from settings and merged into the `embed` worker payload AT POST TIME — it is
+    // NEVER written to the persisted `jobs` row (the same secret-keeping discipline
+    // as the fork-env paths above).
+    getJobSecrets: (job) => embedJobSecrets(job, () => dbService.repos.settings.getAppSettings()),
   });
   // Hand the runner to the DB service so the OCR command path (T066) can enqueue
   // an `ocr` job (the apply handler reaches the OCR service the other direction).
