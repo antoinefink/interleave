@@ -628,3 +628,66 @@
     transform: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Image-occlusion review face (T071) — the base image with one region masked.
+   The mask is presentational (a box over a clean <img>); the image is never
+   re-encoded. On reveal the masked box clears and the label shows.
+   --------------------------------------------------------------------------- */
+
+.rcard-occlusion {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.rcard-occlusion__stage {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 8px);
+  overflow: hidden;
+  background: var(--surface-2, var(--surface));
+}
+
+.rcard-occlusion__img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* This card's masked region — a solid box on the front (hides the answer). */
+.rcard-occlusion__mask {
+  position: absolute;
+  background: var(--el-card, #2f9e6e);
+  border: 2px solid color-mix(in oklch, var(--el-card, #2f9e6e) 60%, black);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px var(--canvas) inset;
+}
+
+/* On reveal the box becomes a thin highlight outline so the region shows through. */
+.rcard-occlusion__mask--revealed {
+  background: color-mix(in oklch, var(--el-card, #2f9e6e) 12%, transparent);
+  border-color: var(--el-card, #2f9e6e);
+  box-shadow: none;
+}
+
+/* The diagram's other regions — a light dim so the eye knows others exist. */
+.rcard-occlusion__sibling {
+  position: absolute;
+  background: color-mix(in oklch, var(--text) 8%, transparent);
+  border: 1px dashed color-mix(in oklch, var(--text) 24%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.rcard-occlusion__label {
+  font-size: var(--t-base);
+  font-weight: 600;
+  color: var(--text);
+  text-align: center;
+}

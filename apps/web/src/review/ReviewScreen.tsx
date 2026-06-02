@@ -41,6 +41,7 @@ import { useActiveScope } from "../shell/activeScope";
 import { Kbd } from "../shell/Kbd";
 import { useSelection } from "../shell/selection";
 import { CardFront } from "./CardFront";
+import { CardOcclusionFace } from "./CardOcclusionFace";
 import { ReviewRepairBar } from "./ReviewRepairBar";
 import "./review.css";
 
@@ -444,7 +445,11 @@ export function ReviewScreen() {
             <div className="rv-meta">
               <div className="rv-meta__chips">
                 <span className="badge badge--soft" data-testid="review-kind">
-                  {card.kind === "cloze" ? "Cloze" : "Q&A"}
+                  {card.kind === "cloze"
+                    ? "Cloze"
+                    : card.kind === "image_occlusion"
+                      ? "Occlusion"
+                      : "Q&A"}
                 </span>
                 {card.concept ? <span className="concept-tag">{card.concept}</span> : null}
                 <Prio priority={card.priority} />
@@ -482,32 +487,57 @@ export function ReviewScreen() {
             {/* the card */}
             <div className="rcard">
               <div className="rcard__face">
-                <div className="rcard__prompt" data-testid="review-prompt">
-                  <CardFront card={card} revealed={false} />
-                </div>
-                {revealed ? (
-                  <div className="rcard__reveal-wrap rv-fade" data-testid="review-answer">
-                    <div className="rcard__answer">
-                      {card.kind === "cloze" ? (
-                        <CardFront card={card} revealed={true} />
-                      ) : (
-                        (card.answer ?? "")
-                      )}
+                {/* An image-occlusion card (T071) renders the base image with its
+                    one masked region hidden on the front, revealed on reveal —
+                    instead of the string prompt/answer. Q&A/cloze unchanged. */}
+                {card.kind === "image_occlusion" && card.occlusion ? (
+                  <>
+                    <div className="rcard__prompt" data-testid="review-prompt">
+                      <CardOcclusionFace occlusion={card.occlusion} revealed={revealed} />
                     </div>
-                    {/* Source reference (T043) — the enriched refblock, shown ONLY
-                        after reveal so it can't leak the answer. Reuses the shared
-                        RefBlock + formatSourceRef; the jump-to-source button is wired
-                        when the card carries a location (T022). */}
-                    {card.sourceRef ? (
-                      <RefBlock
-                        ref={card.sourceRef}
-                        testId="review-refblock"
-                        style={{ marginTop: 16 }}
-                        {...(card.sourceLocationLabel ? { onOpenSource: openSource } : {})}
-                      />
+                    {revealed ? (
+                      <div className="rcard__reveal-wrap rv-fade" data-testid="review-answer">
+                        {card.sourceRef ? (
+                          <RefBlock
+                            ref={card.sourceRef}
+                            testId="review-refblock"
+                            style={{ marginTop: 16 }}
+                            {...(card.sourceLocationLabel ? { onOpenSource: openSource } : {})}
+                          />
+                        ) : null}
+                      </div>
                     ) : null}
-                  </div>
-                ) : null}
+                  </>
+                ) : (
+                  <>
+                    <div className="rcard__prompt" data-testid="review-prompt">
+                      <CardFront card={card} revealed={false} />
+                    </div>
+                    {revealed ? (
+                      <div className="rcard__reveal-wrap rv-fade" data-testid="review-answer">
+                        <div className="rcard__answer">
+                          {card.kind === "cloze" ? (
+                            <CardFront card={card} revealed={true} />
+                          ) : (
+                            (card.answer ?? "")
+                          )}
+                        </div>
+                        {/* Source reference (T043) — the enriched refblock, shown ONLY
+                            after reveal so it can't leak the answer. Reuses the shared
+                            RefBlock + formatSourceRef; the jump-to-source button is wired
+                            when the card carries a location (T022). */}
+                        {card.sourceRef ? (
+                          <RefBlock
+                            ref={card.sourceRef}
+                            testId="review-refblock"
+                            style={{ marginTop: 16 }}
+                            {...(card.sourceLocationLabel ? { onOpenSource: openSource } : {})}
+                          />
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </>
+                )}
               </div>
               <hr className="card-sep" />
               <div className="rcard__pad">

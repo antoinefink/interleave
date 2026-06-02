@@ -25,7 +25,7 @@ afterEach(() => {
 
 function seed(): { collection: DemoCollection; repos: ReturnType<typeof createRepositories> } {
   const repos = createRepositories(handle.db);
-  const collection = seedDemoCollection(repos);
+  const collection = seedDemoCollection(repos, handle.db);
   return { collection, repos };
 }
 
@@ -179,12 +179,12 @@ describe("seedDemoCollection", () => {
 
   it("is deterministic in content across two independent seeds", () => {
     const repos1 = createRepositories(handle.db);
-    const c1 = seedDemoCollection(repos1);
+    const c1 = seedDemoCollection(repos1, handle.db);
 
     const handle2 = createInMemoryDb();
     try {
       const repos2 = createRepositories(handle2.db);
-      const c2 = seedDemoCollection(repos2);
+      const c2 = seedDemoCollection(repos2, handle2.db);
 
       // Ids differ (domain-generated UUIDs) but content is identical.
       expect(c1.source.element.title).toBe(c2.source.element.title);

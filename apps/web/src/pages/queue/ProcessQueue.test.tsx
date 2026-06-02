@@ -128,6 +128,7 @@ const h = vi.hoisted(() => {
     lapses: 0,
     flagged: false,
     siblingGroupId: null,
+    occlusion: null,
   };
   const previews: Record<ReviewRating, ReviewIntervalPreview> = {
     again: { dueAt: "2026-05-30T08:10:00.000Z", scheduledDays: 0.007, label: "10m" },

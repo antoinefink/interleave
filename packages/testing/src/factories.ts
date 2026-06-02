@@ -26,10 +26,12 @@
 
 import type { BlockId, ElementId, IsoTimestamp, SiblingGroupId } from "@interleave/core";
 import { PRIORITY_LABEL_VALUE } from "@interleave/core";
+import type { InterleaveDatabase } from "@interleave/db";
 import {
   type CardWithElement,
   type ExtractWithLocation,
   newSiblingGroupId,
+  OcclusionService,
   type Repositories,
   type SourceWithElement,
 } from "@interleave/local-db";
@@ -233,6 +235,37 @@ export const DEMO_FIXTURES = {
     reasonAdded: "Counterpoint on scaling vs. hand-crafted priors — triage later.",
     priority: PRIORITY_LABEL_VALUE.C,
   },
+  /**
+   * An image-occlusion example (T071): a `media_fragment` image extract (a cropped
+   * figure on page 3) + two masks the user occludes, yielding two sibling
+   * `image_occlusion` cards. So the editor + the review face show a real example
+   * out-of-the-box and the E2E has a seeded target. The masks are normalized
+   * fractions 0–1 (`RegionRect`); the base image asset is a clean crop (never baked).
+   */
+  occlusion: {
+    figure: {
+      title: "Figure 1 · ARC task grid",
+      page: 3,
+      pageBlockId: "blk_def_p1" as BlockId,
+      region: { x0: 0.1, y0: 0.2, x1: 0.9, y1: 0.7 },
+      label: "Page 3 · region",
+      priority: PRIORITY_LABEL_VALUE.B,
+      // The cropped figure's vault asset (clean base — masks stored separately).
+      asset: {
+        kind: "image" as const,
+        vaultRoot: "assets" as const,
+        relativePathSuffix: "original.bin",
+        contentHash: "sha256:0c1d2e3f405162738495a6b7c8d9e0f1a2b3c4d5e6f70819203a4b5c6d7e8f90",
+        mime: "image/png",
+        size: 24576,
+      },
+    },
+    /** Two masks over the figure → two sibling image_occlusion cards. */
+    masks: [
+      { region: { x0: 0.15, y0: 0.25, x1: 0.45, y1: 0.5 }, label: "Input grid" },
+      { region: { x0: 0.55, y0: 0.25, x1: 0.85, y1: 0.5 }, label: "Output grid" },
+    ],
+  },
   /** Asset metadata pointing at vault paths/hashes (bytes live on disk, not here). */
   assets: {
     snapshot: {
@@ -297,6 +330,16 @@ export interface DemoCollection {
   readonly leechCard: CardWithElement;
   readonly concepts: SeededConcepts;
   readonly siblingGroupId: SiblingGroupId;
+  /**
+   * The image-occlusion example (T071): a `media_fragment` image extract + the two
+   * sibling `image_occlusion` cards generated from its two masks. The editor + the
+   * review face show a real example out-of-the-box; the E2E has a seeded target.
+   */
+  readonly occlusion: {
+    readonly imageExtract: ExtractWithLocation;
+    readonly cards: readonly { readonly id: ElementId; readonly maskId: string }[];
+    readonly siblingGroupId: SiblingGroupId;
+  };
 }
 
 /**
@@ -317,9 +360,15 @@ export interface DemoCollection {
  *  - two hierarchical concepts (Cognition → Intelligence) with membership edges,
  *    and two tags on the extract;
  *  - asset metadata (a snapshot + a PDF) pointing at vault paths/hashes;
- *  - a second, lower-priority `inbox` source for triage variety.
+ *  - a second, lower-priority `inbox` source for triage variety;
+ *  - an image-occlusion example (T071): a `media_fragment` image extract + two
+ *    sibling `image_occlusion` cards generated from its two masks.
+ *
+ * The `db` handle is threaded so the occlusion generation can run through the real
+ * {@link OcclusionService} (the same path the `cards.generateOcclusion` command
+ * uses) — masks stored SEPARATELY from the base image, one card per mask, in one tx.
  */
-export function seedDemoCollection(repos: Repositories): DemoCollection {
+export function seedDemoCollection(repos: Repositories, db: InterleaveDatabase): DemoCollection {
   const f = DEMO_FIXTURES;
 
   // 1) Source element + provenance, accepted into active learning.
@@ -492,7 +541,42 @@ export function seedDemoCollection(repos: Repositories): DemoCollection {
     reasonAdded: f.inboxSource.reasonAdded,
   });
 
-  // 11) Dev settings the scheduler/UI read.
+  // 11) Image-occlusion example (T071): a `media_fragment` image extract (a cropped
+  //     figure on page 3) anchored at a page+region source-location, its clean base
+  //     `image` asset, and TWO sibling `image_occlusion` cards generated from two
+  //     masks via the real OcclusionService (masks stored SEPARATELY from the image).
+  const og = f.occlusion;
+  const imageExtract = repos.sources.createExtract({
+    sourceElementId: sourceId,
+    elementType: "media_fragment",
+    title: og.figure.title,
+    priority: og.figure.priority,
+    selectedText: "",
+    blockIds: [og.figure.pageBlockId],
+    startOffset: 0,
+    endOffset: 0,
+    page: og.figure.page,
+    region: og.figure.region,
+    label: og.figure.label,
+  });
+  const imageElementId = imageExtract.element.id;
+  // The clean base image asset (the crop) — masks are NEVER baked into it.
+  repos.assets.create({
+    owningElementId: imageElementId,
+    kind: og.figure.asset.kind,
+    vaultRoot: og.figure.asset.vaultRoot,
+    relativePath: `media/${imageElementId}/${og.figure.asset.relativePathSuffix}`,
+    contentHash: og.figure.asset.contentHash,
+    mime: og.figure.asset.mime,
+    size: og.figure.asset.size,
+  });
+  // Generate the two sibling image_occlusion cards (one per mask) in one tx.
+  const occlusionResult = new OcclusionService(db).generate({
+    imageElementId,
+    masks: og.masks.map((m) => ({ region: m.region, label: m.label })),
+  });
+
+  // 12) Dev settings the scheduler/UI read.
   repos.settings.setMany(f.settings);
 
   return {
@@ -505,5 +589,10 @@ export function seedDemoCollection(repos: Repositories): DemoCollection {
     leechCard,
     concepts: { parentConceptId, childConceptId },
     siblingGroupId,
+    occlusion: {
+      imageExtract,
+      cards: occlusionResult.cards.map((c) => ({ id: c.id, maskId: c.maskId })),
+      siblingGroupId: occlusionResult.siblingGroupId,
+    },
   };
 }

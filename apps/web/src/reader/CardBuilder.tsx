@@ -49,8 +49,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Icon } from "../components/Icon";
 import { priorityLabel } from "../components/inspector/primitives";
 import { appApi, type CardKind, type PriorityLabel } from "../lib/appApi";
+import { OcclusionEditor } from "./OcclusionEditor";
 
-/** The builder's two enabled tabs (Image occlusion is M15, disabled). */
+/**
+ * The builder's tabs. `qa`/`cloze` are the text-card tabs; `image_occlusion`
+ * (T071) is enabled ONLY for an image extract — it mounts the {@link OcclusionEditor}
+ * instead of the textarea surface. For a non-image extract that tab stays disabled.
+ */
 type BuilderTab = CardKind;
 
 const PRIORITY_LABELS: readonly PriorityLabel[] = ["A", "B", "C", "D"];
@@ -60,6 +65,13 @@ export interface CardBuilderProps {
   readonly extractId: string;
   /** The extract's numeric priority — the default A/B/C/D chip selection. */
   readonly extractPriority: number;
+  /**
+   * Whether the current element is a `media_fragment` IMAGE extract (T071). When
+   * true, the third "Image occlusion" tab is enabled and mounts the
+   * {@link OcclusionEditor} (the diagram-→-masks surface); when false it stays
+   * disabled with a hint. Defaults to `false`.
+   */
+  readonly isImageExtract?: boolean;
   /**
    * Whether the extract carries a source location the card will inherit (lineage to
    * source). Feeds the T035 "missing source" quality check; defaults to `false` so a
@@ -91,6 +103,7 @@ export interface CardBuilderProps {
 export function CardBuilder({
   extractId,
   extractPriority,
+  isImageExtract = false,
   hasSource = false,
   seedBody,
   initialTab = "qa",
@@ -101,7 +114,9 @@ export function CardBuilder({
 }: CardBuilderProps) {
   const defaultLabel = priorityLabel(extractPriority);
 
-  const [tab, setTab] = useState<BuilderTab>(initialTab);
+  // An image extract opens straight on the occlusion tab — its text-card tabs
+  // would have no body. A text extract opens on the requested text tab.
+  const [tab, setTab] = useState<BuilderTab>(isImageExtract ? "image_occlusion" : initialTab);
   const [front, setFront] = useState("");
   const [back, setBack] = useState(seedBody?.trim() ?? "");
   const [cloze, setCloze] = useState(initialClozeText ?? seedBody?.trim() ?? "");
@@ -113,10 +128,11 @@ export function CardBuilder({
   const [siblingGroupId, setSiblingGroupId] = useState<string | undefined>(undefined);
 
   // When the host re-seeds the builder (a new extract / a Cloze-toolbar open), pick
-  // up the new tab + cloze pre-wrap without remounting.
+  // up the new tab + cloze pre-wrap without remounting. An image extract forces the
+  // occlusion tab (its text-card tabs have no body).
   useEffect(() => {
-    setTab(initialTab);
-  }, [initialTab]);
+    setTab(isImageExtract ? "image_occlusion" : initialTab);
+  }, [initialTab, isImageExtract]);
   useEffect(() => {
     if (initialClozeText !== undefined) setCloze(initialClozeText);
   }, [initialClozeText]);
@@ -221,6 +237,21 @@ export function CardBuilder({
     onCardCreated,
   ]);
 
+  // An image extract (T071) gets the dedicated occlusion editor as the WHOLE builder
+  // — its text-card tabs have no body. The editor draws masks over the base image and
+  // generates one sibling `image_occlusion` card per mask.
+  if (isImageExtract) {
+    return (
+      <OcclusionEditor
+        imageElementId={extractId}
+        imagePriority={extractPriority}
+        onToast={onToast}
+        onCardsCreated={onCardCreated}
+        onClose={onClose}
+      />
+    );
+  }
+
   return (
     <aside className="card-builder" data-testid="card-builder">
       <div className="card-builder__tabs" role="tablist" aria-label="Card type">
@@ -250,8 +281,9 @@ export function CardBuilder({
           type="button"
           className="cb-tab cb-tab--disabled"
           disabled
-          title="Coming later"
+          title="Open an image extract to occlude"
           aria-disabled="true"
+          data-testid="cb-tab-occlusion-disabled"
         >
           Image occlusion
         </button>

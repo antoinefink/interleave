@@ -2005,6 +2005,18 @@ export const CardsCreateRequestSchema = z
     siblingGroupId: z.string().min(1).max(128).optional(),
   })
   .superRefine((value, ctx) => {
+    // `image_occlusion` cards are NOT authorable here: they require an
+    // `occlusion_masks` row minted atomically alongside the card, so they MUST go
+    // through `cards.generateOcclusion`. Accepting one on this path would mint a
+    // mask-less, permanently-blank, FSRS-scheduled card with no reviewable face.
+    if (value.kind === "image_occlusion") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["kind"],
+        message: "image-occlusion cards are created via cards.generateOcclusion, not cards.create",
+      });
+      return;
+    }
     // Coarse boundary check (the rich quality gate is T035): a Q&A card must carry
     // a non-empty prompt AND answer; a cloze card must carry non-empty cloze text.
     if (value.kind === "qa") {
@@ -2057,6 +2069,50 @@ export interface CardsCreateResult {
   readonly card: CardSummary;
   /** The inherited source-location anchor id (lineage), or `null` when the extract has none. */
   readonly sourceLocationId: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// cards.generateOcclusion()  (T071 — image-occlusion card generation)
+// ---------------------------------------------------------------------------
+
+/** The most masks one diagram may yield (cap a runaway editor minting hundreds of cards). */
+const MAX_OCCLUSION_MASKS = 50;
+
+/**
+ * Generate N sibling `image_occlusion` cards from a `media_fragment` image extract
+ * (T071). The renderer draws normalized mask rects over the base image (which
+ * already lives in the vault — the bytes are NOT sent here) and ships ONLY the
+ * `imageElementId` + the vector masks. MAIN mints one `image_occlusion` `card` per
+ * mask, all in one `sibling_group`, in ONE transaction. Masks are stored SEPARATELY
+ * from the base image (the `occlusion_masks` table); the crop is never mutated.
+ *
+ * Mirrors `cards.create` (T032): `priority` is optional A/B/C/D (else INHERITS the
+ * image's). Each rect is validated by the reused `RegionRectSchema` (`0≤·≤1`,
+ * `x0<x1`, `y0<y1`); a label is the text the hidden region stands for.
+ */
+export const CardsGenerateOcclusionRequestSchema = z.object({
+  /** The `media_fragment` image extract the masks are drawn over (the base). */
+  imageElementId: ElementIdSchema,
+  /** The masks to occlude — one card per mask (≥1, ≤50). */
+  masks: z
+    .array(
+      z.object({
+        region: RegionRectSchema,
+        label: z.string().trim().max(512).nullable().optional(),
+      }),
+    )
+    .min(1)
+    .max(MAX_OCCLUSION_MASKS),
+  /** Optional A/B/C/D priority override; otherwise INHERITS the image's priority. */
+  priority: PriorityLabelSchema.optional(),
+});
+export type CardsGenerateOcclusionRequest = z.infer<typeof CardsGenerateOcclusionRequestSchema>;
+
+export interface CardsGenerateOcclusionResult {
+  /** The sibling group all generated cards joined (the whole diagram). */
+  readonly siblingGroupId: string;
+  /** One `image_occlusion` card summary per mask. */
+  readonly cards: CardSummary[];
 }
 
 // ---------------------------------------------------------------------------
@@ -2295,6 +2351,29 @@ export interface ReviewCardView {
    * renderer never computes sibling relationships itself.
    */
   readonly siblingGroupId: string | null;
+  /**
+   * Image-occlusion render data (T071) — present ONLY for an `image_occlusion`
+   * card, `null` otherwise. The review face reads the base image bytes through the
+   * typed `sources.getRegionImage({ elementId: imageElementId })` command and
+   * composites a mask box over the card's `region` (the hidden answer) on the
+   * front; on reveal it clears the box and shows the `label`. `otherRegions` are
+   * the sibling masks (so the front can optionally dim them too). Resolved MAIN-side
+   * from `occlusion_masks` — the masks are stored SEPARATELY from the base image,
+   * never baked into it.
+   */
+  readonly occlusion: ReviewOcclusion | null;
+}
+
+/** The image-occlusion data a review face needs (T071). */
+export interface ReviewOcclusion {
+  /** The `media_fragment` image extract whose bytes the face loads (base image). */
+  readonly imageElementId: string;
+  /** The masked region this card hides (the answer), shown on reveal. */
+  readonly region: RegionRectInput;
+  /** The label the hidden region stands for, shown on reveal; or `null`. */
+  readonly label: string | null;
+  /** The sibling masks (the other regions of the diagram) — for optional dimming. */
+  readonly otherRegions: RegionRectInput[];
 }
 
 export const ReviewSessionNextRequestSchema = z.object({
@@ -3277,6 +3356,16 @@ export interface AppApi {
      * `add_tag`/`add_relation`); does NO FSRS math (M7 first-schedules it).
      */
     create(request: CardsCreateRequest): Promise<CardsCreateResult>;
+    /**
+     * Generate N sibling `image_occlusion` cards (T071) from a `media_fragment`
+     * image extract + the drawn masks, in one transaction: one card per mask, all
+     * in one `sibling_group`. Masks are stored SEPARATELY (the `occlusion_masks`
+     * table); the base image bytes (already in the vault) are NOT sent. Logs
+     * `create_card` ×N (+ `add_tag`/`add_relation`); does NO FSRS math (M7 schedules).
+     */
+    generateOcclusion(
+      request: CardsGenerateOcclusionRequest,
+    ): Promise<CardsGenerateOcclusionResult>;
     /**
      * Edit a card's body (T038) — prompt/answer (Q&A) or cloze text — in review;
      * writes the `cards` row + logs `update_element`. Never touches lineage,

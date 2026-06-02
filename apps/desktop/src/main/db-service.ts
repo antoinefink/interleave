@@ -55,6 +55,7 @@ import {
   LibraryQuery,
   LineageQuery,
   nowIso,
+  OcclusionService,
   QueueActionService,
   QueueQuery,
   type Repositories,
@@ -77,6 +78,8 @@ import type {
   CardsDeleteResult,
   CardsFlagRequest,
   CardsFlagResult,
+  CardsGenerateOcclusionRequest,
+  CardsGenerateOcclusionResult,
   CardsMarkLeechRequest,
   CardsMarkLeechResult,
   CardsSuspendRequest,
@@ -255,6 +258,7 @@ export class DbService {
   private extraction: ExtractionService | null = null;
   private extractReview: ExtractService | null = null;
   private cardService: CardService | null = null;
+  private occlusionService: OcclusionService | null = null;
   private cardEditService: CardEditService | null = null;
   private reviewSession: ReviewSessionService | null = null;
   private scheduler: CardSchedulerService | null = null;
@@ -404,6 +408,9 @@ export class DbService {
     this.extraction = new ExtractionService(this.handle.db);
     this.extractReview = new ExtractService(this.handle.db);
     this.cardService = new CardService(this.handle.db);
+    // Image-occlusion card generation (T071) — mints N sibling `image_occlusion`
+    // cards from a `media_fragment` image extract + its masks in one transaction.
+    this.occlusionService = new OcclusionService(this.handle.db);
     this.cardEditService = new CardEditService(this.handle.db);
     // The sibling-aware review-session ordering seam (T039): chooses the next due
     // card and buries siblings (session-ordering ONLY — it writes nothing).
@@ -1696,6 +1703,59 @@ export class DbService {
     };
   }
 
+  /** The image-occlusion card-generation service (T071), bound to the open database. */
+  private get occlusion(): OcclusionService {
+    if (!this.occlusionService) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.occlusionService;
+  }
+
+  /**
+   * Generate N sibling `image_occlusion` cards (T071) from a `media_fragment`
+   * image extract + the drawn masks, in ONE transaction. The renderer ships only
+   * the element id + the vector masks (the base image bytes already live in the
+   * vault); MAIN mints one `image_occlusion` `card` per mask, all in one
+   * `sibling_group`, via {@link OcclusionService}. Masks are stored SEPARATELY from
+   * the base image (the `occlusion_masks` table) — the cropped PNG is never mutated.
+   *
+   * The priority is INHERITED from the image extract by default (the A/B/C/D label,
+   * when supplied, overrides it, mapped to a numeric value here main-side). Each
+   * card is `card_draft` with an UN-DUE `review_states` row (FSRS — M7 first-
+   * schedules it); the originating `media_fragment` stays an ATTENTION item.
+   */
+  generateOcclusionCards(request: CardsGenerateOcclusionRequest): CardsGenerateOcclusionResult {
+    const imageElementId = request.imageElementId as ElementId;
+    const image = this.repos.elements.findById(imageElementId);
+    if (!image || image.deletedAt) {
+      throw new Error(`DbService.generateOcclusionCards: image ${imageElementId} not found`);
+    }
+    const result = this.occlusion.generate({
+      imageElementId,
+      masks: request.masks.map((m) => ({
+        region: m.region,
+        label: m.label ?? null,
+      })),
+      // Inherit the image's numeric priority unless the renderer overrode it.
+      ...(request.priority ? { priority: priorityFromLabel(request.priority) } : {}),
+    });
+    return {
+      siblingGroupId: result.siblingGroupId,
+      cards: result.cards.map((c) => ({
+        id: c.id,
+        type: c.type,
+        status: c.status,
+        stage: c.stage,
+        priority: c.priority,
+        title: c.title,
+        kind: c.kind,
+        parentId: c.parentId,
+        sourceId: c.sourceId,
+        siblingGroupId: c.siblingGroupId,
+      })),
+    };
+  }
+
   /** The in-review card-repair service (T038), bound to the open database. */
   private get cardEdit(): CardEditService {
     if (!this.cardEditService) {
@@ -1971,6 +2031,26 @@ export class DbService {
       ? DbService.approximateRetrievability(state.stability, state.lastReviewedAt, asOfMs)
       : null;
 
+    // Image-occlusion render data (T071): resolved from `occlusion_masks` ONLY for
+    // an `image_occlusion` card. The face loads the base image bytes through the
+    // typed `getRegionImage` command (the masks are stored SEPARATELY); we ship the
+    // card's own masked region + the sibling masks so the front can dim them too.
+    let occlusion: ReviewCardView["occlusion"] = null;
+    if (card.card.kind === "image_occlusion") {
+      const mask = this.repos.occlusionMasks.findByCard(element.id);
+      if (mask) {
+        const siblings = this.repos.occlusionMasks
+          .listForImage(mask.imageElementId as ElementId)
+          .filter((m) => m.id !== mask.id);
+        occlusion = {
+          imageElementId: mask.imageElementId,
+          region: mask.region,
+          label: mask.label,
+          otherRegions: siblings.map((m) => m.region),
+        };
+      }
+    }
+
     return {
       id: element.id,
       kind: card.card.kind,
@@ -2009,6 +2089,8 @@ export class DbService {
       // The card's sibling group (T039) — the renderer threads it forward so the
       // next `session.next` can bury it. `null` when the card has no siblings.
       siblingGroupId: this.reviewSessionService.siblingGroupOf(element.id),
+      // Image-occlusion render data (T071) — null for non-occlusion cards.
+      occlusion,
     };
   }
 
@@ -2865,7 +2947,7 @@ export class DbService {
     const repos = this.repos;
     const existing = repos.elements.listByType("source");
     if (existing.length > 0) return false;
-    seedDemoCollection(repos);
+    seedDemoCollection(repos, this.require().db);
     return true;
   }
 

@@ -81,6 +81,7 @@ const QA_CARD: ReviewCardView = {
   lapses: 0,
   flagged: false,
   siblingGroupId: null,
+  occlusion: null,
 };
 
 function summary(overrides: Partial<CardEditSummary> = {}): CardEditSummary {
@@ -188,6 +189,44 @@ describe("ReviewRepairBar", () => {
         cardId: "card-cloze",
         cloze: "Intelligence is {{c1::edited}}.",
       }),
+    );
+  });
+
+  it("edits an image_occlusion card through a single Reveal label field (not prompt/answer)", async () => {
+    const occlusionCard: ReviewCardView = {
+      ...QA_CARD,
+      id: "card-occ",
+      kind: "image_occlusion",
+      // An occlusion card has no prompt text body; the mask reveal label lives on answer.
+      prompt: "",
+      answer: "Hippocampus",
+      cloze: null,
+    };
+    h.updateCard.mockResolvedValue({
+      card: summary({
+        id: "card-occ",
+        kind: "image_occlusion",
+        prompt: null,
+        answer: "Amygdala",
+        cloze: null,
+      }),
+    });
+    renderBar(occlusionCard);
+
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    // The editor shows the label field only — NO prompt/answer/cloze textareas.
+    const label = await screen.findByTestId("review-edit-occlusion-label");
+    expect(screen.queryByTestId("review-edit-prompt")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("review-edit-answer")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("review-edit-cloze")).not.toBeInTheDocument();
+    expect(label).toHaveValue("Hippocampus");
+
+    fireEvent.change(label, { target: { value: "Amygdala" } });
+    fireEvent.click(screen.getByTestId("review-edit-save"));
+
+    // Only the answer (label) is sent — no prompt key.
+    await waitFor(() =>
+      expect(h.updateCard).toHaveBeenCalledWith({ cardId: "card-occ", answer: "Amygdala" }),
     );
   });
 

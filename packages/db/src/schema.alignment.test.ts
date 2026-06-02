@@ -87,7 +87,7 @@ describe("Drizzle ⇄ @interleave/core alignment", () => {
     expect(ELEMENT_TYPES.length).toBe(8);
     expect(ELEMENT_STATUSES.length).toBe(8);
     expect(DISTILLATION_STAGES.length).toBe(9);
-    expect(CARD_KINDS).toEqual(["qa", "cloze"]);
+    expect(CARD_KINDS).toEqual(["qa", "cloze", "image_occlusion"]);
     expect(ASSET_KINDS).toContain("source_pdf");
     expect(OPERATION_TYPES).toContain("create_card");
   });

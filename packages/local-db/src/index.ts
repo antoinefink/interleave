@@ -127,6 +127,18 @@ export {
   LineageQuery,
 } from "./lineage-query";
 export {
+  type OcclusionMask,
+  type OcclusionMaskInput,
+  OcclusionMasksRepository,
+} from "./occlusion-masks-repository";
+export {
+  type GeneratedOcclusionCard,
+  type GenerateOcclusionInput,
+  type GenerateOcclusionResult,
+  type OcclusionMaskRequest,
+  OcclusionService,
+} from "./occlusion-service";
+export {
   type OcrPage,
   OcrPagesRepository,
   type OcrPageWord,
@@ -221,6 +233,8 @@ export interface Repositories {
   readonly jobs: import("./jobs-repository").JobsRepository;
   /** The reviewable per-page OCR layer (T066) — the recognized-text suggestion store. */
   readonly ocrPages: import("./ocr-pages-repository").OcrPagesRepository;
+  /** The image-occlusion masks store (T071) — vector masks kept separate from the base image. */
+  readonly occlusionMasks: import("./occlusion-masks-repository").OcclusionMasksRepository;
 }
 
 import type { InterleaveDatabase } from "@interleave/db";
@@ -230,6 +244,7 @@ import { ConceptRepository } from "./concept-repository";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
 import { JobsRepository } from "./jobs-repository";
+import { OcclusionMasksRepository } from "./occlusion-masks-repository";
 import { OcrPagesRepository } from "./ocr-pages-repository";
 import { OperationLogRepository } from "./operation-log-repository";
 import { QueueRepository } from "./queue-repository";
@@ -262,5 +277,6 @@ export function createRepositories(db: InterleaveDatabase): Repositories {
     sourceDedup: new SourceDedupQuery(db, assets),
     jobs: new JobsRepository(db),
     ocrPages: new OcrPagesRepository(db),
+    occlusionMasks: new OcclusionMasksRepository(db),
   };
 }

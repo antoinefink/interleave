@@ -328,26 +328,35 @@ export class ElementRepository {
    * recoverable; lineage references remain valid.
    */
   softDelete(id: ElementId): Element {
-    return this.db.transaction((tx) => {
-      // Capture the PRE-IMAGE status so the Trash view + undo can restore the
-      // element to where it was (the op payload is the undo/origin source of truth).
-      const before = tx.select().from(elements).where(eq(elements.id, id)).get();
-      if (!before) throw new Error(`ElementRepository.softDelete: element ${id} not found`);
-      const prevStatus = before.status;
-      const ts = nowIso();
-      tx.update(elements)
-        .set({ deletedAt: ts, status: "deleted", updatedAt: ts })
-        .where(eq(elements.id, id))
-        .run();
-      const row = tx.select().from(elements).where(eq(elements.id, id)).get();
-      if (!row) throw new Error(`ElementRepository.softDelete: element ${id} not found`);
-      new OperationLogRepository(tx).append(tx, {
-        opType: "soft_delete_element",
-        elementId: id,
-        payload: { id, deletedAt: ts, prev: { status: prevStatus } },
-      });
-      return rowToElement(row);
+    return this.db.transaction((tx) => this.softDeleteWithin(tx, id));
+  }
+
+  /**
+   * Soft-delete using an EXISTING transaction, logging `soft_delete_element` on
+   * the SAME `tx`. The tx-composable seam {@link OcclusionService} (T071) uses to
+   * retire the prior batch of `image_occlusion` cards in the SAME transaction that
+   * regenerates a diagram's masks + new cards — so an edit-then-regenerate REPLACES
+   * the cards atomically instead of accumulating orphan, mask-less cards.
+   */
+  softDeleteWithin(tx: DbClient, id: ElementId): Element {
+    // Capture the PRE-IMAGE status so the Trash view + undo can restore the
+    // element to where it was (the op payload is the undo/origin source of truth).
+    const before = tx.select().from(elements).where(eq(elements.id, id)).get();
+    if (!before) throw new Error(`ElementRepository.softDelete: element ${id} not found`);
+    const prevStatus = before.status;
+    const ts = nowIso();
+    tx.update(elements)
+      .set({ deletedAt: ts, status: "deleted", updatedAt: ts })
+      .where(eq(elements.id, id))
+      .run();
+    const row = tx.select().from(elements).where(eq(elements.id, id)).get();
+    if (!row) throw new Error(`ElementRepository.softDelete: element ${id} not found`);
+    new OperationLogRepository(tx).append(tx, {
+      opType: "soft_delete_element",
+      elementId: id,
+      payload: { id, deletedAt: ts, prev: { status: prevStatus } },
     });
+    return rowToElement(row);
   }
 
   /**

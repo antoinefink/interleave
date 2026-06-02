@@ -22,6 +22,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   createCard: vi.fn(),
+  getRegionImage: vi.fn(),
+  generateOcclusionCards: vi.fn(),
   onToast: vi.fn(),
   onCardCreated: vi.fn(),
   onClose: vi.fn(),
@@ -29,7 +31,11 @@ const h = vi.hoisted(() => ({
 
 vi.mock("../lib/appApi", () => ({
   isDesktop: () => true,
-  appApi: { createCard: h.createCard },
+  appApi: {
+    createCard: h.createCard,
+    getRegionImage: h.getRegionImage,
+    generateOcclusionCards: h.generateOcclusionCards,
+  },
 }));
 
 import { CardBuilder } from "./CardBuilder";
@@ -66,6 +72,14 @@ beforeEach(() => {
     },
     sourceLocationId: "loc_1",
   });
+  h.getRegionImage.mockResolvedValue({ bytes: new ArrayBuffer(8), mime: "image/png" });
+  h.generateOcclusionCards.mockResolvedValue({ siblingGroupId: "sg_1", cards: [] });
+  if (!("createObjectURL" in URL)) {
+    // biome-ignore lint/suspicious/noExplicitAny: jsdom shim
+    (URL as any).createObjectURL = () => "blob:mock";
+    // biome-ignore lint/suspicious/noExplicitAny: jsdom shim
+    (URL as any).revokeObjectURL = () => {};
+  }
 });
 
 describe("CardBuilder — Q&A tab", () => {
@@ -245,5 +259,22 @@ describe("CardBuilder — quality checks (T035)", () => {
     expect(screen.getByTestId("cb-qc-multiple-clozes")).toHaveAttribute("data-severity", "warn");
     // Two deletions is still authorable (warnings never block).
     expect(screen.getByTestId("cb-create")).not.toBeDisabled();
+  });
+});
+
+describe("CardBuilder — image extract (T071)", () => {
+  it("mounts the OcclusionEditor (not the text tabs) for an image extract", async () => {
+    renderBuilder({ isImageExtract: true });
+    // The dedicated occlusion editor replaces the Q&A/Cloze surface.
+    expect(await screen.findByTestId("occlusion-editor")).toBeInTheDocument();
+    expect(screen.queryByTestId("card-builder")).toBeNull();
+    expect(screen.queryByTestId("cb-tab-qa")).toBeNull();
+  });
+
+  it("keeps the text-card tabs for a non-image extract (occlusion tab disabled)", () => {
+    renderBuilder({ isImageExtract: false });
+    expect(screen.getByTestId("card-builder")).toBeInTheDocument();
+    expect(screen.getByTestId("cb-tab-qa")).toBeInTheDocument();
+    expect(screen.getByTestId("cb-tab-occlusion-disabled")).toBeDisabled();
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CARD_KINDS,
   CORE_PACKAGE,
   DISTILLATION_STAGES,
   ELEMENT_STATUSES,
@@ -43,6 +44,10 @@ describe("@interleave/core surface", () => {
       "suspended",
       "deleted",
     ]);
+  });
+
+  it("pins the card kinds to the canonical vocabulary (incl. image_occlusion, T071)", () => {
+    expect([...CARD_KINDS]).toEqual(["qa", "cloze", "image_occlusion"]);
   });
 
   it("pins the distillation stages to the canonical vocabulary", () => {

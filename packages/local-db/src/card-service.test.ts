@@ -271,6 +271,21 @@ describe("CardService.createFromExtract — Q&A card", () => {
     expect(handle.db.select().from(elementTags).all().length).toBe(tagsBefore);
     expect(handle.db.select().from(operationLog).all().length).toBe(opsBefore);
   });
+
+  it("rejects image_occlusion (those must go through the occlusion generator)", () => {
+    // image_occlusion cards need an occlusion_masks row minted atomically by the
+    // occlusion generator; authoring one here would yield a mask-less, blank card.
+    const { extractId } = seedExtract(handle);
+    const service = new CardService(handle.db);
+    const elementsRepo = new ElementRepository(handle.db);
+
+    const cardsBefore = elementsRepo.listByType("card").length;
+    expect(() => service.createFromExtract({ extractId, kind: "image_occlusion" })).toThrow(
+      /occlusion generator/,
+    );
+    // No element/row leaked: the guard throws before any write.
+    expect(elementsRepo.listByType("card").length).toBe(cardsBefore);
+  });
 });
 
 describe("CardService.createFromExtract — cloze card + siblings", () => {

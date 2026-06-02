@@ -112,10 +112,16 @@ export function isMarkType(value: unknown): value is MarkType {
 }
 
 /**
- * Active-recall card flavours (`cards.kind`). Only `qa` and `cloze` ship in the
- * MVP; richer media-card kinds arrive in later milestones (M15).
+ * Active-recall card flavours (`cards.kind`). `qa` and `cloze` ship in the MVP;
+ * `image_occlusion` (T071, M15) is the THIRD kind — a card whose front hides ONE
+ * masked region of a `media_fragment` image extract, revealed at review. It is a
+ * card VARIANT, not a parallel system: it rides the same `cards`/`review_states`/
+ * `element_relations` substrate + `CardService`/`ReviewRepository` seam + the FSRS
+ * review loop. Its only extra storage is the `occlusion_masks` table (the vector
+ * masks a `cards` row can't hold). Adding it widens the `cards.kind` CHECK (built
+ * from this tuple), so it ships with a Drizzle migration.
  */
-export const CARD_KINDS = ["qa", "cloze"] as const;
+export const CARD_KINDS = ["qa", "cloze", "image_occlusion"] as const;
 export type CardKind = (typeof CARD_KINDS)[number];
 
 /**

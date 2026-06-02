@@ -21,6 +21,7 @@ import {
   CardsDeleteRequestSchema,
   CardsExportAnkiRequestSchema,
   CardsFlagRequestSchema,
+  CardsGenerateOcclusionRequestSchema,
   CardsImportAnkiRequestSchema,
   CardsMarkLeechRequestSchema,
   CardsSuspendRequestSchema,
@@ -691,6 +692,15 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.cardsCreate, (_event, rawRequest: unknown) => {
     const request = CardsCreateRequestSchema.parse(rawRequest);
     return dbService.createCard(request);
+  });
+
+  // Generate N sibling `image_occlusion` cards (T071) from a `media_fragment` image
+  // extract + its masks. The renderer ships only the element id + the vector masks
+  // (the base image bytes already live in the vault); MAIN mints one card per mask
+  // in one transaction. Masks are stored SEPARATELY from the base image.
+  ipcMain.handle(IPC_CHANNELS.cardsGenerateOcclusion, (_event, rawRequest: unknown) => {
+    const request = CardsGenerateOcclusionRequestSchema.parse(rawRequest);
+    return dbService.generateOcclusionCards(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.cardsUpdate, (_event, rawRequest: unknown) => {

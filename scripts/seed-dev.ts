@@ -42,7 +42,7 @@ function main(): void {
     console.log("[seed] migrations applied");
 
     const repos = createRepositories(db);
-    const collection = seedDemoCollection(repos);
+    const collection = seedDemoCollection(repos, db);
     const ops = new OperationLogRepository(db);
 
     // Echo the lineage chain so it is obvious the seed wired it correctly.
@@ -62,6 +62,9 @@ function main(): void {
     console.log(`   ├─ Q&A card   ${qaCardId}  → source_location ${locationId}`);
     console.log(`   └─ cloze card ${collection.clozeCard.element.id}`);
     console.log(`  inbox source  ${collection.inboxSource.element.id}`);
+    console.log(
+      `  image extract ${collection.occlusion.imageExtract.element.id}  → ${collection.occlusion.cards.length} image_occlusion sibling cards`,
+    );
     console.log(
       `  concepts      ${collection.concepts.parentConceptId} → ${collection.concepts.childConceptId}`,
     );

@@ -20,6 +20,8 @@ import {
   CardsExportAnkiRequestSchema,
   type CardsExportAnkiResult,
   CardsFlagRequestSchema,
+  CardsGenerateOcclusionRequestSchema,
+  type CardsGenerateOcclusionResult,
   CardsImportAnkiRequestSchema,
   type CardsImportAnkiResult,
   CardsMarkLeechRequestSchema,
@@ -144,6 +146,7 @@ describe("IPC channels", () => {
         "documents:marks:list",
         "extractions:create",
         "cards:create",
+        "cards:generateOcclusion",
         "cards:update",
         "cards:suspend",
         "cards:delete",
@@ -632,6 +635,69 @@ describe("SourcesExtractRegionRequestSchema (T065)", () => {
   });
 });
 
+describe("CardsGenerateOcclusionRequestSchema (T071)", () => {
+  const base = {
+    imageElementId: "el_img",
+    masks: [
+      { region: { x0: 0.1, y0: 0.2, x1: 0.4, y1: 0.5 }, label: "Hippocampus" },
+      { region: { x0: 0.5, y0: 0.2, x1: 0.8, y1: 0.5 } },
+    ],
+  };
+
+  it("accepts a valid request (masks + optional priority)", () => {
+    const parsed = CardsGenerateOcclusionRequestSchema.parse({ ...base, priority: "B" });
+    expect(parsed.imageElementId).toBe("el_img");
+    expect(parsed.masks.length).toBe(2);
+    expect(parsed.masks[0]?.label).toBe("Hippocampus");
+    expect(parsed.masks[1]?.label ?? null).toBeNull();
+    expect(parsed.priority).toBe("B");
+  });
+
+  it("rejects 0 masks", () => {
+    expect(() => CardsGenerateOcclusionRequestSchema.parse({ ...base, masks: [] })).toThrow();
+  });
+
+  it("rejects more than 50 masks (the runaway-editor cap)", () => {
+    const masks = Array.from({ length: 51 }, () => ({
+      region: { x0: 0.1, y0: 0.1, x1: 0.2, y1: 0.2 },
+    }));
+    expect(() => CardsGenerateOcclusionRequestSchema.parse({ ...base, masks })).toThrow();
+  });
+
+  it("rejects an inverted / out-of-range mask rect (reuses RegionRectSchema)", () => {
+    expect(() =>
+      CardsGenerateOcclusionRequestSchema.parse({
+        ...base,
+        masks: [{ region: { x0: 0.6, y0: 0.2, x1: 0.1, y1: 0.5 } }],
+      }),
+    ).toThrow();
+    expect(() =>
+      CardsGenerateOcclusionRequestSchema.parse({
+        ...base,
+        masks: [{ region: { x0: 0.1, y0: 0.2, x1: 1.2, y1: 0.5 } }],
+      }),
+    ).toThrow();
+  });
+
+  it("ReviewCardView.occlusion round-trips (the review-face data)", () => {
+    const result: CardsGenerateOcclusionResult = {
+      siblingGroupId: "sg_1",
+      cards: [],
+    };
+    expect(result.siblingGroupId).toBe("sg_1");
+    // The occlusion view shape the review face consumes (resolved MAIN-side).
+    const occlusion = {
+      imageElementId: "el_img",
+      region: { x0: 0.1, y0: 0.2, x1: 0.4, y1: 0.5 },
+      label: "Hippocampus",
+      otherRegions: [{ x0: 0.5, y0: 0.2, x1: 0.8, y1: 0.5 }],
+    };
+    expect(occlusion.imageElementId).toBe("el_img");
+    expect(occlusion.otherRegions.length).toBe(1);
+    expect(occlusion.region.x1).toBe(0.4);
+  });
+});
+
 describe("OCR schemas (T066)", () => {
   it("SourcesRunOcrRequestSchema accepts a valid page + PNG", () => {
     const parsed = SourcesRunOcrRequestSchema.parse({
@@ -879,6 +945,20 @@ describe("CardsCreateRequestSchema (T032)", () => {
     expect(() =>
       CardsCreateRequestSchema.parse({ kind: "qa", prompt: "Q?", answer: "A." }),
     ).toThrow();
+  });
+
+  it("rejects an image_occlusion request (those go through cards.generateOcclusion)", () => {
+    // `image_occlusion` is a valid CardKind, but it requires a mask minted
+    // atomically by the occlusion generator — cards.create cannot construct one,
+    // so the contract MUST reject it (else it would mint a blank, unreviewable card).
+    const result = CardsCreateRequestSchema.safeParse({
+      extractId: "el_1",
+      kind: "image_occlusion",
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.some((i) => i.path.includes("kind"))).toBe(true);
+    }
   });
 });
 

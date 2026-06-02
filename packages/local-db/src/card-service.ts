@@ -144,6 +144,15 @@ export class CardService {
    * its sibling group id + the inherited source-location anchor.
    */
   createFromExtract(input: CreateCardFromExtractInput): CreateCardResult {
+    // `image_occlusion` cards are minted only by the occlusion path (which creates
+    // the required `occlusion_masks` row atomically); authoring one here would yield
+    // a mask-less, permanently-blank, FSRS-scheduled card. Reject defensively even
+    // though the IPC contract already blocks it.
+    if (input.kind === "image_occlusion") {
+      throw new Error(
+        "CardService.createFromExtract: image_occlusion cards must be created via the occlusion generator",
+      );
+    }
     const extract = this.elements.findById(input.extractId);
     if (!extract || extract.deletedAt) {
       throw new Error(`CardService.createFromExtract: extract ${input.extractId} not found`);

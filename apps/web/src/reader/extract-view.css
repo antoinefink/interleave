@@ -557,3 +557,130 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ---------------------------------------------------------------------------
+   Image-occlusion editor (T071) — draw masks over the base image.
+   --------------------------------------------------------------------------- */
+
+.occlusion-canvas-wrap {
+  margin: 8px 0 14px;
+}
+
+.occlusion-stage {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 8px);
+  overflow: hidden;
+  background: var(--surface-2, var(--surface));
+}
+
+.occlusion-stage__img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.occlusion-overlay {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.occlusion-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.occlusion-mask {
+  fill: color-mix(in oklch, var(--el-card, #2f9e6e) 30%, transparent);
+  stroke: var(--el-card, #2f9e6e);
+  stroke-width: 0.004;
+  vector-effect: non-scaling-stroke;
+  cursor: pointer;
+}
+
+.occlusion-mask--sel {
+  fill: color-mix(in oklch, var(--el-card, #2f9e6e) 46%, transparent);
+  stroke-width: 0.008;
+}
+
+.occlusion-mask--draft {
+  fill: color-mix(in oklch, var(--accent, #4f7cff) 22%, transparent);
+  stroke: var(--accent, #4f7cff);
+  pointer-events: none;
+}
+
+.occlusion-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.occlusion-list__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 6px);
+  background: var(--surface);
+}
+
+.occlusion-list__row--sel {
+  border-color: var(--el-card, #2f9e6e);
+  background: color-mix(in oklch, var(--el-card, #2f9e6e) 6%, var(--surface));
+}
+
+.occlusion-list__n {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  font-size: var(--t-xs, 11px);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  background: var(--surface-2, var(--surface));
+  border-radius: 50%;
+}
+
+.occlusion-list__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--t-sm, 13px);
+  padding: 2px 0;
+}
+
+.occlusion-list__label:focus {
+  outline: none;
+}
+
+.occlusion-list__del {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  padding: 4px;
+  color: var(--text-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm, 6px);
+  cursor: pointer;
+}
+
+.occlusion-list__del:hover {
+  color: var(--danger, #d4493f);
+  background: var(--surface-2, var(--surface));
+}

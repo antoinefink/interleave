@@ -56,6 +56,7 @@ const h = vi.hoisted(() => {
     lapses: 0,
     flagged: false,
     siblingGroupId: null,
+    occlusion: null,
   };
   const clozeCard: ReviewCardView = {
     id: "card-cloze",
@@ -93,6 +94,7 @@ const h = vi.hoisted(() => {
     lapses: 0,
     flagged: false,
     siblingGroupId: null,
+    occlusion: null,
   };
   const leechCard: ReviewCardView = {
     ...qaCard,

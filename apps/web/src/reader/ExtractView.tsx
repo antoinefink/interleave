@@ -467,6 +467,17 @@ export function ExtractView() {
   const location = inspector?.location ?? null;
   const lineageNodes = lineage?.nodes ?? [];
 
+  // An image extract (T071): a `media_fragment` (T065 crops a PDF region into the
+  // vault as an `image` asset) ANCHORED AT A PAGE REGION — the `region` source-location
+  // is the tell that this is an occludable image, not just any media. It can be
+  // occluded — the card builder swaps its text tabs for the occlusion editor when this
+  // is true. Gating on "has a region image" rather than the bare `media_fragment` type
+  // is forward-compatible: a future audio/video `media_fragment` (T073–T075) has no
+  // region anchor, so the occlusion editor won't mount for it (matching MAIN's
+  // `OcclusionService` guard, which requires an `image` asset). Unlike the rendered
+  // image URL, this signal doesn't depend on the async bytes fetch succeeding.
+  const isImageExtract = element?.type === "media_fragment" && location?.region != null;
+
   return (
     <div className="reader-screen extract-view" data-testid="route-extract">
       <header className="reader-header" data-testid="extract-header">
@@ -722,7 +733,8 @@ export function ExtractView() {
               disabled={busy}
               onClick={onConvert}
             >
-              <Icon name="card" size={14} /> Convert to card
+              <Icon name={isImageExtract ? "layers" : "card"} size={14} />{" "}
+              {isImageExtract ? "Occlude image" : "Convert to card"}
             </button>
             <button
               type="button"
@@ -761,6 +773,7 @@ export function ExtractView() {
             key={`${id ?? "none"}:${builder.tab}`}
             extractId={id}
             extractPriority={element?.priority ?? 0.5}
+            isImageExtract={isImageExtract}
             // The card inherits a source location iff the extract has one — feeds the
             // T035 "missing source" quality check. The renderer ships only the boolean.
             hasSource={inspector?.location != null || inspector?.source != null}

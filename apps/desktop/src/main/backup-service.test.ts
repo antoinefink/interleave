@@ -47,7 +47,7 @@ function openSeeded(): { paths: ReturnType<typeof computeAppPaths>; service: Bac
   const paths = ensureVaultSkeleton(computeAppPaths(dataDir));
   svc = new DbService();
   svc.open(paths.dbPath, { migrationsDir: MIGRATIONS_DIR });
-  seedDemoCollection(svc.repos);
+  seedDemoCollection(svc.repos, svc.raw.db);
 
   // Write a couple of real asset files into the vault so the recursive copy +
   // per-file hashing have something to capture (the demo seed only writes asset
@@ -106,7 +106,7 @@ describe("BackupService.createBackup (T047)", () => {
     expect(fs.existsSync(result.path)).toBe(true);
     expect(result.path.endsWith(".zip")).toBe(true);
     expect(result.sizeBytes).toBeGreaterThan(0);
-    expect(result.schemaVersion).toBe("0013_charming_senator_kelly");
+    expect(result.schemaVersion).toBe("0014_remarkable_yellow_claw");
     // app.sqlite + 2 asset files = 3 captured files.
     expect(result.fileCount).toBe(3);
 
@@ -144,7 +144,7 @@ describe("BackupService.createBackup (T047)", () => {
 
     const manifest = JSON.parse(fs.readFileSync(path.join(backupDir, "manifest.json"), "utf8"));
     expect(manifest.formatVersion).toBe(1);
-    expect(manifest.schemaVersion).toBe("0013_charming_senator_kelly");
+    expect(manifest.schemaVersion).toBe("0014_remarkable_yellow_claw");
     expect(manifest.appVersion).toBe("9.9.9");
     expect(typeof manifest.createdAt).toBe("string");
     expect(Number.isNaN(Date.parse(manifest.createdAt))).toBe(false);

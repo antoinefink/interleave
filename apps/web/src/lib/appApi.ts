@@ -1077,7 +1077,7 @@ export interface ExtractionCreateResult {
 // ---------------------------------------------------------------------------
 
 /** The two card kinds the MVP ships. */
-export type CardKind = "qa" | "cloze";
+export type CardKind = "qa" | "cloze" | "image_occlusion";
 
 export interface CardsCreateRequest {
   /** The originating extract this card is distilled from (lineage parent). */
@@ -1120,6 +1120,35 @@ export interface CardsCreateResult {
   readonly card: CardSummary;
   /** The inherited source-location anchor id (lineage), or `null` when the extract has none. */
   readonly sourceLocationId: string | null;
+}
+
+/** One mask to occlude over the base image — a normalized region + an optional label. */
+export interface OcclusionMaskInput {
+  readonly region: RegionRectInput;
+  /** The text the hidden region stands for (shown on reveal); or `null`. */
+  readonly label?: string | null;
+}
+
+/**
+ * Generate N sibling `image_occlusion` cards from a `media_fragment` image extract
+ * (T071). The renderer draws normalized mask rects over the base image (already in
+ * the vault — the bytes are NOT sent) and ships ONLY the `imageElementId` + the
+ * vector masks. One card per mask, all in one `sibling_group`.
+ */
+export interface CardsGenerateOcclusionRequest {
+  /** The `media_fragment` image extract the masks are drawn over (the base). */
+  readonly imageElementId: string;
+  /** The masks to occlude — one card per mask (≥1, ≤50). */
+  readonly masks: readonly OcclusionMaskInput[];
+  /** Optional A/B/C/D priority override; otherwise inherits the image's priority. */
+  readonly priority?: ExtractionPriorityLabel;
+}
+
+export interface CardsGenerateOcclusionResult {
+  /** The sibling group all generated cards joined (the whole diagram). */
+  readonly siblingGroupId: string;
+  /** One `image_occlusion` card summary per mask. */
+  readonly cards: readonly CardSummary[];
 }
 
 // ---------------------------------------------------------------------------
@@ -1391,6 +1420,25 @@ export interface ReviewCardView {
    * `session.next` can bury the group (T039); it never computes sibling links.
    */
   readonly siblingGroupId: string | null;
+  /**
+   * Image-occlusion render data (T071) — present ONLY for an `image_occlusion`
+   * card, `null` otherwise. The review face loads the base image bytes via
+   * `getRegionImage({ elementId: imageElementId })` and composites a mask box over
+   * `region` on the front; on reveal it clears the box and shows `label`.
+   */
+  readonly occlusion: ReviewOcclusion | null;
+}
+
+/** The image-occlusion data the review face needs (T071). */
+export interface ReviewOcclusion {
+  /** The `media_fragment` image extract whose bytes the face loads (base image). */
+  readonly imageElementId: string;
+  /** The masked region this card hides (the answer), shown on reveal. */
+  readonly region: RegionRectInput;
+  /** The label the hidden region stands for, shown on reveal; or `null`. */
+  readonly label: string | null;
+  /** The sibling masks (the diagram's other regions) — for optional dimming. */
+  readonly otherRegions: readonly RegionRectInput[];
 }
 
 export interface ReviewSessionNextRequest {
@@ -1946,6 +1994,9 @@ export interface AppApi {
   };
   readonly cards: {
     create(request: CardsCreateRequest): Promise<CardsCreateResult>;
+    generateOcclusion(
+      request: CardsGenerateOcclusionRequest,
+    ): Promise<CardsGenerateOcclusionResult>;
     update(request: CardsUpdateRequest): Promise<CardsUpdateResult>;
     suspend(request: CardsSuspendRequest): Promise<CardsSuspendResult>;
     delete(request: CardsDeleteRequest): Promise<CardsDeleteResult>;
@@ -2299,6 +2350,17 @@ export const appApi = {
    */
   createCard(request: CardsCreateRequest): Promise<CardsCreateResult> {
     return requireAppApi().cards.create(request);
+  },
+  /**
+   * Generate N sibling `image_occlusion` cards (T071) from a `media_fragment`
+   * image extract + the drawn masks. One transaction: one card per mask, all in one
+   * `sibling_group`. Masks are stored SEPARATELY from the base image (the bytes,
+   * already in the vault, are NOT sent). Does NO FSRS math (M7 schedules).
+   */
+  generateOcclusionCards(
+    request: CardsGenerateOcclusionRequest,
+  ): Promise<CardsGenerateOcclusionResult> {
+    return requireAppApi().cards.generateOcclusion(request);
   },
   /**
    * Edit a card's body in review (T038) — prompt/answer (Q&A) or cloze text. Writes

@@ -77,8 +77,13 @@ export function ReviewRepairBar({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Inline edit-form fields, seeded from the card on open.
+  // Inline edit-form fields, seeded from the card on open. An `image_occlusion`
+  // card has no prompt/answer text body — its content is the image + masked region.
+  // The only editable text is the mask's REVEAL LABEL (stored on the card's
+  // `answer`), so the inline editor shows a single label field for it rather than the
+  // Q&A prompt/answer form (which would be meaningless for an occlusion card).
   const isCloze = card.kind === "cloze";
+  const isOcclusion = card.kind === "image_occlusion";
   const [prompt, setPrompt] = useState("");
   const [answer, setAnswer] = useState("");
   const [cloze, setCloze] = useState("");
@@ -98,7 +103,9 @@ export function ReviewRepairBar({
     try {
       const res = await appApi.updateCard({
         cardId: card.id,
-        ...(isCloze ? { cloze } : { prompt, answer }),
+        // Occlusion: edit the reveal label only (answer). Cloze: the cloze text.
+        // Q&A: prompt + answer.
+        ...(isOcclusion ? { answer } : isCloze ? { cloze } : { prompt, answer }),
       });
       onCardUpdated(patchFromSummary(res.card));
       setEditing(false);
@@ -107,7 +114,7 @@ export function ReviewRepairBar({
     } finally {
       setSaving(false);
     }
-  }, [saving, card.id, isCloze, cloze, prompt, answer, onCardUpdated]);
+  }, [saving, card.id, isOcclusion, isCloze, cloze, prompt, answer, onCardUpdated]);
 
   const suspend = useCallback(async () => {
     if (busy || saving) return;
@@ -191,7 +198,18 @@ export function ReviewRepairBar({
     <>
       {editing ? (
         <div className="rv-edit" data-testid="review-edit">
-          {isCloze ? (
+          {isOcclusion ? (
+            <label className="rv-edit__field">
+              <span className="rv-edit__label">Reveal label</span>
+              <textarea
+                className="rv-edit__textarea"
+                data-testid="review-edit-occlusion-label"
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
+                rows={2}
+              />
+            </label>
+          ) : isCloze ? (
             <label className="rv-edit__field">
               <span className="rv-edit__label">Cloze text</span>
               <textarea
