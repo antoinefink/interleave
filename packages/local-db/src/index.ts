@@ -237,6 +237,7 @@ export {
 export { type TrashItem, TrashRepository } from "./trash-query";
 export type { DbClient, TransactionClient } from "./types";
 export { type UndoResult, UndoService } from "./undo-service";
+export { WorkloadService, type WorkloadSimulateOptions } from "./workload-service";
 
 /**
  * A bag of all nine repositories bound to one Drizzle client. The Electron DB

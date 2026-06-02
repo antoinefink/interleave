@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../components/Icon";
 import { OptimizationPanel } from "../components/OptimizationPanel";
+import { WorkloadSimulator } from "../components/WorkloadSimulator";
 import {
   type AppSettings,
   appApi,
@@ -626,6 +627,8 @@ export function Settings() {
           />
         ))}
       </SectionPanel>
+
+      <WorkloadSimulator />
 
       <OptimizationPanel />
 

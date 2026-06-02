@@ -195,6 +195,7 @@ describe("IPC channels", () => {
         "retention:resolveFor",
         "optimization:suggest",
         "optimization:apply",
+        "workload:simulate",
         "tags:list",
         "tags:add",
         "tags:remove",

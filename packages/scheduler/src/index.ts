@@ -79,6 +79,7 @@ export {
   MIN_CARDS_FOR_FIT,
   MIN_REVIEWS_FOR_FIT,
   nextIntervalDaysForParams,
+  nextIntervalDaysForRetention,
   type OptimizationSuggestion,
   type OptimizationSuggestionParts,
   type OptimizerHistory,
@@ -126,3 +127,19 @@ export {
   resolveDesiredRetention,
   resolveDesiredRetentionDetailed,
 } from "./retention";
+export {
+  DEFAULT_WORKLOAD_WINDOW_DAYS,
+  projectWorkload,
+  type WorkloadAddCardsChange,
+  type WorkloadApplyParamsChange,
+  type WorkloadAttentionItem,
+  type WorkloadCard,
+  type WorkloadChange,
+  type WorkloadDay,
+  type WorkloadOptions,
+  type WorkloadPostponeChange,
+  type WorkloadProjection,
+  type WorkloadRetentionChange,
+  type WorkloadSnapshot,
+  workloadBand,
+} from "./workload";

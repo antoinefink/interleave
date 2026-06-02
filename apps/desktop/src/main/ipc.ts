@@ -116,6 +116,7 @@ import {
   VaultCollectOrphansRequestSchema,
   VaultFindOrphansRequestSchema,
   VaultVerifyRequestSchema,
+  WorkloadSimulateRequestSchema,
 } from "../shared/contract";
 import { AnkiExportError } from "./anki-export-service";
 import { AnkiImportError } from "./anki-import-service";
@@ -978,6 +979,12 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.optimizationApply, (_event, rawRequest: unknown) => {
     const request = OptimizationApplyRequestSchema.parse(rawRequest);
     return dbService.applyOptimization(request);
+  });
+
+  // workload.*  (T081 — workload simulation; read-only preview, mutates nothing)
+  ipcMain.handle(IPC_CHANNELS.workloadSimulate, (_event, rawRequest: unknown) => {
+    const request = WorkloadSimulateRequestSchema.parse(rawRequest);
+    return dbService.simulateWorkload(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.tagsList, () => {

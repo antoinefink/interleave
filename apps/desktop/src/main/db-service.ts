@@ -74,12 +74,14 @@ import {
   ReviewSessionService,
   resolveSourceRef,
   UndoService,
+  WorkloadService,
 } from "@interleave/local-db";
 import {
   CardSchedulerService,
   type IntervalPreview,
   type OptimizationSuggestionParts,
   optimizationSuggestionFromParts,
+  type WorkloadChange,
 } from "@interleave/scheduler";
 import { seedDemoCollection } from "@interleave/testing";
 import type {
@@ -241,6 +243,8 @@ import type {
   VaultCollectOrphansResult,
   VaultOrphansResult,
   VaultVerifyResult,
+  WorkloadSimulateRequest,
+  WorkloadSimulateResult,
 } from "../shared/contract";
 import {
   type AnkiExportFileResult,
@@ -325,6 +329,14 @@ export class DbService {
    * {@link schedulerForCard} reads. Card-only (FSRS), read-only until `apply`.
    */
   private optimization: OptimizationService | null = null;
+  /**
+   * The workload-simulation seam (T081) — a READ-ONLY pure projection over the live
+   * `review_states` + due dates that previews how daily load shifts from altering
+   * desired retention / adding cards / postponing low-priority material BEFORE the user
+   * commits. Mutates nothing (no due date / setting / op). Shares the projector engine
+   * with the T080 optimization workload preview.
+   */
+  private workload: WorkloadService | null = null;
   /**
    * The per-card FSRS scheduler CACHE (T079), keyed by ROUNDED resolved retention so we
    * build at most ~one `CardSchedulerService` per distinct target (not per card). A
@@ -528,6 +540,8 @@ export class DbService {
     this.retention = new RetentionService(this.handle.db);
     // The FSRS parameter-optimization seam (T080) — suggest (read-only) + apply.
     this.optimization = new OptimizationService(this.handle.db);
+    // The workload-simulation seam (T081) — read-only load projection (mutates nothing).
+    this.workload = new WorkloadService(this.handle.db);
     this.schedulerCache = new Map();
     this.schedulerCacheGen = 0;
     // The attention-scheduler APPLY seam (T028): the only place explicit
@@ -560,6 +574,8 @@ export class DbService {
     this.cardEditService = null;
     this.reviewSession = null;
     this.retention = null;
+    this.optimization = null;
+    this.workload = null;
     this.schedulerCache = null;
     this.schedulerCacheGen = 0;
     this.attentionScheduler = null;
@@ -2334,6 +2350,14 @@ export class DbService {
     return this.optimization;
   }
 
+  /** The workload-simulation seam (T081), bound to the open database. */
+  private get workloadService(): WorkloadService {
+    if (!this.workload) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.workload;
+  }
+
   /**
    * Build (or reuse) the FSRS card scheduler for ONE card (T079) — the seam every FSRS
    * call routes through. Resolves the card's effective desired-retention target via the
@@ -2578,6 +2602,36 @@ export class DbService {
     const result = this.optimizationService.apply(scope, request.params);
     this.bumpSchedulerCache();
     return result;
+  }
+
+  // -------------------------------------------------------------------------
+  // workload.*  (T081 — workload simulation)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Preview how daily load shifts under a hypothetical change (T081) — altering desired
+   * retention, adding N cards, or postponing low-priority material — BEFORE committing.
+   * Builds the snapshot from the live tables and runs the pure projector. READ-ONLY:
+   * mutates nothing (no due date / setting / op). The `change` is the Zod-validated
+   * discriminated union; the result baseline is grounded in the same due reads the
+   * queue/analytics report for the same clock.
+   */
+  simulateWorkload(request: WorkloadSimulateRequest): WorkloadSimulateResult {
+    const change = request.change as WorkloadChange;
+    const options: { asOf?: IsoTimestamp; windowDays?: number } = {};
+    if (request.asOf !== undefined) options.asOf = request.asOf as IsoTimestamp;
+    if (request.windowDays !== undefined) options.windowDays = request.windowDays;
+    const projection = this.workloadService.simulate(change, options);
+    return {
+      days: projection.days,
+      overBudgetDaysBefore: projection.overBudgetDaysBefore,
+      overBudgetDaysAfter: projection.overBudgetDaysAfter,
+      peakBefore: projection.peakBefore,
+      peakAfter: projection.peakAfter,
+      deltaNext7: projection.deltaNext7,
+      deltaNext30: projection.deltaNext30,
+      budget: projection.budget,
+    };
   }
 
   /**

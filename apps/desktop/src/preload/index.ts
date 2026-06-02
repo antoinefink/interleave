@@ -102,6 +102,7 @@ import type {
   VaultCollectOrphansRequest,
   VaultFindOrphansRequest,
   VaultVerifyRequest,
+  WorkloadSimulateRequest,
 } from "../shared/contract";
 
 const appApi: AppApi = {
@@ -284,6 +285,10 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.optimizationSuggest, request),
     apply: (request: OptimizationApplyRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.optimizationApply, request),
+  },
+  workload: {
+    simulate: (request: WorkloadSimulateRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.workloadSimulate, request),
   },
   tags: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.tagsList),

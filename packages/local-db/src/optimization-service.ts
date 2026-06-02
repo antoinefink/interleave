@@ -21,10 +21,9 @@
  */
 
 import type { ElementId, IsoTimestamp } from "@interleave/core";
-import { elements, type InterleaveDatabase, reviewStates } from "@interleave/db";
+import { elements, type InterleaveDatabase } from "@interleave/db";
 import {
   MS_PER_DAY,
-  nextIntervalDaysForParams,
   type OptimizationSuggestion,
   type OptimizerHistory,
   type OptimizerReview,
@@ -35,6 +34,7 @@ import { and, eq, isNull } from "drizzle-orm";
 import { ConceptRepository } from "./concept-repository";
 import { ReviewRepository } from "./review-repository";
 import { SettingsRepository } from "./settings-repository";
+import { WorkloadService } from "./workload-service";
 
 /** A bucketed daily due count for the workload preview. */
 export interface WorkloadDay {
@@ -74,11 +74,13 @@ export class OptimizationService {
   private readonly review: ReviewRepository;
   private readonly concepts: ConceptRepository;
   private readonly settings: SettingsRepository;
+  private readonly workload: WorkloadService;
 
   constructor(private readonly db: InterleaveDatabase) {
     this.review = new ReviewRepository(db);
     this.concepts = new ConceptRepository(db);
     this.settings = new SettingsRepository(db);
+    this.workload = new WorkloadService(db);
   }
 
   /** All LIVE `card` element ids (the global-scope history). */
@@ -224,109 +226,35 @@ export class OptimizationService {
   }
 
   /**
-   * The read-only workload-impact preview (T080): project the per-day card-due
-   * counts for the next {@link WORKLOAD_WINDOW_DAYS} days BEFORE (the live due dates)
-   * and AFTER recomputing each affected card's next interval under `candidateParams`.
+   * The read-only workload-impact preview (T080) — now a THIN WRAPPER over the shared
+   * T081 workload projector (`WorkloadService.simulate` → `projectWorkload`), so the
+   * optimization apply-preview and the T081 simulator share ONE engine (not a fork).
    *
-   * APPROXIMATION (labeled an estimate, deterministic): for each live card with a due
-   * date, a `stability`, and a `lastReviewedAt`, the post-apply due date is
-   * `lastReviewedAt + next_interval(stability, elapsed)` under the candidate params —
-   * a single-step `next_interval` projection (NOT a full multi-grade replay). Cards
-   * with no due date / no last review keep their current due day. Recomputes in
-   * memory and writes nothing.
+   * It runs the projector's `applyParams` lever (re-project each in-scope card's due to
+   * `lastReviewedAt + next_interval(stability, elapsed)` under `candidateParams`) and
+   * maps the projection's `{ date, before, after }` series back to this surface's
+   * `{ before: { date, count }[], after: { date, count }[] }` shape (the IPC contract is
+   * unchanged). A concept scope restricts the re-projection to that concept's member
+   * cards. APPROXIMATION (labeled an estimate, deterministic). Read-only.
    */
   workloadImpactOf(
     candidateParams: readonly number[],
     scope: OptimizationScope = { scope: "global" },
     asOf: IsoTimestamp = new Date().toISOString() as IsoTimestamp,
   ): WorkloadImpact {
-    const candidate = [...candidateParams];
-    const window = WORKLOAD_WINDOW_DAYS;
-    const inScope = new Set(this.cardIdsForScope(scope));
-
-    const rows = this.db.select().from(reviewStates).all();
-    const asOfMs = Date.parse(asOf);
-    const startOfDay = startOfLocalDay(new Date(asOfMs));
-    const before = emptyDayBuckets(startOfDay, window);
-    const after = emptyDayBuckets(startOfDay, window);
-
-    for (const row of rows) {
-      const cardId = row.elementId as ElementId;
-      // Skip cards that have never been scheduled (no due date).
-      if (!row.dueAt) continue;
-      const beforeMs = Date.parse(row.dueAt);
-      bucketDue(before, startOfDay, beforeMs, window);
-
-      // The "after" due date: re-project this card's next interval under the
-      // candidate params from its current stability, anchored at its last review.
-      // The FSRS math stays behind the `@interleave/scheduler` boundary (local-db
-      // never imports `ts-fsrs`); a malformed vector / state yields `null` → keep
-      // the current due date.
-      let afterMs = beforeMs;
-      if (inScope.has(cardId) && row.lastReviewedAt && row.stability > 0) {
-        const lastMs = Date.parse(row.lastReviewedAt);
-        const elapsedDays = Math.max(0, (asOfMs - lastMs) / MS_PER_DAY);
-        const intervalDays = nextIntervalDaysForParams(candidate, row.stability, elapsedDays);
-        if (intervalDays !== null && intervalDays >= 0) {
-          afterMs = lastMs + intervalDays * MS_PER_DAY;
-        }
-      }
-      bucketDue(after, startOfDay, afterMs, window);
-    }
-
+    const cardIds = scope.scope === "concept" ? this.cardIdsForScope(scope) : undefined;
+    const change =
+      cardIds === undefined
+        ? ({ kind: "applyParams", params: [...candidateParams] } as const)
+        : ({ kind: "applyParams", params: [...candidateParams], cardIds } as const);
+    const projection = this.workload.simulate(change, { asOf, windowDays: WORKLOAD_WINDOW_DAYS });
+    const before: WorkloadDay[] = projection.days.map((d) => ({ date: d.date, count: d.before }));
+    const after: WorkloadDay[] = projection.days.map((d) => ({ date: d.date, count: d.after }));
     return {
       before,
       after,
-      deltaDueNext7: sumWindow(after, 7) - sumWindow(before, 7),
-      deltaDueNext30: sumWindow(after, 30) - sumWindow(before, 30),
+      deltaDueNext7: projection.deltaNext7,
+      deltaDueNext30: projection.deltaNext30,
     };
   }
-}
-
-/** The start-of-local-day instant for a date (matches the analytics bucketing). */
-function startOfLocalDay(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-}
-
-/** The local-day key (`YYYY-MM-DD`) for a Date. */
-function dayKey(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-/** Build `window` empty day buckets starting at `start` (local days). */
-function emptyDayBuckets(start: Date, window: number): WorkloadDay[] {
-  const out: WorkloadDay[] = [];
-  for (let i = 0; i < window; i += 1) {
-    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
-    out.push({ date: dayKey(d), count: 0 });
-  }
-  return out;
-}
-
-/**
- * Add one due card to the right day bucket. A due date BEFORE `start` (overdue)
- * counts on day 0; a due date past the window is ignored.
- */
-function bucketDue(buckets: WorkloadDay[], start: Date, dueMs: number, window: number): void {
-  const startMs = start.getTime();
-  const dayIndex = Math.floor((dueMs - startMs) / MS_PER_DAY);
-  const clamped = dayIndex < 0 ? 0 : dayIndex;
-  if (clamped >= window) return;
-  const bucket = buckets[clamped];
-  if (bucket) {
-    // Mutate the readonly count via a fresh object (buckets are owned locally).
-    buckets[clamped] = { date: bucket.date, count: bucket.count + 1 };
-  }
-}
-
-/** Sum the first `days` buckets' counts. */
-function sumWindow(buckets: readonly WorkloadDay[], days: number): number {
-  let total = 0;
-  for (let i = 0; i < Math.min(days, buckets.length); i += 1) {
-    total += buckets[i]?.count ?? 0;
-  }
-  return total;
 }

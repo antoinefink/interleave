@@ -3283,6 +3283,84 @@ export interface OptimizationApplyResult {
   readonly applied: true;
 }
 
+// ---------------------------------------------------------------------------
+// workload.*  (T081 — workload simulation)
+//
+// A single READ-ONLY command that previews how daily load shifts BEFORE the user
+// commits a change: (a) altering desired retention (global / a band / a concept),
+// (b) adding N new cards (a planned import), or (c) postponing low-priority material.
+// A pure projection over the live `review_states` + due dates (the `change` is a Zod
+// discriminatedUnion); it mutates nothing and appends no op. FSRS vs attention stay
+// distinct in the projection (a retention lever moves CARDS; a postpone lever moves
+// ATTENTION items + optional low-priority MATURE cards — never fragile). The renderer
+// then `Commit`s the real change via the relevant EXISTING command (retention set /
+// import / postpone); the preview itself commits nothing.
+// ---------------------------------------------------------------------------
+
+/** The priority band a per-band retention / postpone lever targets. */
+export const WorkloadBandSchema = z.enum(["A", "B", "C", "D"]);
+
+/** The discriminated workload-change union the projector accepts. */
+export const WorkloadChangeSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("retention"),
+    scope: z.enum(["global", "band", "concept"]),
+    /** The band label (scope `band`) or concept name (scope `concept`); omit for `global`. */
+    key: z.string().optional(),
+    /** The new desired-retention target (`0`–`1`). */
+    target: z.number().min(0).max(1),
+  }),
+  z.object({
+    kind: z.literal("addCards"),
+    count: z.number().int().min(0).max(100_000),
+    priority: z.number().min(0).max(1),
+    /** How many days out the first review lands (default `0`). */
+    firstDueInDays: z.number().int().min(0).max(3650).optional(),
+  }),
+  z.object({
+    kind: z.literal("postponeLowPriority"),
+    band: WorkloadBandSchema,
+    days: z.number().min(0).max(3650),
+    /** Also postpone low-priority MATURE cards (never fragile) — default `false`. */
+    includeMatureCards: z.boolean().optional(),
+  }),
+]);
+export type WorkloadChangeRequest = z.infer<typeof WorkloadChangeSchema>;
+
+/** `workload.simulate({ change, windowDays?, asOf? })`. */
+export const WorkloadSimulateRequestSchema = z.object({
+  change: WorkloadChangeSchema,
+  /** The projection window length in days (default 30). */
+  windowDays: z.number().int().min(1).max(365).optional(),
+  /** The clock the projection starts at (ISO-8601); defaults to the wall clock. */
+  asOf: IsoTimestampInputSchema.optional(),
+});
+export type WorkloadSimulateRequest = z.infer<typeof WorkloadSimulateRequestSchema>;
+
+/** One local-calendar day's before/after due counts. `date` is `YYYY-MM-DD` (local). */
+export interface WorkloadProjectionDay {
+  readonly date: string;
+  readonly before: number;
+  readonly after: number;
+}
+
+/** The complete workload projection (the `workload.simulate` result). */
+export interface WorkloadSimulateResult {
+  readonly days: readonly WorkloadProjectionDay[];
+  /** Days in the window strictly above `budget` BEFORE the change. */
+  readonly overBudgetDaysBefore: number;
+  /** Days in the window strictly above `budget` AFTER the change. */
+  readonly overBudgetDaysAfter: number;
+  /** The largest single-day due count BEFORE / AFTER the change. */
+  readonly peakBefore: number;
+  readonly peakAfter: number;
+  /** `after - before` total over the next 7 / 30 days (positive = more load). */
+  readonly deltaNext7: number;
+  readonly deltaNext30: number;
+  /** The daily review budget (the overload line). */
+  readonly budget: number;
+}
+
 /** `tags.list()` takes no arguments. */
 export const TagsListRequestSchema = z.void();
 
@@ -4171,6 +4249,16 @@ export interface AppApi {
      * reads it so subsequent grades use the new params (no retroactive reschedule).
      */
     apply(request: OptimizationApplyRequest): Promise<OptimizationApplyResult>;
+  };
+  readonly workload: {
+    /**
+     * Preview how daily load shifts under a hypothetical change (T081) — altering
+     * desired retention, adding N cards, or postponing low-priority material — BEFORE
+     * committing. A pure projection over the live `review_states` + due dates; READ-ONLY
+     * (no due date / setting / op changes). The renderer `Commit`s the real change via
+     * the relevant existing command. FSRS vs attention stay distinct in the projection.
+     */
+    simulate(request: WorkloadSimulateRequest): Promise<WorkloadSimulateResult>;
   };
   readonly tags: {
     /** All tags with their live usage count (T041) — the library filterbar. Read-only. */

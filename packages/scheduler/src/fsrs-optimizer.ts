@@ -426,6 +426,42 @@ export function nextIntervalDaysForParams(
 }
 
 /**
+ * The next FSRS review INTERVAL (days) a card with the given `stability` would be
+ * scheduled at if its desired-retention TARGET were `requestRetention` (T081's workload
+ * preview — the retention lever). FSRS's `next_interval` is
+ * `clamp(round(stability * intervalModifier), 1, maxInterval)`, where the interval
+ * modifier is `(requestRetention^(1/decay) - 1) / factor` — so a HIGHER target shortens
+ * the interval (load pulls earlier) and a LOWER target lengthens it (load pushes later).
+ * This builds the FSRS engine with the new `request_retention` and calls `next_interval`,
+ * so the math is IDENTICAL to what the card scheduler would produce at that target (no
+ * parallel re-implementation). Fuzz off, so the projection is deterministic. Pass the
+ * same `params` the card is scheduled with (its resolved preset, or `default_w`) so only
+ * the target changes.
+ *
+ * Returns `null` for a non-finite/<=0 stability or an out-of-range target (the caller
+ * then keeps the card's current due date). The FSRS dependency stays behind THIS boundary
+ * (`@interleave/local-db` never imports `ts-fsrs`).
+ */
+export function nextIntervalDaysForRetention(
+  stability: number,
+  requestRetention: number,
+  params?: readonly number[],
+): number | null {
+  if (!Number.isFinite(stability) || stability <= 0) return null;
+  if (!Number.isFinite(requestRetention) || requestRetention <= 0 || requestRetention > 1) {
+    return null;
+  }
+  const w = params ? (sanitizeParams(params) ?? defaultParams()) : defaultParams();
+  const engine = fsrs(
+    generatorParameters({ w, request_retention: requestRetention, enable_fuzz: false }),
+  );
+  // `next_interval`'s modifier is independent of `elapsed_days` (elapsed only feeds the
+  // fuzz, which is off), so the interval is anchored purely at the card's last review.
+  const interval = engine.next_interval(stability, 0);
+  return Number.isFinite(interval) ? interval : null;
+}
+
+/**
  * The clean interface a real `fsrs-rs`/wasm trainer can later implement WITHOUT
  * changing callers. The on-device `suggestParameters` is the v1 implementation.
  */

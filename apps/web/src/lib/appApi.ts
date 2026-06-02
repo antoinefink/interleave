@@ -2016,6 +2016,56 @@ export interface OptimizationApplyResult {
   readonly applied: true;
 }
 
+// ---------------------------------------------------------------------------
+// workload.*  (T081 — workload simulation)
+// ---------------------------------------------------------------------------
+
+/** The discriminated workload-change union (the lever being previewed). */
+export type WorkloadChangeRequest =
+  | {
+      readonly kind: "retention";
+      readonly scope: "global" | "band" | "concept";
+      readonly key?: string;
+      readonly target: number;
+    }
+  | {
+      readonly kind: "addCards";
+      readonly count: number;
+      readonly priority: number;
+      readonly firstDueInDays?: number;
+    }
+  | {
+      readonly kind: "postponeLowPriority";
+      readonly band: "A" | "B" | "C" | "D";
+      readonly days: number;
+      readonly includeMatureCards?: boolean;
+    };
+
+export interface WorkloadSimulateRequest {
+  readonly change: WorkloadChangeRequest;
+  readonly windowDays?: number;
+  readonly asOf?: string;
+}
+
+/** One local-calendar day's before/after due counts. `date` is `YYYY-MM-DD` (local). */
+export interface WorkloadProjectionDay {
+  readonly date: string;
+  readonly before: number;
+  readonly after: number;
+}
+
+/** The complete workload projection (the `workload.simulate` result). */
+export interface WorkloadSimulateResult {
+  readonly days: readonly WorkloadProjectionDay[];
+  readonly overBudgetDaysBefore: number;
+  readonly overBudgetDaysAfter: number;
+  readonly peakBefore: number;
+  readonly peakAfter: number;
+  readonly deltaNext7: number;
+  readonly deltaNext30: number;
+  readonly budget: number;
+}
+
 /** The element's organize state after an assign/unassign/tag mutation. */
 export interface ElementOrganizeState {
   readonly elementId: string;
@@ -2450,6 +2500,9 @@ export interface AppApi {
   readonly optimization: {
     suggest(request: OptimizationSuggestRequest): Promise<OptimizationSuggestResult>;
     apply(request: OptimizationApplyRequest): Promise<OptimizationApplyResult>;
+  };
+  readonly workload: {
+    simulate(request: WorkloadSimulateRequest): Promise<WorkloadSimulateResult>;
   };
   readonly tags: {
     list(): Promise<TagsListResult>;
@@ -3038,6 +3091,14 @@ export const appApi = {
    */
   applyOptimization(request: OptimizationApplyRequest): Promise<OptimizationApplyResult> {
     return requireAppApi().optimization.apply(request);
+  },
+  /**
+   * Preview how daily load shifts (T081) from altering desired retention, adding cards,
+   * or postponing low-priority material — BEFORE committing. Read-only: the projection
+   * mutates nothing; the caller `Commit`s the real change via the relevant command.
+   */
+  simulateWorkload(request: WorkloadSimulateRequest): Promise<WorkloadSimulateResult> {
+    return requireAppApi().workload.simulate(request);
   },
   /** All tags with their live usage count (T041) — the library filterbar. */
   listTags(): Promise<TagsListResult> {

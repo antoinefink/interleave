@@ -96,6 +96,10 @@ export const IPC_CHANNELS = {
   // persisting command (writes the queryable preset store).
   optimizationSuggest: "optimization:suggest",
   optimizationApply: "optimization:apply",
+  // Workload simulation (T081) — a single READ-ONLY command that previews how daily
+  // load shifts from altering desired retention / adding cards / postponing low-priority
+  // material BEFORE committing. It mutates nothing (no due date, no setting, no op).
+  workloadSimulate: "workload:simulate",
   tagsList: "tags:list",
   tagsAdd: "tags:add",
   tagsRemove: "tags:remove",
