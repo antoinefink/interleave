@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   ANSWER_MAX_CHARS,
+  answerSimilarity,
   type CardQualityCheckId,
   type CardQualitySeverity,
+  CLOZE_DELETION_MAX_WORDS,
   CLOZE_MAX_WORDS,
   CODE_MAX_LINES,
+  detectInterference,
   evaluateCardQuality,
+  LIST_ITEM_WARN_COUNT,
   LONG_AUDIO_CLIP_MS,
   MAX_CLOZE_DELETIONS,
   PROMPT_MAX_CHARS,
@@ -370,3 +374,256 @@ describe("evaluateCardQuality — audio cards (T075)", () => {
     expect(report.checks.find((c) => c.id === "long-audio-clip")).toBeUndefined();
   });
 });
+
+/**
+ * Minimum-information-principle checks (T086).
+ *
+ * Each new heuristic fires on the right input and stays `ok` otherwise, and NONE ever
+ * produces a `block` (only the hollow-card `empty` blocks). The existing T035/T072/T075
+ * checks above are unchanged.
+ */
+describe("evaluateCardQuality — T086 minimum-information checks", () => {
+  it("multiple-facts: a two-sentence answer warns; a single atomic answer is ok", () => {
+    const multi = evaluateCardQuality({
+      kind: "qa",
+      prompt: "What did the study find?",
+      answer: "Sleep consolidates memory. Caffeine blocks adenosine.",
+      hasSource: true,
+    });
+    expect(check(multi, "multiple-facts").severity).toBe("warn");
+
+    const single = evaluateCardQuality({
+      kind: "qa",
+      prompt: "What does deep sleep do to memory?",
+      answer: "It consolidates memory.",
+      hasSource: true,
+    });
+    expect(check(single, "multiple-facts").severity).toBe("ok");
+  });
+
+  it("multiple-facts: a SHORT two-clause answer joined by 'and' still warns (count, not length)", () => {
+    const report = evaluateCardQuality({
+      kind: "qa",
+      prompt: "Compare the two regions",
+      answer: "Hippocampus encodes, and neocortex stores.",
+      hasSource: true,
+    });
+    // Well under ANSWER_MAX_CHARS, yet two facts.
+    expect(report.checks.find((c) => c.id === "answer-too-long")?.severity).toBe("ok");
+    expect(check(report, "multiple-facts").severity).toBe("warn");
+  });
+
+  it("long-list: a 9-item list warns; a 3-item list is ok", () => {
+    const nine = evaluateCardQuality({
+      kind: "qa",
+      prompt: "Name the cranial nerves group",
+      answer: "one, two, three, four, five, six, seven, eight, nine",
+      hasSource: true,
+    });
+    expect(check(nine, "long-list").severity).toBe("warn");
+    expect(parseListWarn(nine).items).toBeGreaterThan(LIST_ITEM_WARN_COUNT);
+
+    const three = evaluateCardQuality({
+      kind: "qa",
+      prompt: "Name the primary colors",
+      answer: "red, green, blue",
+      hasSource: true,
+    });
+    expect(check(three, "long-list").severity).toBe("ok");
+  });
+
+  it("vague-pronoun: a bare 'this' with no named subject warns; a clear sentence is ok", () => {
+    const vague = evaluateCardQuality({
+      kind: "qa",
+      prompt: "What does this do?",
+      answer: "It runs.",
+      hasSource: true,
+    });
+    expect(check(vague, "vague-pronoun").severity).toBe("warn");
+
+    const clear = evaluateCardQuality({
+      kind: "qa",
+      prompt: "What does the mitochondrion produce?",
+      answer: "Adenosine triphosphate from respiration.",
+      hasSource: true,
+    });
+    expect(check(clear, "vague-pronoun").severity).toBe("ok");
+  });
+
+  it("vague-pronoun does NOT regress the existing leading-pronoun ambiguous-pronoun check", () => {
+    // The T035 case still warns under its own id, unchanged.
+    const report = evaluateCardQuality({
+      kind: "qa",
+      prompt: "What happens?",
+      answer: "It increases this.",
+      hasSource: true,
+    });
+    expect(check(report, "ambiguous-pronoun").severity).toBe("warn");
+  });
+
+  it("unsupported-claim: a sourceless claim-shaped answer warns; a sourced one is ok", () => {
+    const sourceless = evaluateCardQuality({
+      kind: "qa",
+      prompt: "Effect of sleep deprivation?",
+      answer: "Sleep deprivation causes a 40% drop in recall.",
+      hasSource: false,
+    });
+    expect(check(sourceless, "unsupported-claim").severity).toBe("warn");
+
+    const sourced = evaluateCardQuality({
+      kind: "qa",
+      prompt: "Effect of sleep deprivation?",
+      answer: "Sleep deprivation causes a 40% drop in recall.",
+      hasSource: true,
+    });
+    expect(check(sourced, "unsupported-claim").severity).toBe("ok");
+
+    // A sourceless NON-claim (a plain definition) does not escalate.
+    const definition = evaluateCardQuality({
+      kind: "qa",
+      prompt: "Define entropy",
+      answer: "A measure of disorder.",
+      hasSource: false,
+    });
+    expect(check(definition, "unsupported-claim").severity).toBe("ok");
+  });
+
+  it("outdated-source: time-sensitive language with no sourceDate warns; with a date it is ok", () => {
+    const undated = evaluateCardQuality({
+      kind: "qa",
+      prompt: "What is the current LTS Node version?",
+      answer: "Node 20.",
+      hasSource: true,
+    });
+    expect(check(undated, "outdated-source").severity).toBe("warn");
+
+    const dated = evaluateCardQuality({
+      kind: "qa",
+      prompt: "What is the current LTS Node version?",
+      answer: "Node 20.",
+      hasSource: true,
+      sourceDate: "2024-05-01",
+    });
+    expect(check(dated, "outdated-source").severity).toBe("ok");
+  });
+
+  it("outdated-source: sourceIsStale warns even without time-sensitive language", () => {
+    const stale = evaluateCardQuality({
+      kind: "qa",
+      prompt: "Define recursion",
+      answer: "A function that calls itself.",
+      hasSource: true,
+      sourceIsStale: true,
+    });
+    expect(check(stale, "outdated-source").severity).toBe("warn");
+  });
+
+  it("outdated-source: a timeless claim adds NO outdated-source row", () => {
+    const report = evaluateCardQuality({
+      kind: "qa",
+      prompt: "Define recursion",
+      answer: "A function that calls itself.",
+      hasSource: true,
+    });
+    expect(report.checks.find((c) => c.id === "outdated-source")).toBeUndefined();
+  });
+
+  it("oversized-cloze: a 12-word single deletion warns; a 3-word deletion is ok (independent of body length)", () => {
+    const big = evaluateCardQuality({
+      kind: "cloze",
+      cloze:
+        "The result is {{c1::a very long phrase that is basically a whole sentence to recall}}.",
+      hasSource: true,
+    });
+    expect(check(big, "oversized-cloze").severity).toBe("warn");
+
+    const ok = evaluateCardQuality({
+      kind: "cloze",
+      cloze: "Memory moves to the {{c1::neocortex region}}.",
+      hasSource: true,
+    });
+    expect(check(ok, "oversized-cloze").severity).toBe("ok");
+  });
+
+  it("oversized-cloze is distinct from the whole-body answer-too-long check", () => {
+    // A short whole body (under CLOZE_MAX_WORDS) but one over-long deletion.
+    const cloze = `A is {{c1::${Array.from({ length: CLOZE_DELETION_MAX_WORDS + 4 }, (_, i) => `w${i}`).join(" ")}}}.`;
+    const report = evaluateCardQuality({ kind: "cloze", cloze, hasSource: true });
+    expect(report.checks.find((c) => c.id === "answer-too-long")?.severity).toBe("ok");
+    expect(check(report, "oversized-cloze").severity).toBe("warn");
+  });
+
+  it("produces NO new block — only the hollow-card empty check ever blocks", () => {
+    // A maximally-bad card (multi-fact, list, vague, claim, time-sensitive, oversized
+    // cloze) still has exactly one possible blocker source: the empty/hollow check.
+    const report = evaluateCardQuality({
+      kind: "qa",
+      prompt: "What is the current value of this, and that, and the other thing as of 2024?",
+      answer: "It causes a, b, c, d, e, f, g. And it always proves the point.",
+      hasSource: false,
+    });
+    expect(report.hasBlocker).toBe(false);
+    expect(report.checks.filter((c) => c.severity === "block")).toHaveLength(0);
+    // But it IS loud with warnings.
+    expect(report.hasWarning).toBe(true);
+  });
+
+  it("a clean atomic card stays all-ok across the new checks too", () => {
+    const report = evaluateCardQuality({
+      kind: "qa",
+      prompt: "How does Chollet define intelligence?",
+      answer: "As skill-acquisition efficiency.",
+      hasSource: true,
+    });
+    expect(report.hasWarning).toBe(false);
+    expect(report.checks.every((c) => c.severity === "ok")).toBe(true);
+  });
+});
+
+describe("detectInterference (T086 similar-answer)", () => {
+  const candidate = {
+    kind: "qa" as const,
+    prompt: "What does deep sleep consolidate?",
+    answer: "Deep sleep consolidates long-term memory.",
+    hasSource: true,
+  };
+
+  it("warns when a sibling answer is near-identical", () => {
+    const row = detectInterference(candidate, [
+      { id: "sib_1", answer: "Deep sleep consolidates long term memory." },
+    ]);
+    expect(row).not.toBeNull();
+    expect(row?.id).toBe("similar-answer");
+    expect(row?.severity).toBe("warn");
+  });
+
+  it("returns null for a distinct sibling answer", () => {
+    const row = detectInterference(candidate, [
+      { id: "sib_1", answer: "The hippocampus encodes new episodic events." },
+    ]);
+    expect(row).toBeNull();
+  });
+
+  it("returns null for an empty candidate set (degrades gracefully)", () => {
+    expect(detectInterference(candidate, [])).toBeNull();
+  });
+
+  it("compares a cloze sibling by its rendered body", () => {
+    const row = detectInterference(candidate, [
+      { id: "sib_1", cloze: "Deep sleep consolidates {{c1::long-term memory}}." },
+    ]);
+    expect(row).not.toBeNull();
+  });
+
+  it("answerSimilarity is 1 for identical normalized text and 0 for disjoint", () => {
+    expect(answerSimilarity("Long-term memory", "long term memory")).toBe(1);
+    expect(answerSimilarity("apple", "orange")).toBe(0);
+  });
+});
+
+/** Read the item count out of the long-list warn message ("Long list (N items)…"). */
+function parseListWarn(report: ReturnType<typeof evaluateCardQuality>): { items: number } {
+  const row = report.checks.find((c) => c.id === "long-list");
+  const match = row?.message.match(/\((\d+) items\)/);
+  return { items: match ? Number.parseInt(match[1] ?? "0", 10) : 0 };
+}

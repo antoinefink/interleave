@@ -318,3 +318,57 @@ test("authoring a multi-cloze card from an extract persists canonical text + clo
 
   await app.close();
 });
+
+/**
+ * Minimum-information-principle quality checks (T086) — drives the real Electron app.
+ *
+ * Proves the new advisory `qc` rows render in the builder over real IPC, never block
+ * authoring, and — critically — that the `similar-answer` INTERFERENCE row fires from
+ * the REAL `cards.siblingAnswers` read seam: after authoring one card under an extract,
+ * re-opening the builder and typing a near-identical answer surfaces the interference
+ * warning, computed main-side from the durable sibling answer (not a renderer guess).
+ */
+test("T086 quality checks surface advisory rows + interference from the real sibling read, without blocking", async () => {
+  const app = await launchApp(dataDir, { seedOnEmpty: true });
+  const page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+  const url = new URL(page.url());
+  baseUrl = `${url.protocol}//${url.host}`;
+  const srcId = await resolveSourceId(page);
+  // A FRESH extract so its only card children are the ones authored here.
+  const qcExtractId = await createIntroExtract(page, srcId);
+
+  await openExtract(page, qcExtractId);
+  await page.getByTestId("extract-convert").click();
+  await expect(page.getByTestId("card-builder")).toBeVisible();
+  await expect(page.getByTestId("cb-qa-front")).toBeVisible();
+
+  // (a) Author a FIRST clean card so a sibling answer exists under this extract.
+  await page.getByTestId("cb-qa-front").fill("What does deep sleep consolidate?");
+  await page.getByTestId("cb-qa-back").fill("Deep sleep consolidates long-term memory.");
+  await page.getByTestId("cb-create").click();
+  await expect(page.getByText("Q&A card created")).toBeVisible();
+
+  // (b) MULTIPLE-FACTS + LONG-LIST — advisory warns that do NOT block Create.
+  await page.getByTestId("cb-qa-front").fill("What two things happen?");
+  await page
+    .getByTestId("cb-qa-back")
+    .fill("Sleep consolidates memory. Caffeine blocks adenosine.");
+  await expect(page.getByTestId("cb-qc-multiple-facts")).toHaveAttribute("data-severity", "warn");
+  await expect(page.getByTestId("cb-create")).toBeEnabled();
+
+  // (c) INTERFERENCE — a near-identical answer to the first card trips `similar-answer`,
+  // computed from the REAL `cards.siblingAnswers` read of the durable sibling. The
+  // candidate set was refreshed after the first create, so it is available now.
+  await page.getByTestId("cb-qa-front").fill("What does deep sleep consolidate again?");
+  await page.getByTestId("cb-qa-back").fill("Deep sleep consolidates long term memory.");
+  await expect(page.getByTestId("cb-qc-similar-answer")).toHaveAttribute("data-severity", "warn");
+  // It is advisory — Create stays enabled.
+  await expect(page.getByTestId("cb-create")).toBeEnabled();
+
+  // (d) A distinct answer clears the interference row (the heuristic is content-driven).
+  await page.getByTestId("cb-qa-back").fill("The hippocampus first encodes new episodic events.");
+  await expect(page.getByTestId("cb-qc-similar-answer")).toHaveCount(0);
+
+  await app.close();
+});

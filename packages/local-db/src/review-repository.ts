@@ -129,6 +129,16 @@ export interface CardWithElement {
   readonly card: CardRow;
 }
 
+/**
+ * The comparable answer body of one sibling card (T086) — only the fields the pure
+ * `detectInterference` similar-answer heuristic compares. No FSRS state, no lineage.
+ */
+export interface SiblingCardBody {
+  readonly id: ElementId;
+  readonly answer: string | null;
+  readonly cloze: string | null;
+}
+
 /** The full FSRS state assigned by a review (computed by the scheduler upstream). */
 export interface ReviewOutcome {
   readonly rating: ReviewRating;
@@ -302,6 +312,33 @@ export class ReviewRepository {
     const card = this.db.select().from(cards).where(eq(cards.elementId, elementId)).get();
     if (!elementRow || !card) return null;
     return { element: rowToElement(elementRow), card };
+  }
+
+  /**
+   * The answer bodies of the live `card` children of an extract (T086) — the read-only
+   * candidate set the card builder feeds to the pure `detectInterference` similar-answer
+   * heuristic. Joins the `card`-typed live (not soft-deleted) child elements to their
+   * `cards` rows and returns ONLY the comparable fields (`answer`/`cloze`); no FSRS state,
+   * no lineage resolution. Pure read — no mutation, no `operation_log`.
+   */
+  listSiblingCardBodies(extractId: ElementId): SiblingCardBody[] {
+    return this.db
+      .select({ id: cards.elementId, answer: cards.answer, cloze: cards.cloze })
+      .from(cards)
+      .innerJoin(elements, eq(elements.id, cards.elementId))
+      .where(
+        and(
+          eq(elements.parentId, extractId),
+          eq(elements.type, "card"),
+          isNull(elements.deletedAt),
+        ),
+      )
+      .all()
+      .map((row) => ({
+        id: row.id as ElementId,
+        answer: row.answer ?? null,
+        cloze: row.cloze ?? null,
+      }));
   }
 
   /** Read the FSRS state for a card, or `null`. */

@@ -222,6 +222,7 @@ export {
   type ReviewOutcome,
   ReviewRepository,
   type ReviewStateSeed,
+  type SiblingCardBody,
 } from "./review-repository";
 export {
   type NextReviewCard,

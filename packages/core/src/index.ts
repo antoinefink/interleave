@@ -42,16 +42,25 @@ export type {
   CardQualityReport,
   CardQualitySeverity,
   ClozeQualityInput,
+  InterferenceCandidate,
   QaQualityInput,
+  SourceRecencySignals,
 } from "./card-quality";
 export {
   ANSWER_MAX_CHARS,
+  answerSimilarity,
+  CLOZE_DELETION_MAX_WORDS,
   CLOZE_MAX_WORDS,
   CODE_MAX_LINES,
+  detectInterference,
   evaluateCardQuality,
+  INTERFERENCE_SIMILARITY_THRESHOLD,
+  LIST_ITEM_WARN_COUNT,
   LONG_AUDIO_CLIP_MS,
   MAX_CLOZE_DELETIONS,
+  MAX_FACTS_HINT,
   PROMPT_MAX_CHARS,
+  TIME_SENSITIVE_TERMS,
 } from "./card-quality";
 // Cloze parse/serialize/preview — structured-metadata source of truth (./cloze).
 export type {

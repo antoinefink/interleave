@@ -2861,6 +2861,32 @@ export interface CardsRetiredResult {
   readonly cards: RetiredCardSummary[];
 }
 
+/**
+ * Request the sibling card ANSWERS under an extract (T086) — the one-shot, read-only
+ * candidate set the card builder feeds to the pure `detectInterference` heuristic. Fetched
+ * once when the builder opens / the extract changes, NEVER on every keystroke.
+ */
+export const CardsSiblingAnswersRequestSchema = z.object({
+  /** The originating extract whose live card children supply the comparison set. */
+  extractId: ElementIdSchema,
+});
+export type CardsSiblingAnswersRequest = z.infer<typeof CardsSiblingAnswersRequestSchema>;
+
+/** One sibling card's answer body (the interference comparison unit, T086). */
+export interface SiblingCardAnswer {
+  /** The sibling card element id (so the candidate never compares against itself). */
+  readonly id: string;
+  /** The Q&A answer, when the sibling is a Q&A card. */
+  readonly answer: string | null;
+  /** The canonical cloze text, when the sibling is a cloze card. */
+  readonly cloze: string | null;
+}
+
+/** The sibling answer bodies under an extract (T086, read-only). */
+export interface CardsSiblingAnswersResult {
+  readonly cards: SiblingCardAnswer[];
+}
+
 // ---------------------------------------------------------------------------
 // review.session.next() / review.preview() / review.grade()  (T037 — the session)
 // ---------------------------------------------------------------------------
@@ -4515,6 +4541,13 @@ export interface AppApi {
      * Read-only — no mutation, no `operation_log`.
      */
     retired(): Promise<CardsRetiredResult>;
+    /**
+     * The sibling card ANSWERS under an extract (T086) — the read-only candidate set the
+     * card builder feeds to the pure `detectInterference` similar-answer heuristic. Fetched
+     * once when the builder opens / the extract changes (NOT per keystroke). Read-only — no
+     * mutation, no `operation_log`.
+     */
+    siblingAnswers(request: CardsSiblingAnswersRequest): Promise<CardsSiblingAnswersResult>;
     /**
      * Import an Anki `.apkg` deck (T070) — MAIN unwraps the ZIP, opens the embedded
      * `collection.anki2` (`better-sqlite3`), and authors the notes as `card` elements

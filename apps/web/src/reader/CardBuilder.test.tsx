@@ -24,6 +24,7 @@ const h = vi.hoisted(() => ({
   createCard: vi.fn(),
   getRegionImage: vi.fn(),
   generateOcclusionCards: vi.fn(),
+  siblingCardAnswers: vi.fn(),
   onToast: vi.fn(),
   onCardCreated: vi.fn(),
   onClose: vi.fn(),
@@ -35,6 +36,7 @@ vi.mock("../lib/appApi", () => ({
     createCard: h.createCard,
     getRegionImage: h.getRegionImage,
     generateOcclusionCards: h.generateOcclusionCards,
+    siblingCardAnswers: h.siblingCardAnswers,
   },
 }));
 
@@ -74,6 +76,8 @@ beforeEach(() => {
   });
   h.getRegionImage.mockResolvedValue({ bytes: new ArrayBuffer(8), mime: "image/png" });
   h.generateOcclusionCards.mockResolvedValue({ siblingGroupId: "sg_1", cards: [] });
+  // Default: no sibling cards (interference check absent). Specific tests override this.
+  h.siblingCardAnswers.mockResolvedValue({ cards: [] });
   if (!("createObjectURL" in URL)) {
     // biome-ignore lint/suspicious/noExplicitAny: jsdom shim
     (URL as any).createObjectURL = () => "blob:mock";
@@ -270,6 +274,85 @@ describe("CardBuilder — quality checks (T035)", () => {
     expect(screen.getByTestId("cb-qc-multiple-clozes")).toHaveAttribute("data-severity", "warn");
     // Two deletions is still authorable (warnings never block).
     expect(screen.getByTestId("cb-create")).not.toBeDisabled();
+  });
+});
+
+describe("CardBuilder — T086 minimum-information rows", () => {
+  it("renders the new check rows (multiple-facts + oversized-cloze) and still allows Create", () => {
+    renderBuilder({ hasSource: true, seedBody: "" });
+    fireEvent.change(screen.getByTestId("cb-qa-front"), { target: { value: "What happened?" } });
+    fireEvent.change(screen.getByTestId("cb-qa-back"), {
+      target: { value: "Sleep consolidates memory. Caffeine blocks adenosine." },
+    });
+    // A multi-fact answer trips the new warn row…
+    expect(screen.getByTestId("cb-qc-multiple-facts")).toHaveAttribute("data-severity", "warn");
+    // …but warnings never block authoring.
+    expect(screen.getByTestId("cb-create")).not.toBeDisabled();
+
+    // The oversized-cloze row appears on the Cloze tab for a long single deletion.
+    fireEvent.click(screen.getByTestId("cb-tab-cloze"));
+    fireEvent.change(screen.getByTestId("cb-cloze-text"), {
+      target: {
+        value: "The answer is {{c1::a very long phrase that is basically a whole sentence}}.",
+      },
+    });
+    expect(screen.getByTestId("cb-qc-oversized-cloze")).toHaveAttribute("data-severity", "warn");
+    expect(screen.getByTestId("cb-create")).not.toBeDisabled();
+  });
+
+  it("warns 'outdated-source' for time-sensitive text without a sourceDate, and clears with one", () => {
+    const { rerender } = renderBuilder({ hasSource: true, seedBody: "" });
+    fireEvent.change(screen.getByTestId("cb-qa-front"), {
+      target: { value: "What is the current LTS Node version?" },
+    });
+    fireEvent.change(screen.getByTestId("cb-qa-back"), { target: { value: "Node 20." } });
+    expect(screen.getByTestId("cb-qc-outdated-source")).toHaveAttribute("data-severity", "warn");
+
+    rerender(
+      <CardBuilder
+        extractId="ex_1"
+        extractPriority={0.625}
+        hasSource
+        sourceDate="2024-05-01"
+        seedBody=""
+        initialTab="qa"
+        onToast={h.onToast}
+        onCardCreated={h.onCardCreated}
+        onClose={h.onClose}
+      />,
+    );
+    fireEvent.change(screen.getByTestId("cb-qa-front"), {
+      target: { value: "What is the current LTS Node version?" },
+    });
+    fireEvent.change(screen.getByTestId("cb-qa-back"), { target: { value: "Node 20." } });
+    expect(screen.getByTestId("cb-qc-outdated-source")).toHaveAttribute("data-severity", "ok");
+  });
+
+  it("shows the interference row when a sibling answer is near-identical (one-shot read)", async () => {
+    h.siblingCardAnswers.mockResolvedValue({
+      cards: [{ id: "sib_1", answer: "Deep sleep consolidates long-term memory.", cloze: null }],
+    });
+    renderBuilder({ hasSource: true, seedBody: "" });
+    // The interference candidate set is loaded once on open; wait for it.
+    await waitFor(() => expect(h.siblingCardAnswers).toHaveBeenCalledWith({ extractId: "ex_1" }));
+
+    fireEvent.change(screen.getByTestId("cb-qa-front"), {
+      target: { value: "What does deep sleep consolidate?" },
+    });
+    fireEvent.change(screen.getByTestId("cb-qa-back"), {
+      target: { value: "Deep sleep consolidates long term memory." },
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("cb-qc-similar-answer")).toHaveAttribute("data-severity", "warn"),
+    );
+    expect(screen.getByTestId("cb-create")).not.toBeDisabled();
+  });
+
+  it("omits the interference row when no sibling answers are available (graceful degradation)", () => {
+    renderBuilder({ hasSource: true, seedBody: "" });
+    fireEvent.change(screen.getByTestId("cb-qa-front"), { target: { value: "Q?" } });
+    fireEvent.change(screen.getByTestId("cb-qa-back"), { target: { value: "A distinct answer." } });
+    expect(screen.queryByTestId("cb-qc-similar-answer")).toBeNull();
   });
 });
 

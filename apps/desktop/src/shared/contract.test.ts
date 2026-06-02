@@ -26,6 +26,7 @@ import {
   type CardsImportAnkiResult,
   CardsMarkLeechRequestSchema,
   CardsRetireRequestSchema,
+  CardsSiblingAnswersRequestSchema,
   CardsSuspendRequestSchema,
   CardsUnretireRequestSchema,
   CardsUpdateRequestSchema,
@@ -182,6 +183,7 @@ describe("IPC channels", () => {
         "cards:retire",
         "cards:unretire",
         "cards:retired",
+        "cards:siblingAnswers",
         "cards:importAnki",
         "cards:exportAnki",
         "extracts:updateStage",
@@ -1255,6 +1257,11 @@ describe("Card repair schemas (T038)", () => {
     expect(CardsDeleteRequestSchema.parse({ cardId: "el_1" }).cardId).toBe("el_1");
     expect(() => CardsSuspendRequestSchema.parse({})).toThrow();
     expect(() => CardsDeleteRequestSchema.parse({})).toThrow();
+  });
+
+  it("cards.siblingAnswers requires an extractId (T086)", () => {
+    expect(CardsSiblingAnswersRequestSchema.parse({ extractId: "ex_1" }).extractId).toBe("ex_1");
+    expect(() => CardsSiblingAnswersRequestSchema.parse({})).toThrow();
   });
 
   it("cards.flag requires a cardId + boolean flagged, with an optional reason", () => {

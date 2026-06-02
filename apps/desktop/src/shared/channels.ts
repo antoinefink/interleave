@@ -81,6 +81,9 @@ export const IPC_CHANNELS = {
   cardsRetire: "cards:retire",
   cardsUnretire: "cards:unretire",
   cardsRetired: "cards:retired",
+  // T086: the read-only sibling-answer candidate set the card builder feeds to the pure
+  // `detectInterference` similar-answer heuristic (fetched once per extract, not per keystroke).
+  cardsSiblingAnswers: "cards:siblingAnswers",
   cardsImportAnki: "cards:importAnki",
   cardsExportAnki: "cards:exportAnki",
   extractsUpdateStage: "extracts:updateStage",

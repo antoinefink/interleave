@@ -39,9 +39,12 @@
  */
 
 import {
+  type CardQualityCheck,
   type CardQualityInput,
   canonicalizeCloze,
+  detectInterference,
   evaluateCardQuality,
+  type InterferenceCandidate,
   parseCloze,
   renderClozePrompt,
 } from "@interleave/core";
@@ -103,6 +106,18 @@ export interface CardBuilderProps {
    */
   readonly hasSource?: boolean;
   /**
+   * The originating source's publish/anchor date (T086) — feeds the `outdated-source`
+   * time-sensitive quality check. When the card uses time-sensitive language but this is
+   * absent, the claim warns "no date/version". The renderer ships only the string (from the
+   * inspector provenance); it resolves nothing itself. Defaults to `undefined`.
+   */
+  readonly sourceDate?: string | null;
+  /**
+   * A caller-supplied "this source is known stale" flag (T086) — when `true`, the
+   * `outdated-source` check warns regardless of wording. Defaults to `undefined`.
+   */
+  readonly sourceIsStale?: boolean;
+  /**
    * Seed text for the answer / cloze body (usually the extract's atomic
    * statement). The user edits both fields freely from here.
    */
@@ -129,6 +144,8 @@ export function CardBuilder({
   isImageExtract = false,
   audioClip,
   hasSource = false,
+  sourceDate,
+  sourceIsStale,
   seedBody,
   initialTab = "qa",
   initialClozeText,
@@ -154,6 +171,13 @@ export function CardBuilder({
   // The sibling group the FIRST card from this extract minted; threaded into the
   // next create so a Q&A + cloze pair are recorded as siblings.
   const [siblingGroupId, setSiblingGroupId] = useState<string | undefined>(undefined);
+  // T086: the sibling/concept card ANSWERS under this extract — the candidate set the pure
+  // `detectInterference` heuristic compares against. Fetched ONCE when the builder opens / the
+  // extract changes (and after a card is created), NEVER on every keystroke. Empty when none
+  // are available (the interference check then degrades gracefully to absent).
+  const [interferenceCandidates, setInterferenceCandidates] = useState<
+    readonly InterferenceCandidate[]
+  >([]);
 
   // When the host re-seeds the builder (a new extract / a Cloze-toolbar open), pick
   // up the new tab + cloze pre-wrap without remounting. An image extract forces the
@@ -170,6 +194,28 @@ export function CardBuilder({
     setPriority(defaultLabel);
   }, [defaultLabel]);
 
+  // T086: load the sibling-answer candidate set for the interference check — ONE read per
+  // extract (and a refresh after creating a card), OFF the per-keystroke path. The pure
+  // `detectInterference` heuristic compares the current draft against these. If the read
+  // fails or returns nothing, the candidate set stays empty and the check is simply absent.
+  const loadCandidates = useCallback(async () => {
+    if (!extractId) {
+      setInterferenceCandidates([]);
+      return;
+    }
+    try {
+      const result = await appApi.siblingCardAnswers({ extractId });
+      setInterferenceCandidates(
+        result.cards.map((c) => ({ id: c.id, answer: c.answer, cloze: c.cloze })),
+      );
+    } catch {
+      setInterferenceCandidates([]);
+    }
+  }, [extractId]);
+  useEffect(() => {
+    void loadCandidates();
+  }, [loadCandidates]);
+
   // The card-quality report (T035) runs live on every edit. The component holds NO
   // heuristic logic — it calls the pure `@interleave/core` `evaluateCardQuality` and
   // renders the ordered `ok` / `warn` / `block` rows as the `qc` checklist. A
@@ -185,12 +231,42 @@ export function CardBuilder({
           audioClipMs: audioClip ? audioClip.endMs - audioClip.startMs : null,
         }
       : {};
+    // Source-recency signals (T086): the time-sensitive `outdated-source` check reads these
+    // optional inputs the renderer supplies from the inspector provenance.
+    const recencySignals = {
+      ...(sourceDate != null ? { sourceDate } : {}),
+      ...(sourceIsStale != null ? { sourceIsStale } : {}),
+    };
     const input: CardQualityInput =
       tab === "qa"
-        ? { kind: "qa", prompt: front, answer: back, hasSource, ...audioSignals }
-        : { kind: "cloze", cloze, hasSource, ...audioSignals };
-    return evaluateCardQuality(input);
-  }, [tab, front, back, cloze, hasSource, isAudio, audioOn, audioClip]);
+        ? { kind: "qa", prompt: front, answer: back, hasSource, ...audioSignals, ...recencySignals }
+        : { kind: "cloze", cloze, hasSource, ...audioSignals, ...recencySignals };
+    const report = evaluateCardQuality(input);
+    // T086 interference: the ONE check that needs sibling answers — the pure
+    // `detectInterference` heuristic compares this draft against the (one-shot-loaded)
+    // candidate set. Merge its row into the rendered checklist when it fires; absent otherwise.
+    const interference = detectInterference(input, interferenceCandidates);
+    const checks: readonly CardQualityCheck[] = interference
+      ? [...report.checks, interference]
+      : report.checks;
+    return {
+      checks,
+      hasBlocker: report.hasBlocker,
+      hasWarning: report.hasWarning || interference != null,
+    };
+  }, [
+    tab,
+    front,
+    back,
+    cloze,
+    hasSource,
+    sourceDate,
+    sourceIsStale,
+    isAudio,
+    audioOn,
+    audioClip,
+    interferenceCandidates,
+  ]);
 
   // Create is allowed with warnings; only a `block`-severity check (the hollow-card
   // set) disables it. This is the create-time precondition M7's activation reuses.
@@ -264,6 +340,9 @@ export function CardBuilder({
         isAudio ? "Audio card created" : tab === "qa" ? "Q&A card created" : "Cloze card created",
       );
       onCardCreated();
+      // T086: refresh the interference candidate set so the NEXT card from this extract
+      // can be compared against the one just created (still one read, not per-keystroke).
+      void loadCandidates();
       // Leave the builder ready for another card: keep the body context, clear the
       // authored prompt so the user does not accidentally re-create the same card.
       if (tab === "qa") {
@@ -290,6 +369,7 @@ export function CardBuilder({
     audioOn,
     onToast,
     onCardCreated,
+    loadCandidates,
   ]);
 
   // An image extract (T071) gets the dedicated occlusion editor as the WHOLE builder

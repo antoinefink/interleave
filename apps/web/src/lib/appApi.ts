@@ -1615,6 +1615,23 @@ export interface CardsRetiredResult {
   readonly cards: readonly RetiredCardSummary[];
 }
 
+/** Request the sibling card answers under an extract (T086 — interference candidates). */
+export interface CardsSiblingAnswersRequest {
+  readonly extractId: string;
+}
+
+/** One sibling card's comparable answer body (T086). */
+export interface SiblingCardAnswer {
+  readonly id: string;
+  readonly answer: string | null;
+  readonly cloze: string | null;
+}
+
+/** The sibling answer bodies under an extract (T086 — the read-only candidate set). */
+export interface CardsSiblingAnswersResult {
+  readonly cards: readonly SiblingCardAnswer[];
+}
+
 // ---------------------------------------------------------------------------
 // cards.importAnki() / cards.exportAnki()  (T070 — Anki .apkg/CSV interop)
 // ---------------------------------------------------------------------------
@@ -2697,6 +2714,7 @@ export interface AppApi {
     retire(request: CardsRetireRequest): Promise<CardsRetireResult>;
     unretire(request: CardsUnretireRequest): Promise<CardsUnretireResult>;
     retired(): Promise<CardsRetiredResult>;
+    siblingAnswers(request: CardsSiblingAnswersRequest): Promise<CardsSiblingAnswersResult>;
     importAnki(request: CardsImportAnkiRequest): Promise<CardsImportAnkiResult>;
     exportAnki(request: CardsExportAnkiRequest): Promise<CardsExportAnkiResult>;
   };
@@ -3217,6 +3235,14 @@ export const appApi = {
   /** The retired-card inventory (T082) — every LIVE retired card + memory + lineage. */
   retiredCards(): Promise<CardsRetiredResult> {
     return requireAppApi().cards.retired();
+  },
+  /**
+   * The sibling card answers under an extract (T086) — the read-only candidate set the
+   * card builder feeds to the pure `detectInterference` similar-answer heuristic. Fetched
+   * once when the builder opens / the extract changes, never on every keystroke.
+   */
+  siblingCardAnswers(request: CardsSiblingAnswersRequest): Promise<CardsSiblingAnswersResult> {
+    return requireAppApi().cards.siblingAnswers(request);
   },
   /**
    * Import an Anki `.apkg` deck as `card` elements under a per-deck `source` (T070),

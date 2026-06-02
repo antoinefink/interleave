@@ -113,6 +113,8 @@ import type {
   CardsRetiredResult,
   CardsRetireRequest,
   CardsRetireResult,
+  CardsSiblingAnswersRequest,
+  CardsSiblingAnswersResult,
   CardsSplitRequest,
   CardsSplitResult,
   CardsSuspendRequest,
@@ -2558,6 +2560,19 @@ export class DbService {
       };
     });
     return { cards };
+  }
+
+  /**
+   * The sibling card ANSWERS under an extract (T086) — the read-only candidate set the
+   * card builder feeds to the pure `detectInterference` similar-answer heuristic. Reads
+   * the live `card` children of the extract via {@link ReviewRepository.listSiblingCardBodies}
+   * and returns only the comparable bodies. Read-only — no mutation, no `operation_log`.
+   */
+  cardsSiblingAnswers(request: CardsSiblingAnswersRequest): CardsSiblingAnswersResult {
+    const siblings = this.repos.review.listSiblingCardBodies(request.extractId as ElementId);
+    return {
+      cards: siblings.map((s) => ({ id: s.id, answer: s.answer, cloze: s.cloze })),
+    };
   }
 
   /** The retention RESOLVER seam (T079), bound to the open database. */

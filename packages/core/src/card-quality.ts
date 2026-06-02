@@ -46,7 +46,19 @@ export type CardQualityCheckId =
   // thresholds would over-warn on legitimate code).
   | "code-too-long"
   // T075: an audio card whose looped clip is over ~30 s warns (minimum-information).
-  | "long-audio-clip";
+  | "long-audio-clip"
+  // T086 — the remaining minimum-information-principle heuristics. Each is advisory
+  // (`warn`), never a new hard block (the only blocker stays the hollow-card `empty`).
+  | "multiple-facts"
+  | "long-list"
+  | "vague-pronoun"
+  | "unsupported-claim"
+  | "outdated-source"
+  | "oversized-cloze"
+  // `similar-answer` is produced by the SEPARATE pure {@link detectInterference}
+  // function (it needs caller-supplied sibling answers), not by the single-card
+  // {@link evaluateCardQuality} — but it shares this id union + check shape.
+  | "similar-answer";
 
 /** One row of the quality checklist. */
 export interface CardQualityCheck {
@@ -87,8 +99,33 @@ export interface AudioQualitySignals {
   readonly audioClipMs?: number | null;
 }
 
+/**
+ * Optional source-recency signals (T086) the caller may supply from the originating
+ * source's metadata, feeding the `outdated-source` time-sensitive check. Both are
+ * backward-compatible — a caller that omits them behaves exactly as before, and the
+ * check only escalates a card whose TEXT uses time-sensitive language (a version, a
+ * year, "current"/"latest"/"as of") while carrying no anchoring date.
+ *
+ * Real fact-expiry (`valid_from`/`valid_until`/`review_by`/staleness scheduling) is
+ * deferred to M18/T090 — T086 only WARNS at authoring time and exposes these inputs the
+ * later task can feed.
+ */
+export interface SourceRecencySignals {
+  /**
+   * The source's publish/anchor date (ISO or any truthy string) when known. When a card
+   * uses time-sensitive language but this is absent/empty, the claim has nothing dating
+   * it → warn. A present date silences the time-sensitive warning (the claim is dated).
+   */
+  readonly sourceDate?: string | null;
+  /**
+   * A caller-supplied "this source is known to be stale" flag (e.g. the source is years
+   * old, or superseded). When `true`, warn regardless of the card's wording.
+   */
+  readonly sourceIsStale?: boolean;
+}
+
 /** Discriminated quality input for a Q&A card. */
-export interface QaQualityInput extends AudioQualitySignals {
+export interface QaQualityInput extends AudioQualitySignals, SourceRecencySignals {
   readonly kind: "qa";
   /** The card front / question. */
   readonly prompt: string;
@@ -99,7 +136,7 @@ export interface QaQualityInput extends AudioQualitySignals {
 }
 
 /** Discriminated quality input for a cloze card. */
-export interface ClozeQualityInput extends AudioQualitySignals {
+export interface ClozeQualityInput extends AudioQualitySignals, SourceRecencySignals {
   readonly kind: "cloze";
   /** The canonical `{{c1::answer}}` cloze text. */
   readonly cloze: string;
@@ -162,6 +199,100 @@ export const CODE_MAX_LINES = 12;
  * 30-second clip usually bundles more than one phrase/idea. 30 s = 30_000 ms.
  */
 export const LONG_AUDIO_CLIP_MS = 30_000;
+
+/**
+ * T086 — `multiple-facts`: an answer/cloze-body that holds MORE THAN this many distinct
+ * assertions warns "split into one card per fact". A "fact unit" is a sentence (split on
+ * `.`/`!`/`?`) OR an independent clause joined by a coordinating conjunction / `;`. The
+ * minimum-information principle wants ONE fact per card — so even a SHORT two-sentence
+ * answer warns (this is independent of the char-length `answer-too-long` check). A
+ * documented heuristic, NOT a parser: false positives are acceptable for a `warn`.
+ */
+export const MAX_FACTS_HINT = 1;
+
+/**
+ * T086 — `long-list`: an answer/cloze-body that enumerates MORE THAN this many
+ * delimiter-separated items warns "list/set too large — split it". A long enumeration
+ * is better as several cards or an overlapping-cloze set. Tuned so a normal 2–3 item
+ * answer stays `ok` and only a genuine long list (≥ 6 items) trips.
+ */
+export const LIST_ITEM_WARN_COUNT = 5;
+
+/**
+ * T086 — `oversized-cloze`: any SINGLE `{{cN::…}}` deletion span longer than this many
+ * words asks the user to recall too much in one blank (distinct from the whole-body
+ * {@link CLOZE_MAX_WORDS}). A `{{c1::a long phrase that is basically a whole sentence}}`
+ * is not an atomic deletion. Tuned smaller than the whole-body cap on purpose.
+ */
+export const CLOZE_DELETION_MAX_WORDS = 6;
+
+/**
+ * T086 — `outdated-source`: phrases/patterns that mark a TIME-SENSITIVE claim (one that
+ * silently rots without a date/version). Matched case-insensitively against the card
+ * text; when present AND the card carries no `sourceDate`, the claim has nothing dating
+ * it → warn. A small, documented list (not exhaustive), plus the version/year regexes
+ * in {@link TIME_SENSITIVE_PATTERNS}.
+ */
+export const TIME_SENSITIVE_TERMS: readonly string[] = [
+  "current",
+  "currently",
+  "latest",
+  "as of",
+  "right now",
+  "nowadays",
+  "today",
+  "this year",
+  "recent",
+  "recently",
+  "newest",
+  "up to date",
+  "up-to-date",
+];
+
+/**
+ * Regex patterns for time-sensitive content the {@link TIME_SENSITIVE_TERMS} word list
+ * cannot catch: a software/version token (`v1.2`, `Node 18`, `Python 3.11`), or a bare
+ * 4-digit year (`2024`). A card that pins itself to a version/year is time-sensitive —
+ * if it carries no anchoring `sourceDate`, the claim can silently rot.
+ */
+const TIME_SENSITIVE_PATTERNS: readonly RegExp[] = [
+  // A version token: an optional leading `v`, OR a name immediately followed by a
+  // dotted/integer version (`Node 18`, `Python 3.11`, `macOS 14`, `v1.2.3`).
+  /\bv\d+(?:\.\d+)*\b/i,
+  /\b[A-Za-z][\w.+#-]*\s+\d+(?:\.\d+)+\b/,
+  // A bare 4-digit year in a plausible range (avoids matching arbitrary 4-digit ids).
+  /\b(?:19|20)\d{2}\b/,
+];
+
+/**
+ * T086 — `unsupported-claim`: shapes that mark an answer as a strong factual ASSERTION
+ * (rather than a definition or a label) — so a SOURCELESS such answer escalates beyond
+ * the generic `missing-source` advisory. Causal language, a comparative, a definitive
+ * quantifier, or a number/percentage. Documented heuristic; advisory only.
+ */
+const CLAIM_SHAPE_PATTERNS: readonly RegExp[] = [
+  /\b(causes?|caused|leads? to|results? in|due to|because|increases?|decreases?|reduces?|improves?|prevents?)\b/i,
+  /\b(always|never|all|none|every|must|cannot|proven|proves?)\b/i,
+  /\b\d+(?:\.\d+)?%/, // a percentage
+  /\b\d{2,}\b/, // a multi-digit number (a quantitative claim)
+];
+
+/**
+ * T086 — `vague-pronoun` (broadens the leading-pronoun `ambiguous-pronoun`): a bare
+ * demonstrative/pronoun used MID-text with no concrete noun anywhere on the SAME face to
+ * bind it to. A documented heuristic — we look for a standalone `this`/`that`/`it`/`they`
+ * and, when the face names NO multi-letter noun-ish word besides pronouns/stopwords,
+ * treat the reference as dangling. Kept conservative (advisory only).
+ */
+const VAGUE_PRONOUNS: readonly string[] = ["this", "that", "it", "they", "them", "these", "those"];
+
+/**
+ * Default Jaccard-over-word-shingles similarity at/above which two answers are judged
+ * near-identical (likely to interfere) by {@link detectInterference}. A heuristic
+ * interference WARN, NOT semantic dedup (semantic similarity + duplicate detection is
+ * M18/T088). Tuned high so only truly near-duplicate answers trip.
+ */
+export const INTERFERENCE_SIMILARITY_THRESHOLD = 0.85;
 
 /**
  * A fenced code block — ```` ```lang\n…\n``` ````. T072's code cards carry a code body
@@ -228,6 +359,142 @@ function leadsWithAmbiguousPronoun(text: string): boolean {
 }
 
 /**
+ * Count the distinct "fact units" in prose (T086 `multiple-facts`). A unit is a
+ * non-empty sentence (split on `.`/`!`/`?` terminators) PLUS each independent clause a
+ * sentence joins with a coordinating conjunction (`and`/`but`/`or`/`;`) — so a single
+ * sentence "X is true, and Y is false" counts as two. A documented heuristic, not a
+ * grammar parser: an `and`/`or` inside a noun phrase ("salt and pepper") can over-count,
+ * which is acceptable for an advisory `warn`. Returns 0 for empty/whitespace text.
+ */
+function factCount(text: string): number {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return 0;
+  // Split into sentences on terminal punctuation; drop empties.
+  const sentences = trimmed.split(/[.!?]+/).filter((s) => s.trim().length > 0);
+  // Each sentence is at least one fact; a coordinating conjunction / semicolon joining
+  // two independent clauses inside it adds one more per join.
+  let count = 0;
+  for (const sentence of sentences) {
+    const joins = sentence.match(/(;|\b(?:and|but|or)\b)/gi);
+    count += 1 + (joins?.length ?? 0);
+  }
+  // A bare phrase with no terminal punctuation but internal joins ("a; b; c").
+  if (sentences.length === 0) count = 1;
+  return count;
+}
+
+/**
+ * Count delimiter-separated enumeration items (T086 `long-list`). Splits on commas,
+ * semicolons, newlines, and bullet markers, then drops empties. A list-shaped answer
+ * ("a, b, c, d, e, f, g") returns its item count; ordinary prose with a comma or two
+ * returns a small number (so it stays under {@link LIST_ITEM_WARN_COUNT}). Returns 0
+ * for empty text.
+ */
+function listItemCount(text: string): number {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return 0;
+  const items = trimmed
+    .split(/\s*(?:,|;|\n|•|·|•)\s*|\s+-\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  return items.length;
+}
+
+/**
+ * True when `text` references a bare demonstrative/pronoun mid-text but names NO concrete
+ * noun on the same face to anchor it (T086 `vague-pronoun`). Conservative: only fires
+ * when a vague pronoun appears AND every other word is a short stopword/pronoun (so the
+ * face is "What does this do?" with no subject, not "Sleep clears this from the brain.").
+ */
+function hasDanglingPronoun(text: string): boolean {
+  const lower = text.toLowerCase();
+  const words = lower.match(/[a-z']+/g) ?? [];
+  if (words.length === 0) return false;
+  const usesVague = words.some((w) => VAGUE_PRONOUNS.includes(w));
+  if (!usesVague) return false;
+  // A "concrete noun candidate" is a word of length ≥ 4 that is NOT a pronoun and NOT a
+  // common function/stop word — a documented, deliberately loose proxy for "names a
+  // subject". If the face has any such word, the pronoun likely has an antecedent.
+  const namesSubject = words.some(
+    (w) => w.length >= 4 && !VAGUE_PRONOUNS.includes(w) && !STOPWORDS.has(w),
+  );
+  return !namesSubject;
+}
+
+/**
+ * Short function/stop words that do NOT count as "naming a subject" for the dangling-
+ * pronoun heuristic — so "What does this do?" (only stopwords + a pronoun) is flagged,
+ * but "What does mitochondria do?" is not.
+ */
+const STOPWORDS: ReadonlySet<string> = new Set([
+  "what",
+  "does",
+  "what's",
+  "when",
+  "where",
+  "which",
+  "whom",
+  "whose",
+  "with",
+  "from",
+  "into",
+  "that",
+  "this",
+  "they",
+  "them",
+  "then",
+  "than",
+  "have",
+  "here",
+  "there",
+  "were",
+  "will",
+  "would",
+  "could",
+  "should",
+  "about",
+  "your",
+  "ours",
+  "very",
+  "just",
+  "only",
+  "also",
+  "such",
+  "some",
+  "many",
+  "much",
+]);
+
+/** True when any time-sensitive term or pattern appears in `text` (T086). */
+function isTimeSensitive(text: string): boolean {
+  const lower = text.toLowerCase();
+  if (TIME_SENSITIVE_TERMS.some((t) => lower.includes(t))) return true;
+  return TIME_SENSITIVE_PATTERNS.some((re) => re.test(text));
+}
+
+/** True when an answer is "claim-shaped" — a strong factual assertion (T086). */
+function isClaimShaped(text: string): boolean {
+  return CLAIM_SHAPE_PATTERNS.some((re) => re.test(text));
+}
+
+/**
+ * Lower-case word-shingle (single-word) Jaccard similarity in `[0,1]` between two
+ * strings — the pure, deterministic string metric {@link detectInterference} uses. Two
+ * identical normalized strings → `1`; fully disjoint → `0`. No NLP, no embeddings.
+ */
+export function answerSimilarity(a: string, b: string): number {
+  const tokens = (s: string): Set<string> =>
+    new Set((s.toLowerCase().match(/[a-z0-9']+/g) ?? []).filter((w) => w.length > 0));
+  const setA = tokens(a);
+  const setB = tokens(b);
+  if (setA.size === 0 && setB.size === 0) return 0;
+  let intersection = 0;
+  for (const w of setA) if (setB.has(w)) intersection += 1;
+  const union = setA.size + setB.size - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+/**
  * Evaluate a `card_draft`'s quality, returning an ordered {@link CardQualityReport}.
  *
  * Pure + deterministic (no NLP models, no DB): the same input always yields the same
@@ -240,6 +507,19 @@ function leadsWithAmbiguousPronoun(text: string): boolean {
  *  - **multiple-clozes** (more than {@link MAX_CLOZE_DELETIONS} distinct deletions) → `warn`;
  *  - **ambiguous-pronoun** (prompt/answer leads with a bare pronoun) → `warn`;
  *  - **missing-source** (`hasSource === false`) → `warn`.
+ *
+ * The T086 minimum-information additions (all advisory `warn`, never a new blocker):
+ *
+ *  - **multiple-facts** (the answer/body holds more than one assertion);
+ *  - **long-list** (the answer/body enumerates more than {@link LIST_ITEM_WARN_COUNT} items);
+ *  - **vague-pronoun** (a bare demonstrative mid-face with no named subject);
+ *  - **unsupported-claim** (a sourceless, claim-shaped answer);
+ *  - **outdated-source** (time-sensitive language with no `sourceDate`, or `sourceIsStale`);
+ *  - **oversized-cloze** (a single deletion span over {@link CLOZE_DELETION_MAX_WORDS} words).
+ *
+ * The **similar-answer** interference check needs sibling answers, so it is produced by
+ * the separate caller-fed {@link detectInterference}, not here ({@link evaluateCardQuality}
+ * stays single-card-pure).
  */
 export function evaluateCardQuality(input: CardQualityInput): CardQualityReport {
   const checks: CardQualityCheck[] = input.kind === "qa" ? evaluateQa(input) : evaluateCloze(input);
@@ -262,6 +542,36 @@ export function evaluateCardQuality(input: CardQualityInput): CardQualityReport 
             message: `Focused audio clip (${seconds}s)`,
           },
     );
+  }
+
+  // T086 — outdated-source / time-sensitive: shared across kinds. The card text is the
+  // combined face(s); a version/year/"current"-style claim with NO anchoring sourceDate
+  // (or an explicitly stale source) can silently rot. Advisory only — real fact expiry
+  // is M18/T090.
+  const faceText =
+    input.kind === "qa"
+      ? `${input.prompt} ${input.answer}`
+      : (input.parsed ?? parseCloze(input.cloze)).rendered;
+  const timeSensitive = isTimeSensitive(faceText);
+  const dated = typeof input.sourceDate === "string" && input.sourceDate.trim().length > 0;
+  if (input.sourceIsStale === true) {
+    checks.push({
+      id: "outdated-source",
+      severity: "warn",
+      message: "Source is marked stale — verify the claim is still current",
+    });
+  } else if (timeSensitive && !dated) {
+    checks.push({
+      id: "outdated-source",
+      severity: "warn",
+      message: "Time-sensitive claim with no date/version — add when it was true",
+    });
+  } else if (timeSensitive) {
+    checks.push({
+      id: "outdated-source",
+      severity: "ok",
+      message: "Time-sensitive claim is dated",
+    });
   }
 
   // Missing source is shared across kinds and shown last (least urgent advisory).
@@ -356,8 +666,14 @@ function evaluateQa(input: QaQualityInput): CardQualityCheck[] {
   }
 
   // Ambiguous pronoun — meaningless on a code body, so skip it when EITHER side is code.
+  // The T086 prose heuristics (multiple-facts/long-list/vague-pronoun/unsupported-claim)
+  // are likewise prose-only and skipped when either side is code.
   if (!promptIsCode && !answerIsCode) {
     checks.push(ambiguousPronounCheck(`${prompt} ${answer}`, prompt, answer));
+    checks.push(multipleFactsCheck(answer));
+    checks.push(longListCheck(answer));
+    checks.push(vaguePronounCheck(`${prompt} ${answer}`, prompt, answer));
+    checks.push(unsupportedClaimCheck(answer, input.hasSource));
   }
 
   return checks;
@@ -446,11 +762,105 @@ function evaluateCloze(input: ClozeQualityInput): CardQualityCheck[] {
   }
 
   // Ambiguous pronoun in the cloze body (skipped for a code body — meaningless there).
+  // The T086 prose heuristics run on the rendered body too; oversized-cloze inspects each
+  // DELETION span (independent of the whole-body word count) and applies even on code-free
+  // bodies — a single over-long blank asks too much regardless of body length.
   if (!bodyIsCode) {
     checks.push(ambiguousPronounCheck(parsed.rendered, parsed.rendered, ""));
+    checks.push(multipleFactsCheck(parsed.rendered));
+    checks.push(longListCheck(parsed.rendered));
+    checks.push(vaguePronounCheck(parsed.rendered, parsed.rendered, ""));
+    checks.push(oversizedClozeCheck(parsed));
   }
 
   return checks;
+}
+
+/**
+ * T086 `multiple-facts`: warn when the answer/body plausibly holds more than one fact
+ * ({@link factCount} over {@link MAX_FACTS_HINT}). Targets FACT COUNT, not length — a
+ * short two-sentence answer still warns. Advisory only.
+ */
+function multipleFactsCheck(text: string): CardQualityCheck {
+  return factCount(text) > MAX_FACTS_HINT
+    ? {
+        id: "multiple-facts",
+        severity: "warn",
+        message: "Holds multiple facts — split into one card per fact",
+      }
+    : { id: "multiple-facts", severity: "ok", message: "One fact" };
+}
+
+/**
+ * T086 `long-list`: warn when the answer/body is a long enumeration ({@link listItemCount}
+ * over {@link LIST_ITEM_WARN_COUNT}). A long list/set is better as several cards or an
+ * overlapping-cloze set. Advisory only.
+ */
+function longListCheck(text: string): CardQualityCheck {
+  const items = listItemCount(text);
+  return items > LIST_ITEM_WARN_COUNT
+    ? {
+        id: "long-list",
+        severity: "warn",
+        message: `Long list (${items} items) — split it or use an overlapping cloze set`,
+      }
+    : { id: "long-list", severity: "ok", message: "Not an over-long list" };
+}
+
+/**
+ * T086 `vague-pronoun`: warn when a face uses a bare demonstrative/pronoun mid-text with
+ * no concrete noun on the SAME face to anchor it ({@link hasDanglingPronoun}). Broadens
+ * the leading-only `ambiguous-pronoun` (kept stable) without regressing it. Conservative.
+ */
+function vaguePronounCheck(
+  _combined: string,
+  primary: string,
+  secondary: string,
+): CardQualityCheck {
+  const vague =
+    hasDanglingPronoun(primary) || (secondary.length > 0 && hasDanglingPronoun(secondary));
+  return vague
+    ? {
+        id: "vague-pronoun",
+        severity: "warn",
+        message: "Vague reference (this/that/it…) with no named subject — name what it refers to",
+      }
+    : { id: "vague-pronoun", severity: "ok", message: "References a named subject" };
+}
+
+/**
+ * T086 `unsupported-claim`: warn when a SOURCELESS answer is "claim-shaped" — a strong
+ * factual assertion (causal/comparative/definitive/quantitative). Stricter than the
+ * generic `missing-source`: escalates a claim that needs evidence. When the card has a
+ * source, or the answer is not claim-shaped, stays `ok`. No network/lookup.
+ */
+function unsupportedClaimCheck(answer: string, hasSource: boolean): CardQualityCheck {
+  return !hasSource && isClaimShaped(answer)
+    ? {
+        id: "unsupported-claim",
+        severity: "warn",
+        message: "Factual claim with no source — attach where this is supported",
+      }
+    : { id: "unsupported-claim", severity: "ok", message: "No unsupported claim" };
+}
+
+/**
+ * T086 `oversized-cloze`: warn when ANY single `{{cN::…}}` deletion span exceeds
+ * {@link CLOZE_DELETION_MAX_WORDS} words — too much to recall in one blank, distinct from
+ * the whole-body {@link CLOZE_MAX_WORDS}. Uses the parsed model's per-deletion answers.
+ */
+function oversizedClozeCheck(parsed: ParsedCloze): CardQualityCheck {
+  let worst = 0;
+  for (const deletion of parsed.deletions) {
+    worst = Math.max(worst, wordCount(deletion.answer));
+  }
+  return worst > CLOZE_DELETION_MAX_WORDS
+    ? {
+        id: "oversized-cloze",
+        severity: "warn",
+        message: `A cloze blank is ${worst} words — shorten what each {{ }} hides`,
+      }
+    : { id: "oversized-cloze", severity: "ok", message: "Each cloze blank is concise" };
 }
 
 /**
@@ -477,4 +887,67 @@ function ambiguousPronounCheck(
         severity: "ok",
         message: "No dangling pronoun",
       };
+}
+
+/** A candidate sibling/concept card to compare against for interference (T086). */
+export interface InterferenceCandidate {
+  /** The sibling card's element id (so the candidate never compares against itself). */
+  readonly id: string;
+  /** The sibling Q&A answer, when it is a Q&A card. */
+  readonly answer?: string | null;
+  /** The sibling cloze text, when it is a cloze card (its rendered body is compared). */
+  readonly cloze?: string | null;
+}
+
+/**
+ * Detect a likely INTERFERENCE pair (T086 `similar-answer`): warn when the candidate
+ * card's answer is near-identical to an existing sibling/concept card's answer (two cards
+ * whose answers are nearly the same are prone to interfere in review). This is the ONE
+ * minimum-information check that needs more than the single card's text, so it is kept
+ * SEPARATE from the single-card-pure {@link evaluateCardQuality}: the CALLER supplies the
+ * comparison set (sibling cards under the same extract/concept, WITH their answer bodies),
+ * and this function stays pure (no DB, no embeddings). The builder merges the returned row
+ * into the rendered `qc` list.
+ *
+ * Returns `null` (no row) when the candidate has no answer text, the comparison set is
+ * empty, or nothing is similar — so the check degrades gracefully to ABSENT. A heuristic
+ * interference WARN over a normalized string similarity ({@link answerSimilarity} ≥
+ * {@link INTERFERENCE_SIMILARITY_THRESHOLD}); true semantic similarity / duplicate
+ * detection is M18/T088 and is NOT pulled into `packages/core`.
+ */
+export function detectInterference(
+  candidate: CardQualityInput,
+  siblings: readonly InterferenceCandidate[],
+  threshold: number = INTERFERENCE_SIMILARITY_THRESHOLD,
+): CardQualityCheck | null {
+  const candidateAnswer = answerBodyOf(candidate);
+  if (candidateAnswer.trim().length === 0 || siblings.length === 0) return null;
+
+  for (const sibling of siblings) {
+    const siblingAnswer = siblingAnswerBody(sibling);
+    if (siblingAnswer.trim().length === 0) continue;
+    if (answerSimilarity(candidateAnswer, siblingAnswer) >= threshold) {
+      return {
+        id: "similar-answer",
+        severity: "warn",
+        message: "Nearly identical to another card — they may interfere; merge or differentiate",
+      };
+    }
+  }
+  return null;
+}
+
+/** The comparable answer text of a quality input (Q&A answer, or rendered cloze body). */
+function answerBodyOf(input: CardQualityInput): string {
+  if (input.kind === "qa") return input.answer;
+  return (input.parsed ?? parseCloze(input.cloze)).rendered;
+}
+
+/** The comparable answer text of a sibling candidate (Q&A answer, or rendered cloze). */
+function siblingAnswerBody(candidate: InterferenceCandidate): string {
+  if (typeof candidate.answer === "string" && candidate.answer.length > 0) return candidate.answer;
+  if (typeof candidate.cloze === "string" && candidate.cloze.length > 0) {
+    return parseCloze(candidate.cloze).rendered;
+  }
+  return "";
 }

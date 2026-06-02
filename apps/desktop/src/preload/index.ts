@@ -30,6 +30,7 @@ import type {
   CardsImportAnkiRequest,
   CardsMarkLeechRequest,
   CardsRetireRequest,
+  CardsSiblingAnswersRequest,
   CardsSplitRequest,
   CardsSuspendRequest,
   CardsUnretireRequest,
@@ -246,6 +247,8 @@ const appApi: AppApi = {
     unretire: (request: CardsUnretireRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.cardsUnretire, request),
     retired: () => ipcRenderer.invoke(IPC_CHANNELS.cardsRetired),
+    siblingAnswers: (request: CardsSiblingAnswersRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.cardsSiblingAnswers, request),
     importAnki: (request: CardsImportAnkiRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.cardsImportAnki, request),
     exportAnki: (request: CardsExportAnkiRequest) =>

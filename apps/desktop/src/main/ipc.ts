@@ -28,6 +28,7 @@ import {
   CardsImportAnkiRequestSchema,
   CardsMarkLeechRequestSchema,
   CardsRetireRequestSchema,
+  CardsSiblingAnswersRequestSchema,
   CardsSplitRequestSchema,
   CardsSuspendRequestSchema,
   CardsUnretireRequestSchema,
@@ -899,6 +900,11 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
 
   ipcMain.handle(IPC_CHANNELS.cardsRetired, () => {
     return dbService.cardsRetired();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.cardsSiblingAnswers, (_event, rawRequest: unknown) => {
+    const request = CardsSiblingAnswersRequestSchema.parse(rawRequest);
+    return dbService.cardsSiblingAnswers(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.extractsUpdateStage, (_event, rawRequest: unknown) => {

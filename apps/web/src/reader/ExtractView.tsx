@@ -828,6 +828,11 @@ export function ExtractView() {
             // The card inherits a source location iff the extract has one — feeds the
             // T035 "missing source" quality check. The renderer ships only the boolean.
             hasSource={inspector?.location != null || inspector?.source != null}
+            // T086: the source publish date feeds the time-sensitive `outdated-source`
+            // quality check — the renderer ships only the string from the provenance.
+            {...(inspector?.provenance?.publishedAt != null
+              ? { sourceDate: inspector.provenance.publishedAt }
+              : {})}
             seedBody={doc.plainText}
             initialTab={builder.tab}
             {...(builder.clozeText !== undefined ? { initialClozeText: builder.clozeText } : {})}
