@@ -39,6 +39,7 @@ import {
 import type { InterleaveDatabase } from "@interleave/db";
 import { extractPdfPages, extractPdfTitle, pdfPagesToProseMirrorDoc } from "@interleave/importers";
 import {
+  type ElementRepository,
   type InboxItemSummary,
   InboxQuery,
   newElementId,
@@ -102,6 +103,7 @@ export interface PdfImportResult {
 
 export class PdfImportService {
   private readonly sources: SourceRepository;
+  private readonly elements: ElementRepository;
   private readonly inbox: InboxQuery;
   private readonly assetsDir: string;
   private readonly assetVault: AssetVaultService;
@@ -111,6 +113,7 @@ export class PdfImportService {
     // tx-composable path); `createWithDocument` opens its own transaction, so it is
     // not stored here.
     this.sources = deps.repositories.sources;
+    this.elements = deps.repositories.elements;
     this.inbox = new InboxQuery(deps.repositories);
     this.assetsDir = deps.assetsDir;
     this.assetVault = deps.assetVault;
@@ -199,6 +202,11 @@ export class PdfImportService {
         ? NO_TEXT_NOTE
         : null;
 
+    // `createWithDocument` and `importAsset` are SEPARATE transactions (the latter
+    // opens its own metadata tx), so a failure in step 5 cannot roll back step 4.
+    // Track whether the source row committed so the catch can undo a partial import
+    // rather than leave an orphan inbox source pointing at a snapshot that never landed.
+    let sourceCommitted = false;
     try {
       // 4. Create the source + its body in ONE transaction. `snapshotKey` already
       //    points at the PDF we are about to stream in (step 5).
@@ -213,6 +221,7 @@ export class PdfImportService {
         reasonAdded,
         conversion,
       });
+      sourceCommitted = true;
 
       // 5. Stream the original PDF into the vault keyed by the now-existing source
       //    (its own metadata transaction; bytes never touch SQLite). Passing the
@@ -226,10 +235,17 @@ export class PdfImportService {
         destRelativePath: snapshotRel,
       });
     } catch (err) {
-      // Best-effort: remove the partial vault dir so no orphan files linger. The
-      // source-row transaction either committed (then this throw came from
-      // `importAsset` — the row is rolled forward only with a missing snapshot,
-      // which we surface by throwing) or never committed. We re-throw either way.
+      // A partial import must leave NO trace. If the source row committed (the throw
+      // came from `importAsset`), soft-delete it so the inbox never shows a source
+      // whose `snapshotKey` points at a PDF that was never stored. Then drop the
+      // partial vault dir. Both are best-effort; we re-throw the original error.
+      if (sourceCommitted) {
+        try {
+          this.elements.softDelete(sourceId as ElementId);
+        } catch {
+          // ignore — surface the original import error below
+        }
+      }
       try {
         rmSync(sourceDir, { recursive: true, force: true });
       } catch {

@@ -53,6 +53,17 @@ describe("parseReadwiseCsv", () => {
     expect(highlights[0]?.tags).toEqual(["transformers", "nlp"]);
     expect(highlights[1]?.tags).toEqual(["nlp"]);
   });
+
+  it("resolves columns case-insensitively (header casing varies across exporters)", () => {
+    // ALL-CAPS headers — not in the candidate-name lists, so an exact-key lookup
+    // would silently drop every column. `pick` matches case-insensitively.
+    const odd = "HIGHLIGHT,TITLE,AUTHOR\n" + "Recall is a skill,Make It Stick,Brown\n";
+    const parsed = parseReadwiseCsv(odd);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.text).toBe("Recall is a skill");
+    expect(parsed[0]?.title).toBe("Make It Stick");
+    expect(parsed[0]?.author).toBe("Brown");
+  });
 });
 
 describe("parseReadwiseJson", () => {

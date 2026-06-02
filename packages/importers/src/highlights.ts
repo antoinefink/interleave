@@ -99,11 +99,20 @@ function splitTags(raw: string | null | undefined): string[] {
     .filter((t) => t.length > 0);
 }
 
-/** Case-insensitively resolve a value from a CSV row by candidate header names. */
+/**
+ * Resolve a value from a CSV row by candidate header names, CASE-INSENSITIVELY (and
+ * tolerant of surrounding whitespace in the header). Readwise/Kindle exports vary the
+ * header casing across versions/locales, so an exact-key lookup would silently drop a
+ * column whose case differs from every candidate. The first candidate that resolves to
+ * a non-empty trimmed value wins.
+ */
 function pick(row: Record<string, string>, ...names: string[]): string | null {
   for (const name of names) {
-    const value = row[name];
-    if (value != null && value.trim().length > 0) return value.trim();
+    const wanted = name.trim().toLowerCase();
+    for (const [key, value] of Object.entries(row)) {
+      if (key.trim().toLowerCase() !== wanted) continue;
+      if (value != null && value.trim().length > 0) return value.trim();
+    }
   }
   return null;
 }

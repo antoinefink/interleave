@@ -19,7 +19,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { MIGRATIONS_DIR } from "@interleave/db";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { AssetVaultService } from "./asset-vault-service";
 import { DbService } from "./db-service";
 import { PdfImportError } from "./pdf-import-service";
 
@@ -145,6 +146,31 @@ describe("PdfImportService.importFromFile", () => {
     });
     expect(svc.listInbox().items.length).toBe(before);
     // No `sources/` dir was left behind for a failed import.
+    const sourcesDir = path.join(assetsDir, "sources");
+    const entries = fs.existsSync(sourcesDir) ? fs.readdirSync(sourcesDir) : [];
+    expect(entries).toHaveLength(0);
+    svc.close();
+  });
+
+  it("soft-deletes the orphan source if the vault PDF import fails after the row commits", async () => {
+    const svc = openSvc();
+    const fixture = path.join(FIXTURES, "two-page-text.pdf");
+    const before = svc.listInbox().items.length;
+
+    // Force step 5 (importAsset) to fail AFTER the source row + body committed in
+    // step 4 — the partial-import case the catch must undo (e.g. disk full).
+    const spy = vi
+      .spyOn(AssetVaultService.prototype, "importAsset")
+      .mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(svc.pdfImportService.importFromFile({ filePath: fixture })).rejects.toThrow(
+      "disk full",
+    );
+    spy.mockRestore();
+
+    // The orphan source was soft-deleted: the inbox is back to its prior count and
+    // no live source dangles with a snapshotKey pointing at a PDF that never landed.
+    expect(svc.listInbox().items.length).toBe(before);
     const sourcesDir = path.join(assetsDir, "sources");
     const entries = fs.existsSync(sourcesDir) ? fs.readdirSync(sourcesDir) : [];
     expect(entries).toHaveLength(0);
