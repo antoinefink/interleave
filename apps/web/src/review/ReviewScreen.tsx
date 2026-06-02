@@ -40,6 +40,7 @@ import { useNavigateToLocation } from "../reader/navigateToLocation";
 import { useActiveScope } from "../shell/activeScope";
 import { Kbd } from "../shell/Kbd";
 import { useSelection } from "../shell/selection";
+import { CardBody } from "./CardBody";
 import { CardFront } from "./CardFront";
 import { CardOcclusionFace } from "./CardOcclusionFace";
 import { ReviewRepairBar } from "./ReviewRepairBar";
@@ -519,7 +520,11 @@ export function ReviewScreen() {
                           {card.kind === "cloze" ? (
                             <CardFront card={card} revealed={true} />
                           ) : (
-                            (card.answer ?? "")
+                            // T072: the Q&A answer is a SEPARATE call site from the
+                            // prompt (`CardFront`). Render it through the shared
+                            // `CardBody` so math + highlighted code show on the back
+                            // too — never as a raw LaTeX/source string.
+                            <CardBody body={card.answer ?? ""} />
                           )}
                         </div>
                         {/* Source reference (T043) — the enriched refblock, shown ONLY

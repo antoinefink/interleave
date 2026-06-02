@@ -33,16 +33,23 @@
   },
   "dependencies": {
     "@interleave/core": "workspace:*",
+    "@shikijs/core": "4.1.0",
+    "@shikijs/langs": "4.1.0",
+    "@shikijs/themes": "4.1.0",
     "@tiptap/core": "^3.23.6",
+    "@tiptap/extension-code-block": "3.23.6",
     "@tiptap/pm": "^3.23.6",
     "@tiptap/react": "^3.23.6",
-    "@tiptap/starter-kit": "^3.23.6"
+    "@tiptap/starter-kit": "^3.23.6",
+    "katex": "^0.17.0",
+    "shiki": "^4.1.0"
   },
   "peerDependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@types/katex": "^0.16.8",
     "@types/react": "^19.2.15",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"

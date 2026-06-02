@@ -302,9 +302,32 @@ export function CardBuilder({
         {tab === "qa" ? (
           <>
             <div className="cb-field">
-              <label className="cb-field__label" htmlFor="cb-qa-front">
-                Front · question
-              </label>
+              <div className="cb-field__labelrow">
+                <label className="cb-field__label" htmlFor="cb-qa-front">
+                  Front · question
+                </label>
+                {/* T072: a "Predict output" code-card template — pre-seed the prompt
+                    as a fenced code block from the extract body so the front renders
+                    highlighted code and the answer is the expected output. It is a
+                    plain `qa` card (no new kind); the code-aware quality checks apply. */}
+                <button
+                  type="button"
+                  className="cb-template"
+                  data-testid="cb-predict-output"
+                  title="Seed the prompt with the code; answer is the expected output"
+                  onClick={() => {
+                    const code = (seedBody ?? back).trim();
+                    setFront(
+                      code.length > 0
+                        ? `What does this code output?\n\`\`\`\n${code}\n\`\`\``
+                        : "What does this code output?\n```\n\n```",
+                    );
+                    setBack("");
+                  }}
+                >
+                  <Icon name="code" size={12} /> Predict output
+                </button>
+              </div>
               <textarea
                 id="cb-qa-front"
                 className="cb-textarea"

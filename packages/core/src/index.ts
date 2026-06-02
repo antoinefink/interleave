@@ -46,6 +46,7 @@ export type {
 export {
   ANSWER_MAX_CHARS,
   CLOZE_MAX_WORDS,
+  CODE_MAX_LINES,
   evaluateCardQuality,
   MAX_CLOZE_DELETIONS,
   PROMPT_MAX_CHARS,
@@ -160,6 +161,7 @@ export type {
   ProseMirrorListItemNode,
   ProseMirrorMark,
   ProseMirrorMarkType,
+  ProseMirrorMathNode,
   ProseMirrorOrderedListNode,
   ProseMirrorParagraphNode,
   ProseMirrorTextNode,

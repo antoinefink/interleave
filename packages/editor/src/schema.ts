@@ -32,6 +32,8 @@ import type { Schema } from "@tiptap/pm/model";
 import StarterKit from "@tiptap/starter-kit";
 import { BlockId } from "./block-id";
 import type { BlockIdMinter } from "./block-ids";
+import { CODE_BLOCK_LANGUAGE_ATTR, CodeBlockLanguage } from "./nodes/code-block-language";
+import { MathNode } from "./nodes/math";
 
 /** The heading levels the constrained schema permits. */
 export const ALLOWED_HEADING_LEVELS = [1, 2, 3] as const;
@@ -59,6 +61,10 @@ export const ALLOWED_NODE_NAMES = [
   "codeBlock",
   "horizontalRule",
   "hardBreak",
+  // T072: a LaTeX-bearing inline atom (block + inline formulas), rendered with
+  // KaTeX at display time. The stored JSON keeps only the latex string + a
+  // `display` flag — never pre-rendered HTML. See `nodes/math.ts`.
+  "math",
 ] as const;
 
 /**
@@ -84,6 +90,18 @@ export interface BuildExtensionsOptions {
   readonly mintBlockId?: BlockIdMinter;
   /** Extra extensions appended after the constrained set. */
   readonly extra?: Extensions;
+  /**
+   * React NodeView renderers for the `math` + `codeBlock` nodes (T072). When set
+   * (the React `SourceEditor` passes them), the `math` / `codeBlock` extensions are
+   * `.extend`ed with `addNodeView` so KaTeX/Shiki render. Omitted for the headless
+   * schema (tests/importers) — the node specs are IDENTICAL either way, so headless
+   * round-trips and the rendered editor never drift. Typed loosely (Tiptap's
+   * NodeView renderer type) to keep `schema.ts` free of a hard React import.
+   */
+  // biome-ignore lint/suspicious/noExplicitAny: Tiptap NodeView renderer (React-free schema)
+  readonly mathNodeView?: any;
+  // biome-ignore lint/suspicious/noExplicitAny: Tiptap NodeView renderer (React-free schema)
+  readonly codeBlockNodeView?: any;
 }
 
 /**
@@ -96,13 +114,26 @@ export interface BuildExtensionsOptions {
  * trusted local surface but stored links are user content.
  */
 export function buildExtensions(options: BuildExtensionsOptions = {}): Extensions {
-  const { withBlockIds = true, mintBlockId, extra = [] } = options;
+  const { withBlockIds = true, mintBlockId, extra = [], mathNodeView, codeBlockNodeView } = options;
+  // T072: the `math` + `codeBlock` nodes are defined ONCE (schema-only). The React
+  // editor passes NodeView renderers, which we attach via `.extend({ addNodeView })`
+  // — the node SPECS are identical with or without the view, so the headless schema
+  // (tests/importers) and the rendered editor can never drift.
+  const mathExtension = mathNodeView
+    ? MathNode.extend({ addNodeView: () => mathNodeView })
+    : MathNode;
+  const codeBlockExtension = codeBlockNodeView
+    ? CodeBlockLanguage.extend({ addNodeView: () => codeBlockNodeView })
+    : CodeBlockLanguage;
   return [
     StarterKit.configure({
       heading: { levels: [...ALLOWED_HEADING_LEVELS] },
       // Disable the StarterKit marks that are outside the constrained set.
       strike: false,
       underline: false,
+      // T072: StarterKit's `codeBlock` is disabled in favour of the constrained
+      // `CodeBlockWithLanguage` (same node name + the `language` attr), added below.
+      codeBlock: false,
       // Lock down link behaviour; it stays in the allowed mark set.
       link: {
         openOnClick: false,
@@ -111,10 +142,18 @@ export function buildExtensions(options: BuildExtensionsOptions = {}): Extension
         HTMLAttributes: { rel: "noopener noreferrer nofollow" },
       },
     }),
+    // T072: the LaTeX `math` node + the constrained `codeBlock` (with the `language`
+    // attr). The KaTeX/Shiki render is added via `addNodeView` ONLY when the React
+    // editor passes a renderer; the stored shape is unchanged.
+    mathExtension,
+    codeBlockExtension,
     ...(withBlockIds ? [mintBlockId ? BlockId.configure({ mintBlockId }) : BlockId] : []),
     ...extra,
   ];
 }
+
+/** Re-export the codeBlock language DOM attribute for importers/renderers. */
+export { CODE_BLOCK_LANGUAGE_ATTR };
 
 /**
  * The canonical constrained extension array (with stable block ids). The React

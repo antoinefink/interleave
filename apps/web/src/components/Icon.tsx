@@ -32,6 +32,7 @@ import {
   CirclePause,
   ClipboardPaste,
   Clock,
+  Code,
   Command,
   Copy,
   CornerDownLeft,
@@ -121,6 +122,8 @@ const ICONS = {
   highlight: Highlighter,
   bookmark: Bookmark,
   cloze: Brackets,
+  // T072: code-card affordances (predict-output template, code cloze).
+  code: Code,
   edit: Pencil,
   copy: Copy,
   pause: Pause,

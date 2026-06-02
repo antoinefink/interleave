@@ -111,6 +111,35 @@ describe("toPlainText", () => {
     expect(toPlainText(doc)).toBe("const x = 1;\nline A\nline B");
   });
 
+  it("flattens math nodes to delimited LaTeX and code blocks to their code (T072)", () => {
+    const doc = {
+      type: "doc",
+      content: [
+        // A block formula (display:true math alone in its paragraph) → $$…$$.
+        {
+          type: "paragraph",
+          content: [{ type: "math", attrs: { latex: "E=mc^2", display: true } }],
+        },
+        // An inline formula inside running text → $…$.
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "energy " },
+            { type: "math", attrs: { latex: "a^2+b^2", display: false } },
+            { type: "text", text: " end" },
+          ],
+        },
+        // A code block keeps its code text verbatim (language is not in plainText).
+        {
+          type: "codeBlock",
+          attrs: { language: "python" },
+          content: [{ type: "text", text: "print('hi')" }],
+        },
+      ],
+    };
+    expect(toPlainText(doc)).toBe("$$E=mc^2$$\nenergy $a^2+b^2$ end\nprint('hi')");
+  });
+
   it("trims trailing empty blocks (no dangling newline)", () => {
     const doc = {
       type: "doc",

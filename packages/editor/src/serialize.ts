@@ -19,6 +19,20 @@ interface PmNode {
   readonly type?: string;
   readonly text?: string;
   readonly content?: readonly PmNode[];
+  /** Node attrs we read for the plain-text mirror (the math node's latex). */
+  readonly attrs?: { readonly latex?: string; readonly display?: boolean };
+}
+
+/**
+ * Render a `math` node's LaTeX into the plain-text mirror with delimiters so it is
+ * searchable + re-parseable: a block formula → `$$E=mc^2$$`, an inline formula →
+ * `$E=mc^2$`. The latex is stored clean (no rendered HTML) so this flattening is
+ * lossless for search/preview.
+ */
+function mathText(node: PmNode): string {
+  const latex = node.attrs?.latex ?? "";
+  if (latex.length === 0) return "";
+  return node.attrs?.display ? `$$${latex}$$` : `$${latex}$`;
 }
 
 /** The canonical empty document: a single empty paragraph. */
@@ -39,11 +53,14 @@ const BLOCK_TYPES = new Set([
 /** Collect the concatenated text of a node's inline content (depth-first). */
 function inlineText(node: PmNode): string {
   if (typeof node.text === "string") return node.text;
+  if (node.type === "math") return mathText(node);
   if (!node.content) return "";
   let out = "";
   for (const child of node.content) {
     if (child.type === "hardBreak") {
       out += "\n";
+    } else if (child.type === "math") {
+      out += mathText(child);
     } else {
       out += inlineText(child);
     }

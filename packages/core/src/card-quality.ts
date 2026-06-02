@@ -41,7 +41,10 @@ export type CardQualityCheckId =
   | "answer-too-long"
   | "multiple-clozes"
   | "ambiguous-pronoun"
-  | "missing-source";
+  | "missing-source"
+  // T072: a code body's length is judged in LINES, not chars/words (the char/word
+  // thresholds would over-warn on legitimate code).
+  | "code-too-long";
 
 /** One row of the quality checklist. */
 export interface CardQualityCheck {
@@ -125,6 +128,36 @@ export const CLOZE_MAX_WORDS = 40;
  * stricter than the kit on purpose (the minimum-information principle prefers one).
  */
 export const MAX_CLOZE_DELETIONS = 1;
+
+/**
+ * Max LINES in a code body before "card spans too much code, narrow it" warns (T072).
+ * A code card holds ONE construct/idea — a function, a signature, a key line. Code is
+ * judged in LINES, not chars/words: a correct 8-line function is fine but would trip
+ * the char/word thresholds, so for a detected code body we apply THIS line cap and
+ * SKIP the char/word + ambiguous-pronoun heuristics (which are meaningless on code).
+ */
+export const CODE_MAX_LINES = 12;
+
+/**
+ * A fenced code block — ```` ```lang\n…\n``` ````. T072's code cards carry a code body
+ * inside a fence; detecting one switches the length check to {@link CODE_MAX_LINES}
+ * and suppresses the prose-only heuristics.
+ */
+const FENCED_CODE = /```[\w+#.-]*\n[\s\S]*?```/;
+
+/** True when `text` contains a fenced code block (a code-bearing card body). */
+function hasCodeBlock(text: string): boolean {
+  return FENCED_CODE.test(text);
+}
+
+/** Count the code lines inside the FIRST fenced block of `text` (0 if none). */
+function codeLineCount(text: string): number {
+  const match = text.match(/```[\w+#.-]*\n([\s\S]*?)```/);
+  if (!match) return 0;
+  const body = (match[1] ?? "").replace(/\n$/, "");
+  if (body.length === 0) return 0;
+  return body.split("\n").length;
+}
 
 /**
  * Bare pronouns that, when a prompt/answer LEADS with one, usually lack an antecedent
@@ -226,40 +259,80 @@ function evaluateQa(input: QaQualityInput): CardQualityCheck[] {
     checks.push({ id: "empty", severity: "ok", message: "Has a question and an answer" });
   }
 
-  // Prompt length (front).
-  checks.push(
-    prompt.length > PROMPT_MAX_CHARS
-      ? {
-          id: "prompt-too-long",
-          severity: "warn",
-          message: `Question too long (${prompt.length} chars) — narrow it to one idea`,
-        }
-      : {
-          id: "prompt-too-long",
-          severity: "ok",
-          message: "Clear, single-fact question",
-        },
-  );
+  // T072: a code body (a fenced block in the prompt or answer) is judged in LINES,
+  // not chars/words, and the prose-only ambiguous-pronoun heuristic is skipped — both
+  // would over-warn on legitimate code. A predict-output card (code prompt + short
+  // answer) and a code Q&A both fall here.
+  const promptIsCode = hasCodeBlock(input.prompt);
+  const answerIsCode = hasCodeBlock(input.answer);
 
-  // Answer length (back).
-  checks.push(
-    answer.length > ANSWER_MAX_CHARS
-      ? {
-          id: "answer-too-long",
-          severity: "warn",
-          message: `Answer too long (${answer.length} chars) — it may hold multiple facts; split it`,
-        }
-      : {
-          id: "answer-too-long",
-          severity: "ok",
-          message: "Atomic answer",
-        },
-  );
+  // Prompt length (front). Code prompts use the line cap; prose uses the char cap.
+  if (promptIsCode) {
+    checks.push(codeLengthCheck("prompt-too-long", codeLineCount(input.prompt)));
+  } else {
+    checks.push(
+      prompt.length > PROMPT_MAX_CHARS
+        ? {
+            id: "prompt-too-long",
+            severity: "warn",
+            message: `Question too long (${prompt.length} chars) — narrow it to one idea`,
+          }
+        : {
+            id: "prompt-too-long",
+            severity: "ok",
+            message: "Clear, single-fact question",
+          },
+    );
+  }
 
-  // Ambiguous pronoun in the prompt or answer.
-  checks.push(ambiguousPronounCheck(`${prompt} ${answer}`, prompt, answer));
+  // Answer length (back). Code answers use the line cap; prose uses the char cap.
+  if (answerIsCode) {
+    checks.push(codeLengthCheck("answer-too-long", codeLineCount(input.answer)));
+  } else {
+    checks.push(
+      answer.length > ANSWER_MAX_CHARS
+        ? {
+            id: "answer-too-long",
+            severity: "warn",
+            message: `Answer too long (${answer.length} chars) — it may hold multiple facts; split it`,
+          }
+        : {
+            id: "answer-too-long",
+            severity: "ok",
+            message: "Atomic answer",
+          },
+    );
+  }
+
+  // Ambiguous pronoun — meaningless on a code body, so skip it when EITHER side is code.
+  if (!promptIsCode && !answerIsCode) {
+    checks.push(ambiguousPronounCheck(`${prompt} ${answer}`, prompt, answer));
+  }
 
   return checks;
+}
+
+/**
+ * The shared code-length row (T072): warns when a code body exceeds
+ * {@link CODE_MAX_LINES} lines, reusing the existing `prompt-too-long`/`answer-too-long`
+ * check ids so the builder's `qc` checklist renders it without new wiring. The message
+ * speaks of code LINES (not chars) so the user understands the different bound.
+ */
+function codeLengthCheck(
+  id: "prompt-too-long" | "answer-too-long",
+  lines: number,
+): CardQualityCheck {
+  return lines > CODE_MAX_LINES
+    ? {
+        id,
+        severity: "warn",
+        message: `Card spans too much code (${lines} lines) — narrow it to one construct`,
+      }
+    : {
+        id,
+        severity: "ok",
+        message: `Focused code (${lines} line${lines === 1 ? "" : "s"})`,
+      };
 }
 
 /** Cloze-specific checks (no deletion → block; multiple/giant clozes + pronoun → warn). */
@@ -297,24 +370,34 @@ function evaluateCloze(input: ClozeQualityInput): CardQualityCheck[] {
         },
   );
 
-  // Giant cloze paragraph (the cloze body, markers stripped, over the word cap).
-  const words = wordCount(parsed.rendered);
-  checks.push(
-    words > CLOZE_MAX_WORDS
-      ? {
-          id: "answer-too-long",
-          severity: "warn",
-          message: `Cloze too long (${words} words) — aim for one idea`,
-        }
-      : {
-          id: "answer-too-long",
-          severity: "ok",
-          message: `Concise (${words} word${words === 1 ? "" : "s"})`,
-        },
-  );
+  // T072: a code cloze (a fill-in over a fenced code body) is judged in LINES, not
+  // words, and the ambiguous-pronoun heuristic is skipped — both would over-warn on
+  // code. The fence lives in the canonical cloze text (markers may sit inside it).
+  const bodyIsCode = hasCodeBlock(input.cloze);
+  if (bodyIsCode) {
+    checks.push(codeLengthCheck("answer-too-long", codeLineCount(input.cloze)));
+  } else {
+    // Giant cloze paragraph (the cloze body, markers stripped, over the word cap).
+    const words = wordCount(parsed.rendered);
+    checks.push(
+      words > CLOZE_MAX_WORDS
+        ? {
+            id: "answer-too-long",
+            severity: "warn",
+            message: `Cloze too long (${words} words) — aim for one idea`,
+          }
+        : {
+            id: "answer-too-long",
+            severity: "ok",
+            message: `Concise (${words} word${words === 1 ? "" : "s"})`,
+          },
+    );
+  }
 
-  // Ambiguous pronoun in the cloze body (the rendered, answers-inline form).
-  checks.push(ambiguousPronounCheck(parsed.rendered, parsed.rendered, ""));
+  // Ambiguous pronoun in the cloze body (skipped for a code body — meaningless there).
+  if (!bodyIsCode) {
+    checks.push(ambiguousPronounCheck(parsed.rendered, parsed.rendered, ""));
+  }
 
   return checks;
 }

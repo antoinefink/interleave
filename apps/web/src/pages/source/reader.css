@@ -86,6 +86,91 @@
   border-top: 1px solid var(--border);
   margin: 28px 0;
 }
+
+/* ---------- math node (KaTeX) + code node (Shiki) NodeViews (T072) ---------- */
+/* Math: an inline atom; a block formula centers on its own row. The rendered KaTeX
+   is clickable to open the inline latex editor. */
+.math-node--inline {
+  display: inline;
+}
+.math-node--block {
+  display: block;
+  margin: 14px 0;
+  text-align: center;
+  overflow-x: auto;
+}
+.math-node__rendered {
+  cursor: text;
+}
+.math-node__edit {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  width: 100%;
+  min-width: 12ch;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-xs);
+  padding: 2px 6px;
+  background: var(--surface-2);
+  color: var(--text);
+}
+.math-node__empty {
+  cursor: text;
+  font-style: italic;
+}
+
+/* Code node: the editable `<pre>` is the source of truth; the Shiki overlay sits on
+   top, hidden while the block is being edited (focus-within) so raw text shows. */
+.code-node {
+  position: relative;
+  margin: 0 0 20px;
+}
+.code-node__lang {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs, 0.75rem);
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  padding: 1px 4px;
+}
+.code-node__pre {
+  font-family: var(--font-mono);
+  background: var(--sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--s-4);
+  margin: 0;
+  overflow-x: auto;
+}
+.code-node__pre code {
+  background: none;
+  padding: 0;
+}
+/* The Shiki overlay: absolutely covers the editable pre; shown only when NOT editing
+   (no focus inside the node) so editing always sees raw text + a working caret. The
+   overlay carries the solid backdrop so the editable raw text underneath is hidden
+   (Shiki's own .shiki background may be theme-tinted/transparent). */
+.code-node__hl {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-md);
+  overflow: auto;
+  pointer-events: none;
+  background: var(--sunken);
+}
+.code-node__hl .shiki {
+  margin: 0;
+  padding: var(--s-4);
+  border-radius: var(--r-md);
+  min-height: 100%;
+}
+.code-node:focus-within .code-node__hl {
+  display: none;
+}
 .reader a {
   color: var(--accent-text);
   text-decoration: none;

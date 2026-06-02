@@ -166,6 +166,43 @@
   color: var(--ok);
 }
 
+/* ---------- math + code in card bodies (T072) ---------- */
+/* KaTeX math: inline flows in the text; a block formula centers on its own row. */
+.card-math--block {
+  display: block;
+  margin: 12px 0;
+  text-align: center;
+  overflow-x: auto;
+}
+.card-math--inline {
+  display: inline;
+}
+/* Shiki code: a monospaced block; Shiki sets its own colors via inline styles, so we
+   only frame it. The raw fallback (before Shiki resolves) shares the frame. */
+.card-code,
+.card-code--raw {
+  font-family: var(--font-mono);
+  font-size: var(--t-sm, 0.875rem);
+  line-height: var(--lh-snug);
+  margin: 12px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 6px);
+  overflow-x: auto;
+}
+.card-code pre,
+.card-code--raw {
+  margin: 0;
+  padding: 12px 14px;
+}
+.card-code--raw code {
+  white-space: pre;
+}
+/* Shiki emits a `.shiki` pre; it owns its theme background/colors — we only pad it. */
+.card-code .shiki {
+  margin: 0;
+  padding: 12px 14px;
+}
+
 /* ---------- source reference (kit `.refblock`) ---------- */
 .refblock {
   border-left: 3px solid var(--border-strong);

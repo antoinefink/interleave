@@ -266,6 +266,52 @@ export const DEMO_FIXTURES = {
       { region: { x0: 0.55, y0: 0.25, x1: 0.85, y1: 0.5 }, label: "Output grid" },
     ],
   },
+  /**
+   * A formula & code source (T072): a source whose body has a BLOCK formula
+   * (`$$…$$` math node), an INLINE formula inside running text, and a
+   * `language`-tagged code block — so source/extract/review show real math +
+   * highlighted code out-of-the-box and the E2E has seeded targets. Plus a code
+   * fill-in CLOZE card and a math Q&A card distilled from it.
+   */
+  mathCode: {
+    source: {
+      title: "Backpropagation in one page",
+      author: "Notes",
+      priority: PRIORITY_LABEL_VALUE.B,
+      reasonAdded: "A compact derivation with a formula and the gradient-step code.",
+    },
+    // Block ids for the body's rows (paragraph / math / paragraph / codeBlock).
+    blocks: [
+      { stableBlockId: "blk_mc_intro" as BlockId, blockType: "paragraph" as const, order: 0 },
+      { stableBlockId: "blk_mc_formula" as BlockId, blockType: "paragraph" as const, order: 1 },
+      { stableBlockId: "blk_mc_inline" as BlockId, blockType: "paragraph" as const, order: 2 },
+      { stableBlockId: "blk_mc_code" as BlockId, blockType: "codeBlock" as const, order: 3 },
+    ],
+    /** The block formula's LaTeX (rendered with KaTeX as a display formula). */
+    formulaLatex: "\\frac{\\partial L}{\\partial w} = \\delta \\cdot x",
+    /** The inline formula's LaTeX (inside a sentence). */
+    inlineLatex: "L = \\tfrac{1}{2}(y-\\hat{y})^2",
+    /** The code block's language + body (highlighted with Shiki). */
+    codeLanguage: "python",
+    codeBody: "def step(w, grad, lr):\n    return w - lr * grad",
+    paragraphs: [
+      "Backpropagation computes the gradient of the loss with respect to each weight.",
+      "The squared-error loss is L = (1/2)(y - y_hat)^2.",
+    ],
+    /** A code fill-in CLOZE card — a cloze over a code token (kind: cloze). */
+    clozeCard: {
+      title: "Gradient step (code cloze)",
+      cloze: "The SGD update is ```python\nw = w - {{c1::lr}} * grad\n```",
+      priority: PRIORITY_LABEL_VALUE.B,
+    },
+    /** A math Q&A card — the answer is a block formula (kind: qa). */
+    qaCard: {
+      title: "Gradient of the loss (math Q&A)",
+      prompt: "What is the gradient of the loss L w.r.t. a weight w?",
+      answer: "$$\\frac{\\partial L}{\\partial w} = \\delta \\cdot x$$",
+      priority: PRIORITY_LABEL_VALUE.B,
+    },
+  },
   /** Asset metadata pointing at vault paths/hashes (bytes live on disk, not here). */
   assets: {
     snapshot: {
@@ -339,6 +385,18 @@ export interface DemoCollection {
     readonly imageExtract: ExtractWithLocation;
     readonly cards: readonly { readonly id: ElementId; readonly maskId: string }[];
     readonly siblingGroupId: SiblingGroupId;
+  };
+  /**
+   * The formula & code example (T072): a source with a block + inline formula and a
+   * `language`-tagged code block, plus a code fill-in cloze card and a math Q&A card
+   * distilled from a code extract — so source/extract/review show real math +
+   * highlighted code out-of-the-box and the E2E has seeded targets.
+   */
+  readonly mathCode: {
+    readonly source: SourceWithElement;
+    readonly extract: ExtractWithLocation;
+    readonly clozeCard: CardWithElement;
+    readonly qaCard: CardWithElement;
   };
 }
 
@@ -576,7 +634,100 @@ export function seedDemoCollection(repos: Repositories, db: InterleaveDatabase):
     masks: og.masks.map((m) => ({ region: m.region, label: m.label })),
   });
 
-  // 12) Dev settings the scheduler/UI read.
+  // 12) Formula & code example (T072): a source whose body carries a block formula
+  //     (a `display:true` math node), an inline formula, and a `language`-tagged code
+  //     block; plus a code fill-in cloze card and a math Q&A card distilled from it.
+  const mc = f.mathCode;
+  const mathCodeSource = repos.sources.create({
+    title: mc.source.title,
+    priority: mc.source.priority,
+    status: "active",
+    author: mc.source.author,
+    reasonAdded: mc.source.reasonAdded,
+  });
+  const mathCodeSourceId = mathCodeSource.element.id;
+  repos.documents.upsert({
+    elementId: mathCodeSourceId,
+    prosemirrorJson: {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          attrs: { blockId: mc.blocks[0]?.stableBlockId },
+          content: [{ type: "text", text: mc.paragraphs[0] }],
+        },
+        // A BLOCK formula: a display:true math node alone in its paragraph.
+        {
+          type: "paragraph",
+          attrs: { blockId: mc.blocks[1]?.stableBlockId },
+          content: [{ type: "math", attrs: { latex: mc.formulaLatex, display: true } }],
+        },
+        // An INLINE formula inside running text.
+        {
+          type: "paragraph",
+          attrs: { blockId: mc.blocks[2]?.stableBlockId },
+          content: [
+            { type: "text", text: "The squared-error loss is " },
+            { type: "math", attrs: { latex: mc.inlineLatex, display: false } },
+            { type: "text", text: "." },
+          ],
+        },
+        // A language-tagged code block (highlighted with Shiki at display time).
+        {
+          type: "codeBlock",
+          attrs: { blockId: mc.blocks[3]?.stableBlockId, language: mc.codeLanguage },
+          content: [{ type: "text", text: mc.codeBody }],
+        },
+      ],
+    },
+    plainText: [
+      mc.paragraphs[0],
+      `$$${mc.formulaLatex}$$`,
+      `The squared-error loss is $${mc.inlineLatex}$.`,
+      mc.codeBody,
+    ].join("\n"),
+    blocks: mc.blocks.map((b) => ({
+      blockType: b.blockType,
+      order: b.order,
+      stableBlockId: b.stableBlockId,
+    })),
+  });
+  // An extract of the code snippet → the two code/math cards are distilled from it.
+  const mathCodeExtract = repos.sources.createExtract({
+    sourceElementId: mathCodeSourceId,
+    title: "Gradient step",
+    priority: mc.source.priority,
+    selectedText: mc.codeBody,
+    blockIds: [mc.blocks[3]?.stableBlockId as BlockId],
+    startOffset: 0,
+    endOffset: mc.codeBody.length,
+    label: "Code · gradient step",
+  });
+  // Left `card_draft` (an UN-DUE review state) so they DON'T crowd the seeded due
+  // queue/process loop (M7 owns the first schedule) — review still resolves them by id.
+  const mathCodeClozeCard = repos.review.createCard({
+    kind: "cloze",
+    title: mc.clozeCard.title,
+    priority: mc.clozeCard.priority,
+    cloze: mc.clozeCard.cloze,
+    parentId: mathCodeExtract.element.id,
+    sourceId: mathCodeSourceId,
+    sourceLocationId: mathCodeExtract.location.id,
+    stage: "card_draft",
+  });
+  const mathCodeQaCard = repos.review.createCard({
+    kind: "qa",
+    title: mc.qaCard.title,
+    priority: mc.qaCard.priority,
+    prompt: mc.qaCard.prompt,
+    answer: mc.qaCard.answer,
+    parentId: mathCodeExtract.element.id,
+    sourceId: mathCodeSourceId,
+    sourceLocationId: mathCodeExtract.location.id,
+    stage: "card_draft",
+  });
+
+  // 13) Dev settings the scheduler/UI read.
   repos.settings.setMany(f.settings);
 
   return {
@@ -593,6 +744,12 @@ export function seedDemoCollection(repos: Repositories, db: InterleaveDatabase):
       imageExtract,
       cards: occlusionResult.cards.map((c) => ({ id: c.id, maskId: c.maskId })),
       siblingGroupId: occlusionResult.siblingGroupId,
+    },
+    mathCode: {
+      source: mathCodeSource,
+      extract: mathCodeExtract,
+      clozeCard: mathCodeClozeCard,
+      qaCard: mathCodeQaCard,
     },
   };
 }

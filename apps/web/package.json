@@ -18,10 +18,12 @@
     "@interleave/core": "workspace:*",
     "@interleave/editor": "workspace:*",
     "@tanstack/react-router": "^1.170.9",
+    "katex": "^0.17.0",
     "lucide-react": "^1.17.0",
     "pdfjs-dist": "^4.10.38",
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "shiki": "^4.1.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",
@@ -30,6 +32,7 @@
     "@testing-library/react": "^16",
     "@testing-library/user-event": "^14",
     "@tiptap/pm": "^3.23.6",
+    "@types/katex": "^0.16.8",
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",

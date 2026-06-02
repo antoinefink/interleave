@@ -307,6 +307,31 @@
   color: var(--text-3);
 }
 
+/* T072: the label row + the "Predict output" code-card template button. */
+.cb-field__labelrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.cb-template {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--t-2xs, 11px);
+  font-weight: 600;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.cb-template:hover {
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+}
+
 .cb-field__hint {
   font-size: var(--t-2xs, 11px);
   color: var(--text-3);

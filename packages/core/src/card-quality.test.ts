@@ -4,6 +4,7 @@ import {
   type CardQualityCheckId,
   type CardQualitySeverity,
   CLOZE_MAX_WORDS,
+  CODE_MAX_LINES,
   evaluateCardQuality,
   MAX_CLOZE_DELETIONS,
   PROMPT_MAX_CHARS,
@@ -205,5 +206,90 @@ describe("evaluateCardQuality — cloze", () => {
     const report = evaluateCardQuality({ kind: "cloze", cloze, parsed, hasSource: true });
     expect(check(report, "empty").severity).toBe("ok");
     expect(report.hasBlocker).toBe(false);
+  });
+});
+
+/**
+ * Code-aware card-quality checks (T072).
+ *
+ * A code body is judged in LINES (not chars/words) so the existing thresholds do not
+ * over-warn on legitimate code, and the ambiguous-pronoun heuristic is skipped for
+ * code (meaningless there).
+ */
+describe("evaluateCardQuality — code-aware (T072)", () => {
+  /** A fenced code block of `n` lines (each a realistically-long statement). */
+  const codeFence = (n: number, lang = "python") =>
+    [
+      `\`\`\`${lang}`,
+      ...Array.from(
+        { length: n },
+        (_, i) => `result_variable_${i} = compute_something_useful(input_${i}, factor=${i})`,
+      ),
+      "```",
+    ].join("\n");
+
+  it("a short code Q&A answer is ok on the LINE threshold (not the char threshold)", () => {
+    // This code answer is well over ANSWER_MAX_CHARS in characters, but only a few
+    // lines — the char threshold must NOT fire; the line check must say ok.
+    const answer = codeFence(4);
+    expect(answer.length).toBeGreaterThan(ANSWER_MAX_CHARS);
+    const report = evaluateCardQuality({
+      kind: "qa",
+      prompt: "What does this script set up?",
+      answer,
+      hasSource: true,
+    });
+    const lengthRow = check(report, "answer-too-long");
+    expect(lengthRow.severity).toBe("ok");
+    expect(lengthRow.message).toMatch(/line/i);
+    expect(report.hasWarning).toBe(false);
+  });
+
+  it("warns when a code answer exceeds CODE_MAX_LINES lines", () => {
+    const answer = codeFence(CODE_MAX_LINES + 3);
+    const report = evaluateCardQuality({
+      kind: "qa",
+      prompt: "What does this module do?",
+      answer,
+      hasSource: true,
+    });
+    const lengthRow = check(report, "answer-too-long");
+    expect(lengthRow.severity).toBe("warn");
+    expect(lengthRow.message).toMatch(/code/i);
+  });
+
+  it("skips the ambiguous-pronoun heuristic for a code body", () => {
+    // The answer is code that begins with `this` (a code identifier), which the prose
+    // heuristic would otherwise flag — for a code body it must be skipped entirely.
+    const report = evaluateCardQuality({
+      kind: "qa",
+      prompt: "```js\nthis.x = 1;\n```",
+      answer: "```js\nthis.value = compute();\n```",
+      hasSource: true,
+    });
+    expect(report.checks.find((c) => c.id === "ambiguous-pronoun")).toBeUndefined();
+  });
+
+  it("judges a code CLOZE fill-in by lines and skips the word/pronoun checks", () => {
+    // A code cloze: a fenced block with a `{{c1::…}}` inside. Few lines → ok.
+    const cloze = "```python\nw = w - {{c1::lr}} * grad\n```";
+    const report = evaluateCardQuality({ kind: "cloze", cloze, hasSource: true });
+    const lengthRow = check(report, "answer-too-long");
+    expect(lengthRow.severity).toBe("ok");
+    expect(lengthRow.message).toMatch(/line/i);
+    expect(report.checks.find((c) => c.id === "ambiguous-pronoun")).toBeUndefined();
+    // The deletion still counts (not hollow).
+    expect(check(report, "empty").severity).toBe("ok");
+  });
+
+  it("a normal short prose card still uses the char/word checks (no code regression)", () => {
+    const report = evaluateCardQuality({
+      kind: "qa",
+      prompt: "How is intelligence defined?",
+      answer: "As skill-acquisition efficiency.",
+      hasSource: true,
+    });
+    expect(check(report, "answer-too-long").message).not.toMatch(/line/i);
+    expect(report.checks.find((c) => c.id === "ambiguous-pronoun")).toBeDefined();
   });
 });

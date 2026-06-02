@@ -28,9 +28,23 @@
 import type { Content, Editor, Extensions } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import { useEffect, useMemo, useRef } from "react";
+import { CodeBlockNodeView, MathNodeView } from "./nodes/react-node-views";
 import { ReaderDecorations } from "./reader-decorations";
-import { interleaveExtensions } from "./schema";
+import { buildExtensions } from "./schema";
 import { emptyDoc, toPlainText } from "./serialize";
+
+import "katex/dist/katex.min.css";
+
+/**
+ * The constrained extension array WITH the T072 KaTeX/Shiki NodeViews attached. The
+ * React editor builds this (rather than the headless `interleaveExtensions`) so a
+ * `math` node renders via KaTeX and a `codeBlock` via Shiki — the stored shape is
+ * identical to the headless schema; only the render strategy differs.
+ */
+const reactInterleaveExtensions: Extensions = buildExtensions({
+  mathNodeView: MathNodeView,
+  codeBlockNodeView: CodeBlockNodeView,
+});
 
 /** The payload emitted on every (debounced) document change. */
 export interface SourceEditorChange {
@@ -94,9 +108,13 @@ export function SourceEditor({
   const editorRef = useRef<Editor | null>(null);
   const pendingRef = useRef(false);
 
-  // Compose the constrained schema with the optional reader-decoration plugin.
+  // Compose the constrained schema (with the T072 NodeViews) + the optional
+  // reader-decoration plugin.
   const extensions: Extensions = useMemo(
-    () => (readerDecorations ? [...interleaveExtensions, ReaderDecorations] : interleaveExtensions),
+    () =>
+      readerDecorations
+        ? [...reactInterleaveExtensions, ReaderDecorations]
+        : reactInterleaveExtensions,
     [readerDecorations],
   );
 

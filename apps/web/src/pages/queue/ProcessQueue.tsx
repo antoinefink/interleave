@@ -56,6 +56,7 @@ import {
   type ReviewRating,
   type SchedulerSignals,
 } from "../../lib/appApi";
+import { CardBody } from "../../review/CardBody";
 import { CardFront } from "../../review/CardFront";
 import "../../review/review.css";
 import { useActiveScope } from "../../shell/activeScope";
@@ -661,7 +662,9 @@ function ProcessCard({
                 {cardView.kind === "cloze" ? (
                   <CardFront card={cardView} revealed={true} />
                 ) : (
-                  (cardView.answer ?? "")
+                  // T072: render the Q&A answer through the shared body renderer so
+                  // math + highlighted code show here too (same path as ReviewScreen).
+                  <CardBody body={cardView.answer ?? ""} />
                 )}
               </div>
               {/* Source reference (T043) — shown ONLY after reveal so it can't leak

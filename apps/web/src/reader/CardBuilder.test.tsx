@@ -171,6 +171,17 @@ describe("CardBuilder — Q&A tab", () => {
     fireEvent.click(screen.getByTestId("cb-close"));
     expect(h.onClose).toHaveBeenCalledTimes(1);
   });
+
+  it("the 'Predict output' template (T072) seeds the prompt with a fenced code block", async () => {
+    renderBuilder({ seedBody: "def step(w, grad, lr):\n    return w - lr * grad" });
+    fireEvent.click(screen.getByTestId("cb-predict-output"));
+    const front = screen.getByTestId("cb-qa-front") as HTMLTextAreaElement;
+    // The prompt now wraps the extract code in a fence (renders highlighted in review).
+    expect(front.value).toContain("```");
+    expect(front.value).toContain("def step(w, grad, lr):");
+    // The answer is cleared (the user fills in the expected output).
+    expect((screen.getByTestId("cb-qa-back") as HTMLTextAreaElement).value).toBe("");
+  });
 });
 
 describe("CardBuilder — Cloze tab (T034)", () => {

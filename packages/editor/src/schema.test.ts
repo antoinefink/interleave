@@ -63,6 +63,78 @@ describe("constrained schema — allowed set", () => {
     expect(schema.nodes.taskList).toBeUndefined();
   });
 
+  // T072: the schema's sanctioned growth — a `math` node + a `codeBlock` language attr.
+  it("registers the math node and a codeBlock language attr (T072)", () => {
+    expect(schema.nodes.math, "math node should exist").toBeDefined();
+    expect((ALLOWED_NODE_NAMES as readonly string[]).includes("math")).toBe(true);
+    const codeBlockAttrs = schema.nodes.codeBlock?.spec.attrs ?? {};
+    expect(Object.keys(codeBlockAttrs)).toContain("language");
+  });
+
+  it("round-trips a block formula, an inline formula, and a language-tagged code block (T072)", () => {
+    const doc = {
+      type: "doc",
+      content: [
+        {
+          // A BLOCK formula: a display:true math node alone in its own paragraph;
+          // the row's stable id sits on the paragraph (math is an inline atom).
+          type: "paragraph",
+          attrs: { blockId: "blk-formula" },
+          content: [{ type: "math", attrs: { latex: "E = mc^2", display: true } }],
+        },
+        {
+          // An INLINE formula inside running text.
+          type: "paragraph",
+          attrs: { blockId: "blk-inline" },
+          content: [
+            { type: "text", text: "The identity " },
+            { type: "math", attrs: { latex: "a^2 + b^2 = c^2", display: false } },
+            { type: "text", text: " holds." },
+          ],
+        },
+        {
+          type: "codeBlock",
+          attrs: { blockId: "blk-code", language: "typescript" },
+          content: [{ type: "text", text: "const x: number = 1;" }],
+        },
+      ],
+    };
+
+    const result = roundTrip(doc);
+    const json = result.toJSON() as {
+      content: { type: string; attrs?: Record<string, unknown>; content?: unknown[] }[];
+    };
+
+    // Block math: display:true, latex preserved, paragraph keeps its block id.
+    const blockPara = json.content[0];
+    expect(blockPara?.attrs?.blockId).toBe("blk-formula");
+    const blockMath = (
+      blockPara?.content as { type: string; attrs?: Record<string, unknown> }[]
+    )[0];
+    expect(blockMath?.type).toBe("math");
+    expect(blockMath?.attrs?.latex).toBe("E = mc^2");
+    expect(blockMath?.attrs?.display).toBe(true);
+
+    // Inline math: display:false, sits between two text runs.
+    const inlinePara = json.content[1];
+    const inlineMath = (
+      inlinePara?.content as { type: string; attrs?: Record<string, unknown> }[]
+    )[1];
+    expect(inlineMath?.type).toBe("math");
+    expect(inlineMath?.attrs?.display).toBe(false);
+
+    // Code block: the language string + raw code survive; block id preserved.
+    const code = json.content[2];
+    expect(code?.attrs?.language).toBe("typescript");
+    expect(code?.attrs?.blockId).toBe("blk-code");
+
+    // No disallowed node/mark leaked through.
+    const nodes = nodeNames(result);
+    expect(nodes.has("math")).toBe(true);
+    expect(nodes.has("codeBlock")).toBe(true);
+    expect(nodes.has("image")).toBe(false);
+  });
+
   it("accepts a rich document using the full allowed set", () => {
     const doc = {
       type: "doc",

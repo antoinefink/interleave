@@ -79,6 +79,16 @@ export {
   PROCESSED_MARK_NAME,
   ProcessedSpan,
 } from "./marks/processed";
+// codeBlock `language` attr (T072): the extension (the DOM attr is re-exported from schema).
+export { CodeBlockLanguage } from "./nodes/code-block-language";
+// Math (T072): the LaTeX `math` node + its attrs/DOM constants (schema-only, React-free).
+export {
+  MATH_DISPLAY_ATTR,
+  MATH_DOM_ATTR,
+  MATH_NODE_NAME,
+  MathNode,
+  type MathNodeAttrs,
+} from "./nodes/math";
 export {
   clampOffsetToBlock,
   firstUnreadBlockId,
@@ -105,6 +115,25 @@ export {
   readerDecorationsKey,
   setReaderDecorations,
 } from "./reader-decorations";
+// Shared on-device render helpers (T072): ONE KaTeX + ONE Shiki path for source,
+// extract, and review — so the three surfaces never drift. Bundled assets, no CDN.
+export {
+  type BodySegment,
+  bodyHasRichSegments,
+  parseBodySegments,
+} from "./render/body-segments";
+export { type RenderMathOptions, renderMathHtml } from "./render/katex";
+export {
+  BUNDLED_LANGUAGES,
+  escapeHtml,
+  getHighlighter,
+  type HighlightOptions,
+  highlightCodeHtml,
+  plainCodeHtml,
+  resolveLanguage,
+  SHIKI_DARK_THEME,
+  SHIKI_LIGHT_THEME,
+} from "./render/shiki";
 export {
   SourceEditor,
   type SourceEditorChange,
@@ -117,6 +146,7 @@ export {
   type BuildExtensionsOptions,
   buildExtensions,
   buildSchema,
+  CODE_BLOCK_LANGUAGE_ATTR,
   interleaveExtensions,
 } from "./schema";
 // Selection → source-location resolution (T019): turn a live ProseMirror

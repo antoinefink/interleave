@@ -89,6 +89,26 @@ function clampHeadingLevel(tag: string): ProseMirrorHeadingLevel {
   return 3;
 }
 
+/**
+ * Normalize a fenced-code info string to a clean `language` (T072). markdown-it's
+ * `token.info` is the raw text after the opening fence (e.g. `python`, or
+ * `python title=x`); take the FIRST whitespace-separated word, lower-cased, and keep
+ * only language-shaped characters. Empty/absent → `null` (a plain block).
+ */
+function normalizeFenceLanguage(info: string | undefined): string | null {
+  const first = (info ?? "").trim().split(/\s+/)[0] ?? "";
+  const cleaned = first.toLowerCase().replace(/[^\w+#.-]/g, "");
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+/**
+ * Match a paragraph that is ENTIRELY a block math formula `$$…$$` (T072). markdown-it
+ * does not tokenize math, so a `$$E=mc^2$$` source arrives as a paragraph whose only
+ * inline text is the delimited latex. When a paragraph's flattened text is exactly
+ * one `$$…$$`, we map it to a block `math` node instead of a text paragraph.
+ */
+const STANDALONE_BLOCK_MATH = /^\$\$([\s\S]+?)\$\$$/;
+
 /** The active inline marks while walking an `inline` token's children. */
 type MarkSet = readonly ProseMirrorMark[];
 
@@ -285,7 +305,22 @@ class TokenWalker {
         if (topLevel) {
           const id = this.acc.mint();
           recordBlock(this.acc, "paragraph", id);
-          this.acc.plainText.push(inlineText(inline));
+          // T072: a paragraph that is ENTIRELY `$$…$$` becomes a block math formula
+          // (a `display:true` math node alone in its paragraph; the row id stays on
+          // the paragraph). Otherwise it is a normal text paragraph.
+          const flat = inlineText(inline);
+          const blockMath = STANDALONE_BLOCK_MATH.exec(flat.trim());
+          if (blockMath) {
+            const latex = (blockMath[1] ?? "").trim();
+            this.acc.plainText.push(`$$${latex}$$`);
+            const mathPara: ProseMirrorParagraphNode = {
+              type: "paragraph",
+              attrs: { blockId: id },
+              content: [{ type: "math", attrs: { latex, display: true } }],
+            };
+            return mathPara;
+          }
+          this.acc.plainText.push(flat);
           const node: ProseMirrorParagraphNode = {
             type: "paragraph",
             attrs: { blockId: id },
@@ -329,16 +364,19 @@ class TokenWalker {
       case "code_block": {
         this.i += 1;
         // Preserve the code verbatim (indentation is load-bearing); drop only the
-        // trailing newline markdown-it appends. The info-string language is NOT
-        // representable in the constrained schema (no language attr) → dropped.
+        // trailing newline markdown-it appends. T072: the fence INFO STRING (the
+        // language, e.g. ```` ```python ````) IS now representable — the `codeBlock`
+        // carries a `language` attr — so map the first info-string token to it (the
+        // standard Markdown fence convention) so import/export round-trips the language.
         const text = tok.content.replace(/\n$/, "");
         if (text.length === 0) return null;
+        const language = normalizeFenceLanguage(tok.info);
         const id = this.acc.mint();
         recordBlock(this.acc, "codeBlock", id);
         this.acc.plainText.push(text);
         const node: ProseMirrorCodeBlockNode = {
           type: "codeBlock",
-          attrs: { blockId: id },
+          attrs: language ? { blockId: id, language } : { blockId: id },
           content: [{ type: "text", text }],
         };
         return node;
@@ -478,6 +516,13 @@ function serializeInline(nodes: readonly ProseMirrorInlineNode[]): string {
       out += "  \n";
       continue;
     }
+    if (node.type === "math") {
+      // T072: a math node emits delimited LaTeX — `$$…$$` for a block formula,
+      // `$…$` for inline. The latex is stored clean, so this round-trips.
+      const latex = node.attrs.latex;
+      out += node.attrs.display ? `$$${latex}$$` : `$${latex}$`;
+      continue;
+    }
     const text = node.text;
     const marks = node.marks ?? [];
     const hasCode = marks.some((m) => m.type === "code");
@@ -553,7 +598,10 @@ function serializeBlock(node: ProseMirrorBlockNode, indent: string): string {
       );
     case "codeBlock": {
       const text = (node.content ?? []).map((t) => t.text).join("");
-      const fenced = ["```", ...text.split("\n"), "```"];
+      // T072: emit the fence language (`` ```python ``) so import → export → import
+      // round-trips it. `null`/absent language → a bare ` ``` ` fence.
+      const language = node.attrs?.language ?? "";
+      const fenced = [`\`\`\`${language}`, ...text.split("\n"), "```"];
       return fenced.map((line) => indent + line).join("\n");
     }
     case "horizontalRule":

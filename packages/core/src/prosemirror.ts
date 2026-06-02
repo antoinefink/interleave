@@ -52,8 +52,11 @@ export interface ProseMirrorHardBreakNode {
   readonly type: "hardBreak";
 }
 
-/** The inline content a text-bearing block may hold. */
-export type ProseMirrorInlineNode = ProseMirrorTextNode | ProseMirrorHardBreakNode;
+/** The inline content a text-bearing block may hold (text, hard break, math atom). */
+export type ProseMirrorInlineNode =
+  | ProseMirrorTextNode
+  | ProseMirrorHardBreakNode
+  | ProseMirrorMathNode;
 
 /**
  * The stable block id (T016), embedded as a node attribute so the editor ADOPTS
@@ -82,8 +85,26 @@ export interface ProseMirrorHeadingNode {
 /** A code block — a single plain-text run (no inline marks). */
 export interface ProseMirrorCodeBlockNode {
   readonly type: "codeBlock";
-  readonly attrs?: BlockIdAttrs;
+  /**
+   * The fenced-code `language` (T072) is an optional attr alongside the block id —
+   * stored as a clean string; syntax highlighting (Shiki) is a render-time concern,
+   * never baked into the JSON. `null`/absent → a plain, un-highlighted block.
+   */
+  readonly attrs?: BlockIdAttrs & { readonly language?: string | null };
   readonly content?: readonly ProseMirrorTextNode[];
+}
+
+/**
+ * A LaTeX math node (T072) — an inline atom carrying a raw `latex` string + a
+ * `display` flag (block vs inline formula). The rendered KaTeX is a display-time
+ * concern; the stored JSON keeps only the latex. Mirrors `@interleave/editor`'s
+ * `math` node. It is inline content (sits inside a paragraph's content); a block
+ * formula is a `display:true` math node that is the sole inline child of its
+ * paragraph, so the row's stable id lives on the containing paragraph.
+ */
+export interface ProseMirrorMathNode {
+  readonly type: "math";
+  readonly attrs: { readonly latex: string; readonly display: boolean };
 }
 
 /** A horizontal rule — a leaf block. */

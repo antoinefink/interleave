@@ -66,6 +66,9 @@ function main(): void {
       `  image extract ${collection.occlusion.imageExtract.element.id}  → ${collection.occlusion.cards.length} image_occlusion sibling cards`,
     );
     console.log(
+      `  math/code src ${collection.mathCode.source.element.id}  "${collection.mathCode.source.element.title}" → code cloze + math Q&A`,
+    );
+    console.log(
       `  concepts      ${collection.concepts.parentConceptId} → ${collection.concepts.childConceptId}`,
     );
 

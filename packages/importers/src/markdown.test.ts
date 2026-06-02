@@ -174,18 +174,49 @@ describe("round-trip fidelity (the fixed-point contract)", () => {
     expect(md2).toBe(md1);
   });
 
-  it("normalizes away features outside the constrained schema (images / code-language)", () => {
-    // An image becomes its alt text; a fenced block's language is dropped — neither
-    // round-trips, by design (documented fidelity ceiling).
+  it("normalizes away features outside the constrained schema (images)", () => {
+    // An image becomes its alt text — it does not round-trip, by design (the
+    // documented fidelity ceiling).
     const conversion = markdownToProseMirrorDoc(
-      "![A caption](https://example.com/x.png)\n\n```js\nconst x = 1;\n```\n",
+      "![A caption](https://example.com/x.png)\n\n```\nconst x = 1;\n```\n",
       counterMint(),
     );
     const md = proseMirrorDocToMarkdown(conversion.doc);
     expect(md).not.toContain("https://example.com/x.png"); // image src gone
     expect(md).toContain("A caption"); // alt text kept
-    expect(md).not.toContain("```js"); // language label dropped
     expect(md).toContain("```\nconst x = 1;\n```"); // code text preserved
+  });
+
+  it("round-trips a fenced code block's LANGUAGE and a $$…$$ math node (T072)", () => {
+    // T072 widened the schema: the codeBlock carries a `language` attr and `$$…$$`
+    // maps to a `math` node, so both now round-trip through import → export → import.
+    const source = "```python\nprint('hi')\n```\n\n$$E=mc^2$$\n";
+    const conversion = markdownToProseMirrorDoc(source, counterMint());
+
+    // Import: the code block carries `language: "python"`; the `$$…$$` paragraph
+    // holds a `display:true` math node.
+    const blocks = conversion.doc.content;
+    const code = blocks.find((b) => b.type === "codeBlock");
+    expect(code?.type === "codeBlock" ? code.attrs?.language : null).toBe("python");
+    const mathPara = blocks.find(
+      (b): b is Extract<typeof b, { type: "paragraph" }> =>
+        b.type === "paragraph" && b.content?.[0]?.type === "math",
+    );
+    const mathNode = mathPara?.content?.[0];
+    expect(mathNode?.type).toBe("math");
+    if (mathNode?.type === "math") {
+      expect(mathNode.attrs.latex).toBe("E=mc^2");
+      expect(mathNode.attrs.display).toBe(true);
+    }
+
+    // Export: the fence language + the `$$…$$` are emitted back.
+    const md = proseMirrorDocToMarkdown(conversion.doc);
+    expect(md).toContain("```python");
+    expect(md).toContain("$$E=mc^2$$");
+
+    // Re-import is a fixed point (structurally equal modulo block ids).
+    const md2 = proseMirrorDocToMarkdown(markdownToProseMirrorDoc(md, counterMint()).doc);
+    expect(md2).toBe(md);
   });
 });
 
