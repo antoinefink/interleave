@@ -161,14 +161,38 @@ ran two more passes:
 - A **UI-completeness pass** — hunting placeholder/unwired bits (the sidebar identity, the streak,
   live menu counters, an exclusive-highlight navigation fix) and finishing them with real data.
 
-**Quality bars enforced throughout:** source lineage is sacred; the renderer never touches the
-database; every mutation is transactional and operation-logged; **every feature must survive an
-app restart** (proven by a full restart-persistence E2E).
+**Part II — the full system (v0.2.0).** The same machinery then built the entire gold-standard
+roadmap (M12–M20, ~37 tasks) on top of the MVP, run as a **wave-based relay**: one milestone at a
+time, generate its spec against the *real, evolved* codebase → coherence-review it → run the strict
+per-task gate → repeat. A deliberate re-scope kept it **local-first**: the future server is an
+encrypted-backup target only (no live multi-device sync), AI and semantic search run **on-device** (a
+local model or your own API key, off by default; `sqlite-vec`, not a server vector DB), and the
+browser extension reaches the desktop over a token-protected `127.0.0.1` loopback server. What
+landed: URL import + the MV3 extension, PDF/EPUB/Markdown/Anki import + on-device OCR,
+image-occlusion/formula/code/media cards, advanced scheduling & overload management, analytics +
+card-quality tooling, on-device semantic search + **drafts-only** AI, alternative review modes, and a
+100k-element scale-hardening pass. (The cloud backup server, a Tauri shell, and end-to-end-encrypted
+sync were deliberately left out of scope.)
 
-**Roughly where it stands today:** ~70 commits · **985 unit/integration tests** · **158
-Playwright/Electron E2E** · a packaged macOS build · the complete import → extract → card → review
-loop. Part II of the roadmap (server + operation-log sync, PDF/EPUB import, AI-assisted
-distillation, semantic search) is planned but not yet built.
+A human-in-the-loop **residual review** after each wave was the difference-maker. The strict gate
+keeps each task green, but a second look at the "cosmetic" leftovers it waved through caught *real*
+boundary bugs — a side-panel selection that paired one tab's text with another tab's source, a vault
+garbage-collector that could delete an in-flight import, a failed PDF import that orphaned its source
+row, a unit test that quietly streamed an 80 MB model over the network, an orphaned vector left after
+a hard-delete — plus spec-level catches (a retention-target keying mismatch, a phantom OCR-worker
+seam) fixed *before* any builder implemented them. A final UI audit then traced four reported visual
+glitches to one shared CSS bug across seventeen buttons and fixed them in a single pass.
+
+**Quality bars enforced throughout:** source lineage is sacred; the renderer never touches the
+database; every mutation is transactional and operation-logged; AI output is always a draft and never
+auto-schedules; **every feature must survive an app restart** (proven by a full restart-persistence E2E).
+
+**Roughly where it stands today (v0.2.0):** ~150 commits · **2,256 unit/integration tests** · **275
+Playwright/Electron E2E** across 71 specs · a packaged, installable macOS build
+([`v0.2.0`](https://github.com/antoinefink/incremental-reading/releases/tag/v0.2.0)) · the full
+local-first system from import → extract → distill → card → review, plus PDF/EPUB import, rich-media
+cards, on-device semantic search + AI, and 100k-scale hardening. The cloud-sync layer remains
+deliberately out of scope — Interleave is local-first by design.
 
 ---
 
