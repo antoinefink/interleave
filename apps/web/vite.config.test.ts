@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import config from "./vite.config";
 
@@ -15,7 +16,6 @@ describe("web Vite config", () => {
   it("allows imports from the monorepo root for shared design tokens", () => {
     const allow = config.server?.fs?.allow ?? [];
 
-    expect(allow).toHaveLength(1);
-    expect(String(allow[0])).toMatch(/interleave$/);
+    expect(allow).toEqual([resolve(import.meta.dirname, "../..")]);
   });
 });
