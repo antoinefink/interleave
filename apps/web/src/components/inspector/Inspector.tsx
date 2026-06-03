@@ -655,7 +655,8 @@ function ExportAnkiSection({
           </option>
         ))}
       </select>
-      <div style={{ display: "flex", gap: 6 }}>
+      <div className="insp-export-actions">
+        <span className="insp-export-actions__label">Export as</span>
         <button
           type="button"
           className="insp-add__btn"
@@ -1209,7 +1210,7 @@ export function MaintenanceSection({
       ) : (
         <button
           type="button"
-          className="insp-add__btn"
+          className="insp-add__btn insp-add__btn--inline"
           data-testid="maintenance-create"
           onClick={() => setCreating(true)}
           style={{ marginTop: 8 }}
@@ -1549,19 +1550,31 @@ function RetirementRow({
   }, [busy, isRetired, cardId, onChanged]);
   return (
     <MetaRow k="Retirement">
-      <span data-testid="inspector-retired-state">
-        {isRetired ? "Retired (kept for reference)" : "Active"}
-      </span>{" "}
-      <button
-        type="button"
-        className="insp-add__btn"
-        data-testid="inspector-retire-toggle"
-        disabled={busy}
-        onClick={() => void toggle()}
-      >
-        <Icon name="archive" size={13} />
-        {isRetired ? "Un-retire" : "Retire"}
-      </button>
+      <div className="insp-retire">
+        <span className="insp-retire__state" data-testid="inspector-retired-state">
+          {isRetired ? (
+            <>
+              <span className="insp-retire__dot insp-retire__dot--retired" />
+              Retired · kept for reference
+            </>
+          ) : (
+            <>
+              <span className="insp-retire__dot insp-retire__dot--active" />
+              Active
+            </>
+          )}
+        </span>
+        <button
+          type="button"
+          className="insp-add__btn"
+          data-testid="inspector-retire-toggle"
+          disabled={busy}
+          onClick={() => void toggle()}
+        >
+          <Icon name={isRetired ? "restore" : "archive"} size={13} />
+          {isRetired ? "Un-retire" : "Retire"}
+        </button>
+      </div>
       {error ? (
         <span className="text-danger" data-testid="inspector-retire-error">
           {" "}

@@ -486,6 +486,16 @@
   font-family: var(--font-ui);
   font-size: var(--t-xs);
   font-weight: 500;
+  /* Group the icon + label as one centered control (matches the kit's `.btn`):
+     inline-flex with a real gap so the icon never jams against the label, and
+     `justify-content: center` so the icon+label stay grouped even when the
+     button is stretched full-width (e.g. as a flex-column child of `.insp-sec`,
+     where `align-items: stretch` would otherwise leave the label centered with a
+     loose, detached icon). */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
   color: var(--text-2);
   background: var(--surface-2);
   border: 1px solid var(--border-faint);
@@ -494,6 +504,18 @@
   height: 26px;
   cursor: pointer;
   white-space: nowrap;
+}
+/* Keep the icon a fixed, non-shrinking glyph (mirrors `.btn svg` in the kit) so
+   it never warps when the label is long. */
+.insp-add__btn svg {
+  flex: none;
+}
+/* A standalone section-level affordance (e.g. "Create verification task") sits as
+   a direct flex-column child of `.insp-sec`, whose default `align-items: stretch`
+   would stretch it edge-to-edge and leave the icon+label adrift in the centre.
+   `--inline` shrinks the button to its content so it reads as one tidy control. */
+.insp-add__btn--inline {
+  align-self: flex-start;
 }
 .insp-add__btn:hover:not(:disabled) {
   color: var(--text);
@@ -544,6 +566,52 @@
 .meta-key {
   font-size: var(--t-sm);
   color: var(--text-3);
+}
+/* Anki/CSV export actions (T070) — an "Export as" lead-in label so the two
+   format buttons read as intentional export actions, not context-less chips. */
+.insp-export-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.insp-export-actions__label {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+  margin-right: 2px;
+}
+
+/* Retirement control (T082) — the current state (a dot + label) and the
+   retire/un-retire action read as ONE balanced control: a flex row, vertically
+   centred, with the action pushed to the trailing edge. Every colour is a token
+   so it re-themes in dark. */
+.insp-retire {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  min-width: 0;
+}
+.insp-retire__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.insp-retire__dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-full);
+}
+.insp-retire__dot--active {
+  background: var(--ok);
+}
+.insp-retire__dot--retired {
+  background: var(--text-3);
 }
 .meta-val {
   font-size: var(--t-sm);

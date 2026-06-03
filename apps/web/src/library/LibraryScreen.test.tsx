@@ -151,6 +151,20 @@ describe("LibraryScreen", () => {
     expect(h.searchQuery).not.toHaveBeenCalled();
   });
 
+  it("shows the GLOBAL concept memberCount on the chip when there is NO query (not a wall of 0s)", async () => {
+    // Empty-query state: keyword search returns [] (no drill-down `byConcept`), so the
+    // chip must fall back to the concept's GLOBAL memberCount (2) — the same number the
+    // Map shows — rather than `0`. (The reported symptom was every concept chip reading
+    // `0` on the empty `/search` screen even though members exist.)
+    render(<LibraryScreen />);
+    const chip = await screen.findByTestId("library-filter-concept-concept-1");
+    await waitFor(() =>
+      expect(within(chip).getByText("2", { selector: ".filter-opt__count" })).toBeTruthy(),
+    );
+    // And no query was issued (the chip number came from listConcepts, not searchQuery).
+    expect(h.searchQuery).not.toHaveBeenCalled();
+  });
+
   it("shows the 'Build index (N of M embedded)' affordance when semantics are enabled but the index is incomplete, and reindexes on click (T087)", async () => {
     // Semantics ON + vec available, but only 1 of 3 elements embedded.
     h.semanticStatus.mockResolvedValue({

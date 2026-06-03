@@ -335,6 +335,15 @@ export function LibraryScreen() {
     return m;
   }, [concepts]);
 
+  // Whether a keyword search is actually running (the drill-down concept counts
+  // only exist once there is a query — FTS returns [] for an empty query). When
+  // there is NO query, the filterbar concept chips fall back to the GLOBAL
+  // `memberCount` (the concept's total reach, the same number the Map shows) so the
+  // empty-search state reads as a browsable facet column — not a wall of `0`s. Once
+  // a keyword is typed, the chips switch to the keyword-scoped DRILL-DOWN
+  // `conceptCounts`, preserving the count-matches-the-narrowed-list invariant.
+  const hasQuery = debouncedQuery.trim().length > 0;
+
   if (!desktop) {
     return (
       <div className="lib-shell" data-testid="route-search">
@@ -423,11 +432,16 @@ export function LibraryScreen() {
                   onClick={() => setConceptFilter((cur) => (cur === c.id ? null : c.id))}
                 >
                   <ConceptTag name={c.name} />
-                  {/* DRILL-DOWN count: members of this concept that ALSO match the
-                      active keyword + type (NOT the global memberCount) — so the chip
-                      number always matches the narrowed result list. Empty until a
-                      keyword is entered (search returns [] for an empty query). */}
-                  <span className="filter-opt__count">{conceptCounts[c.id] ?? 0}</span>
+                  {/* With a keyword active: the DRILL-DOWN count (members of this
+                      concept that ALSO match the keyword + type), so the chip number
+                      always matches the narrowed result list. With NO keyword: the
+                      GLOBAL `memberCount` (the concept's total reach) so the empty
+                      state reads as a browsable facet — not a wall of `0`s — since
+                      keyword search returns [] (and thus no drill-down counts) for an
+                      empty query. */}
+                  <span className="filter-opt__count">
+                    {hasQuery ? (conceptCounts[c.id] ?? 0) : (conceptVolume.get(c.id) ?? 0)}
+                  </span>
                 </button>
               ))}
             </div>
