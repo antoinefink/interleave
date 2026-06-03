@@ -20,12 +20,19 @@ import type { BlockId, ElementId } from "@interleave/core";
 import { AiDisabledError, DEFAULT_APP_SETTINGS } from "@interleave/core";
 import {
   type DbHandle,
+  elementRelations,
   elements,
   migrateDatabase,
   openDatabase,
   reviewStates,
+  sourceLocations,
 } from "@interleave/db";
-import { CardService, createRepositories, type Repositories } from "@interleave/local-db";
+import {
+  CardService,
+  createRepositories,
+  type Repositories,
+  resolveSourceRef,
+} from "@interleave/local-db";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AiService } from "./ai-service";
@@ -252,6 +259,67 @@ describe("AiService.approveCard", () => {
 
     // The suggestion flipped to `approved`.
     expect(repos.aiSuggestions.findById(summary.id)?.status).toBe("approved");
+  });
+
+  it("inherits the grounding: writes a source_locations row + derived_from edge so the card resolves the SAME SourceRef (T094)", () => {
+    const { extractId, sourceId, blockId } = seed();
+    const svc = makeService();
+
+    // The suggestion's grounding refblock (what the model commented ABOUT).
+    const summary = svc.applyResult(
+      {
+        action: "suggest_qa",
+        providerKind: "anthropic",
+        owningElementId: extractId,
+        request: { action: "suggest_qa", sourceText: "The definition paragraph." },
+        grounding: {
+          sourceElementId: sourceId,
+          blockIds: [blockId],
+          startOffset: 0,
+          endOffset: 25,
+          selectedText: "The definition paragraph.",
+        },
+      },
+      {
+        kind: "card_qa",
+        text: "model text",
+        cards: [{ kind: "qa", prompt: "What is the definition?", answer: "Skill efficiency." }],
+      },
+    );
+    const suggestionRef = repos.aiSuggestions.groundingFor(repos, summary.id);
+
+    const result = svc.approveCard(summary.id);
+    const cardId = result.cardId as ElementId;
+
+    // A REAL `source_locations` row was written anchored to the minted card, carrying the
+    // grounding (the verbatim quote + the same source span) — NOT just copied onto the card.
+    const loc = handle.db
+      .select()
+      .from(sourceLocations)
+      .where(eq(sourceLocations.elementId, cardId))
+      .get();
+    expect(loc).toBeTruthy();
+    expect(loc?.sourceElementId).toBe(sourceId);
+    expect(loc?.selectedText).toBe("The definition paragraph.");
+
+    // A `derived_from` edge card → owning extract (the `card → extract → source` chain).
+    const edge = handle.db
+      .select()
+      .from(elementRelations)
+      .where(eq(elementRelations.fromElementId, cardId))
+      .get();
+    expect(edge?.toElementId).toBe(extractId);
+    expect(edge?.relationType).toBe("derived_from");
+
+    // The minted card resolves the SAME SourceRef the suggestion's grounding did — the
+    // jump-to-source target (sourceElementId) + the verbatim quote match an extract-derived
+    // card, so the card's refblock reads identically. (Lineage chain is intact.)
+    const cardRef = resolveSourceRef(repos, cardId);
+    expect(cardRef?.sourceElementId).toBe(sourceId);
+    expect(cardRef?.sourceElementId).toBe(suggestionRef.sourceElementId);
+    expect(cardRef?.snippet).toBe(suggestionRef.snippet);
+    expect(cardRef?.snippet).toBe("The definition paragraph.");
+    expect(cardRef?.sourceTitle).toBe("On Intelligence");
   });
 
   it("mints the card + flips the suggestion in ONE transaction (a flip failure rolls the card back)", () => {

@@ -84,7 +84,7 @@ async function enableAi(page: Page): Promise<void> {
   });
 }
 
-/** The inspector payload for an element (persisted stage/status/review). */
+/** The inspector payload for an element (persisted stage/status/review + the refblock). */
 async function inspect(page: Page, id: string) {
   return page.evaluate(async (elementId) => {
     const api = window.appApi as unknown as {
@@ -93,6 +93,12 @@ async function inspect(page: Page, id: string) {
           data: {
             element: { type: string; stage: string; status: string; dueAt: string | null };
             review: unknown | null;
+            // The resolved refblock (T043/T094) — the minted card inherits the grounding.
+            sourceRef: {
+              sourceElementId: string | null;
+              sourceTitle: string | null;
+              snippet: string | null;
+            } | null;
           } | null;
         }>;
       };
@@ -127,6 +133,9 @@ test("AI off → calm disabled state on the extract surface", async () => {
 });
 
 test("suggest Q&A → a grounded draft → approve mints a parked card_draft that survives restart", async () => {
+  // This flow mounts the source reader twice (the in-app jump-to-source + the return),
+  // runs the AI worker, AND restarts the app — so it needs more than the 30s default.
+  test.setTimeout(90_000);
   let app = await launchApp(dataDir, { aiFake: true });
   let page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
@@ -139,13 +148,31 @@ test("suggest Q&A → a grounded draft → approve mints a parked card_draft tha
   await expect(page.getByTestId("ai-assist")).toBeVisible();
 
   // (2) RUN "suggest Q&A" over the extract's span → a DRAFT appears (via the runner).
-  await page.getByTestId("ai-action-suggest_qa").click();
+  // The action buttons stay disabled until the extract's grounding (its source-location
+  // anchor) has loaded into the surface, so wait for enabled before clicking.
+  const runQa = page.getByTestId("ai-action-suggest_qa");
+  await expect(runQa).toBeEnabled({ timeout: 15_000 });
+  await runQa.click();
   await expect(page.getByTestId("ai-draft")).toBeVisible({ timeout: 15_000 });
   // The grounding refblock shows the source quote the suggestion was made ABOUT (T094).
   await expect(page.getByTestId("ai-draft-grounding")).toBeVisible();
   await expect(page.getByTestId("ai-draft-grounding")).toContainText(
     /deliberate progress|feedback signal/i,
   );
+
+  // (T094) The draft's grounding refblock carries a WORKING in-app "jump to source"
+  // that lands on the ORIGINATING block — exactly like an extract/card refblock. The
+  // intro extract was created over `blk_intro_p1`, so the jump scrolls/flashes it.
+  const draftJump = page.getByTestId("ai-draft-grounding").getByTestId("refblock-open-source");
+  await expect(draftJump).toBeVisible();
+  await draftJump.click();
+  await expect(page.locator('.reader [data-block-id="blk_intro_p1"].jumped')).toBeVisible({
+    timeout: 15_000,
+  });
+
+  // Return to the extract surface to continue the approve flow (the jump navigated away).
+  await openExtract(page, extractId);
+  await expect(page.getByTestId("ai-draft")).toBeVisible({ timeout: 15_000 });
 
   // (3) APPROVE → mint a parked card_draft. Resolve its id via a set-difference of the
   // card ids before/after (the seeded collection already has cards; insertion order is
@@ -179,6 +206,13 @@ test("suggest Q&A → a grounded draft → approve mints a parked card_draft tha
   expect(afterRestart?.element.type).toBe("card");
   expect(afterRestart?.element.stage).toBe("card_draft");
   expect(afterRestart?.element.dueAt).toBeNull();
+
+  // (T094) The approved card INHERITED the grounding as a real source_location: its
+  // refblock resolves the SAME source (the seeded article) + the verbatim source quote,
+  // so jump-to-source + provenance work exactly like an extract-derived card — and it
+  // survives the restart (lineage `card → source location → source` is intact).
+  expect(afterRestart?.sourceRef?.sourceElementId).toBe(sourceId);
+  expect(afterRestart?.sourceRef?.snippet).toMatch(/deliberate progress|feedback signal/i);
 
   await app.close();
 });

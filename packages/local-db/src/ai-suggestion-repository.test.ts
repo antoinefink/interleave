@@ -220,6 +220,56 @@ describe("groundingFor (T094)", () => {
   });
 });
 
+describe("groundingLocationFor (T094 — drafts-panel jump-to-source target)", () => {
+  it("resolves a jump location with the span's source element + block ids + offsets + label", () => {
+    const { sourceId, extractId, blockId } = seedSourceAndExtract();
+    const created = repos.aiSuggestions.create({
+      owningElementId: extractId,
+      action: "suggest_qa",
+      kind: "card_qa",
+      providerKind: "anthropic",
+      suggestionText: "a Q&A",
+      grounding: {
+        sourceElementId: sourceId,
+        blockIds: [blockId],
+        startOffset: 0,
+        endOffset: 25,
+        selectedText: "The definition paragraph.",
+      },
+    });
+    const loc = repos.aiSuggestions.groundingLocationFor(repos, created.id);
+    expect(loc).not.toBeNull();
+    // The jump lands on the ORIGINATING block of the source the model commented on.
+    expect(loc?.sourceElementId).toBe(sourceId);
+    expect(loc?.blockIds).toEqual([blockId]);
+    expect(loc?.startOffset).toBe(0);
+    expect(loc?.endOffset).toBe(25);
+    expect(loc?.selectedText).toBe("The definition paragraph.");
+    expect(loc?.label).toBe("¶1");
+  });
+
+  it("returns null (no jump affordance) when the grounding source is soft-deleted", () => {
+    const { sourceId, extractId, blockId } = seedSourceAndExtract();
+    const created = repos.aiSuggestions.create({
+      owningElementId: extractId,
+      action: "explain",
+      kind: "text",
+      providerKind: "openai",
+      suggestionText: "explanation",
+      grounding: {
+        sourceElementId: sourceId,
+        blockIds: [blockId],
+        startOffset: null,
+        endOffset: null,
+        selectedText: "orphan quote",
+      },
+    });
+    repos.elements.softDelete(sourceId);
+    // No live reader to jump into → no jump target (the refblock degrades on its own).
+    expect(repos.aiSuggestions.groundingLocationFor(repos, created.id)).toBeNull();
+  });
+});
+
 describe("CardService.createDraftFromSuggestion — the draft-only approve seam", () => {
   it("mints a PARKED, un-due card_draft (NOT active, dueAt null) with create_element + create_card", () => {
     const { sourceId, extractId, blockId } = seedSourceAndExtract();

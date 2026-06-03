@@ -1194,6 +1194,20 @@ export interface AiDraftCard {
   readonly cloze?: string;
 }
 
+/**
+ * The grounding span as a jump-to-source target (T094) — the subset of a
+ * {@link LocationSummary} the drafts panel needs to wire an in-app "jump to source"
+ * on an AI draft's refblock. `null` for the orphan case (no resolvable source).
+ */
+export interface AiGroundingLocation {
+  readonly label: string | null;
+  readonly selectedText: string;
+  readonly sourceElementId: string;
+  readonly blockIds: readonly string[];
+  readonly startOffset: number | null;
+  readonly endOffset: number | null;
+}
+
 /** A renderer-safe AI suggestion + its resolved grounding (T093/T094). NO key. */
 export interface AiSuggestionView {
   readonly id: string;
@@ -1204,6 +1218,11 @@ export interface AiSuggestionView {
   readonly status: string;
   readonly qualityChecks: readonly AiQualityCheck[];
   readonly grounding: SourceRef;
+  /**
+   * The grounding span as a jump-to-source location (T094), or `null` (orphan case) —
+   * the drafts panel builds a `LocationSummary` from this to wire "jump to source".
+   */
+  readonly groundingLocation: AiGroundingLocation | null;
 }
 
 export interface AiListRequest {

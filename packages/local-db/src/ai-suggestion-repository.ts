@@ -53,6 +53,27 @@ export interface AiSuggestionGrounding {
   readonly selectedText: string;
 }
 
+/**
+ * The grounding span resolved to a jump-to-source location (T094) — the data the
+ * drafts panel needs to wire an in-app "jump to source" on an AI draft's refblock,
+ * exactly like an extract/card. Framework-free; `db-service` maps it to the IPC
+ * `LocationSummary`.
+ */
+export interface AiGroundingLocation {
+  /** The source element the span lives in (the reader to open on jump). */
+  readonly sourceElementId: ElementId;
+  /** Ordered STABLE block ids the span covers (the scroll target is the first). */
+  readonly blockIds: readonly BlockId[];
+  /** Char offset within the first spanned block (caret target), or `null`. */
+  readonly startOffset: number | null;
+  /** Char offset within the last spanned block, or `null`. */
+  readonly endOffset: number | null;
+  /** The verbatim selected source quote. */
+  readonly selectedText: string;
+  /** The human location label (e.g. "¶ 3"), best-effort; `null` when underivable. */
+  readonly label: string | null;
+}
+
 /** A persisted AI suggestion (the domain shape the repository returns). */
 export interface AiSuggestion {
   readonly id: string;
@@ -232,6 +253,11 @@ export class AiSuggestionRepository {
   groundingFor(repos: GroundingRepos, suggestionId: string): SourceRef {
     const suggestion = this.findById(suggestionId);
     if (!suggestion) return EMPTY_SOURCE_REF;
+    return this.resolveGroundingRef(repos, suggestion);
+  }
+
+  /** Resolve a loaded suggestion's grounding span to a {@link SourceRef} (shared seam). */
+  private resolveGroundingRef(repos: GroundingRepos, suggestion: AiSuggestion): SourceRef {
     const g = suggestion.grounding;
 
     // The span's own human label (e.g. "¶ 3"), derived from its block ids + the source
@@ -261,6 +287,34 @@ export class AiSuggestionRepository {
       // model commented on THIS exact span, not the whole source.
       locationLabel: label ?? baseRef.locationLabel,
       snippet: g.selectedText.length > 0 ? g.selectedText : baseRef.snippet,
+    };
+  }
+
+  /**
+   * Resolve a suggestion's grounding span to a {@link AiGroundingLocation} — the
+   * jump-to-source target (source element id + ordered stable block ids + offsets +
+   * the verbatim quote + the human label) the drafts panel uses to wire an in-app
+   * "jump to source" exactly like an extract/card refblock (T094). Returns `null`
+   * when the span has no block ids OR its source is gone/soft-deleted (the orphan
+   * case, where the refblock shows the calm quote but offers no jump) — mirroring
+   * {@link groundingFor}'s orphan degradation so a draft never offers a dead jump.
+   */
+  groundingLocationFor(repos: GroundingRepos, suggestionId: string): AiGroundingLocation | null {
+    const suggestion = this.findById(suggestionId);
+    if (!suggestion) return null;
+    const g = suggestion.grounding;
+    if (!g.sourceElementId || g.blockIds.length === 0) return null;
+    // The source must still resolve — a soft-deleted source has no live reader to jump
+    // into, so we offer no jump (the refblock already degrades to "source unavailable").
+    if (!resolveSourceRef(repos, g.sourceElementId)) return null;
+    const label = this.deriveSpanLabel(repos, g.sourceElementId, g.blockIds);
+    return {
+      sourceElementId: g.sourceElementId,
+      blockIds: g.blockIds,
+      startOffset: g.startOffset,
+      endOffset: g.endOffset,
+      selectedText: g.selectedText,
+      label,
     };
   }
 

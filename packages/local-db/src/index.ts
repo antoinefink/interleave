@@ -19,6 +19,7 @@
  */
 
 export {
+  type AiGroundingLocation,
   type AiSuggestion,
   type AiSuggestionGrounding,
   AiSuggestionRepository,

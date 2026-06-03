@@ -1887,6 +1887,13 @@ export interface AiSuggestionView {
   readonly qualityChecks: readonly AiQualityCheck[];
   /** The resolved grounding refblock (the source span this was made about, T094). */
   readonly grounding: SourceRef;
+  /**
+   * The grounding span as a jump-to-source location (T094) — source element id +
+   * ordered stable block ids + offsets + label, so the drafts panel can wire an
+   * in-app "jump to source" on the refblock exactly like an extract/card. `null`
+   * when the span has no resolvable source (the orphan case — no jump affordance).
+   */
+  readonly groundingLocation: LocationSummary | null;
 }
 
 /** List the draft suggestions for an element (T093). */

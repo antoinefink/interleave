@@ -200,6 +200,7 @@ import type {
   LibraryBrowseResult,
   LibraryItem,
   LineageGetResult,
+  LocationSummary,
   OptimizationApplyRequest,
   OptimizationApplyResult,
   OptimizationSuggestRequest,
@@ -1902,10 +1903,29 @@ export class DbService {
     const owningElementId = request.elementId as ElementId;
     const suggestions = this.aiService.listForElement(owningElementId);
     return {
-      suggestions: suggestions.map((s) => ({
-        ...s,
-        grounding: this.repos.aiSuggestions.groundingFor(this.repos, s.id),
-      })),
+      suggestions: suggestions.map((s) => {
+        // The grounding span as a jump-to-source `LocationSummary` (T094) so the drafts
+        // panel can wire an in-app "jump to source" exactly like an extract/card refblock;
+        // `null` for the orphan case (no resolvable source → no jump affordance).
+        const span = this.repos.aiSuggestions.groundingLocationFor(this.repos, s.id);
+        const groundingLocation: LocationSummary | null = span
+          ? {
+              label: span.label,
+              selectedText: span.selectedText,
+              page: null,
+              region: null,
+              sourceElementId: span.sourceElementId,
+              blockIds: span.blockIds,
+              startOffset: span.startOffset,
+              endOffset: span.endOffset,
+            }
+          : null;
+        return {
+          ...s,
+          grounding: this.repos.aiSuggestions.groundingFor(this.repos, s.id),
+          groundingLocation,
+        };
+      }),
     };
   }
 

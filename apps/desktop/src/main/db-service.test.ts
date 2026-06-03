@@ -3229,3 +3229,116 @@ describe("DbService tasks.* (T092 — verification tasks)", () => {
     second.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// ai.listAiSuggestions → AiSuggestionView.groundingLocation (T094) — the IPC
+// jump-to-source field. The underlying resolver has its own repo unit tests; here
+// we pin the DbService MAPPING that threads it across the wire: a draft with a live
+// grounding source carries a `LocationSummary` jump target (source element id +
+// ordered stable block ids + offsets + derived label + verbatim quote, page/region
+// null for a block source), and the orphan case (soft-deleted source) maps to null
+// so the drafts panel shows no jump affordance.
+// ---------------------------------------------------------------------------
+
+describe("DbService — listAiSuggestions grounding location (T094)", () => {
+  /** Seed a source + extract, attach one draft AI suggestion grounded on the first block. */
+  function seedDraftWithGrounding(svc: DbService): {
+    sourceId: string;
+    extractId: string;
+    blockId: string;
+    suggestionId: string;
+    locationLabel: string | null;
+  } {
+    const { id: sourceId } = svc.importManualSource({
+      title: "On the Measure of Intelligence",
+      priority: "A",
+      body: "The definition paragraph.\n\nAnother paragraph.",
+    });
+    const blockId = (
+      svc.raw.sqlite
+        .prepare("SELECT stable_block_id AS b FROM document_blocks WHERE document_id = ? LIMIT 1")
+        .get(sourceId) as { b: string }
+    ).b;
+    const { extract, location } = svc.createExtraction({
+      sourceElementId: sourceId,
+      selectedText: "The definition paragraph.",
+      blockIds: [blockId],
+      startOffset: 0,
+      endOffset: 25,
+    });
+    const created = svc.repos.aiSuggestions.create({
+      owningElementId: extract.id as never,
+      action: "suggest_qa",
+      kind: "card_qa",
+      providerKind: "anthropic",
+      suggestionText: "MODEL: a Q&A about the definition",
+      cards: [{ kind: "qa", prompt: "What is the definition?", answer: "Skill efficiency." }],
+      grounding: {
+        sourceElementId: sourceId as never,
+        blockIds: [blockId as never],
+        startOffset: 0,
+        endOffset: 25,
+        selectedText: "The definition paragraph.",
+      },
+    });
+    return {
+      sourceId,
+      extractId: extract.id,
+      blockId,
+      suggestionId: created.id,
+      locationLabel: location.label,
+    };
+  }
+
+  it("maps groundingLocation to a jump-to-source LocationSummary on the originating block", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { extractId, sourceId, blockId, locationLabel } = seedDraftWithGrounding(svc);
+
+    const { suggestions } = svc.listAiSuggestions({ elementId: extractId });
+    expect(suggestions).toHaveLength(1);
+    const view = suggestions[0];
+    if (!view) throw new Error("expected one suggestion");
+
+    // The wire field is populated (not the orphan null) and resolves the live span.
+    const loc = view.groundingLocation;
+    expect(loc).not.toBeNull();
+    // Jump lands on the originating block of the source the model commented on.
+    expect(loc?.sourceElementId).toBe(sourceId);
+    expect(loc?.blockIds).toEqual([blockId]);
+    expect(loc?.startOffset).toBe(0);
+    expect(loc?.endOffset).toBe(25);
+    // Verbatim quote + derived label travel with the jump target. The draft resolves
+    // the SAME paragraph label as an extract anchored on that same block.
+    expect(loc?.selectedText).toBe("The definition paragraph.");
+    expect(loc?.label).toMatch(/^¶\d+$/);
+    expect(loc?.label).toBe(locationLabel);
+    // A block-anchored source has no page/region (those are PDF-only).
+    expect(loc?.page).toBeNull();
+    expect(loc?.region).toBeNull();
+    // The model output stays SEPARATE from the source quote (T093 invariant, still intact).
+    expect(view.text).toBe("MODEL: a Q&A about the definition");
+    expect(view.grounding.snippet).toBe("The definition paragraph.");
+
+    svc.close();
+  });
+
+  it("maps groundingLocation to null when the grounding source is soft-deleted (orphan)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { extractId, sourceId } = seedDraftWithGrounding(svc);
+
+    // No live reader to jump into → the refblock must degrade to no jump affordance.
+    svc.repos.elements.softDelete(sourceId as never);
+
+    const { suggestions } = svc.listAiSuggestions({ elementId: extractId });
+    expect(suggestions).toHaveLength(1);
+    const view = suggestions[0];
+    if (!view) throw new Error("expected one suggestion");
+    expect(view.groundingLocation).toBeNull();
+    // The verbatim quote is still preserved on the grounding ref for context.
+    expect(view.grounding.snippet).toBe("The definition paragraph.");
+
+    svc.close();
+  });
+});

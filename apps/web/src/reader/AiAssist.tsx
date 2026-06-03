@@ -16,8 +16,36 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { RefBlock } from "../components/RefBlock";
-import type { AiActionType, AiStatusResult, AiSuggestionView } from "../lib/appApi";
+import type {
+  AiActionType,
+  AiGroundingLocation,
+  AiStatusResult,
+  AiSuggestionView,
+  LocationSummary,
+} from "../lib/appApi";
 import { appApi, isDesktop } from "../lib/appApi";
+import { useNavigateToLocation } from "./navigateToLocation";
+
+/**
+ * Build a full `LocationSummary` from a suggestion's resolved grounding span (T094)
+ * so the drafts panel can reuse the shared jump-to-source navigation — an AI draft's
+ * refblock jumps to the originating block exactly like an extract/card. AI grounding
+ * has no PDF page / region / media clip, so those degrade to `null`.
+ */
+function locationFromGrounding(g: AiGroundingLocation): LocationSummary {
+  return {
+    label: g.label,
+    selectedText: g.selectedText,
+    page: null,
+    region: null,
+    clip: null,
+    timestampMs: null,
+    sourceElementId: g.sourceElementId,
+    blockIds: g.blockIds,
+    startOffset: g.startOffset,
+    endOffset: g.endOffset,
+  };
+}
 
 /** The seven actions + their human labels, in display order. */
 const AI_ACTIONS: ReadonlyArray<{ action: AiActionType; label: string }> = [
@@ -51,6 +79,7 @@ export function AiAssist({ owningElementId, grounding }: AiAssistProps): React.R
   const [suggestions, setSuggestions] = useState<readonly AiSuggestionView[]>([]);
   const [busyAction, setBusyAction] = useState<AiActionType | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const navigateToLocation = useNavigateToLocation();
 
   const refreshStatus = useCallback(async () => {
     if (!isDesktop() || typeof appApi.aiStatus !== "function") return;
@@ -209,13 +238,27 @@ export function AiAssist({ owningElementId, grounding }: AiAssistProps): React.R
                 {s.text}
               </p>
 
-              {/* The grounding refblock — the source span this was made ABOUT (T094). */}
+              {/* The grounding refblock — the source span this was made ABOUT (T094).
+                  When the span resolves a source, the refblock carries a working
+                  in-app "jump to source" that lands on the originating block, exactly
+                  like an extract/card refblock. */}
               <div
                 className="ai-draft__grounding"
                 data-testid="ai-draft-grounding"
                 style={{ marginTop: 6 }}
               >
-                <RefBlock ref={s.grounding} />
+                <RefBlock
+                  ref={s.grounding}
+                  {...(s.groundingLocation
+                    ? {
+                        onOpenSource: () => {
+                          if (s.groundingLocation) {
+                            navigateToLocation(locationFromGrounding(s.groundingLocation));
+                          }
+                        },
+                      }
+                    : {})}
+                />
               </div>
 
               {/* The card-quality warnings (the same T035/T086 checks). */}
