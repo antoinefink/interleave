@@ -89,6 +89,7 @@ describe("RelatedSection (T088)", () => {
     expect(screen.getByText("Spacing effect (copy)")).toBeInTheDocument();
     expect(screen.getByText("Cognition")).toBeInTheDocument();
     expect(screen.getByText("Memory consolidation")).toBeInTheDocument();
+    expect(screen.getByTestId("related-prereq-concepts")).toHaveClass("related-bucket__concepts");
   });
 
   it("styles duplicates distinctly with a 'possible duplicate' badge", async () => {

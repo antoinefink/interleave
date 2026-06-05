@@ -1713,7 +1713,7 @@ export function RelatedSection({
       {prerequisiteConcepts.length > 0 ? (
         <div className="related-bucket" data-testid="related-prereqs">
           <div className="related-bucket__label">Prerequisite concepts</div>
-          <div className="tag-list">
+          <div className="related-bucket__concepts" data-testid="related-prereq-concepts">
             {prerequisiteConcepts.map((c) => (
               <ConceptTag key={c.id} name={c.name} />
             ))}
