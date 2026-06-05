@@ -281,7 +281,7 @@ function Sidebar({
                 <Icon name="info" size={14} />
                 <span className="shell-grow">Help &amp; docs</span>
               </button>
-              <hr className="shell-usermenu__sep" />
+              <hr className="shell-usermenu__sep" data-testid="shell-usermenu-vault-sep" />
               {/* Non-interactive status (not a menu action): the MVP is local-only,
                   so this is honest "offline-first" copy, not a misleading "synced"
                   button. Cloud sync is a later server-phase feature. */}
@@ -289,7 +289,6 @@ function Sidebar({
                 <Icon name="shield" size={14} />
                 <span className="shell-grow">Local vault · offline-first</span>
               </div>
-              <hr className="shell-usermenu__sep" data-testid="shell-usermenu-vault-sep" />
             </div>
           )}
         </div>

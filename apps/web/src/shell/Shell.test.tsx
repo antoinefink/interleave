@@ -195,9 +195,10 @@ describe("Shell", () => {
     const themeSep = screen.getByTestId("shell-usermenu-theme-sep");
     expect(themeSep.previousElementSibling).toHaveTextContent("Dark mode");
     expect(themeSep.nextElementSibling).toHaveTextContent("Settings");
-    expect(screen.getByTestId("shell-usermenu-vault-sep").previousElementSibling).toHaveTextContent(
-      "Local vault · offline-first",
-    );
-    expect(document.querySelectorAll(".shell-usermenu__sep")).toHaveLength(3);
+    const vaultSep = screen.getByTestId("shell-usermenu-vault-sep");
+    expect(vaultSep.previousElementSibling).toHaveTextContent("Help & docs");
+    expect(vaultSep.nextElementSibling).toHaveTextContent("Local vault · offline-first");
+    expect(screen.getByTestId("shell-vault-status").nextElementSibling).toBeNull();
+    expect(document.querySelectorAll(".shell-usermenu__sep")).toHaveLength(2);
   });
 });
