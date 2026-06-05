@@ -14,7 +14,9 @@
  *       tree now marks the extract active);
  *   (c) UP: from the extract, clicking the source node re-selects the source and
  *       opens its reader (`/source/$id`);
- *   (d) RESTART: relaunching against the same data dir still shows the full tree —
+ *   (d) CARD: from the extract workspace lineage panel, clicking a card selects it
+ *       in the inspector without incorrectly starting `/review`;
+ *   (e) RESTART: relaunching against the same data dir still shows the full tree —
  *       lineage survives an app restart (the DoD bar).
  *
  * It reads element ids only through `window.appApi` (the lineage tree + selection),
@@ -124,6 +126,8 @@ test("the lineage tree shows the full chain and navigates both directions, survi
   expect(ids).toContain(sourceId);
   expect(ids).toContain(extractId);
   expect(ids).toContain(subExtractId);
+  const cardId = fromSource?.nodes.find((n) => n.type === "card")?.id;
+  expect(cardId).toBeTruthy();
   const sourceNode = fromSource?.nodes.find((n) => n.id === sourceId);
   const extractNode = fromSource?.nodes.find((n) => n.id === extractId);
   const subNode = fromSource?.nodes.find((n) => n.id === subExtractId);
@@ -157,7 +161,21 @@ test("the lineage tree shows the full chain and navigates both directions, survi
   await expect(page.getByTestId("reader-title")).toBeVisible();
   await expect(treeNode(page, sourceId)).toHaveAttribute("data-active", "true");
 
-  // (d) RESTART: relaunch against the same data dir — the tree survives.
+  // (d) CARD: in the extract workspace's own lineage panel, cards have no dedicated
+  // route yet; clicking one should select it in the universal inspector and stay put
+  // instead of silently doing nothing or detouring into the review session.
+  if (!cardId) throw new Error("seeded lineage card not found");
+  await page.goto(`${baseUrl}/extract/${extractId}`);
+  await page.waitForLoadState("domcontentloaded");
+  await expect(page.getByTestId("route-extract")).toBeVisible();
+  const extractLineage = page.getByTestId("extract-context");
+  await extractLineage
+    .locator(`[data-testid="lineage-tree-node"][data-element-id="${cardId}"]`)
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/extract/${extractId}$`));
+  await expect(page.getByTestId("inspector-content")).toHaveAttribute("data-element-type", "card");
+
+  // (e) RESTART: relaunch against the same data dir — the tree survives.
   await app.close();
   app = await launchApp(dataDir);
   page = await app.firstWindow();

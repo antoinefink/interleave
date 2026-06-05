@@ -58,6 +58,7 @@ import {
   type LineageData,
 } from "../lib/appApi";
 import { useDocument } from "../pages/source/useDocument";
+import { useSelection } from "../shell/selection";
 import { AiAssist } from "./AiAssist";
 import { CardBuilder } from "./CardBuilder";
 import { ClipMiniPlayer } from "./ClipMiniPlayer";
@@ -90,6 +91,7 @@ export function ExtractView() {
   const desktop = isDesktop();
   const navigate = useNavigate();
   const navigateToLocation = useNavigateToLocation();
+  const { select } = useSelection();
 
   const doc = useDocument(id);
   const [inspector, setInspector] = useState<InspectorData | null>(null);
@@ -647,10 +649,10 @@ export function ExtractView() {
             <LineageTree
               nodes={lineageNodes}
               onPick={(n) => {
-                if (n.id === id) return;
-                if (n.type === "source") {
+                select(n.id);
+                if (n.type === "source" || n.type === "topic") {
                   void navigate({ to: "/source/$id", params: { id: n.id } });
-                } else if (n.type === "extract") {
+                } else if (n.type === "extract" && n.id !== id) {
                   void navigate({ to: "/extract/$id", params: { id: n.id } });
                 }
               }}

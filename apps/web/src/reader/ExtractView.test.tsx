@@ -76,6 +76,7 @@ const h = vi.hoisted(() => {
   };
   return {
     navigateSpy: vi.fn(),
+    selectSpy: vi.fn(),
     inspectorData,
     updateStage: vi.fn().mockResolvedValue({
       extract: { ...inspectorData.element, stage: "clean_extract" },
@@ -137,6 +138,24 @@ vi.mock("../lib/appApi", () => ({
             meta: "this",
             active: true,
           },
+          {
+            id: "card_1",
+            type: "card",
+            title: "Why does sleep consolidate memories?",
+            stage: "active_card",
+            depth: 2,
+            meta: "active_card",
+            active: false,
+          },
+          {
+            id: "ex_2",
+            type: "extract",
+            title: "A narrower sleep mechanism",
+            stage: "raw_extract",
+            depth: 2,
+            meta: "sub-extract",
+            active: false,
+          },
         ],
       },
     }),
@@ -173,6 +192,10 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => h.navigateSpy,
 }));
 
+vi.mock("../shell/selection", () => ({
+  useSelection: () => ({ selectedId: null, select: h.selectSpy }),
+}));
+
 // Stub the heavy Tiptap editor with a trivial element so the component renders
 // without a real contentEditable. `toBlockInputs` is a no-op here.
 vi.mock("@interleave/editor", () => ({
@@ -202,7 +225,17 @@ import { ExtractView } from "./ExtractView";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.selectionLocation.current = null;
 });
+
+async function lineageNode(id: string): Promise<HTMLElement> {
+  await screen.findByTestId("lineage-tree");
+  const node = screen
+    .getAllByTestId("lineage-tree-node")
+    .find((row) => row.getAttribute("data-element-id") === id);
+  expect(node).toBeDefined();
+  return node as HTMLElement;
+}
 
 describe("ExtractView — stage stepper", () => {
   it("renders the three-step stepper for raw → clean → atomic", async () => {
@@ -252,6 +285,41 @@ describe("ExtractView — source reference (T043)", () => {
     );
     // The jump-to-source affordance is wired (T022 reuse).
     expect(screen.getByTestId("extract-refblock-open-source")).toBeInTheDocument();
+  });
+});
+
+describe("ExtractView — lineage navigation", () => {
+  it("navigates source and extract lineage nodes to their dedicated views", async () => {
+    render(<ExtractView />);
+
+    fireEvent.click(await lineageNode("src_1"));
+    expect(h.selectSpy).toHaveBeenCalledWith("src_1");
+    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/source/$id", params: { id: "src_1" } });
+
+    fireEvent.click(await lineageNode("ex_2"));
+    expect(h.selectSpy).toHaveBeenLastCalledWith("ex_2");
+    expect(h.navigateSpy).toHaveBeenLastCalledWith({
+      to: "/extract/$id",
+      params: { id: "ex_2" },
+    });
+  });
+
+  it("selects the current extract lineage node without re-navigating to the same route", async () => {
+    render(<ExtractView />);
+
+    fireEvent.click(await lineageNode("ex_1"));
+
+    expect(h.selectSpy).toHaveBeenCalledWith("ex_1");
+    expect(h.navigateSpy).not.toHaveBeenCalled();
+  });
+
+  it("selects card lineage nodes in the inspector without starting a review session", async () => {
+    render(<ExtractView />);
+
+    fireEvent.click(await lineageNode("card_1"));
+
+    expect(h.selectSpy).toHaveBeenCalledWith("card_1");
+    expect(h.navigateSpy).not.toHaveBeenCalled();
   });
 });
 
