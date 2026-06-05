@@ -53,6 +53,7 @@ import {
   stageLabel,
   TypeIcon,
 } from "../../components/inspector/primitives";
+import { QueueSnackbar } from "../../components/queue/QueueSnackbar";
 import { ScheduleMenu } from "../../components/queue/ScheduleMenu";
 import { RefBlock } from "../../components/RefBlock";
 import "../../components/inspector/inspector.css";
@@ -63,6 +64,7 @@ import {
   type InspectorData,
   isDesktop,
   type QueueActAction,
+  type QueueActUndo,
   type QueueItemSummary,
   type QueueScheduleChoice,
   type ReviewCardView,
@@ -117,6 +119,15 @@ const GRADES: readonly { rating: ReviewRating; label: string; key: string }[] = 
 
 /** The inline non-open actions a loop item exposes (the T030 set + skip). */
 type LoopActionKind = QueueActAction["kind"];
+
+type ProcessUndoState = {
+  readonly id: string;
+  readonly index: number;
+  readonly message: string;
+  readonly undo:
+    | { readonly kind: "queue"; readonly recipe: QueueActUndo }
+    | { readonly kind: "last" };
+};
 
 /** The three extract distillation stages, in chain order (mirrors `ExtractView`). */
 const EXTRACT_STAGES: readonly ExtractStage[] = [
@@ -186,6 +197,29 @@ function cardChipSignals(card: ReviewCardView): SchedulerSignals {
   };
 }
 
+function nounFor(item: QueueItemSummary): string {
+  if (item.type === "card") return "Card";
+  if (item.type === "source") return "Source";
+  if (item.type === "extract") return "Extract";
+  if (item.type === "topic") return "Topic";
+  if (item.type === "task") return "Task";
+  return "Item";
+}
+
+function actionUndoMessage(item: QueueItemSummary, kind: LoopActionKind): string {
+  const noun = nounFor(item);
+  if (kind === "postpone") return `${noun} postponed`;
+  if (kind === "raise") return `${noun} priority raised`;
+  if (kind === "lower") return `${noun} priority lowered`;
+  if (kind === "delete") return `${noun} deleted`;
+  if (kind === "markDone") return `${noun} marked done`;
+  return `${noun} dismissed`;
+}
+
+function scheduleUndoMessage(item: QueueItemSummary): string {
+  return `${nounFor(item)} scheduled`;
+}
+
 export function ProcessQueue() {
   const desktop = isDesktop();
   const navigate = useNavigate();
@@ -217,6 +251,7 @@ export function ProcessQueue() {
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [undoState, setUndoState] = useState<ProcessUndoState | null>(null);
 
   // --- The inline card-review surface state (lifted here so the keyboard can drive
   // reveal/grade while a card is the current item, exactly like the review session).
@@ -270,6 +305,10 @@ export function ProcessQueue() {
   const toast = useCallback((message: string) => {
     setFlash(message);
     window.setTimeout(() => setFlash(null), 1600);
+  }, []);
+
+  const clearUndo = useCallback(() => {
+    setUndoState(null);
   }, []);
 
   const patchCurrentExtract = useCallback(
@@ -339,6 +378,7 @@ export function ProcessQueue() {
           mode: activeMode,
         });
         setError(null);
+        setUndoState(null);
         setOrder(jitterOrder(next.items));
         setCursor(0);
         setProcessed(0);
@@ -433,24 +473,40 @@ export function ProcessQueue() {
    * Apply one in-place action through the SAME typed mutation path as the list
    * (T030), then ADVANCE to the next item. postpone/raise/lower/done/dismiss/delete
    * all route through `queue.act`; the loop never returns to the list — it just
-   * moves the cursor. No undo snackbar here (the list owns that affordance); the
-   * loop optimizes for uninterrupted forward motion.
+   * moves the cursor. Recoverable mutations raise a snackbar that restores the
+   * item and cursor in place, preserving flow after accidental actions.
    */
   const act = useCallback(
     async (kind: LoopActionKind) => {
       if (!current || busy || !isDesktop()) return;
+      const undoIndex = cursor;
+      clearUndo();
       setBusy(true);
       try {
-        await appApi.actOnQueueItem({ id: current.id, action: { kind } });
+        const res = await appApi.actOnQueueItem({ id: current.id, action: { kind } });
         setProcessed((p) => p + 1);
         advance();
+        requestInspectorRefresh();
+        const undo: ProcessUndoState["undo"] | null = res.undo
+          ? { kind: "queue", recipe: res.undo }
+          : kind === "postpone" || kind === "raise" || kind === "lower"
+            ? { kind: "last" }
+            : null;
+        if (undo) {
+          setUndoState({
+            id: current.id,
+            index: undoIndex,
+            message: actionUndoMessage(current, kind),
+            undo,
+          });
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
         setBusy(false);
       }
     },
-    [current, busy, advance],
+    [current, busy, cursor, clearUndo, advance],
   );
 
   /**
@@ -462,19 +518,59 @@ export function ProcessQueue() {
   const schedule = useCallback(
     async (choice: QueueScheduleChoice) => {
       if (!current || busy || !isDesktop()) return;
+      const undoIndex = cursor;
+      clearUndo();
       setBusy(true);
       try {
         await appApi.scheduleQueueItem({ id: current.id, choice });
         setProcessed((p) => p + 1);
         advance();
+        requestInspectorRefresh();
+        setUndoState({
+          id: current.id,
+          index: undoIndex,
+          message: scheduleUndoMessage(current),
+          undo: { kind: "last" },
+        });
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
         setBusy(false);
       }
     },
-    [current, busy, advance],
+    [current, busy, cursor, clearUndo, advance],
   );
+
+  const undoLastProcessAction = useCallback(async () => {
+    const pending = undoState;
+    if (!pending || busy || !isDesktop()) return;
+    setUndoState(null);
+    setBusy(true);
+    try {
+      if (pending.undo.kind === "queue") {
+        await appApi.undoQueueAction({
+          id: pending.id,
+          undo: pending.undo.recipe,
+        });
+      } else {
+        const res = await appApi.undoLast();
+        if (!res.undone) {
+          toast(res.reason ?? "Nothing to undo");
+          return;
+        }
+      }
+      setCursor(pending.index);
+      setProcessed((p) => Math.max(0, p - 1));
+      select(pending.id);
+      requestInspectorRefresh();
+      toast("Undone");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      toast("Could not undo");
+    } finally {
+      setBusy(false);
+    }
+  }, [undoState, busy, select, toast]);
 
   const onExtractChange = useCallback((change: SourceEditorChange) => {
     setExtractDraft(change);
@@ -531,6 +627,7 @@ export function ProcessQueue() {
   const setExtractStage = useCallback(
     async (target?: ExtractStage) => {
       if (current?.type !== "extract" || busy || !isDesktop()) return;
+      clearUndo();
       setBusy(true);
       try {
         const res = await appApi.updateExtractStage(
@@ -547,12 +644,13 @@ export function ProcessQueue() {
         setBusy(false);
       }
     },
-    [current, busy, patchCurrentExtract, reloadInspector, toast],
+    [current, busy, clearUndo, patchCurrentExtract, reloadInspector, toast],
   );
 
   const saveExtract = useCallback(
     async (kind: "trim" | "rewrite") => {
       if (current?.type !== "extract" || busy || !isDesktop()) return;
+      clearUndo();
       setBusy(true);
       try {
         await settleEditorInput();
@@ -609,6 +707,7 @@ export function ProcessQueue() {
       doc.initialDoc,
       doc.plainText,
       extractEditor,
+      clearUndo,
       patchCurrentExtract,
       reloadInspector,
       toast,
@@ -616,21 +715,23 @@ export function ProcessQueue() {
   );
 
   const onCardCreatedFromExtract = useCallback(() => {
+    clearUndo();
     if (current?.type === "extract") {
       void reloadInspector(current.id);
       requestInspectorRefresh();
     }
-  }, [current, reloadInspector]);
+  }, [current, clearUndo, reloadInspector]);
 
   const setSourceReadPoint = useCallback(async () => {
     if (current?.type !== "source" || !sourceEditor) return;
+    clearUndo();
     const resolved = await sourceReadPoint.setFromSelection(sourceEditor);
     toast(resolved ? "Read-point set here" : "Place the caret in the source first");
     if (resolved) {
       requestInspectorRefresh();
       await reloadInspector(current.id);
     }
-  }, [current, sourceEditor, sourceReadPoint, reloadInspector, toast]);
+  }, [current, sourceEditor, clearUndo, sourceReadPoint, reloadInspector, toast]);
 
   const createProcessSourceExtract = useCallback(async () => {
     const loc = sourceSelection.location;
@@ -639,6 +740,7 @@ export function ProcessQueue() {
       return;
     }
     if (current?.type !== "source" || busy || !isDesktop()) return;
+    clearUndo();
     setBusy(true);
     try {
       await appApi.createExtraction({
@@ -667,7 +769,17 @@ export function ProcessQueue() {
       setBusy(false);
       sourceSelection.dismiss();
     }
-  }, [current, busy, sourceSelection, doc, sourceEditor, sourceReadPoint, reloadInspector, toast]);
+  }, [
+    current,
+    busy,
+    clearUndo,
+    sourceSelection,
+    doc,
+    sourceEditor,
+    sourceReadPoint,
+    reloadInspector,
+    toast,
+  ]);
 
   const highlightProcessSourceSelection = useCallback(async () => {
     const loc = sourceSelection.location;
@@ -676,6 +788,7 @@ export function ProcessQueue() {
       return;
     }
     if (current?.type !== "source" || busy || !isDesktop()) return;
+    clearUndo();
     setBusy(true);
     try {
       await sourceHighlights.add(loc);
@@ -687,7 +800,7 @@ export function ProcessQueue() {
       setBusy(false);
       sourceSelection.dismiss();
     }
-  }, [current, busy, sourceSelection, sourceHighlights, toast]);
+  }, [current, busy, clearUndo, sourceSelection, sourceHighlights, toast]);
 
   const onSourceSelectionAction = useCallback(
     (action: SelectionToolbarAction) => {
@@ -753,6 +866,7 @@ export function ProcessQueue() {
       extractSelection.dismiss();
       return;
     }
+    clearUndo();
     setBusy(true);
     try {
       await appApi.createExtraction({
@@ -774,7 +888,7 @@ export function ProcessQueue() {
       setBusy(false);
       extractSelection.dismiss();
     }
-  }, [current, busy, inspector, extractSelection, doc, reloadInspector, toast]);
+  }, [current, busy, clearUndo, inspector, extractSelection, doc, reloadInspector, toast]);
 
   const onExtractSelectionAction = useCallback(
     (action: SelectionToolbarAction) => {
@@ -870,6 +984,7 @@ export function ProcessQueue() {
     async (rating: ReviewRating) => {
       if (!isCard || !cardView || !revealed || busy || !isDesktop()) return;
       if (gradedRef.current.has(cardView.id)) return;
+      clearUndo();
       setBusy(true);
       const responseMs = revealAtRef.current ? Math.max(0, Date.now() - revealAtRef.current) : 0;
       try {
@@ -879,6 +994,7 @@ export function ProcessQueue() {
           responseMs,
           ...(asOf ? { asOf } : {}),
         });
+        requestInspectorRefresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
         setBusy(false);
@@ -889,7 +1005,7 @@ export function ProcessQueue() {
       advance();
       setBusy(false);
     },
-    [isCard, cardView, revealed, busy, asOf, advance],
+    [isCard, cardView, revealed, busy, clearUndo, asOf, advance],
   );
 
   /** Open the current item in its full surface — the ONLY navigation in the loop. */
@@ -1098,6 +1214,11 @@ export function ProcessQueue() {
           </span>
         </div>
       ) : null}
+      <QueueSnackbar
+        message={undoState?.message ?? null}
+        onUndo={undoState ? () => void undoLastProcessAction() : undefined}
+        onClose={() => setUndoState(null)}
+      />
     </div>
   );
 }

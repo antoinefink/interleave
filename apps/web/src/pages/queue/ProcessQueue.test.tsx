@@ -161,6 +161,19 @@ const h = vi.hoisted(() => {
     selectSpy: vi.fn(),
     listQueue: vi.fn().mockResolvedValue(result),
     actOnQueueItem: vi.fn().mockResolvedValue({ item: null, removed: true, undo: null }),
+    scheduleQueueItem: vi.fn().mockResolvedValue({
+      item: null,
+      dueAt: "2026-06-01T12:00:00.000Z",
+      intervalDays: 1,
+    }),
+    undoQueueAction: vi.fn().mockResolvedValue({ item: null }),
+    undoLast: vi.fn().mockResolvedValue({
+      undone: true,
+      opType: "reschedule_element",
+      elementId: "source-1",
+      label: "Undid change",
+      count: 1,
+    }),
     getDocument: vi.fn().mockResolvedValue({
       document: {
         prosemirrorJson: { type: "doc", content: [], mockPlainText: "Body preview text." },
@@ -274,6 +287,9 @@ vi.mock("../../lib/appApi", async () => {
     appApi: {
       listQueue: h.listQueue,
       actOnQueueItem: h.actOnQueueItem,
+      scheduleQueueItem: h.scheduleQueueItem,
+      undoQueueAction: h.undoQueueAction,
+      undoLast: h.undoLast,
       getDocument: h.getDocument,
       saveDocument: h.saveDocument,
       getInspectorData: h.getInspectorData,
@@ -398,6 +414,19 @@ import { ProcessQueue } from "./ProcessQueue";
 beforeEach(() => {
   vi.clearAllMocks();
   h.actOnQueueItem.mockResolvedValue({ item: null, removed: true, undo: null });
+  h.scheduleQueueItem.mockResolvedValue({
+    item: null,
+    dueAt: "2026-06-01T12:00:00.000Z",
+    intervalDays: 1,
+  });
+  h.undoQueueAction.mockResolvedValue({ item: null });
+  h.undoLast.mockResolvedValue({
+    undone: true,
+    opType: "reschedule_element",
+    elementId: "source-1",
+    label: "Undid change",
+    count: 1,
+  });
   h.getInspectorData.mockResolvedValue({ data: null });
   h.staleEditorJson = false;
   h.selectionLocation.current = null;
@@ -491,6 +520,100 @@ describe("ProcessQueue", () => {
     // The cursor advanced: a DIFFERENT item is now shown (no return to a list).
     await waitFor(() => expect(currentItemId()).not.toBe(first));
     expect(h.navigateSpy).not.toHaveBeenCalled();
+  });
+
+  it("offers recipe undo after a lifecycle action and restores the process cursor", async () => {
+    h.actOnQueueItem.mockResolvedValueOnce({
+      item: null,
+      removed: true,
+      undo: { kind: "status", previousStatus: "scheduled" },
+    });
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+
+    await screen.findByTestId("queue-snackbar");
+    expect(screen.getByTestId("queue-snackbar")).toHaveTextContent("Card marked done");
+    await waitFor(() => expect(currentItemId()).toBe("source-1"));
+
+    fireEvent.click(screen.getByTestId("queue-snackbar-undo"));
+
+    await waitFor(() =>
+      expect(h.undoQueueAction).toHaveBeenCalledWith({
+        id: "card-1",
+        undo: { kind: "status", previousStatus: "scheduled" },
+      }),
+    );
+    await waitFor(() => expect(currentItemId()).toBe("card-1"));
+    expect(screen.getByTestId("process-progress")).toHaveTextContent("1 / 3");
+  });
+
+  it("offers command-log undo after postponing and restores the process cursor", async () => {
+    render(<ProcessQueue />);
+    await moveToSource();
+
+    fireEvent.click(screen.getByTestId("process-action-postpone"));
+
+    await screen.findByTestId("queue-snackbar");
+    expect(screen.getByTestId("queue-snackbar")).toHaveTextContent("Source postponed");
+    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+
+    fireEvent.click(screen.getByTestId("queue-snackbar-undo"));
+
+    await waitFor(() => expect(h.undoLast).toHaveBeenCalledTimes(1));
+    expect(h.undoQueueAction).not.toHaveBeenCalled();
+    await waitFor(() => expect(currentItemId()).toBe("source-1"));
+    expect(screen.getByTestId("process-progress")).toHaveTextContent("2 / 3");
+  });
+
+  it("offers command-log undo after explicit scheduling and restores the process cursor", async () => {
+    render(<ProcessQueue />);
+    await moveToSource();
+
+    fireEvent.click(screen.getByTestId("schedule-menu-trigger"));
+    fireEvent.click(await screen.findByTestId("schedule-tomorrow"));
+
+    await waitFor(() =>
+      expect(h.scheduleQueueItem).toHaveBeenCalledWith({
+        id: "source-1",
+        choice: { kind: "tomorrow" },
+      }),
+    );
+    await screen.findByTestId("queue-snackbar");
+    expect(screen.getByTestId("queue-snackbar")).toHaveTextContent("Source scheduled");
+    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+
+    fireEvent.click(screen.getByTestId("queue-snackbar-undo"));
+
+    await waitFor(() => expect(h.undoLast).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(currentItemId()).toBe("source-1"));
+  });
+
+  it("replaces a pending undo with the next process mutation", async () => {
+    h.actOnQueueItem
+      .mockResolvedValueOnce({
+        item: null,
+        removed: true,
+        undo: { kind: "status", previousStatus: "scheduled" },
+      })
+      .mockResolvedValueOnce({ item: null, removed: false, undo: null });
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+    await screen.findByTestId("queue-snackbar");
+    expect(screen.getByTestId("queue-snackbar")).toHaveTextContent("Card marked done");
+    await waitFor(() => expect(currentItemId()).toBe("source-1"));
+
+    fireEvent.click(screen.getByTestId("process-action-postpone"));
+    await waitFor(() => expect(screen.getByTestId("queue-snackbar")).toHaveTextContent("Source"));
+
+    fireEvent.click(screen.getByTestId("queue-snackbar-undo"));
+
+    await waitFor(() => expect(h.undoLast).toHaveBeenCalledTimes(1));
+    expect(h.undoQueueAction).not.toHaveBeenCalled();
+    await waitFor(() => expect(currentItemId()).toBe("source-1"));
   });
 
   it("processes all items one at a time and reaches the done state", async () => {

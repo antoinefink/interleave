@@ -603,6 +603,47 @@ test("distills an extract inline inside /process and persists stage, body, and c
   await app.close();
 });
 
+test("undoes a lifecycle action inside /process and persists the restored item after restart", async () => {
+  const freshDir = makeDataDir();
+  let app = await launchApp(freshDir, { seedOnEmpty: true });
+  let page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+  const url = new URL(page.url());
+  baseUrl = `${url.protocol}//${url.host}`;
+
+  const sourceId = await findSourceId(page);
+  const [extractId] = await createExtracts(page, sourceId, 1);
+  if (!extractId) throw new Error("failed to create process extract");
+  expect((await inspectElement(page, extractId))?.element.status).toBe("scheduled");
+
+  await openProcess(page, AS_OF);
+  await moveProcessCursorTo(page, extractId);
+  await expect(page.getByTestId("process-item")).toHaveAttribute("data-element-id", extractId);
+
+  await page.getByTestId("process-action-markDone").click();
+  await expect(page.getByTestId("queue-snackbar")).toContainText(/Extract marked done/);
+  await expect
+    .poll(async () => (await inspectElement(page, extractId))?.element.status)
+    .toBe("done");
+
+  await page.getByTestId("queue-snackbar-undo").click();
+  await expect
+    .poll(async () => (await inspectElement(page, extractId))?.element.status)
+    .toBe("scheduled");
+  await expect(page.getByTestId("process-item")).toHaveAttribute("data-element-id", extractId);
+  expect((await dueIds(page)).some((item) => item.id === extractId)).toBe(true);
+
+  await app.close();
+
+  app = await launchApp(freshDir);
+  page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+  expect((await inspectElement(page, extractId))?.element.status).toBe("scheduled");
+  expect((await dueIds(page)).some((item) => item.id === extractId)).toBe(true);
+
+  await app.close();
+});
+
 test("the loop reaches the Queue-clear done state when every item is processed", async () => {
   const app = await launchApp(dataDir, { seedOnEmpty: true });
   const page = await app.firstWindow();
