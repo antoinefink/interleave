@@ -245,6 +245,7 @@ function Sidebar({
                   {theme === item.theme ? <Icon name="check" size={13} aria-hidden="true" /> : null}
                 </button>
               ))}
+              <hr className="shell-usermenu__sep" data-testid="shell-usermenu-theme-sep" />
               <Link
                 to="/settings"
                 className="shell-usermenu__item"
@@ -288,6 +289,7 @@ function Sidebar({
                 <Icon name="shield" size={14} />
                 <span className="shell-grow">Local vault · offline-first</span>
               </div>
+              <hr className="shell-usermenu__sep" data-testid="shell-usermenu-vault-sep" />
             </div>
           )}
         </div>

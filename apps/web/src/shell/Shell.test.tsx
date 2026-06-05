@@ -186,4 +186,18 @@ describe("Shell", () => {
       "false",
     );
   });
+
+  it("separates theme actions, help actions, and vault status in the user menu", () => {
+    render(<Shell />);
+
+    fireEvent.click(screen.getByTestId("user-chip"));
+
+    const themeSep = screen.getByTestId("shell-usermenu-theme-sep");
+    expect(themeSep.previousElementSibling).toHaveTextContent("Dark mode");
+    expect(themeSep.nextElementSibling).toHaveTextContent("Settings");
+    expect(screen.getByTestId("shell-usermenu-vault-sep").previousElementSibling).toHaveTextContent(
+      "Local vault · offline-first",
+    );
+    expect(document.querySelectorAll(".shell-usermenu__sep")).toHaveLength(3);
+  });
 });
