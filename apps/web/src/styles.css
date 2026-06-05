@@ -152,3 +152,19 @@ body,
 #root {
   height: 100%;
 }
+
+/* Native date inputs do not always inherit text color for the browser-provided
+   calendar button. Keep the field native, but align its internal control with the
+   resolved app theme so the icon stays visible on dark surfaces. */
+input[type="date"] {
+  color-scheme: light;
+}
+
+[data-theme="dark"] input[type="date"] {
+  color-scheme: dark;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.72;
+}
