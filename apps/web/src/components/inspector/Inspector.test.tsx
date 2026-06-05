@@ -14,6 +14,10 @@ const h = vi.hoisted(() => ({
   getLineage: vi.fn(),
   setElementPriority: vi.fn(),
   semanticRelated: vi.fn(),
+  listTasks: vi.fn(),
+  createTask: vi.fn(),
+  completeTask: vi.fn(),
+  postponeTask: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -48,6 +52,10 @@ vi.mock("../../lib/appApi", async () => {
       getLineage: h.getLineage,
       setElementPriority: h.setElementPriority,
       semanticRelated: h.semanticRelated,
+      listTasks: h.listTasks,
+      createTask: h.createTask,
+      completeTask: h.completeTask,
+      postponeTask: h.postponeTask,
       exportDocumentMarkdown: vi.fn(),
       addTag: vi.fn(),
       removeTag: vi.fn(),
@@ -101,6 +109,32 @@ function topicData(title: string): InspectorData {
   };
 }
 
+function sourceData(): InspectorData {
+  const data = topicData("Wigner paper");
+  return {
+    ...data,
+    element: {
+      ...element("src-1", "Wigner paper"),
+      type: "source",
+      stage: "raw_source",
+    },
+    provenance: {
+      elementId: "src-1",
+      url: "https://www.maths.ed.ac.uk/~v1ranick/papers/wigner.pdf?download=1",
+      canonicalUrl: "https://www.maths.ed.ac.uk/~v1ranick/papers/wigner.pdf",
+      originalUrl: "https://www.maths.ed.ac.uk/~v1ranick/papers/wigner.pdf?utm_source=test",
+      author: "Eugene Wigner",
+      publishedAt: "1960-02-01T00:00:00.000Z",
+      accessedAt: "2026-04-24T00:00:00.000Z",
+      reasonAdded: null,
+      sourceType: null,
+      reliabilityTier: null,
+      confidence: null,
+      reliabilityNotes: null,
+    },
+  };
+}
+
 beforeEach(() => {
   h.desktop = true;
   h.selectedId = null;
@@ -125,6 +159,14 @@ beforeEach(() => {
     siblingSources: [],
     semanticAvailable: true,
   });
+  h.listTasks.mockReset();
+  h.listTasks.mockResolvedValue({ tasks: [] });
+  h.createTask.mockReset();
+  h.createTask.mockResolvedValue({});
+  h.completeTask.mockReset();
+  h.completeTask.mockResolvedValue({});
+  h.postponeTask.mockReset();
+  h.postponeTask.mockResolvedValue({});
 });
 
 describe("Inspector", () => {
@@ -162,5 +204,28 @@ describe("Inspector", () => {
     );
     expect(h.getInspectorData).toHaveBeenCalledWith({ id: "topic-1" });
     expect(h.listInspectableElements).toHaveBeenCalledTimes(2);
+  });
+
+  it("renders source provenance URLs as clickable external links", async () => {
+    h.selectedId = "src-1";
+    h.getInspectorData.mockResolvedValue({ data: sourceData() });
+
+    render(<Inspector />);
+
+    const url = await screen.findByTestId("provenance-url");
+    expect(url).toHaveAttribute(
+      "href",
+      "https://www.maths.ed.ac.uk/~v1ranick/papers/wigner.pdf?download=1",
+    );
+    expect(url).toHaveAttribute("target", "_blank");
+    expect(url).toHaveClass("external-url-link");
+    expect(screen.getByTestId("provenance-canonical-url")).toHaveAttribute(
+      "href",
+      "https://www.maths.ed.ac.uk/~v1ranick/papers/wigner.pdf",
+    );
+    expect(screen.getByTestId("provenance-original-url")).toHaveAttribute(
+      "href",
+      "https://www.maths.ed.ac.uk/~v1ranick/papers/wigner.pdf?utm_source=test",
+    );
   });
 });

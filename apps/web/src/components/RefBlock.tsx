@@ -21,6 +21,7 @@
  */
 
 import { formatSourceRef, type ReliabilitySummary, type SourceRef } from "@interleave/core";
+import { ExternalUrlLink } from "./ExternalUrlLink";
 import { Icon } from "./Icon";
 import "./ref-block.css";
 
@@ -121,16 +122,12 @@ export function RefBlock({
       ) : null}
 
       {f.href ? (
-        <a
+        <ExternalUrlLink
           className="refblock__url"
-          data-testid={`${testId}-url`}
-          href={f.href}
-          target="_blank"
-          rel="noreferrer noopener"
-        >
-          <Icon name="link" size={12} />
-          {f.href}
-        </a>
+          icon="link"
+          testId={`${testId}-url`}
+          url={f.href}
+        />
       ) : null}
 
       {onOpenSource ? (

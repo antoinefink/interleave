@@ -40,6 +40,7 @@ import {
 } from "@interleave/editor";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ExternalUrlLink } from "../../components/ExternalUrlLink";
 import { Icon } from "../../components/Icon";
 import { requestInspectorRefresh } from "../../components/inspector/Inspector";
 import { Prio, SchedulerChip, Status } from "../../components/inspector/primitives";
@@ -107,15 +108,13 @@ function SourceHeader({ data }: { data: InspectorData | null }) {
         ) : null}
         {provenance?.url ? (
           <>
-            <a
+            <ExternalUrlLink
               className="reader-meta reader-meta--link"
-              href={provenance.url}
-              target="_blank"
-              rel="noreferrer"
-              data-testid="reader-url"
-            >
-              <Icon name="globe" size={13} /> {provenance.url}
-            </a>
+              icon="globe"
+              iconSize={13}
+              testId="reader-url"
+              url={provenance.url}
+            />
             <Dot />
           </>
         ) : null}

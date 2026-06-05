@@ -187,6 +187,12 @@ describe("InboxScreen", () => {
     await waitFor(() => expect(h.getInboxItem).toHaveBeenCalledWith({ id: "src-1" }));
     expect(h.select).toHaveBeenCalledWith("src-1");
     expect(getByTestId("inbox-preview-title")).toHaveTextContent("Inbox source");
+    expect(getByTestId("inbox-preview-url")).toHaveAttribute("href", "https://example.com/article");
+    expect(getByTestId("inbox-preview-canonical")).toHaveAttribute(
+      "href",
+      "https://example.com/article",
+    );
+    expect(getByTestId("inbox-preview-canonical")).toHaveClass("external-url-link");
     expect(getByTestId("inbox-count")).toHaveTextContent("2 items awaiting triage");
   });
 

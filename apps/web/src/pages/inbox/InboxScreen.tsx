@@ -22,6 +22,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { BalanceBanner } from "../../components/BalanceBanner";
+import { ExternalUrlLink } from "../../components/ExternalUrlLink";
 import { Icon, type IconName } from "../../components/Icon";
 import { Prio, Status, TypeIcon } from "../../components/inspector/primitives";
 import { HelpLink, InlineHint } from "../../help/Contextual";
@@ -234,8 +235,13 @@ function PreviewPane({
         </h2>
         {provenance.url ? (
           <div className="mb-4 flex items-center gap-1.5 text-accent-text text-sm">
-            <Icon name="link" size={13} />
-            <span className="break-all">{provenance.url}</span>
+            <ExternalUrlLink
+              className="text-sm"
+              icon="link"
+              iconSize={13}
+              testId="inbox-preview-url"
+              url={provenance.url}
+            />
           </div>
         ) : null}
         {bodyPreview ? (
@@ -278,11 +284,12 @@ function PreviewPane({
             {provenance.canonicalUrl ? (
               <div className="flex justify-between gap-3">
                 <dt className="text-text-3">Canonical</dt>
-                <dd
-                  className="min-w-0 break-all text-right text-text"
-                  data-testid="inbox-preview-canonical"
-                >
-                  {provenance.canonicalUrl}
+                <dd className="min-w-0 text-right text-text">
+                  <ExternalUrlLink
+                    className="justify-end text-right"
+                    testId="inbox-preview-canonical"
+                    url={provenance.canonicalUrl}
+                  />
                 </dd>
               </div>
             ) : null}

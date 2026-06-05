@@ -52,6 +52,7 @@ import { ReviewModeButton } from "../../review/ReviewModeButton";
 import "../../review/review.css";
 import { useSelection } from "../../shell/selection";
 import { ConflictSection } from "../ConflictSection";
+import { ExternalUrlLink } from "../ExternalUrlLink";
 import { Icon } from "../Icon";
 import { RefBlock } from "../RefBlock";
 import "./inspector.css";
@@ -1888,23 +1889,19 @@ function InspectorBody({
             <MetaRow k="Author">{provenance.author ?? "—"}</MetaRow>
             <MetaRow k="URL">
               {provenance.url ? (
-                <span style={{ overflowWrap: "anywhere" }}>{provenance.url}</span>
+                <ExternalUrlLink testId="provenance-url" url={provenance.url} />
               ) : (
                 "—"
               )}
             </MetaRow>
             {provenance.canonicalUrl && (
               <MetaRow k="Canonical URL">
-                <span data-testid="provenance-canonical-url" style={{ overflowWrap: "anywhere" }}>
-                  {provenance.canonicalUrl}
-                </span>
+                <ExternalUrlLink testId="provenance-canonical-url" url={provenance.canonicalUrl} />
               </MetaRow>
             )}
             {provenance.originalUrl && provenance.originalUrl !== provenance.url && (
               <MetaRow k="Original URL">
-                <span data-testid="provenance-original-url" style={{ overflowWrap: "anywhere" }}>
-                  {provenance.originalUrl}
-                </span>
+                <ExternalUrlLink testId="provenance-original-url" url={provenance.originalUrl} />
               </MetaRow>
             )}
             <MetaRow k="Published">{fmtDate(provenance.publishedAt)}</MetaRow>

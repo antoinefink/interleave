@@ -1,0 +1,38 @@
+.external-url-link {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--accent-text);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.external-url-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.external-url-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+.external-url-link svg {
+  flex: none;
+  align-self: center;
+}
+
+.external-url-link__text,
+.external-url-link__fallback {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.external-url-link__fallback {
+  display: inline-block;
+  max-width: 100%;
+  color: var(--text);
+}
