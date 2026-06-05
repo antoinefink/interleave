@@ -1052,12 +1052,13 @@ export function Settings() {
           />
         </SettingRow>
 
-        <SettingRow label="Theme" hint="Light or dark.">
+        <SettingRow label="Theme" hint="Follow the system, or choose a fixed theme.">
           <Segmented
             name="setting-theme"
             value={s.theme}
             onChange={(value) => void patch({ theme: value as ThemePreference })}
             options={[
+              { value: "system", label: "System" },
               { value: "light", label: "Light" },
               { value: "dark", label: "Dark" },
             ]}

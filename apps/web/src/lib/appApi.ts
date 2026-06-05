@@ -66,8 +66,8 @@ export interface SettingsUpdateResult {
 /** Keyboard layouts affecting default shortcut bindings. */
 export type KeyboardLayout = "qwerty" | "dvorak" | "vim";
 
-/** UI theme preference (mirrors the `data-theme` attribute). */
-export type ThemePreference = "light" | "dark";
+/** UI theme preference; `system` resolves to light/dark in the renderer. */
+export type ThemePreference = "system" | "light" | "dark";
 
 /**
  * The complete, validated user/domain settings the scheduler + UI read. Mirrors

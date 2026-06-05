@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   pathname: "/queue",
   navigate: vi.fn(),
-  toggleTheme: vi.fn(() => "dark"),
+  applyTheme: vi.fn(),
   updateAppSettings: vi.fn(),
   useShellShortcuts: vi.fn(),
   globalActions: {
@@ -68,8 +68,7 @@ vi.mock("../lib/appApi", async () => {
 
 vi.mock("../theme", () => ({
   getStoredTheme: () => "light",
-  toggleTheme: () => h.toggleTheme(),
-  applyTheme: vi.fn(),
+  applyTheme: (theme: string) => h.applyTheme(theme),
 }));
 
 vi.mock("./CheatSheet", () => ({
@@ -124,7 +123,7 @@ import { Shell } from "./Shell";
 beforeEach(() => {
   h.pathname = "/queue";
   h.navigate.mockReset();
-  h.toggleTheme.mockClear();
+  h.applyTheme.mockClear();
   h.updateAppSettings.mockReset();
   h.updateAppSettings.mockResolvedValue({});
   h.useShellShortcuts.mockReset();
@@ -163,9 +162,28 @@ describe("Shell", () => {
     render(<Shell />);
 
     fireEvent.click(screen.getByTestId("user-chip"));
-    fireEvent.click(screen.getByText("Dark mode"));
+    fireEvent.click(screen.getByText("System theme"));
 
-    expect(h.toggleTheme).toHaveBeenCalledOnce();
-    expect(h.updateAppSettings).toHaveBeenCalledWith({ patch: { theme: "dark" } });
+    expect(h.applyTheme).toHaveBeenCalledWith("system");
+    expect(h.updateAppSettings).toHaveBeenCalledWith({ patch: { theme: "system" } });
+  });
+
+  it("renders all sidebar theme choices with the current preference checked", () => {
+    render(<Shell />);
+
+    fireEvent.click(screen.getByTestId("user-chip"));
+
+    expect(screen.getByRole("menuitemradio", { name: /System theme/ })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    expect(screen.getByRole("menuitemradio", { name: /Light mode/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByRole("menuitemradio", { name: /Dark mode/ })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
   });
 });

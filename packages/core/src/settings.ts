@@ -32,8 +32,8 @@ import { DEFAULT_PRIORITY, type Priority, type PriorityLabel, priorityFromLabel 
 export const KEYBOARD_LAYOUTS = ["qwerty", "dvorak", "vim"] as const;
 export type KeyboardLayout = (typeof KEYBOARD_LAYOUTS)[number];
 
-/** UI theme. Mirrors the `data-theme` attribute the design tokens key off. */
-export const THEMES = ["light", "dark"] as const;
+/** UI theme preference. `system` resolves to a light/dark `data-theme` in the renderer. */
+export const THEMES = ["system", "light", "dark"] as const;
 export type ThemePreference = (typeof THEMES)[number];
 
 /**
@@ -61,7 +61,7 @@ export type ThemePreference = (typeof THEMES)[number];
  *   balance warning fires (T046): imports must exceed processed output by this
  *   multiple. Higher = less sensitive. Read by the pure `judgeBalance` rule.
  * - `keyboardLayout` — default shortcut bindings (T048).
- * - `theme` — light/dark UI preference.
+ * - `theme` — system/light/dark UI preference.
  * - `displayName` — the local vault owner's name shown in the shell's user chip
  *   (and the source of the avatar initials). Empty by default (a brand-new vault
  *   has no name yet — the UI degrades to the neutral "Local vault" identity); the

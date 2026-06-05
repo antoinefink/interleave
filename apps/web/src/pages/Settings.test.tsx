@@ -1,5 +1,5 @@
 import { fireEvent, render, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   desktop: true,
@@ -82,6 +82,8 @@ const settings = {
 };
 
 beforeEach(() => {
+  localStorage.clear();
+  document.documentElement.removeAttribute("data-theme");
   h.desktop = true;
   for (const mock of Object.values(h)) {
     if (typeof mock === "function" && "mockReset" in mock) mock.mockReset();
@@ -120,6 +122,11 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => {
+  localStorage.clear();
+  document.documentElement.removeAttribute("data-theme");
+});
+
 describe("Settings", () => {
   it("renders desktop-only fallback without the bridge", () => {
     h.desktop = false;
@@ -140,6 +147,19 @@ describe("Settings", () => {
       expect(h.updateAppSettings).toHaveBeenCalledWith({ patch: { dailyReviewBudget: 75 } }),
     );
     expect(await findByTestId("settings-saved")).toBeInTheDocument();
+  });
+
+  it("persists the system theme preference from the theme segmented control", async () => {
+    const { getByTestId, findByTestId } = render(<Settings />);
+
+    await findByTestId("setting-theme-option-system");
+    fireEvent.click(getByTestId("setting-theme-option-system"));
+
+    await waitFor(() =>
+      expect(h.updateAppSettings).toHaveBeenCalledWith({ patch: { theme: "system" } }),
+    );
+    expect(getByTestId("setting-theme-option-system")).toHaveAttribute("aria-pressed", "true");
+    expect(localStorage.getItem("interleave.theme")).toBe("system");
   });
 
   it("runs a backup and displays the result", async () => {

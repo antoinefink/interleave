@@ -26,7 +26,7 @@ import type { LocalVaultPath, VaultRoot } from "@interleave/core";
 import { Link, Outlet, useLinkProps, useNavigate, useRouterState } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BackupPrompt, runBackup } from "../components/BackupPrompt";
-import { Icon } from "../components/Icon";
+import { Icon, type IconName } from "../components/Icon";
 import { Inspector } from "../components/inspector/Inspector";
 import { Snackbar } from "../components/Snackbar";
 import { HelpCenter } from "../help/HelpCenter";
@@ -34,7 +34,7 @@ import { type HelpContextValue, HelpProvider } from "../help/HelpContext";
 import { appApi, isDesktop } from "../lib/appApi";
 import { getTourSteps, TourLayer } from "../onboarding/Tour";
 import { WelcomeModal } from "../onboarding/WelcomeModal";
-import { applyTheme, toggleTheme as applyToggleTheme, getStoredTheme, type Theme } from "../theme";
+import { applyTheme, getStoredTheme, type Theme } from "../theme";
 import { CheatSheet } from "./CheatSheet";
 import { CommandPalette } from "./CommandPalette";
 import { Kbd } from "./Kbd";
@@ -61,6 +61,12 @@ import { useShellShortcuts } from "./useShellShortcuts";
 const SEEN_ONBOARDING_KEY = "ui.seenOnboarding";
 const TIPS_ENABLED_KEY = "ui.tipsEnabled";
 const COACH_SEEN_KEY = "ui.coachSeen";
+
+const THEME_MENU_ITEMS = [
+  { theme: "system", label: "System theme", icon: "system" },
+  { theme: "light", label: "Light mode", icon: "sun" },
+  { theme: "dark", label: "Dark mode", icon: "moon" },
+] as const satisfies ReadonlyArray<{ theme: Theme; label: string; icon: IconName }>;
 
 function NavButton({
   item,
@@ -120,13 +126,13 @@ function NavButton({
 function Sidebar({
   pathname,
   theme,
-  onToggleTheme,
+  onPickTheme,
   onOpenCheat,
   onOpenHelp,
 }: {
   pathname: string;
   theme: Theme;
-  onToggleTheme: () => void;
+  onPickTheme: (theme: Theme) => void;
   onOpenCheat: () => void;
   onOpenHelp: () => void;
 }) {
@@ -222,15 +228,23 @@ function Sidebar({
           </button>
           {menuOpen && (
             <div className="shell-usermenu" role="menu">
-              <button
-                type="button"
-                className="shell-usermenu__item"
-                role="menuitem"
-                onClick={onToggleTheme}
-              >
-                <Icon name={theme === "dark" ? "sun" : "moon"} size={14} />
-                <span className="shell-grow">{theme === "dark" ? "Light mode" : "Dark mode"}</span>
-              </button>
+              {THEME_MENU_ITEMS.map((item) => (
+                <button
+                  type="button"
+                  className="shell-usermenu__item"
+                  role="menuitemradio"
+                  aria-checked={theme === item.theme}
+                  key={item.theme}
+                  onClick={() => {
+                    onPickTheme(item.theme);
+                    setMenuOpen(false);
+                  }}
+                >
+                  <Icon name={item.icon} size={14} />
+                  <span className="shell-grow">{item.label}</span>
+                  {theme === item.theme ? <Icon name="check" size={13} aria-hidden="true" /> : null}
+                </button>
+              ))}
               <Link
                 to="/settings"
                 className="shell-usermenu__item"
@@ -463,18 +477,6 @@ function ShellInner() {
     return appApi.onMenuCreateBackup(() => createBackupRef.current());
   }, []);
 
-  const onToggleTheme = () => {
-    const next = applyToggleTheme();
-    setTheme(next);
-    // Theme is a SQLite-backed setting (T011); persist the choice through the
-    // typed bridge so it survives an app restart and stays in sync with
-    // /settings. Best-effort — the in-memory + localStorage state already drives
-    // the UI if the bridge call fails.
-    if (isDesktop()) {
-      void appApi.updateAppSettings({ patch: { theme: next } }).catch(() => {});
-    }
-  };
-
   // ---- Onboarding + contextual-help wiring (design handoff) ----
 
   // Load the persisted flags once: tips toggle, the once-only "seen" coachmark set,
@@ -628,7 +630,7 @@ function ShellInner() {
         <Sidebar
           pathname={pathname}
           theme={theme}
-          onToggleTheme={onToggleTheme}
+          onPickTheme={onPickTheme}
           onOpenCheat={() => setCheatOpen(true)}
           onOpenHelp={() => openHelp()}
         />

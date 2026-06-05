@@ -352,7 +352,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: 'At the bottom of the sidebar is the user chip showing your display name (set in Settings) and the subtitle <em>"Local vault · offline-first."</em> This is not a login — there is no account. Clicking the chip opens a small menu with: toggle Light/Dark mode, Settings, Keyboard shortcuts, and the vault-status line. The display name is local to the vault and has no network meaning.',
+      text: 'At the bottom of the sidebar is the user chip showing your display name (set in Settings) and the subtitle <em>"Local vault · offline-first."</em> This is not a login — there is no account. Clicking the chip opens a small menu with: System/Light/Dark appearance choices, Settings, Keyboard shortcuts, and the vault-status line. The display name is local to the vault and has no network meaning.',
     },
     {
       type: "h2",
@@ -3945,7 +3945,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: "The theme segmented control switches between <b>Light</b> and <b>Dark</b> mode. The same toggle is accessible from the user chip menu in the bottom-left sidebar (click your initials → <b>Light mode</b> or <b>Dark mode</b>). The choice persists to both <code>localStorage</code> and your local SQLite settings table and survives restart. Both themes are equally supported — the design system uses OKLCH color tokens driven by a <code>[data-theme]</code> attribute, so all surfaces re-theme correctly. The default is dark.",
+      text: "The theme segmented control switches between <b>System</b>, <b>Light</b>, and <b>Dark</b> mode. The same choices are accessible from the user chip menu in the bottom-left sidebar (click your initials → choose <b>System theme</b>, <b>Light mode</b>, or <b>Dark mode</b>). The choice persists to both <code>localStorage</code> and your local SQLite settings table and survives restart. When System is selected, the renderer follows the operating system color-scheme preference while still writing a resolved light/dark <code>[data-theme]</code> attribute for the design tokens. The default is dark.",
     },
     {
       type: "h2",
@@ -4040,7 +4040,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: 'Dark mode is applied by setting the attribute <code>data-theme="dark"</code> on the document root element. It is <em>not</em> implemented with Tailwind\'s <code>dark:</code> class variant. Toggling the theme flips this attribute, persists the choice to <code>localStorage</code> (for immediate effect) and to the SQLite settings table (so it survives app restart). Every token that differs between themes is declared in a <code>[data-theme="dark"]</code> block inside <code>design/tokens.css</code>.',
+      text: 'Dark mode is applied by setting the attribute <code>data-theme="dark"</code> on the document root element. It is <em>not</em> implemented with Tailwind\'s <code>dark:</code> class variant. Choosing System/Light/Dark persists the preference to <code>localStorage</code> (for immediate effect) and to the SQLite settings table (so it survives app restart); System resolves through <code>prefers-color-scheme</code> before writing <code>data-theme</code>. Every token that differs between themes is declared in a <code>[data-theme="dark"]</code> block inside <code>design/tokens.css</code>.',
     },
     {
       type: "h2",

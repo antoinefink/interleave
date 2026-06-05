@@ -110,6 +110,7 @@ describe("coerceSettingValue", () => {
       DEFAULT_APP_SETTINGS.keyboardLayout,
     );
     expect(coerceSettingValue("theme", "light")).toBe("light");
+    expect(coerceSettingValue("theme", "system")).toBe("system");
     expect(coerceSettingValue("theme", "sepia")).toBe(DEFAULT_APP_SETTINGS.theme);
   });
 
@@ -173,7 +174,8 @@ describe("type guards", () => {
   });
   it("isThemePreference", () => {
     expect(isThemePreference("dark")).toBe(true);
-    expect(isThemePreference("system")).toBe(false);
+    expect(isThemePreference("system")).toBe(true);
+    expect(isThemePreference("sepia")).toBe(false);
   });
 });
 
@@ -189,7 +191,7 @@ describe("stored ↔ model round-trip", () => {
       [SETTINGS_KEYS.balanceWarnings]: false,
       [SETTINGS_KEYS.importBalanceFactor]: 2.5,
       [SETTINGS_KEYS.keyboardLayout]: "dvorak",
-      [SETTINGS_KEYS.theme]: "light",
+      [SETTINGS_KEYS.theme]: "system",
       [SETTINGS_KEYS.displayName]: "Ada Lovelace",
     };
     expect(appSettingsFromStored(stored)).toEqual({
@@ -202,7 +204,7 @@ describe("stored ↔ model round-trip", () => {
       balanceWarnings: false,
       importBalanceFactor: 2.5,
       keyboardLayout: "dvorak",
-      theme: "light",
+      theme: "system",
       displayName: "Ada Lovelace",
       retentionByBand: {},
       retentionByBandEnabled: false,
@@ -224,10 +226,10 @@ describe("stored ↔ model round-trip", () => {
   });
 
   it("a model patch maps back to stable storage keys", () => {
-    const stored = settingsPatchToStored({ dailyReviewBudget: 100, theme: "light" });
+    const stored = settingsPatchToStored({ dailyReviewBudget: 100, theme: "system" });
     expect(stored).toEqual({
       [SETTINGS_KEYS.dailyReviewBudget]: 100,
-      [SETTINGS_KEYS.theme]: "light",
+      [SETTINGS_KEYS.theme]: "system",
     });
   });
 
@@ -242,7 +244,7 @@ describe("stored ↔ model round-trip", () => {
       balanceWarnings: false,
       importBalanceFactor: 2,
       keyboardLayout: "vim" as const,
-      theme: "light" as const,
+      theme: "system" as const,
       displayName: "Ada Lovelace",
       retentionByBand: { A: 0.93, D: 0.85 },
       retentionByBandEnabled: true,
@@ -272,9 +274,9 @@ describe("coerceSettingsPatch", () => {
     const patch = coerceSettingsPatch({
       dailyReviewBudget: 9999,
       bogus: "x",
-      theme: "light",
+      theme: "system",
     });
-    expect(patch).toEqual({ dailyReviewBudget: DAILY_REVIEW_BUDGET_MAX, theme: "light" });
+    expect(patch).toEqual({ dailyReviewBudget: DAILY_REVIEW_BUDGET_MAX, theme: "system" });
   });
 
   it("ignores undefined fields", () => {

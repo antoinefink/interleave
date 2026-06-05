@@ -97,6 +97,7 @@ export function WelcomeModal({
             value={theme}
             onChange={onPickTheme}
             options={[
+              { value: "system", label: "System", icon: "system" },
               { value: "light", label: "Light", icon: "sun" },
               { value: "dark", label: "Dark", icon: "moon" },
             ]}

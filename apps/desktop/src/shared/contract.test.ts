@@ -1545,8 +1545,8 @@ describe("SettingsUpdateRequestSchema", () => {
 
 describe("SettingsPatchSchema (T011)", () => {
   it("accepts a valid partial patch", () => {
-    const parsed = SettingsPatchSchema.parse({ dailyReviewBudget: 60, theme: "light" });
-    expect(parsed).toEqual({ dailyReviewBudget: 60, theme: "light" });
+    const parsed = SettingsPatchSchema.parse({ dailyReviewBudget: 60, theme: "system" });
+    expect(parsed).toEqual({ dailyReviewBudget: 60, theme: "system" });
   });
 
   it("accepts an empty patch", () => {
@@ -1565,7 +1565,7 @@ describe("SettingsPatchSchema (T011)", () => {
   it("rejects an out-of-range retention and a bad enum", () => {
     expect(() => SettingsPatchSchema.parse({ defaultDesiredRetention: 0.5 })).toThrow();
     expect(() => SettingsPatchSchema.parse({ keyboardLayout: "azerty" })).toThrow();
-    expect(() => SettingsPatchSchema.parse({ theme: "system" })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ theme: "sepia" })).toThrow();
   });
 
   it("rejects a non-integer budget / topic interval", () => {
@@ -1590,8 +1590,8 @@ describe("SettingsPatchSchema (T011)", () => {
 
 describe("SettingsUpdateManyRequestSchema (T011)", () => {
   it("wraps a patch", () => {
-    expect(SettingsUpdateManyRequestSchema.parse({ patch: { theme: "dark" } })).toEqual({
-      patch: { theme: "dark" },
+    expect(SettingsUpdateManyRequestSchema.parse({ patch: { theme: "system" } })).toEqual({
+      patch: { theme: "system" },
     });
   });
 

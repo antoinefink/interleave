@@ -77,12 +77,12 @@ describe("DbService", () => {
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
 
     svc.updateSetting("theme", "dark");
-    svc.updateSetting("theme", "light");
-    expect(svc.getSettings("theme").settings.theme).toBe("light");
+    svc.updateSetting("theme", "system");
+    expect(svc.getSettings("theme").settings.theme).toBe("system");
 
     // No key omitted → all settings; exactly one row for the key.
     const all = svc.getSettings();
-    expect(all.settings.theme).toBe("light");
+    expect(all.settings.theme).toBe("system");
 
     svc.close();
   });
@@ -181,11 +181,11 @@ describe("DbService", () => {
     const { settings } = svc.updateAppSettings({
       dailyReviewBudget: 120,
       keyboardLayout: "vim",
-      theme: "light",
+      theme: "system",
     });
     expect(settings.dailyReviewBudget).toBe(120);
     expect(settings.keyboardLayout).toBe("vim");
-    expect(settings.theme).toBe("light");
+    expect(settings.theme).toBe("system");
     // Untouched fields keep their defaults.
     expect(settings.defaultTopicIntervalDays).toBe(7);
 

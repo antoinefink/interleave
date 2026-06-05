@@ -60,8 +60,8 @@ describe("WelcomeModal", () => {
 
   it("picks a theme from the segmented control", () => {
     const p = setup();
-    fireEvent.click(screen.getByRole("button", { name: "Dark" }));
-    expect(p.onPickTheme).toHaveBeenCalledWith("dark");
+    fireEvent.click(screen.getByRole("button", { name: "System" }));
+    expect(p.onPickTheme).toHaveBeenCalledWith("system");
   });
 
   it("explores on Escape", () => {
