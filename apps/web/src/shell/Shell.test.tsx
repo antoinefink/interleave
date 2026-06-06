@@ -140,6 +140,7 @@ vi.mock("./useShellShortcuts", () => ({
 }));
 
 import { Shell } from "./Shell";
+import { OPEN_HELP_EVENT } from "./nav";
 
 beforeEach(() => {
   h.pathname = "/queue";
@@ -266,6 +267,35 @@ describe("Shell", () => {
     });
 
     await waitFor(() => expect(h.createBackup).toHaveBeenCalledTimes(2));
+  });
+
+  it("opens and closes the in-app help center from shell help events", () => {
+    render(<Shell />);
+
+    expect(screen.queryByTestId("help-center")).not.toBeInTheDocument();
+
+    window.dispatchEvent(new CustomEvent(OPEN_HELP_EVENT));
+    expect(screen.getByTestId("help-center")).toBeInTheDocument();
+    expect(screen.getByText("How can we help?")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Close help center"));
+    expect(screen.queryByTestId("help-center")).not.toBeInTheDocument();
+  });
+
+  it("opens help from the user menu and navigates from an article action", () => {
+    render(<Shell />);
+
+    fireEvent.click(screen.getByTestId("user-chip"));
+    fireEvent.click(screen.getByTestId("usermenu-help"));
+    expect(screen.getByText("How can we help?")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Search the help center"), {
+      target: { value: "home dashboard" },
+    });
+    fireEvent.click(screen.getByText(/The Home command center/i));
+    fireEvent.click(screen.getByRole("button", { name: "Open the relevant screen" }));
+
+    expect(h.navigate).toHaveBeenCalledWith({ to: "/" });
   });
 
   it("routes main-process source-open events through in-app navigation", async () => {

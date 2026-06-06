@@ -711,3 +711,61 @@ test("10+11. restart + verify: every artifact survives an app restart", async ()
 
   await app.close();
 });
+
+test("12. render-loop continuity: review resume is preserved across relaunch", async () => {
+  expect(qaCardId).toBeTruthy();
+  expect(qaDueAfterGrade).toBeTruthy();
+
+  const renderClock = qaDueAfterGrade ?? AS_OF_DUE;
+
+  const appA = await launchApp(dataDir);
+  const pageA = await appA.firstWindow();
+  await pageA.waitForLoadState("domcontentloaded");
+  const launchUrl = new URL(pageA.url());
+  baseUrl = `${launchUrl.protocol}//${launchUrl.host}`;
+
+  await pageA.goto(`${baseUrl}/review?asOf=${encodeURIComponent(renderClock)}`);
+  await pageA.waitForLoadState("domcontentloaded");
+  await expect(pageA.getByTestId("route-review")).toBeVisible();
+
+  const firstReview = await pageA.evaluate(async (cardId, clock) => {
+    const api = window.appApi as unknown as {
+      review: {
+        preview(req: { cardId: string; asOf?: string }): Promise<{
+          intervals:
+            | Record<"again" | "hard" | "good" | "easy", { scheduledDays: number }>
+            | null;
+        }>;
+      };
+    };
+    return api.review.preview({ cardId, asOf: clock });
+  }, qaCardId, renderClock);
+  expect(firstReview.intervals).toBeTruthy();
+  await appA.close();
+
+  const appB = await launchApp(dataDir);
+  const pageB = await appB.firstWindow();
+  await pageB.waitForLoadState("domcontentloaded");
+  const nextLaunchUrl = new URL(pageB.url());
+  baseUrl = `${nextLaunchUrl.protocol}//${nextLaunchUrl.host}`;
+
+  await pageB.goto(`${baseUrl}/review?asOf=${encodeURIComponent(renderClock)}`);
+  await pageB.waitForLoadState("domcontentloaded");
+  await expect(pageB.getByTestId("route-review")).toBeVisible();
+
+  const secondReview = await pageB.evaluate(async (cardId, clock) => {
+    const api = window.appApi as unknown as {
+      review: {
+        preview(req: { cardId: string; asOf?: string }): Promise<{
+          intervals:
+            | Record<"again" | "hard" | "good" | "easy", { scheduledDays: number }>
+            | null;
+        }>;
+      };
+    };
+    return api.review.preview({ cardId, asOf: clock });
+  }, qaCardId, renderClock);
+  expect(secondReview.intervals).toEqual(firstReview.intervals);
+
+  await appB.close();
+});

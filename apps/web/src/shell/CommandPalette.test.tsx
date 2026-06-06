@@ -117,4 +117,45 @@ describe("CommandPalette — action entries (T048)", () => {
     fireEvent.keyDown(window, { key: "Enter" });
     expect(onAction).toHaveBeenCalledWith("lower-priority");
   });
+
+  it("dispatches the shell-only event when a Help command is chosen", () => {
+    const spy = vi.fn();
+    window.addEventListener("interleave:open-help", spy);
+
+    vi.useFakeTimers();
+    try {
+      setup(false);
+      clickRow("Help: Open help center");
+
+      expect(spy).not.toHaveBeenCalled();
+      vi.runAllTimers();
+      expect(spy).toHaveBeenCalledTimes(1);
+      const dispatched = spy.mock.calls.at(0)?.[0];
+      expect(dispatched).toBeInstanceOf(Event);
+    } finally {
+      vi.runOnlyPendingTimers();
+      vi.useRealTimers();
+      window.removeEventListener("interleave:open-help", spy);
+    }
+  });
+
+  it("dispatches the tour event when the help tour command is chosen", () => {
+    const spy = vi.fn();
+    window.addEventListener("interleave:start-tour", spy);
+
+    vi.useFakeTimers();
+    try {
+      setup(false);
+      clickRow("Help: Take the tour");
+
+      expect(spy).not.toHaveBeenCalled();
+      vi.runAllTimers();
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(expect.any(Event));
+    } finally {
+      vi.runOnlyPendingTimers();
+      vi.useRealTimers();
+      window.removeEventListener("interleave:start-tour", spy);
+    }
+  });
 });
