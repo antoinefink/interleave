@@ -176,6 +176,7 @@ export function ReviewScreen() {
   const [reviewed, setReviewed] = useState(0);
   const [graded, setGraded] = useState<ReviewRating[]>([]);
   const [busy, setBusy] = useState(false);
+  const [repairBusy, setRepairBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [startMs] = useState(() => Date.now());
@@ -207,6 +208,37 @@ export function ReviewScreen() {
   const recentSiblingGroupRef = useRef<string | null>(null);
   // When the current card was revealed, for the reveal→grade response time.
   const revealAtRef = useRef<number | null>(null);
+  const loadSessionSeqRef = useRef(0);
+  const loadNextSeqRef = useRef(0);
+  const previewSeqRef = useRef(0);
+  const sourceLookupSeqRef = useRef(0);
+  const repairBusyRef = useRef(false);
+  repairBusyRef.current = repairBusy;
+  const mountedRef = useRef(false);
+  const currentCardIdRef = useRef<string | null>(null);
+  currentCardIdRef.current = card?.id ?? null;
+
+  const invalidateCardSideEffects = useCallback(() => {
+    previewSeqRef.current += 1;
+    sourceLookupSeqRef.current += 1;
+  }, []);
+
+  const setRepairBusyNow = useCallback((next: boolean) => {
+    repairBusyRef.current = next;
+    if (next) sourceLookupSeqRef.current += 1;
+    setRepairBusy(next);
+  }, []);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      loadSessionSeqRef.current += 1;
+      loadNextSeqRef.current += 1;
+      previewSeqRef.current += 1;
+      sourceLookupSeqRef.current += 1;
+    };
+  }, []);
 
   /**
    * Pick the next card from the FROZEN mode deck (T096): the first card not in the
@@ -241,14 +273,23 @@ export function ReviewScreen() {
    */
   const loadNext = useCallback(async (): Promise<boolean> => {
     if (!isDesktop()) return false;
+    const sessionSeq = loadSessionSeqRef.current;
+    const requestSeq = ++loadNextSeqRef.current;
+    const isCurrentLoad = () =>
+      mountedRef.current &&
+      loadSessionSeqRef.current === sessionSeq &&
+      loadNextSeqRef.current === requestSeq;
+    if (!isCurrentLoad()) return true;
     try {
       // ---- Targeted mode (T096): walk the in-memory ordered deck ----
       if (mode) {
         const next = nextFromModeDeck();
+        if (!isCurrentLoad()) return true;
         setError(null);
         setRevealed(false);
         setPreviews(null);
         setContextDrawerOpen(false);
+        setRepairBusyNow(false);
         revealAtRef.current = null;
         const deckSize = modeDeckRef.current?.length ?? 0;
         if (!next) {
@@ -275,10 +316,12 @@ export function ReviewScreen() {
         ...(recent ? { recentSiblingGroups: [recent] } : {}),
         ...(asOf ? { asOf } : {}),
       });
+      if (!isCurrentLoad()) return true;
       setError(null);
       setRevealed(false);
       setPreviews(null);
       setContextDrawerOpen(false);
+      setRepairBusyNow(false);
       revealAtRef.current = null;
       if (!res.card) {
         setCard(null);
@@ -303,16 +346,19 @@ export function ReviewScreen() {
       select(res.card.id);
       return true;
     } catch (e) {
+      if (!isCurrentLoad()) return true;
       setError(e instanceof Error ? e.message : String(e));
       return false;
     }
-  }, [asOf, mode, nextFromModeDeck, select]);
+  }, [asOf, mode, nextFromModeDeck, select, setRepairBusyNow]);
 
   // Load the first card on mount. In a TARGETED mode (T096) fetch the FROZEN deck
   // ONCE first (the selection is done main-side), then walk it; in the daily session
   // `loadNext` reads the due deck directly.
   useEffect(() => {
     let cancelled = false;
+    loadSessionSeqRef.current += 1;
+    loadNextSeqRef.current += 1;
     void (async () => {
       if (mode && isDesktop()) {
         try {
@@ -335,21 +381,40 @@ export function ReviewScreen() {
     })();
     return () => {
       cancelled = true;
+      loadSessionSeqRef.current += 1;
+      loadNextSeqRef.current += 1;
     };
   }, [mode, asOf, loadNext]);
 
   /** Reveal the answer + fetch the four interval previews (lazily, on reveal). */
   const reveal = useCallback(async () => {
     if (!card || revealed) return;
+    const requestedCardId = card.id;
+    const requestSeq = ++previewSeqRef.current;
     setRevealed(true);
+    setPreviews(null);
     revealAtRef.current = Date.now();
     try {
       const res = await appApi.reviewPreview({
-        cardId: card.id,
+        cardId: requestedCardId,
         ...(asOf ? { asOf } : {}),
       });
+      if (
+        !mountedRef.current ||
+        currentCardIdRef.current !== requestedCardId ||
+        previewSeqRef.current !== requestSeq
+      ) {
+        return;
+      }
       setPreviews(res.intervals);
     } catch {
+      if (
+        !mountedRef.current ||
+        currentCardIdRef.current !== requestedCardId ||
+        previewSeqRef.current !== requestSeq
+      ) {
+        return;
+      }
       // Previews are a nicety; grading still works without them.
       setPreviews(null);
     }
@@ -358,13 +423,14 @@ export function ReviewScreen() {
   /** Grade the current card, write the review log, and advance. */
   const grade = useCallback(
     async (rating: ReviewRating) => {
-      if (!card || !revealed || busy || !isDesktop()) return;
+      if (!card || !revealed || busy || repairBusyRef.current || !isDesktop()) return;
       // Guard against double-grading the same card: once a card has been recorded
       // in the exclude set it has a durable `review_logs` row + an advanced FSRS
       // state, so a second grade (e.g. after a transient advance failure left it on
       // screen) must not write a second log / advance FSRS twice.
       if (excludeRef.current.includes(card.id)) return;
       setBusy(true);
+      invalidateCardSideEffects();
       // Reveal→grade response time; fall back to 0 if the reveal timestamp is lost.
       const responseMs = revealAtRef.current ? Math.max(0, Date.now() - revealAtRef.current) : 0;
       try {
@@ -395,11 +461,12 @@ export function ReviewScreen() {
         setCard(null);
         setRevealed(false);
         setPreviews(null);
+        setRepairBusyNow(false);
         revealAtRef.current = null;
       }
       setBusy(false);
     },
-    [card, revealed, busy, asOf, loadNext],
+    [card, revealed, busy, asOf, loadNext, invalidateCardSideEffects, setRepairBusyNow],
   );
 
   /**
@@ -408,29 +475,50 @@ export function ReviewScreen() {
    * `exclude` set so `session.next` returns the next due card, and `reviewed`/the
    * per-grade tally are left untouched.
    */
-  const advancePastCurrent = useCallback(async () => {
-    if (!card) return;
-    excludeRef.current = [...excludeRef.current, card.id];
-    // Removed-without-a-grade: shrink the progress denominator so the bar still
-    // reaches 100% at completion (suspend/delete don't count as reviews).
-    setRemoved((n) => n + 1);
-    await loadNext();
-  }, [card, loadNext]);
+  const advancePastCurrent = useCallback(
+    async (removedCardId: string) => {
+      if (currentCardIdRef.current !== removedCardId) return;
+      invalidateCardSideEffects();
+      excludeRef.current = [...excludeRef.current, removedCardId];
+      // Removed-without-a-grade: shrink the progress denominator so the bar still
+      // reaches 100% at completion (suspend/delete don't count as reviews).
+      setRemoved((n) => n + 1);
+      const advanced = await loadNext();
+      if (!advanced) {
+        setCard(null);
+        setRevealed(false);
+        setPreviews(null);
+        setRepairBusyNow(false);
+        revealAtRef.current = null;
+      }
+    },
+    [loadNext, invalidateCardSideEffects, setRepairBusyNow],
+  );
 
   /** Jump back to the originating source paragraph (lineage: card → location → source). */
   const openSource = useCallback(() => {
+    if (busy || repairBusyRef.current) return;
     if (!card?.sourceLocationLabel) return;
+    const requestedCardId = card.id;
+    const requestSeq = ++sourceLookupSeqRef.current;
     // The full jump payload (block ids/offsets) lives on the inspector location;
     // fetch it then navigate. Open-source repair is fleshed out in T038.
     void (async () => {
       try {
-        const res = await appApi.getInspectorData({ id: card.id });
+        const res = await appApi.getInspectorData({ id: requestedCardId });
+        if (
+          !mountedRef.current ||
+          currentCardIdRef.current !== requestedCardId ||
+          sourceLookupSeqRef.current !== requestSeq
+        ) {
+          return;
+        }
         if (res.data?.location) navigateToLocation(res.data.location);
       } catch {
         // Non-fatal: the source jump is a convenience.
       }
     })();
-  }, [card, navigateToLocation]);
+  }, [busy, card, navigateToLocation]);
 
   /**
    * Create a "verify this claim" verification task (T092) for the current card,
@@ -471,6 +559,12 @@ export function ReviewScreen() {
   // during a session (see `activeScope`).
   useActiveScope("review", desktop && !done);
 
+  useEffect(() => {
+    if (!revealed && contextDrawerOpen) {
+      setContextDrawerOpen(false);
+    }
+  }, [revealed, contextDrawerOpen]);
+
   // Keyboard: Space reveals; 1–4 grade. Ignored while focus is in an input/textarea
   // (exactly as the prototype's `onKey`).
   useEffect(() => {
@@ -484,10 +578,9 @@ export function ReviewScreen() {
         if (!revealed) void reveal();
         return;
       }
-      // `o` → open the originating source (lineage jump) — the SAME `openSource`
-      // the repair bar's "Open source" button calls (T022/T048). Available before
-      // or after reveal so the user can ground a card without leaving review.
-      if (e.key === "o" || e.key === "O") {
+      // `o` -> open the originating source (lineage jump) after reveal. Source
+      // context can contain the answer/evidence, so it shares the reveal gate.
+      if (revealed && !busy && !repairBusyRef.current && (e.key === "o" || e.key === "O")) {
         e.preventDefault();
         openSource();
         return;
@@ -502,7 +595,7 @@ export function ReviewScreen() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [desktop, done, revealed, reveal, grade, openSource]);
+  }, [desktop, done, revealed, busy, reveal, grade, openSource]);
 
   if (!desktop) {
     return (
@@ -529,6 +622,7 @@ export function ReviewScreen() {
   // bar still fills to 100% at completion — they're repairs, not reviews.
   const progressTotal = Math.max(reviewedCount, (total || reviewedCount + leftCount) - removed);
   const progressPct = progressTotal === 0 ? 0 : (reviewedCount / progressTotal) * 100;
+  const gradeBusy = busy || repairBusy;
 
   return (
     <div className="rv-shell" data-testid="route-review">
@@ -548,7 +642,10 @@ export function ReviewScreen() {
           type="button"
           className="rv-end"
           data-testid="review-end"
-          onClick={() => navigate({ to: "/queue", search: asOf ? { asOf } : {} })}
+          disabled={gradeBusy}
+          onClick={() => {
+            if (!gradeBusy) navigate({ to: "/queue", search: asOf ? { asOf } : {} });
+          }}
         >
           <Icon name="x" size={14} />
           End session
@@ -573,7 +670,10 @@ export function ReviewScreen() {
             type="button"
             className="rv-mode__exit"
             data-testid="review-mode-exit"
-            onClick={() => navigate({ to: "/review", search: asOf ? { asOf } : {} })}
+            disabled={gradeBusy}
+            onClick={() => {
+              if (!gradeBusy) navigate({ to: "/review", search: asOf ? { asOf } : {} });
+            }}
           >
             <Icon name="x" size={12} />
             Exit mode
@@ -698,7 +798,10 @@ export function ReviewScreen() {
                     type="button"
                     className="banner__action"
                     data-testid="review-leech-add-context"
-                    onClick={() => setContextDrawerOpen(true)}
+                    disabled={!revealed || gradeBusy}
+                    onClick={() => {
+                      if (revealed && !gradeBusy) setContextDrawerOpen(true);
+                    }}
                   >
                     <Icon name="context" size={14} />
                     Add context
@@ -841,7 +944,7 @@ export function ReviewScreen() {
                           key={g.rating}
                           className={`grade grade--${g.rating}`}
                           data-testid={`review-grade-${g.rating}`}
-                          disabled={busy}
+                          disabled={gradeBusy}
                           onClick={() => void grade(g.rating)}
                         >
                           <span className="grade__label">{g.label}</span>
@@ -867,18 +970,22 @@ export function ReviewScreen() {
             </div>
 
             {/* repair actions (T038) — edit / open source / add context / suspend /
-                flag / delete; open-source jumps back via lineage (T022). */}
-            <ReviewRepairBar
-              card={card}
-              busy={busy}
-              onOpenSource={openSource}
-              onCardUpdated={(updated) =>
-                setCard((c) => (c && c.id === updated.id ? { ...c, ...updated } : c))
-              }
-              onCardRemoved={advancePastCurrent}
-              drawerOpen={contextDrawerOpen}
-              onDrawerOpenChange={setContextDrawerOpen}
-            />
+                flag / delete. They are post-reveal because edit/source context can
+                expose answer evidence before the user has recalled it. */}
+            {revealed ? (
+              <ReviewRepairBar
+                card={card}
+                busy={busy}
+                onBusyChange={setRepairBusyNow}
+                onOpenSource={openSource}
+                onCardUpdated={(updated) =>
+                  setCard((c) => (c && c.id === updated.id ? { ...c, ...updated } : c))
+                }
+                onCardRemoved={advancePastCurrent}
+                drawerOpen={contextDrawerOpen}
+                onDrawerOpenChange={setContextDrawerOpen}
+              />
+            ) : null}
           </div>
         ) : (
           <div className="rv-summary" data-testid="review-empty">

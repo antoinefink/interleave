@@ -203,6 +203,9 @@
   gap: 8px;
   flex-wrap: wrap;
 }
+.rv-stats-block {
+  margin-top: 18px;
+}
 
 /* ---------- review card (kit `.rcard`) ---------- */
 .rcard {

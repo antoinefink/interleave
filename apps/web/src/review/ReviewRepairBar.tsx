@@ -21,7 +21,7 @@
  * preload bridge; the main process owns the transaction + the `operation_log` op.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { TypeIcon } from "../components/inspector/primitives";
 import { appApi, type CardEditSummary, type ReviewCardView } from "../lib/appApi";
@@ -41,7 +41,9 @@ interface ReviewRepairBarProps {
   /** Patch the in-flight card after an edit/flag (the card stays in the deck). */
   readonly onCardUpdated: (patch: ReviewCardPatch) => void;
   /** Remove the current card from the deck + advance (suspend/delete). */
-  readonly onCardRemoved: () => void | Promise<void>;
+  readonly onCardRemoved: (cardId: string) => void | Promise<void>;
+  /** Lift local mutation state so parents can block conflicting grade actions. */
+  readonly onBusyChange?: (busy: boolean) => void;
   /**
    * Source-context drawer open state, lifted to the parent so the leech banner's
    * "Add context" affordance (kit `screen-review.jsx`) opens the SAME drawer this
@@ -93,11 +95,13 @@ export function ReviewRepairBar({
   onOpenSource,
   onCardUpdated,
   onCardRemoved,
+  onBusyChange,
   drawerOpen,
   onDrawerOpenChange,
 }: ReviewRepairBarProps) {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Inline edit-form fields, seeded from the card on open. An `image_occlusion`
@@ -112,6 +116,8 @@ export function ReviewRepairBar({
   const [cloze, setCloze] = useState("");
   const editTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedEdit = useRef("");
+  const mountedRef = useRef(false);
+  const inFlightEdit = useRef<{ fingerprint: string; promise: Promise<boolean> } | null>(null);
   const latestEdit = useRef<{
     editing: boolean;
     cardId: string;
@@ -123,6 +129,23 @@ export function ReviewRepairBar({
     patch: reviewEditPatch(card.kind, { prompt: "", answer: "", cloze: "" }),
     fingerprint: "",
   });
+
+  const setSavingState = useCallback(
+    (next: boolean) => {
+      if (!mountedRef.current) return;
+      setSaving(next);
+      onBusyChange?.(next);
+    },
+    [onBusyChange],
+  );
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      onBusyChange?.(false);
+    };
+  }, [onBusyChange]);
 
   const openEditor = useCallback(() => {
     const nextPrompt = card.prompt ?? "";
@@ -147,12 +170,80 @@ export function ReviewRepairBar({
     [card.kind, answer, cloze, prompt],
   );
   const liveEditPatch = currentEditPatch();
+  const dirtyNow = editing && editFingerprint(liveEditPatch) !== lastSavedEdit.current;
+  const editDirty = dirty || dirtyNow;
   latestEdit.current = {
     editing,
     cardId: card.id,
     patch: liveEditPatch,
     fingerprint: editFingerprint(liveEditPatch),
   };
+
+  useLayoutEffect(() => {
+    setDirty(dirtyNow);
+    if (!saving) onBusyChange?.(dirtyNow);
+  }, [dirtyNow, saving, onBusyChange]);
+
+  const saveEditPatch = useCallback(
+    async ({
+      applyResult,
+      cardId,
+      fingerprint,
+      patch,
+      reportError,
+      setBusy,
+    }: {
+      readonly applyResult: boolean;
+      readonly cardId: string;
+      readonly fingerprint: string;
+      readonly patch: Record<string, string>;
+      readonly reportError: boolean;
+      readonly setBusy: boolean;
+    }): Promise<boolean> => {
+      const activeSave = inFlightEdit.current;
+      if (activeSave) {
+        if (activeSave.fingerprint === fingerprint) return activeSave.promise;
+        await activeSave.promise.catch(() => false);
+        return saveEditPatch({ applyResult, cardId, fingerprint, patch, reportError, setBusy });
+      }
+      if (setBusy) setSavingState(true);
+      if (reportError) setError(null);
+      const promise = appApi
+        .updateCard({
+          cardId,
+          ...patch,
+        })
+        .then((res) => {
+          const isLatest =
+            latestEdit.current.cardId === cardId && latestEdit.current.fingerprint === fingerprint;
+          if (isLatest) {
+            if (applyResult) onCardUpdated(patchFromSummary(res.card));
+            lastSavedEdit.current = fingerprint;
+            if (mountedRef.current) setDirty(false);
+          }
+          return true;
+        })
+        .catch((e) => {
+          const isLatest =
+            latestEdit.current.cardId === cardId && latestEdit.current.fingerprint === fingerprint;
+          if (isLatest && reportError && mountedRef.current) {
+            setError(e instanceof Error ? e.message : String(e));
+          }
+          return false;
+        })
+        .finally(() => {
+          if (inFlightEdit.current?.fingerprint === fingerprint) {
+            inFlightEdit.current = null;
+          }
+          if (setBusy) setSavingState(false);
+        });
+      inFlightEdit.current = { fingerprint, promise };
+      return promise;
+    },
+    [onCardUpdated, setSavingState],
+  );
+
+  const flushPendingEditOnUnmountRef = useRef<() => void>(() => {});
 
   const flushPendingEditOnUnmount = useCallback(() => {
     const latest = latestEdit.current;
@@ -167,13 +258,23 @@ export function ReviewRepairBar({
       clearTimeout(editTimer.current);
       editTimer.current = null;
     }
-    void appApi.updateCard({ cardId: latest.cardId, ...latest.patch }).catch(() => {});
-  }, []);
+    void saveEditPatch({
+      applyResult: false,
+      cardId: latest.cardId,
+      fingerprint: latest.fingerprint,
+      patch: latest.patch,
+      reportError: false,
+      setBusy: false,
+    });
+  }, [saveEditPatch]);
+  flushPendingEditOnUnmountRef.current = flushPendingEditOnUnmount;
 
   const persistEdit = useCallback(
     async (requireReady = false) => {
-      const patch = currentEditPatch();
-      const fingerprint = editFingerprint(patch);
+      const latest = latestEdit.current;
+      const patch = latest.patch;
+      const fingerprint = latest.fingerprint;
+      const cardId = latest.cardId;
       if (fingerprint === lastSavedEdit.current) return true;
       if (!editPatchReady(patch)) {
         if (requireReady) setError("Complete the editable fields before closing.");
@@ -183,24 +284,16 @@ export function ReviewRepairBar({
         clearTimeout(editTimer.current);
         editTimer.current = null;
       }
-      setSaving(true);
-      setError(null);
-      try {
-        const res = await appApi.updateCard({
-          cardId: card.id,
-          ...patch,
-        });
-        onCardUpdated(patchFromSummary(res.card));
-        lastSavedEdit.current = fingerprint;
-        return true;
-      } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
-        return false;
-      } finally {
-        setSaving(false);
-      }
+      return saveEditPatch({
+        applyResult: true,
+        cardId,
+        fingerprint,
+        patch,
+        reportError: true,
+        setBusy: true,
+      });
     },
-    [card.id, currentEditPatch, onCardUpdated],
+    [saveEditPatch],
   );
 
   useEffect(() => {
@@ -224,8 +317,8 @@ export function ReviewRepairBar({
   }, [editing, currentEditPatch, persistEdit]);
 
   useEffect(() => {
-    return () => flushPendingEditOnUnmount();
-  }, [flushPendingEditOnUnmount]);
+    return () => flushPendingEditOnUnmountRef.current();
+  }, []);
 
   const closeEditor = useCallback(async () => {
     const saved = await persistEdit(true);
@@ -233,49 +326,52 @@ export function ReviewRepairBar({
   }, [persistEdit]);
 
   const suspend = useCallback(async () => {
-    if (busy || saving) return;
-    setSaving(true);
+    if (busy || saving || editDirty) return;
+    const removedCardId = card.id;
+    setSavingState(true);
     try {
-      await appApi.suspendCard({ cardId: card.id });
-      await onCardRemoved();
+      await appApi.suspendCard({ cardId: removedCardId });
+      await onCardRemoved(removedCardId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      setSaving(false);
+      setSavingState(false);
     }
-  }, [busy, saving, card.id, onCardRemoved]);
+  }, [busy, saving, editDirty, card.id, onCardRemoved, setSavingState]);
 
   const remove = useCallback(async () => {
-    if (busy || saving) return;
-    setSaving(true);
+    if (busy || saving || editDirty) return;
+    const removedCardId = card.id;
+    setSavingState(true);
     try {
-      await appApi.deleteCard({ cardId: card.id });
-      await onCardRemoved();
+      await appApi.deleteCard({ cardId: removedCardId });
+      await onCardRemoved(removedCardId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      setSaving(false);
+      setSavingState(false);
     }
-  }, [busy, saving, card.id, onCardRemoved]);
+  }, [busy, saving, editDirty, card.id, onCardRemoved, setSavingState]);
 
   // Retire (T082) — a low-value mature card leaves active review gracefully (kept
   // for reference, reversibly). Like suspend it drops the card from the deck +
   // advances the session, but it is a distinct exit (the durable `is_retired` flag,
   // not a status). Un-retire lives in the inspector + the maintenance inventory.
   const retire = useCallback(async () => {
-    if (busy || saving) return;
-    setSaving(true);
+    if (busy || saving || editDirty) return;
+    const removedCardId = card.id;
+    setSavingState(true);
     setError(null);
     try {
-      await appApi.retireCard({ cardId: card.id });
-      await onCardRemoved();
+      await appApi.retireCard({ cardId: removedCardId });
+      await onCardRemoved(removedCardId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      setSaving(false);
+      setSavingState(false);
     }
-  }, [busy, saving, card.id, onCardRemoved]);
+  }, [busy, saving, editDirty, card.id, onCardRemoved, setSavingState]);
 
   const toggleFlag = useCallback(async () => {
-    if (busy || saving) return;
-    setSaving(true);
+    if (busy || saving || editDirty) return;
+    setSavingState(true);
     setError(null);
     try {
       const res = await appApi.flagCard({ cardId: card.id, flagged: !card.flagged });
@@ -283,13 +379,13 @@ export function ReviewRepairBar({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      setSavingState(false);
     }
-  }, [busy, saving, card.id, card.flagged, onCardUpdated]);
+  }, [busy, saving, editDirty, card.id, card.flagged, onCardUpdated, setSavingState]);
 
   const toggleLeech = useCallback(async () => {
-    if (busy || saving) return;
-    setSaving(true);
+    if (busy || saving || editDirty) return;
+    setSavingState(true);
     setError(null);
     try {
       const res = await appApi.markLeechCard({ cardId: card.id, leech: !card.leech });
@@ -297,9 +393,9 @@ export function ReviewRepairBar({
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      setSavingState(false);
     }
-  }, [busy, saving, card.id, card.leech, onCardUpdated]);
+  }, [busy, saving, editDirty, card.id, card.leech, onCardUpdated, setSavingState]);
 
   // Keyboard repairs (T048) — `E` opens the inline editor, `S` suspends. These run
   // the SAME `openEditor` / `suspend` handlers the on-screen repair buttons call (no
@@ -311,7 +407,7 @@ export function ReviewRepairBar({
       const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
       if (tag === "input" || tag === "textarea" || tag === "select") return;
       if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
-      if (editing) return;
+      if (editing || busy || saving || editDirty) return;
       const k = e.key.toLowerCase();
       if (k === "e") {
         e.preventDefault();
@@ -323,9 +419,9 @@ export function ReviewRepairBar({
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editing, openEditor, suspend]);
+  }, [busy, editDirty, editing, saving, openEditor, suspend]);
 
-  const disabled = busy || saving;
+  const disabled = busy || saving || editDirty;
 
   return (
     <>
@@ -399,6 +495,12 @@ export function ReviewRepairBar({
         </div>
       ) : null}
 
+      {error && !editing ? (
+        <p className="rv-edit__error" data-testid="review-edit-error">
+          {error}
+        </p>
+      ) : null}
+
       <div className="rv-repair" data-testid="review-repair">
         <button
           type="button"
@@ -414,7 +516,7 @@ export function ReviewRepairBar({
           type="button"
           className="rv-repair__btn"
           data-testid="review-repair-source"
-          disabled={!card.sourceLocationLabel}
+          disabled={disabled || !card.sourceLocationLabel}
           onClick={onOpenSource}
         >
           <Icon name="source" size={14} />
@@ -424,6 +526,7 @@ export function ReviewRepairBar({
           type="button"
           className="rv-repair__btn"
           data-testid="review-repair-context"
+          disabled={disabled}
           onClick={() => onDrawerOpenChange(true)}
         >
           <Icon name="context" size={14} />
@@ -520,7 +623,7 @@ export function ReviewRepairBar({
                 type="button"
                 className="rv-btn rv-btn--primary"
                 data-testid="review-drawer-open-source"
-                disabled={!card.sourceLocationLabel}
+                disabled={disabled || !card.sourceLocationLabel}
                 onClick={() => {
                   onDrawerOpenChange(false);
                   onOpenSource();

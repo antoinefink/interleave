@@ -15,7 +15,7 @@
  */
 
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CardEditSummary, ReviewCardView } from "../lib/appApi";
 
@@ -29,6 +29,7 @@ const h = vi.hoisted(() => ({
   onOpenSource: vi.fn(),
   onCardUpdated: vi.fn(),
   onCardRemoved: vi.fn(),
+  onBusyChange: vi.fn(),
 }));
 
 vi.mock("../lib/appApi", async () => {
@@ -116,6 +117,16 @@ function summary(overrides: Partial<CardEditSummary> = {}): CardEditSummary {
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 /**
  * The source-context drawer is controlled by the parent (`ReviewScreen`); this tiny
  * harness owns that state so the bar behaves exactly as it does in the app (one
@@ -130,6 +141,7 @@ function Harness({ card, busy }: { card: ReviewCardView; busy: boolean }) {
       onOpenSource={h.onOpenSource}
       onCardUpdated={h.onCardUpdated}
       onCardRemoved={h.onCardRemoved}
+      onBusyChange={h.onBusyChange}
       drawerOpen={drawerOpen}
       onDrawerOpenChange={setDrawerOpen}
     />
@@ -193,6 +205,292 @@ describe("ReviewRepairBar", () => {
         answer: "As skill-acquisition efficiency.",
       }),
     );
+  });
+
+  it("keeps the editor open and visible when a card edit save fails", async () => {
+    h.updateCard.mockRejectedValueOnce(new Error("save failed"));
+    renderBar();
+
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const prompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(prompt, { target: { value: "Rejected prompt?" } });
+    fireEvent.blur(prompt);
+
+    await waitFor(() => expect(h.updateCard).toHaveBeenCalledTimes(1));
+    expect(await screen.findByTestId("review-edit-error")).toHaveTextContent("save failed");
+    expect(screen.getByTestId("review-edit")).toBeInTheDocument();
+    expect(h.onCardUpdated).not.toHaveBeenCalled();
+    expect(h.onBusyChange).toHaveBeenCalledWith(false);
+    await waitFor(() => expect(h.onBusyChange).toHaveBeenLastCalledWith(true));
+    expect(screen.getByTestId("review-repair-suspend")).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("review-edit-done"));
+    await waitFor(() => expect(h.updateCard).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByTestId("review-edit")).not.toBeInTheDocument());
+  });
+
+  it("does not duplicate the same edit when blur and Done overlap", async () => {
+    const save = deferred<{ card: CardEditSummary }>();
+    h.updateCard.mockReturnValueOnce(save.promise);
+    renderBar();
+
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const prompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(prompt, { target: { value: "Blur-saved prompt?" } });
+    fireEvent.blur(prompt);
+    await waitFor(() => expect(h.updateCard).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByTestId("review-edit-done"));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(h.updateCard).toHaveBeenCalledTimes(1);
+    expect(h.onBusyChange).toHaveBeenCalledWith(true);
+
+    save.resolve({
+      card: summary({ prompt: "Blur-saved prompt?", answer: "As skill-acquisition efficiency." }),
+    });
+
+    await waitFor(() =>
+      expect(h.onCardUpdated).toHaveBeenCalledWith(
+        expect.objectContaining({ prompt: "Blur-saved prompt?" }),
+      ),
+    );
+    await waitFor(() => expect(screen.queryByTestId("review-edit")).not.toBeInTheDocument());
+    expect(h.onBusyChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("does not flush a dirty edit just because the parent re-renders", async () => {
+    h.updateCard.mockResolvedValueOnce({
+      card: summary({ prompt: "Dirty prompt?", answer: "As skill-acquisition efficiency." }),
+    });
+    function InlineUpdateHarness({ version }: { version: number }) {
+      const [drawerOpen, setDrawerOpen] = useState(false);
+      return (
+        <ReviewRepairBar
+          card={QA_CARD}
+          busy={false}
+          onOpenSource={h.onOpenSource}
+          onCardUpdated={(patch) => h.onCardUpdated({ ...patch, version })}
+          onCardRemoved={h.onCardRemoved}
+          onBusyChange={h.onBusyChange}
+          drawerOpen={drawerOpen}
+          onDrawerOpenChange={setDrawerOpen}
+        />
+      );
+    }
+    const view = render(<InlineUpdateHarness version={1} />);
+
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const prompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(prompt, { target: { value: "Dirty prompt?" } });
+
+    view.rerender(<InlineUpdateHarness version={2} />);
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(h.updateCard).not.toHaveBeenCalled();
+    expect(h.onBusyChange).toHaveBeenLastCalledWith(true);
+
+    fireEvent.click(screen.getByTestId("review-edit-done"));
+
+    await waitFor(() =>
+      expect(h.updateCard).toHaveBeenCalledWith({
+        cardId: "card-qa",
+        prompt: "Dirty prompt?",
+        answer: "As skill-acquisition efficiency.",
+      }),
+    );
+    await waitFor(() =>
+      expect(h.onCardUpdated).toHaveBeenCalledWith(
+        expect.objectContaining({ prompt: "Dirty prompt?" }),
+      ),
+    );
+  });
+
+  it("treats dirty debounced edits as busy until the save finishes", async () => {
+    const save = deferred<{ card: CardEditSummary }>();
+    h.updateCard.mockReturnValueOnce(save.promise);
+    renderBar();
+
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const prompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(prompt, { target: { value: "Dirty prompt?" } });
+
+    await waitFor(() => expect(h.onBusyChange).toHaveBeenLastCalledWith(true));
+    expect(screen.getByTestId("review-repair-suspend")).toBeDisabled();
+    expect(screen.getByTestId("review-repair-delete")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("review-repair-suspend"));
+    expect(h.suspendCard).not.toHaveBeenCalled();
+
+    save.resolve({
+      card: summary({ prompt: "Dirty prompt?", answer: "As skill-acquisition efficiency." }),
+    });
+
+    await waitFor(() => expect(h.onBusyChange).toHaveBeenLastCalledWith(false), {
+      timeout: 1200,
+    });
+  });
+
+  it("treats incomplete dirty edits as busy even though they are not autosave-ready", async () => {
+    renderBar();
+
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const prompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(prompt, { target: { value: "" } });
+
+    await waitFor(() => expect(h.onBusyChange).toHaveBeenLastCalledWith(true));
+    expect(screen.getByTestId("review-repair-suspend")).toBeDisabled();
+    expect(screen.getByTestId("review-repair-delete")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("review-repair-delete"));
+
+    expect(h.deleteCard).not.toHaveBeenCalled();
+    expect(h.updateCard).not.toHaveBeenCalled();
+  });
+
+  it("does not let an unmounted edit save clear a newer card's dirty busy state", async () => {
+    const firstSave = deferred<{ card: CardEditSummary }>();
+    h.updateCard.mockReturnValueOnce(firstSave.promise);
+    const secondCard: ReviewCardView = {
+      ...QA_CARD,
+      id: "card-2",
+      prompt: "Second prompt?",
+      answer: "Second answer.",
+    };
+    function SwitchingHarness() {
+      const [card, setCard] = useState(QA_CARD);
+      const [busy, setBusy] = useState(false);
+      const [drawerOpen, setDrawerOpen] = useState(false);
+      const handleBusyChange = useCallback((next: boolean) => {
+        h.onBusyChange(next);
+        setBusy(next);
+      }, []);
+      return (
+        <>
+          <span data-testid="parent-busy">{String(busy)}</span>
+          <button type="button" data-testid="switch-card" onClick={() => setCard(secondCard)}>
+            Switch
+          </button>
+          <ReviewRepairBar
+            key={card.id}
+            card={card}
+            busy={false}
+            onOpenSource={h.onOpenSource}
+            onCardUpdated={h.onCardUpdated}
+            onCardRemoved={h.onCardRemoved}
+            onBusyChange={handleBusyChange}
+            drawerOpen={drawerOpen}
+            onDrawerOpenChange={setDrawerOpen}
+          />
+        </>
+      );
+    }
+    render(<SwitchingHarness />);
+
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const firstPrompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(firstPrompt, { target: { value: "First pending prompt?" } });
+    await waitFor(() => expect(screen.getByTestId("parent-busy")).toHaveTextContent("true"));
+    fireEvent.blur(firstPrompt);
+    await waitFor(() => expect(h.updateCard).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("parent-busy")).toHaveTextContent("true");
+
+    fireEvent.click(screen.getByTestId("switch-card"));
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const secondPrompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(secondPrompt, { target: { value: "" } });
+    await waitFor(() => expect(screen.getByTestId("parent-busy")).toHaveTextContent("true"));
+
+    firstSave.resolve({
+      card: summary({
+        prompt: "First pending prompt?",
+        answer: "As skill-acquisition efficiency.",
+      }),
+    });
+    await firstSave.promise;
+    await Promise.resolve();
+
+    expect(screen.getByTestId("parent-busy")).toHaveTextContent("true");
+    expect(screen.getByTestId("review-repair-suspend")).toBeDisabled();
+    expect(h.onBusyChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it("ignores stale edit completions and applies the newest queued edit", async () => {
+    const olderSave = deferred<{ card: CardEditSummary }>();
+    const newerSave = deferred<{ card: CardEditSummary }>();
+    h.updateCard.mockReturnValueOnce(olderSave.promise).mockReturnValueOnce(newerSave.promise);
+    renderBar();
+
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const prompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(prompt, { target: { value: "Older prompt?" } });
+    fireEvent.blur(prompt);
+    await waitFor(() => expect(h.updateCard).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(prompt, { target: { value: "Newest prompt?" } });
+    fireEvent.blur(prompt);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(h.updateCard).toHaveBeenCalledTimes(1);
+
+    olderSave.resolve({
+      card: summary({ prompt: "Older prompt?", answer: "As skill-acquisition efficiency." }),
+    });
+
+    await waitFor(() => expect(h.updateCard).toHaveBeenCalledTimes(2));
+    expect(h.updateCard).toHaveBeenLastCalledWith({
+      cardId: "card-qa",
+      prompt: "Newest prompt?",
+      answer: "As skill-acquisition efficiency.",
+    });
+    expect(h.onCardUpdated).not.toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: "Older prompt?" }),
+    );
+
+    newerSave.resolve({
+      card: summary({ prompt: "Newest prompt?", answer: "As skill-acquisition efficiency." }),
+    });
+
+    await waitFor(() =>
+      expect(h.onCardUpdated).toHaveBeenCalledWith(
+        expect.objectContaining({ prompt: "Newest prompt?" }),
+      ),
+    );
+  });
+
+  it("serializes an unmount edit flush behind an in-flight save", async () => {
+    const olderSave = deferred<{ card: CardEditSummary }>();
+    const unmountSave = deferred<{ card: CardEditSummary }>();
+    h.updateCard.mockReturnValueOnce(olderSave.promise).mockReturnValueOnce(unmountSave.promise);
+    const view = renderBar();
+
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const prompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(prompt, { target: { value: "Older prompt?" } });
+    fireEvent.blur(prompt);
+    await waitFor(() => expect(h.updateCard).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(prompt, { target: { value: "Unmount prompt?" } });
+    view.unmount();
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(h.updateCard).toHaveBeenCalledTimes(1);
+
+    olderSave.resolve({
+      card: summary({ prompt: "Older prompt?", answer: "As skill-acquisition efficiency." }),
+    });
+
+    await waitFor(() => expect(h.updateCard).toHaveBeenCalledTimes(2));
+    expect(h.updateCard).toHaveBeenLastCalledWith({
+      cardId: "card-qa",
+      prompt: "Unmount prompt?",
+      answer: "As skill-acquisition efficiency.",
+    });
+    expect(h.onCardUpdated).not.toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: "Older prompt?" }),
+    );
+
+    unmountSave.resolve({
+      card: summary({ prompt: "Unmount prompt?", answer: "As skill-acquisition efficiency." }),
+    });
+    await unmountSave.promise;
   });
 
   it("flushes pending card edits when the editor unmounts before the debounce fires", async () => {
@@ -286,21 +584,21 @@ describe("ReviewRepairBar", () => {
     renderBar();
     fireEvent.click(screen.getByTestId("review-repair-suspend"));
     await waitFor(() => expect(h.suspendCard).toHaveBeenCalledWith({ cardId: "card-qa" }));
-    await waitFor(() => expect(h.onCardRemoved).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(h.onCardRemoved).toHaveBeenCalledWith("card-qa"));
   });
 
   it("deletes a card and advances the session", async () => {
     renderBar();
     fireEvent.click(screen.getByTestId("review-repair-delete"));
     await waitFor(() => expect(h.deleteCard).toHaveBeenCalledWith({ cardId: "card-qa" }));
-    await waitFor(() => expect(h.onCardRemoved).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(h.onCardRemoved).toHaveBeenCalledWith("card-qa"));
   });
 
   it("retires a card via appApi.retireCard and advances the session (T082)", async () => {
     renderBar();
     fireEvent.click(screen.getByTestId("review-repair-retire"));
     await waitFor(() => expect(h.retireCard).toHaveBeenCalledWith({ cardId: "card-qa" }));
-    await waitFor(() => expect(h.onCardRemoved).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(h.onCardRemoved).toHaveBeenCalledWith("card-qa"));
   });
 
   it("flags a card as bad via appApi.flagCard and patches it (stays in the deck)", async () => {
@@ -381,7 +679,7 @@ describe("ReviewRepairBar", () => {
 
     fireEvent.keyDown(window, { key: "s" });
     await waitFor(() => expect(h.suspendCard).toHaveBeenCalledWith({ cardId: "card-qa" }));
-    await waitFor(() => expect(h.onCardRemoved).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(h.onCardRemoved).toHaveBeenCalledWith("card-qa"));
   });
 
   it("ignores repair keys while focus is in a textarea (typing the prompt is unaffected)", async () => {

@@ -172,6 +172,7 @@ describe("CardScreen", () => {
     expect(h.selectSpy).not.toHaveBeenCalledWith("card-qa");
     expect(card).toHaveAttribute("data-card-id", "card-qa");
     expect(screen.getByTestId("card-prompt")).toHaveTextContent(/define intelligence/i);
+    expect(screen.getByTestId("fsrs-stats")).toBeInTheDocument();
     expect(screen.queryByTestId("card-answer")).not.toBeInTheDocument();
     expect(screen.queryByTestId("card-refblock")).not.toBeInTheDocument();
     expect(screen.queryByTestId("review-repair-edit")).not.toBeInTheDocument();
@@ -239,6 +240,88 @@ describe("CardScreen", () => {
     });
   });
 
+  it("keeps back, hide, and source actions disabled while a card detail edit is dirty", async () => {
+    render(<CardScreen />);
+
+    await screen.findByTestId("card-detail");
+    fireEvent.click(screen.getByTestId("card-reveal"));
+    await screen.findByTestId("review-repair-edit");
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const prompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(prompt, { target: { value: "Dirty standalone prompt?" } });
+
+    await waitFor(() => expect(screen.getByTestId("card-hide")).toBeDisabled());
+    expect(screen.getByTestId("card-back-to-queue")).toBeDisabled();
+    expect(screen.getByTestId("review-repair-source")).toBeDisabled();
+    expect(hasActiveScope()).toBe(true);
+
+    fireEvent.click(screen.getByTestId("card-hide"));
+    fireEvent.click(screen.getByTestId("card-back-to-queue"));
+    fireEvent.click(screen.getByTestId("review-repair-source"));
+
+    expect(screen.getByTestId("card-answer")).toBeInTheDocument();
+    expect(h.navigateSpy).not.toHaveBeenCalled();
+    expect(h.getInspectorData).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("review-edit-done"));
+    await waitFor(() => expect(h.updateCard).toHaveBeenCalledTimes(1));
+  });
+
+  it("invalidates card detail source lookups when repair work starts", async () => {
+    const sourceRead = deferred<{ data: { location: unknown } }>();
+    const location = {
+      label: "¶ 4",
+      selectedText: "Intelligence is a measure of skill-acquisition efficiency…",
+      page: null,
+      sourceElementId: "src-1",
+      blockIds: ["block-1"],
+      startOffset: 0,
+      endOffset: 48,
+    };
+    h.getInspectorData.mockReturnValueOnce(sourceRead.promise);
+    render(<CardScreen />);
+
+    await screen.findByTestId("card-detail");
+    fireEvent.click(screen.getByTestId("card-reveal"));
+    await screen.findByTestId("review-repair-source");
+    fireEvent.click(screen.getByTestId("review-repair-source"));
+
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const prompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(prompt, { target: { value: "Dirty standalone prompt?" } });
+
+    sourceRead.resolve({ data: { location } });
+    await sourceRead.promise;
+    await Promise.resolve();
+
+    expect(h.navigateToLocationSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("review-edit-done"));
+    await waitFor(() => expect(h.updateCard).toHaveBeenCalledTimes(1));
+  });
+
+  it("opens the current card's source location after reveal", async () => {
+    const location = {
+      label: "¶ 4",
+      selectedText: "Intelligence is a measure of skill-acquisition efficiency…",
+      page: null,
+      sourceElementId: "src-1",
+      blockIds: ["block-1"],
+      startOffset: 0,
+      endOffset: 48,
+    };
+    h.getInspectorData.mockResolvedValueOnce({ data: { location } });
+    render(<CardScreen />);
+
+    await screen.findByTestId("card-detail");
+    fireEvent.click(screen.getByTestId("card-reveal"));
+    await screen.findByTestId("review-repair-source");
+    fireEvent.click(screen.getByTestId("review-repair-source"));
+
+    await waitFor(() => expect(h.getInspectorData).toHaveBeenCalledWith({ id: "card-qa" }));
+    await waitFor(() => expect(h.navigateToLocationSpy).toHaveBeenCalledWith(location));
+  });
+
   it("shows a missing-card state when the targeted card is not live", async () => {
     h.reviewCard.mockResolvedValue({ card: null });
     render(<CardScreen />);
@@ -246,6 +329,37 @@ describe("CardScreen", () => {
     await screen.findByTestId("card-empty");
     expect(screen.getByText(/card not found/i)).toBeInTheDocument();
     expect(screen.queryByTestId("card-detail")).not.toBeInTheDocument();
+  });
+
+  it("navigates back to the queue from live and missing card states", async () => {
+    const live = render(<CardScreen />);
+    await screen.findByTestId("card-detail");
+
+    fireEvent.click(screen.getByTestId("card-back-to-queue"));
+
+    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/queue" });
+
+    live.unmount();
+    vi.clearAllMocks();
+    h.reviewCard.mockResolvedValue({ card: null });
+    render(<CardScreen />);
+    await screen.findByTestId("card-empty");
+
+    fireEvent.click(screen.getByTestId("card-back"));
+
+    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/queue" });
+  });
+
+  it("navigates back to the queue after standalone card removal actions", async () => {
+    render(<CardScreen />);
+    await screen.findByTestId("card-detail");
+    fireEvent.click(screen.getByTestId("card-reveal"));
+    await screen.findByTestId("review-repair-suspend");
+
+    fireEvent.click(screen.getByTestId("review-repair-suspend"));
+
+    await waitFor(() => expect(h.suspendCard).toHaveBeenCalledWith({ cardId: "card-qa" }));
+    await waitFor(() => expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/queue" }));
   });
 
   it("resets reveal state when navigating between card ids in the same route component", async () => {
@@ -271,6 +385,55 @@ describe("CardScreen", () => {
 
     fireEvent.click(screen.getByTestId("card-reveal"));
     expect(await screen.findByTestId("card-answer")).toHaveTextContent("The second answer.");
+  });
+
+  it("ignores an out-of-order card load after the route id changes", async () => {
+    const firstLoad = deferred<{ card: ReviewCardView | null }>();
+    h.reviewCard
+      .mockReturnValueOnce(firstLoad.promise)
+      .mockResolvedValueOnce({ card: SECOND_CARD });
+    const view = render(<CardScreen />);
+    await screen.findByTestId("card-loading");
+
+    h.routeId = "card-2";
+    view.rerender(<CardScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("card-detail")).toHaveAttribute("data-card-id", "card-2"),
+    );
+
+    firstLoad.resolve({ card: QA_CARD });
+    await firstLoad.promise;
+    await Promise.resolve();
+
+    expect(screen.getByTestId("card-detail")).toHaveAttribute("data-card-id", "card-2");
+    expect(screen.getByTestId("card-prompt")).toHaveTextContent("What is the second card asking?");
+    expect(screen.queryByText(/define intelligence/i)).not.toBeInTheDocument();
+  });
+
+  it("ignores a stale rejected card load after the route id changes", async () => {
+    const firstLoad = deferred<{ card: ReviewCardView | null }>();
+    h.reviewCard
+      .mockReturnValueOnce(firstLoad.promise)
+      .mockResolvedValueOnce({ card: SECOND_CARD });
+    const view = render(<CardScreen />);
+    await screen.findByTestId("card-loading");
+
+    h.routeId = "card-2";
+    view.rerender(<CardScreen />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("card-detail")).toHaveAttribute("data-card-id", "card-2"),
+    );
+
+    firstLoad.reject(new Error("stale bridge error"));
+    await firstLoad.promise.catch(() => undefined);
+    await Promise.resolve();
+
+    expect(screen.getByTestId("card-detail")).toHaveAttribute("data-card-id", "card-2");
+    expect(screen.getByTestId("card-prompt")).toHaveTextContent("What is the second card asking?");
+    expect(screen.queryByText("stale bridge error")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("card-empty")).not.toBeInTheDocument();
   });
 
   it("clears the previous card when a later route-id load rejects", async () => {
@@ -303,6 +466,7 @@ describe("CardScreen", () => {
     fireEvent.click(screen.getByTestId("card-reveal"));
     await screen.findByTestId("review-repair-source");
     fireEvent.click(screen.getByTestId("review-repair-source"));
+    expect(h.getInspectorData).toHaveBeenCalledWith({ id: "card-qa" });
 
     h.routeId = "card-2";
     view.rerender(<CardScreen />);

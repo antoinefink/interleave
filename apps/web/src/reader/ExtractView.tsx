@@ -59,6 +59,7 @@ import {
 } from "../lib/appApi";
 import { useDocument } from "../pages/source/useDocument";
 import { useHighlights } from "../pages/source/useHighlights";
+import { CardDetailPanel } from "../review/CardDetailPanel";
 import { useSelection } from "../shell/selection";
 import { AiAssist } from "./AiAssist";
 import { CardBuilder } from "./CardBuilder";
@@ -112,6 +113,7 @@ export function ExtractView() {
     tab: CardKind;
     clozeText?: string;
   } | null>(null);
+  const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const editorRef = useRef<Editor | null>(null);
   // A reactive mirror of the editor instance so the selection hook (T019/T025)
   // re-binds its listeners when the editor (re)mounts; the ref stays for imperative use.
@@ -119,6 +121,11 @@ export function ExtractView() {
   const [editorReady, setEditorReady] = useState(false);
   // The latest edited body, mirrored so Trim can save the current text.
   const latestChange = useRef<SourceEditorChange | null>(null);
+  const currentExtractIdRef = useRef(id);
+  const activeCardIdRef = useRef(activeCardId);
+  const reloadSeqRef = useRef(0);
+  currentExtractIdRef.current = id;
+  activeCardIdRef.current = activeCardId;
 
   const toast = useCallback((message: string) => {
     setFlash(message);
@@ -130,15 +137,24 @@ export function ExtractView() {
   // mutation so the chips/stepper/tree reflect the new stage/due date/status.
   const reload = useCallback(() => {
     if (!desktop || !id) return;
+    const requestedId = id;
+    reloadSeqRef.current += 1;
+    const requestSeq = reloadSeqRef.current;
+    const isCurrentRequest = () =>
+      reloadSeqRef.current === requestSeq && currentExtractIdRef.current === requestedId;
     void appApi
-      .getInspectorData({ id })
-      .then((res) => setInspector(res.data))
+      .getInspectorData({ id: requestedId })
+      .then((res) => {
+        if (isCurrentRequest()) setInspector(res.data);
+      })
       .catch(() => {
         /* header degrades to the document title */
       });
     void appApi
-      .getLineage({ id })
-      .then((res) => setLineage(res.lineage))
+      .getLineage({ id: requestedId })
+      .then((res) => {
+        if (isCurrentRequest()) setLineage(res.lineage);
+      })
       .catch(() => {
         /* the tree degrades to empty */
       });
@@ -148,11 +164,24 @@ export function ExtractView() {
     reload();
   }, [reload]);
 
+  useEffect(() => {
+    if (!id) return;
+    setInspector(null);
+    setLineage(null);
+    setActiveCardId(null);
+    select(id);
+  }, [id, select]);
+
   // Fetch the cropped region image for a `media_fragment` extract (T065). The bytes
   // come through the typed `sources.getRegionImage` command (no path in the
   // renderer); we hold an object URL for the <img> and revoke it on change/unmount.
   useEffect(() => {
-    if (!desktop || !id || inspector?.element.type !== "media_fragment") {
+    if (
+      !desktop ||
+      !id ||
+      inspector?.element.id !== id ||
+      inspector?.element.type !== "media_fragment"
+    ) {
       setRegionImageUrl(null);
       return;
     }
@@ -174,7 +203,7 @@ export function ExtractView() {
       if (url) URL.revokeObjectURL(url);
       setRegionImageUrl(null);
     };
-  }, [desktop, id, inspector?.element.type]);
+  }, [desktop, id, inspector?.element.id, inspector?.element.type]);
 
   const onEditorReady = useCallback((instance: Editor | null) => {
     editorRef.current = instance;
@@ -192,7 +221,9 @@ export function ExtractView() {
     [doc],
   );
 
-  const element = inspector?.element ?? null;
+  const currentInspector = inspector?.element.id === id ? inspector : null;
+  const currentLineage = lineage?.elementId === id ? lineage : null;
+  const element = currentInspector?.element ?? null;
   const stage = (element?.stage ?? "raw_extract") as ExtractStage;
   const stageIdx = Math.max(0, EXTRACT_STAGES.indexOf(stage));
 
@@ -289,7 +320,7 @@ export function ExtractView() {
       requestInspectorRefresh();
       toast("Extract deleted");
       // Soft-deleted — leave the view; route back to the owning source when known.
-      const sourceId = inspector?.source?.id ?? inspector?.element.id ?? null;
+      const sourceId = currentInspector?.source?.id ?? currentInspector?.element.id ?? null;
       if (sourceId && sourceId !== id) {
         void navigate({ to: "/source/$id", params: { id: sourceId } });
       }
@@ -298,7 +329,7 @@ export function ExtractView() {
     } finally {
       setBusy(false);
     }
-  }, [id, busy, inspector, navigate, toast]);
+  }, [id, busy, currentInspector, navigate, toast]);
 
   // Convert to a card (T033) — open the card builder as the third column, defaulting
   // to the Q&A tab. The builder authors a card from THIS extract via `cards.create`;
@@ -309,6 +340,22 @@ export function ExtractView() {
 
   // Close the builder column (returns to the two-column distill surface).
   const onCloseBuilder = useCallback(() => setBuilder(null), []);
+
+  const closeActiveCard = useCallback(() => {
+    setActiveCardId(null);
+    if (id) select(id);
+  }, [id, select]);
+
+  const onEmbeddedCardRemoved = useCallback(
+    async (removedCardId: string) => {
+      if (activeCardIdRef.current !== removedCardId) return;
+      setActiveCardId(null);
+      if (id) select(id);
+      reload();
+      requestInspectorRefresh();
+    },
+    [id, reload, select],
+  );
 
   // After a card is authored, re-fetch the inspector + lineage so the new card
   // appears under the extract in the tree, and refresh the shared inspector panel.
@@ -321,7 +368,7 @@ export function ExtractView() {
   // inspector resolves `source` from `elements.source_id`, which points at the
   // original source for a top-level extract AND for an already-nested extract — so
   // a sub-extract's `source_id` stays the root no matter how deep the chain.
-  const sourceRootId = inspector?.source?.id ?? null;
+  const sourceRootId = currentInspector?.source?.id ?? null;
 
   // Text-selection toolbar inside the extract body (T025 reuses the T019 seam).
   // The hook owns the anchor + resolved location; this view owns only the action
@@ -494,8 +541,11 @@ export function ExtractView() {
     );
   }
 
-  const location = inspector?.location ?? null;
-  const lineageNodes = lineage?.nodes ?? [];
+  const location = currentInspector?.location ?? null;
+  const lineageNodes = currentLineage?.nodes ?? [];
+  const visibleLineageNodes = activeCardId
+    ? lineageNodes.map((node) => ({ ...node, active: node.id === activeCardId }))
+    : lineageNodes;
 
   // An image extract (T071): a `media_fragment` (T065 crops a PDF region into the
   // vault as an `image` asset) ANCHORED AT A PAGE REGION — the `region` source-location
@@ -527,16 +577,16 @@ export function ExtractView() {
     <div className="reader-screen extract-view" data-testid="route-extract">
       <header className="reader-header" data-testid="extract-header">
         <nav className="reader-crumbs" aria-label="Breadcrumb">
-          {inspector?.source ? (
+          {currentInspector?.source ? (
             <button
               type="button"
               className="reader-crumb"
               onClick={() => {
-                const sid = inspector.source?.id;
+                const sid = currentInspector.source?.id;
                 if (sid) void navigate({ to: "/source/$id", params: { id: sid } });
               }}
             >
-              <Icon name="source" size={14} /> {inspector.source.title}
+              <Icon name="source" size={14} /> {currentInspector.source.title}
             </button>
           ) : (
             <span className="reader-crumb">
@@ -561,7 +611,7 @@ export function ExtractView() {
               <Prio priority={element.priority} />
               <Status status={element.status} />
               <Stage stage={element.stage} />
-              {inspector ? <SchedulerChip scheduler={inspector.scheduler} /> : null}
+              {currentInspector ? <SchedulerChip scheduler={currentInspector.scheduler} /> : null}
               <span className="reader-meta reader-meta--mono">
                 {element.dueAt ? `next ${fmtDate(element.dueAt)}` : "unscheduled"}
               </span>
@@ -645,9 +695,9 @@ export function ExtractView() {
               this extract's lineage. The jump-to-source button (T022) opens the
               originating paragraph; a source-less extract degrades to a calm
               placeholder. Reuses the shared RefBlock + formatSourceRef. */}
-          {inspector?.sourceRef ? (
+          {currentInspector?.sourceRef ? (
             <RefBlock
-              ref={inspector.sourceRef}
+              ref={currentInspector.sourceRef}
               dedupeSnippetAgainst={doc.plainText}
               testId="extract-refblock"
               {...(location ? { onOpenSource: () => navigateToLocation(location) } : {})}
@@ -673,13 +723,23 @@ export function ExtractView() {
           </div>
           {lineageNodes.length > 0 ? (
             <LineageTree
-              nodes={lineageNodes}
+              nodes={visibleLineageNodes}
               onPick={(n) => {
-                select(n.id);
                 if (n.type === "source" || n.type === "topic") {
+                  select(n.id);
+                  setActiveCardId(null);
                   void navigate({ to: "/source/$id", params: { id: n.id } });
+                } else if (n.type === "card") {
+                  select(null);
+                  setBuilder(null);
+                  setActiveCardId(n.id);
                 } else if (n.type === "extract" && n.id !== id) {
+                  select(n.id);
+                  setActiveCardId(null);
                   void navigate({ to: "/extract/$id", params: { id: n.id } });
+                } else if (n.type === "extract") {
+                  select(n.id);
+                  setActiveCardId(null);
                 }
               }}
             />
@@ -689,165 +749,185 @@ export function ExtractView() {
         </aside>
 
         {/* CENTER — distill */}
-        <section className="extract-distill" data-testid="extract-distill">
-          <div className="extract-distill__head">
-            <span className="extract-distill__title">
-              Distill extract <HelpLink slug="distilling-extracts" />
-            </span>
-            {stageIdx < EXTRACT_STAGES.length - 1 ? (
-              <button
-                type="button"
-                className="reader-btn reader-btn--primary"
-                data-testid="extract-advance-stage"
-                disabled={busy}
-                onClick={() => void setStage()}
-              >
-                <Icon name="sparkle" size={14} /> Advance stage
-              </button>
-            ) : null}
-          </div>
-
-          {/* stage stepper — click any step to set that stage */}
-          <div className="stage-stepper" data-testid="extract-stage-stepper" data-coach="stages">
-            {EXTRACT_STAGES.map((s, i) => (
-              <div className="stage-step" key={s}>
+        {activeCardId ? (
+          <section className="extract-card-detail" data-testid="extract-card-detail">
+            <CardDetailPanel
+              cardId={activeCardId}
+              initiallyRevealed={true}
+              backLabel="Back to extract"
+              backTestId="extract-card-back"
+              emptyBackTestId="extract-card-back"
+              onBack={closeActiveCard}
+              onCardRemoved={onEmbeddedCardRemoved}
+            />
+          </section>
+        ) : (
+          <section className="extract-distill" data-testid="extract-distill">
+            <div className="extract-distill__head">
+              <span className="extract-distill__title">
+                Distill extract <HelpLink slug="distilling-extracts" />
+              </span>
+              {stageIdx < EXTRACT_STAGES.length - 1 ? (
                 <button
                   type="button"
-                  className="stage-step__btn"
-                  data-testid={`extract-stage-step-${s}`}
-                  data-active={i === stageIdx ? "true" : "false"}
-                  data-done={i <= stageIdx ? "true" : "false"}
+                  className="reader-btn reader-btn--primary"
+                  data-testid="extract-advance-stage"
                   disabled={busy}
-                  onClick={() => void setStage(s)}
+                  onClick={() => void setStage()}
                 >
-                  <span className="stage-step__num" data-on={i <= stageIdx ? "true" : "false"}>
-                    {i + 1}
-                  </span>
-                  <span
-                    className="stage-step__label"
-                    data-current={i === stageIdx ? "true" : "false"}
-                  >
-                    {stageLabel(s)}
-                  </span>
+                  <Icon name="sparkle" size={14} /> Advance stage
                 </button>
-                {i < EXTRACT_STAGES.length - 1 ? (
-                  <span className="stage-step__line" data-done={i < stageIdx ? "true" : "false"} />
-                ) : null}
-              </div>
-            ))}
-          </div>
-
-          {/* editable extract body */}
-          <div className="extract-editor" data-testid="extract-editor">
-            {doc.status === "loading" ? (
-              <p className="dimmed" data-testid="extract-loading">
-                Loading extract…
-              </p>
-            ) : doc.status === "error" ? (
-              <p className="text-danger text-sm" data-testid="extract-error">
-                {doc.error ?? "Failed to load this extract."}
-              </p>
-            ) : (
-              <SourceEditor
-                key={`${id ?? "none"}:${doc.status}`}
-                initialDoc={doc.initialDoc}
-                editable
-                readerDecorations
-                onChange={onChange}
-                onEditorReady={onEditorReady}
-              />
-            )}
-            <div className="extract-editor__meta">
-              <span className="reader-meta reader-meta--mono">
-                {doc.plainText.trim() ? `${doc.plainText.trim().split(/\s+/).length} words` : "—"}
-              </span>
-              <span className="reader-meta">aim for a single, self-contained idea</span>
+              ) : null}
             </div>
-          </div>
 
-          {/* action bar */}
-          <div className="reader-actions extract-actions">
-            <button
-              type="button"
-              className="reader-btn"
-              data-testid="extract-trim"
-              disabled={busy}
-              onClick={() => void trimBody()}
-            >
-              <Icon name="trim" size={14} /> Trim
-            </button>
-            <button
-              type="button"
-              className="reader-btn"
-              data-testid="extract-split"
-              disabled={busy}
-              onClick={onSplit}
-            >
-              <Icon name="split" size={14} /> Split
-            </button>
-            <button
-              type="button"
-              className="reader-btn"
-              data-testid="extract-convert"
-              disabled={busy}
-              onClick={onConvert}
-            >
-              <Icon name={isImageExtract ? "layers" : isClipExtract ? "play" : "card"} size={14} />{" "}
-              {isImageExtract
-                ? "Occlude image"
-                : isClipExtract
-                  ? "Create audio card"
-                  : "Convert to card"}
-            </button>
-            <button
-              type="button"
-              className="reader-btn"
-              data-testid="extract-postpone"
-              disabled={busy}
-              onClick={() => void onPostpone()}
-            >
-              <Icon name="postpone" size={14} /> Postpone
-            </button>
-            <button
-              type="button"
-              className="reader-btn"
-              data-testid="extract-mark-done"
-              disabled={busy}
-              onClick={() => void onMarkDone()}
-            >
-              <Icon name="checkCircle" size={14} /> Mark done
-            </button>
-            <button
-              type="button"
-              className="reader-btn reader-btn--danger reader-btn--icon"
-              aria-label="Delete extract"
-              data-testid="extract-delete"
-              disabled={busy}
-              onClick={() => void onDelete()}
-            >
-              <Icon name="trash" size={14} />
-            </button>
-          </div>
+            {/* stage stepper — click any step to set that stage */}
+            <div className="stage-stepper" data-testid="extract-stage-stepper" data-coach="stages">
+              {EXTRACT_STAGES.map((s, i) => (
+                <div className="stage-step" key={s}>
+                  <button
+                    type="button"
+                    className="stage-step__btn"
+                    data-testid={`extract-stage-step-${s}`}
+                    data-active={i === stageIdx ? "true" : "false"}
+                    data-done={i <= stageIdx ? "true" : "false"}
+                    disabled={busy}
+                    onClick={() => void setStage(s)}
+                  >
+                    <span className="stage-step__num" data-on={i <= stageIdx ? "true" : "false"}>
+                      {i + 1}
+                    </span>
+                    <span
+                      className="stage-step__label"
+                      data-current={i === stageIdx ? "true" : "false"}
+                    >
+                      {stageLabel(s)}
+                    </span>
+                  </button>
+                  {i < EXTRACT_STAGES.length - 1 ? (
+                    <span
+                      className="stage-step__line"
+                      data-done={i < stageIdx ? "true" : "false"}
+                    />
+                  ) : null}
+                </div>
+              ))}
+            </div>
 
-          {/* AI-assisted distillation (T093/T094) — DRAFTS ONLY. The extract's own
-              source-location anchor is the grounding the actions run over. */}
-          {id ? (
-            <AiAssist
-              owningElementId={id}
-              grounding={
-                inspector?.location
-                  ? {
-                      sourceElementId: inspector.location.sourceElementId,
-                      blockIds: inspector.location.blockIds,
-                      startOffset: inspector.location.startOffset,
-                      endOffset: inspector.location.endOffset,
-                      selectedText: inspector.location.selectedText,
-                    }
-                  : null
-              }
-            />
-          ) : null}
-        </section>
+            {/* editable extract body */}
+            <div className="extract-editor" data-testid="extract-editor">
+              {doc.status === "loading" ? (
+                <p className="dimmed" data-testid="extract-loading">
+                  Loading extract…
+                </p>
+              ) : doc.status === "error" ? (
+                <p className="text-danger text-sm" data-testid="extract-error">
+                  {doc.error ?? "Failed to load this extract."}
+                </p>
+              ) : (
+                <SourceEditor
+                  key={`${id ?? "none"}:${doc.status}`}
+                  initialDoc={doc.initialDoc}
+                  editable
+                  readerDecorations
+                  onChange={onChange}
+                  onEditorReady={onEditorReady}
+                />
+              )}
+              <div className="extract-editor__meta">
+                <span className="reader-meta reader-meta--mono">
+                  {doc.plainText.trim() ? `${doc.plainText.trim().split(/\s+/).length} words` : "—"}
+                </span>
+                <span className="reader-meta">aim for a single, self-contained idea</span>
+              </div>
+            </div>
+
+            {/* action bar */}
+            <div className="reader-actions extract-actions">
+              <button
+                type="button"
+                className="reader-btn"
+                data-testid="extract-trim"
+                disabled={busy}
+                onClick={() => void trimBody()}
+              >
+                <Icon name="trim" size={14} /> Trim
+              </button>
+              <button
+                type="button"
+                className="reader-btn"
+                data-testid="extract-split"
+                disabled={busy}
+                onClick={onSplit}
+              >
+                <Icon name="split" size={14} /> Split
+              </button>
+              <button
+                type="button"
+                className="reader-btn"
+                data-testid="extract-convert"
+                disabled={busy}
+                onClick={onConvert}
+              >
+                <Icon
+                  name={isImageExtract ? "layers" : isClipExtract ? "play" : "card"}
+                  size={14}
+                />{" "}
+                {isImageExtract
+                  ? "Occlude image"
+                  : isClipExtract
+                    ? "Create audio card"
+                    : "Convert to card"}
+              </button>
+              <button
+                type="button"
+                className="reader-btn"
+                data-testid="extract-postpone"
+                disabled={busy}
+                onClick={() => void onPostpone()}
+              >
+                <Icon name="postpone" size={14} /> Postpone
+              </button>
+              <button
+                type="button"
+                className="reader-btn"
+                data-testid="extract-mark-done"
+                disabled={busy}
+                onClick={() => void onMarkDone()}
+              >
+                <Icon name="checkCircle" size={14} /> Mark done
+              </button>
+              <button
+                type="button"
+                className="reader-btn reader-btn--danger reader-btn--icon"
+                aria-label="Delete extract"
+                data-testid="extract-delete"
+                disabled={busy}
+                onClick={() => void onDelete()}
+              >
+                <Icon name="trash" size={14} />
+              </button>
+            </div>
+
+            {/* AI-assisted distillation (T093/T094) — DRAFTS ONLY. The extract's own
+                source-location anchor is the grounding the actions run over. */}
+            {id ? (
+              <AiAssist
+                owningElementId={id}
+                grounding={
+                  currentInspector?.location
+                    ? {
+                        sourceElementId: currentInspector.location.sourceElementId,
+                        blockIds: currentInspector.location.blockIds,
+                        startOffset: currentInspector.location.startOffset,
+                        endOffset: currentInspector.location.endOffset,
+                        selectedText: currentInspector.location.selectedText,
+                      }
+                    : null
+                }
+              />
+            ) : null}
+          </section>
+        )}
 
         {/* RIGHT — card builder (T033/T034), mounted as the third split3 column. */}
         {builder ? (
@@ -859,11 +939,11 @@ export function ExtractView() {
             {...(audioClip ? { audioClip } : {})}
             // The card inherits a source location iff the extract has one — feeds the
             // T035 "missing source" quality check. The renderer ships only the boolean.
-            hasSource={inspector?.location != null || inspector?.source != null}
+            hasSource={currentInspector?.location != null || currentInspector?.source != null}
             // T086: the source publish date feeds the time-sensitive `outdated-source`
             // quality check — the renderer ships only the string from the provenance.
-            {...(inspector?.provenance?.publishedAt != null
-              ? { sourceDate: inspector.provenance.publishedAt }
+            {...(currentInspector?.provenance?.publishedAt != null
+              ? { sourceDate: currentInspector.provenance.publishedAt }
               : {})}
             seedBody={doc.plainText}
             initialTab={builder.tab}

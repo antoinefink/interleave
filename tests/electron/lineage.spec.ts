@@ -14,8 +14,8 @@
  *       tree now marks the extract active);
  *   (c) UP: from the extract, clicking the source node re-selects the source and
  *       opens its reader (`/source/$id`);
- *   (d) CARD: from the extract workspace lineage panel, clicking a card selects it
- *       in the inspector without incorrectly starting `/review`;
+ *   (d) CARD: from the extract workspace lineage panel, clicking a card opens the
+ *       embedded card detail section without incorrectly starting `/review`;
  *   (e) RESTART: relaunching against the same data dir still shows the full tree —
  *       lineage survives an app restart (the DoD bar).
  *
@@ -161,19 +161,50 @@ test("the lineage tree shows the full chain and navigates both directions, survi
   await expect(page.getByTestId("reader-title")).toBeVisible();
   await expect(treeNode(page, sourceId)).toHaveAttribute("data-active", "true");
 
-  // (d) CARD: in the extract workspace's own lineage panel, cards have no dedicated
-  // route yet; clicking one should select it in the universal inspector and stay put
-  // instead of silently doing nothing or detouring into the review session.
+  // (d) CARD: in the extract workspace's own lineage panel, clicking a card opens
+  // the embedded targeted-card section and stays on the extract route instead of
+  // detouring into the review session.
   if (!cardId) throw new Error("seeded lineage card not found");
   await page.goto(`${baseUrl}/extract/${extractId}`);
   await page.waitForLoadState("domcontentloaded");
   await expect(page.getByTestId("route-extract")).toBeVisible();
+  await expect(page.getByTestId("extract-distill")).toBeVisible();
   const extractLineage = page.getByTestId("extract-context");
   await extractLineage
     .locator(`[data-testid="lineage-tree-node"][data-element-id="${cardId}"]`)
     .click();
   await expect(page).toHaveURL(new RegExp(`/extract/${extractId}$`));
-  await expect(page.getByTestId("inspector-content")).toHaveAttribute("data-element-type", "card");
+  await expect(page).not.toHaveURL(/\/review/);
+  await expect(page.getByTestId("extract-card-detail")).toBeVisible();
+  const cardDetail = page.getByTestId("card-detail");
+  await expect(cardDetail).toHaveAttribute("data-card-id", cardId);
+  await expect(cardDetail.getByTestId("fsrs-stats")).toBeVisible();
+  await expect(cardDetail.getByTestId("card-answer")).toBeVisible();
+  await expect(cardDetail.getByTestId("review-repair-edit")).toBeVisible();
+  const embeddedLayout = await page.evaluate(() => {
+    const context = document.querySelector<HTMLElement>('[data-testid="extract-context"]');
+    const detail = document.querySelector<HTMLElement>('[data-testid="extract-card-detail"]');
+    const stats = detail?.querySelector<HTMLElement>('[data-testid="fsrs-stats"]');
+    if (!context || !detail || !stats) return null;
+    const contextBox = context.getBoundingClientRect();
+    const detailBox = detail.getBoundingClientRect();
+    return {
+      columnsDoNotOverlap: contextBox.right <= detailBox.left || detailBox.right <= contextBox.left,
+      detailFitsWidth: detail.scrollWidth <= detail.clientWidth + 1,
+      statsFitWidth: stats.scrollWidth <= stats.clientWidth + 1,
+      detailInsideViewport: detailBox.left >= 0 && detailBox.right <= window.innerWidth,
+    };
+  });
+  expect(embeddedLayout).toEqual({
+    columnsDoNotOverlap: true,
+    detailFitsWidth: true,
+    statsFitWidth: true,
+    detailInsideViewport: true,
+  });
+  await expect(page.getByTestId("extract-distill")).toHaveCount(0);
+  await page.getByTestId("extract-card-back").click();
+  await expect(page.getByTestId("extract-distill")).toBeVisible();
+  await expect(page.getByTestId("extract-card-detail")).toHaveCount(0);
 
   // (e) RESTART: relaunch against the same data dir — the tree survives.
   await app.close();

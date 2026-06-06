@@ -7,8 +7,8 @@
  *    main side persists the stage + reschedules on the attention scheduler);
  *  - clicking a specific step calls `extracts.updateStage` with that explicit
  *    stage;
- *  - "Convert to card" routes to the (placeholder) M6 builder (`/review`) instead
- *    of inventing a builder now;
+ *  - "Convert to card" opens the in-workspace CardBuilder, while active card
+ *    lineage clicks open an embedded card detail/editor surface;
  *  - Trim / Postpone / Mark done / Delete each invoke their `extracts.*` command.
  *
  * The heavy collaborators are mocked so the test exercises ONLY this component's
@@ -74,10 +74,126 @@ const h = vi.hoisted(() => {
     concepts: [],
     review: null,
   };
+  const reviewCardData = {
+    id: "card_1",
+    kind: "qa",
+    prompt: "Why does sleep consolidate memories?",
+    answer: "Because reactivation strengthens useful traces.",
+    cloze: null,
+    priority: 0.625,
+    stage: "active_card",
+    concept: "Sleep",
+    sourceTitle: "On Sleep",
+    sourceLocationLabel: "¶2",
+    ref: "The definition paragraph two.",
+    sourceRef: {
+      sourceElementId: "src_1",
+      sourceTitle: "On Sleep",
+      url: "https://example.com/sleep",
+      author: "M. Walker",
+      publishedAt: "2017-10-03T00:00:00.000Z",
+      locationLabel: "¶2",
+      snippet: "The definition paragraph two.",
+    },
+    expiry: null,
+    schedulerSignals: {
+      kind: "fsrs",
+      retrievability: 0.82,
+      stability: 9.4,
+      difficulty: 5,
+      reps: 2,
+      lapses: 0,
+      fsrsState: "review",
+    },
+    leech: false,
+    lapses: 0,
+    flagged: false,
+    siblingGroupId: null,
+    occlusion: null,
+    mediaRef: null,
+    mediaSource: null,
+    youtubeId: null,
+  };
+  const cardSummary = {
+    id: "card_1",
+    type: "card",
+    status: "active",
+    stage: "active_card",
+    priority: 0.625,
+    title: "Why does sleep consolidate memories?",
+    kind: "qa",
+    prompt: "Why does sleep consolidate memories?",
+    answer: "Because reactivation strengthens useful traces.",
+    cloze: null,
+    parentId: "ex_1",
+    sourceId: "src_1",
+    flagged: false,
+    leech: false,
+    retired: false,
+    deleted: false,
+  };
+  const lineageData = {
+    elementId: "ex_1",
+    rootId: "src_1",
+    nodes: [
+      {
+        id: "src_1",
+        type: "source",
+        title: "On Sleep",
+        stage: "raw_source",
+        depth: 0,
+        meta: "source",
+        active: false,
+      },
+      {
+        id: "ex_1",
+        type: "extract",
+        title: "A clean idea",
+        stage: "raw_extract",
+        depth: 1,
+        meta: "this",
+        active: true,
+      },
+      {
+        id: "card_1",
+        type: "card",
+        title: "Why does sleep consolidate memories?",
+        stage: "active_card",
+        depth: 2,
+        meta: "active_card",
+        active: false,
+      },
+      {
+        id: "ex_2",
+        type: "extract",
+        title: "A narrower sleep mechanism",
+        stage: "raw_extract",
+        depth: 2,
+        meta: "sub-extract",
+        active: false,
+      },
+    ],
+  };
   return {
+    routeId: "ex_1",
     navigateSpy: vi.fn(),
     selectSpy: vi.fn(),
     inspectorData,
+    reviewCardData,
+    cardSummary,
+    lineageData,
+    getInspectorData: vi.fn().mockResolvedValue({ data: inspectorData }),
+    getLineage: vi.fn().mockResolvedValue({ lineage: lineageData }),
+    reviewCard: vi.fn().mockResolvedValue({ card: reviewCardData }),
+    updateCard: vi.fn().mockResolvedValue({ card: cardSummary }),
+    suspendCard: vi.fn().mockResolvedValue({ card: { ...cardSummary, status: "suspended" } }),
+    deleteCard: vi.fn().mockResolvedValue({
+      card: { ...cardSummary, status: "deleted", deleted: true },
+    }),
+    flagCard: vi.fn().mockResolvedValue({ card: { ...cardSummary, flagged: true } }),
+    markLeechCard: vi.fn().mockResolvedValue({ card: { ...cardSummary, leech: true } }),
+    retireCard: vi.fn().mockResolvedValue({ card: { ...cardSummary, retired: true } }),
+    createTask: vi.fn().mockResolvedValue({}),
     updateStage: vi.fn().mockResolvedValue({
       extract: { ...inspectorData.element, stage: "clean_extract" },
     }),
@@ -129,51 +245,8 @@ const h = vi.hoisted(() => {
 vi.mock("../lib/appApi", () => ({
   isDesktop: () => true,
   appApi: {
-    getInspectorData: vi.fn().mockResolvedValue({ data: h.inspectorData }),
-    getLineage: vi.fn().mockResolvedValue({
-      lineage: {
-        elementId: "ex_1",
-        rootId: "src_1",
-        nodes: [
-          {
-            id: "src_1",
-            type: "source",
-            title: "On Sleep",
-            stage: "raw_source",
-            depth: 0,
-            meta: "source",
-            active: false,
-          },
-          {
-            id: "ex_1",
-            type: "extract",
-            title: "A clean idea",
-            stage: "raw_extract",
-            depth: 1,
-            meta: "this",
-            active: true,
-          },
-          {
-            id: "card_1",
-            type: "card",
-            title: "Why does sleep consolidate memories?",
-            stage: "active_card",
-            depth: 2,
-            meta: "active_card",
-            active: false,
-          },
-          {
-            id: "ex_2",
-            type: "extract",
-            title: "A narrower sleep mechanism",
-            stage: "raw_extract",
-            depth: 2,
-            meta: "sub-extract",
-            active: false,
-          },
-        ],
-      },
-    }),
+    getInspectorData: h.getInspectorData,
+    getLineage: h.getLineage,
     getDocument: vi.fn().mockResolvedValue({
       document: {
         prosemirrorJson: { type: "doc", content: [] },
@@ -191,12 +264,20 @@ vi.mock("../lib/appApi", () => ({
     deleteExtract: h.deleteExtract,
     createExtraction: h.createExtraction,
     createCard: h.createCard,
+    reviewCard: h.reviewCard,
+    updateCard: h.updateCard,
+    suspendCard: h.suspendCard,
+    deleteCard: h.deleteCard,
+    flagCard: h.flagCard,
+    markLeechCard: h.markLeechCard,
+    retireCard: h.retireCard,
+    createTask: h.createTask,
   },
 }));
 
 // Mock the router seams the component reaches (params + navigation).
 vi.mock("@tanstack/react-router", () => ({
-  useParams: () => ({ id: "ex_1" }),
+  useParams: () => ({ id: h.routeId }),
   useNavigate: () => h.navigateSpy,
 }));
 
@@ -227,6 +308,9 @@ vi.mock("@interleave/editor", () => ({
   toPlainText: (doc: { mockPlainText?: string } | null | undefined) => doc?.mockPlainText ?? "body",
   emptyDoc: () => ({ type: "doc", content: [] }),
   setReaderDecorations: vi.fn(),
+  parseBodySegments: (body: string) => [{ kind: "text", content: body }],
+  renderMathHtml: () => "",
+  highlightCodeHtml: vi.fn().mockResolvedValue(""),
 }));
 
 // Stub the selection hook so the test can drive the "live selection" directly:
@@ -250,12 +334,26 @@ vi.mock("../components/inspector/Inspector", () => ({
   requestInspectorRefresh: vi.fn(),
 }));
 
+import { hasActiveScope } from "../shell/activeScope";
 import { ExtractView } from "./ExtractView";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.routeId = "ex_1";
   h.selectionLocation.current = null;
   h.selectionPosition.current = null;
+  h.getInspectorData.mockResolvedValue({ data: h.inspectorData });
+  h.getLineage.mockResolvedValue({ lineage: h.lineageData });
+  h.reviewCard.mockResolvedValue({ card: h.reviewCardData });
+  h.updateCard.mockResolvedValue({ card: h.cardSummary });
+  h.suspendCard.mockResolvedValue({ card: { ...h.cardSummary, status: "suspended" } });
+  h.deleteCard.mockResolvedValue({
+    card: { ...h.cardSummary, status: "deleted", deleted: true },
+  });
+  h.flagCard.mockResolvedValue({ card: { ...h.cardSummary, flagged: true } });
+  h.markLeechCard.mockResolvedValue({ card: { ...h.cardSummary, leech: true } });
+  h.retireCard.mockResolvedValue({ card: { ...h.cardSummary, retired: true } });
+  h.createTask.mockResolvedValue({});
 });
 
 async function lineageNode(id: string): Promise<HTMLElement> {
@@ -265,6 +363,16 @@ async function lineageNode(id: string): Promise<HTMLElement> {
     .find((row) => row.getAttribute("data-element-id") === id);
   expect(node).toBeDefined();
   return node as HTMLElement;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 describe("ExtractView — stage stepper", () => {
@@ -343,13 +451,269 @@ describe("ExtractView — lineage navigation", () => {
     expect(h.navigateSpy).not.toHaveBeenCalled();
   });
 
-  it("selects card lineage nodes in the inspector without starting a review session", async () => {
+  it("opens card lineage nodes as an embedded revealed card editor without navigating away", async () => {
     render(<ExtractView />);
+    fireEvent.click(await screen.findByTestId("extract-convert"));
+    expect(await screen.findByTestId("card-builder")).toBeInTheDocument();
 
     fireEvent.click(await lineageNode("card_1"));
 
-    expect(h.selectSpy).toHaveBeenCalledWith("card_1");
+    await waitFor(() => expect(h.reviewCard).toHaveBeenCalledWith({ cardId: "card_1" }));
     expect(h.navigateSpy).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("card-builder")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("extract-distill")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("extract-card-detail")).toBeInTheDocument();
+    expect(screen.getByTestId("card-detail")).toHaveAttribute("data-card-id", "card_1");
+    expect(screen.getByTestId("fsrs-stats")).toBeInTheDocument();
+    expect(await screen.findByTestId("card-answer")).toHaveTextContent(
+      "Because reactivation strengthens useful traces.",
+    );
+    expect(screen.getByTestId("card-refblock")).toBeInTheDocument();
+    expect(screen.getByTestId("review-repair-edit")).toBeInTheDocument();
+    expect(screen.getByTestId("review-repair-source")).toBeEnabled();
+    expect(screen.getByTestId("review-repair-context")).toBeEnabled();
+    expect(await lineageNode("card_1")).toHaveAttribute("data-active", "true");
+    await waitFor(() => expect(h.selectSpy).toHaveBeenCalledWith("card_1"));
+
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const prompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(prompt, { target: { value: "Edited sleep prompt?" } });
+    const answer = screen.getByTestId("review-edit-answer");
+    fireEvent.change(answer, { target: { value: "Edited sleep answer." } });
+    fireEvent.blur(answer);
+
+    await waitFor(() =>
+      expect(h.updateCard).toHaveBeenCalledWith({
+        cardId: "card_1",
+        prompt: "Edited sleep prompt?",
+        answer: "Edited sleep answer.",
+      }),
+    );
+
+    fireEvent.click(screen.getByTestId("extract-card-back"));
+
+    expect(await screen.findByTestId("extract-distill")).toBeInTheDocument();
+    expect(screen.queryByTestId("extract-card-detail")).not.toBeInTheDocument();
+    expect(h.selectSpy).toHaveBeenLastCalledWith("ex_1");
+    expect(h.navigateSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps hidden card selection cleared while an embedded card detail is still loading", async () => {
+    const load = deferred<{ card: typeof h.reviewCardData }>();
+    h.reviewCard.mockReturnValueOnce(load.promise);
+    render(<ExtractView />);
+
+    fireEvent.click(await lineageNode("card_1"));
+    await screen.findByTestId("card-loading");
+
+    expect(h.selectSpy).toHaveBeenLastCalledWith(null);
+    expect(h.selectSpy).not.toHaveBeenCalledWith("card_1");
+    expect(hasActiveScope()).toBe(false);
+
+    load.resolve({ card: h.reviewCardData });
+    await screen.findByTestId("card-detail");
+    await waitFor(() => expect(h.selectSpy).toHaveBeenCalledWith("card_1"));
+  });
+
+  it("closes the embedded source drawer and clears selection when the answer is hidden", async () => {
+    render(<ExtractView />);
+
+    fireEvent.click(await lineageNode("card_1"));
+    await screen.findByTestId("card-detail");
+    fireEvent.click(screen.getByTestId("review-repair-context"));
+    expect(await screen.findByTestId("review-context-drawer")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("card-hide"));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("review-context-drawer")).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("card-answer")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("review-repair-edit")).not.toBeInTheDocument();
+    await waitFor(() => expect(h.selectSpy).toHaveBeenLastCalledWith(null));
+    await waitFor(() => expect(hasActiveScope()).toBe(true));
+  });
+
+  it("closes the embedded card and refreshes lineage when a repair action removes it", async () => {
+    render(<ExtractView />);
+
+    fireEvent.click(await lineageNode("card_1"));
+    await screen.findByTestId("card-detail");
+    await screen.findByTestId("review-repair-suspend");
+    h.getLineage.mockClear();
+    h.getInspectorData.mockClear();
+
+    fireEvent.click(screen.getByTestId("review-repair-suspend"));
+
+    await waitFor(() => expect(h.suspendCard).toHaveBeenCalledWith({ cardId: "card_1" }));
+    expect(await screen.findByTestId("extract-distill")).toBeInTheDocument();
+    expect(screen.queryByTestId("extract-card-detail")).not.toBeInTheDocument();
+    expect(h.selectSpy).toHaveBeenLastCalledWith("ex_1");
+    expect(h.getLineage).toHaveBeenCalledWith({ id: "ex_1" });
+    expect(h.getInspectorData).toHaveBeenCalledWith({ id: "ex_1" });
+  });
+
+  it("clears embedded card selection when the extract route id changes", async () => {
+    const view = render(<ExtractView />);
+
+    fireEvent.click(await lineageNode("card_1"));
+    await screen.findByTestId("card-detail");
+    await waitFor(() => expect(h.selectSpy).toHaveBeenCalledWith("card_1"));
+
+    h.routeId = "ex_2";
+    view.rerender(<ExtractView />);
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("extract-card-detail")).not.toBeInTheDocument(),
+    );
+    expect(await screen.findByTestId("extract-distill")).toBeInTheDocument();
+    expect(h.selectSpy).toHaveBeenLastCalledWith("ex_2");
+  });
+
+  it("clears an embedded card before navigating to another extract lineage node", async () => {
+    render(<ExtractView />);
+
+    fireEvent.click(await lineageNode("card_1"));
+    await screen.findByTestId("card-detail");
+
+    fireEvent.click(await lineageNode("ex_2"));
+
+    expect(screen.queryByTestId("extract-card-detail")).not.toBeInTheDocument();
+    expect(await screen.findByTestId("extract-distill")).toBeInTheDocument();
+    expect(h.selectSpy).toHaveBeenLastCalledWith("ex_2");
+    expect(h.navigateSpy).toHaveBeenLastCalledWith({
+      to: "/extract/$id",
+      params: { id: "ex_2" },
+    });
+  });
+
+  it("ignores stale extract reload responses after a newer route load wins", async () => {
+    const staleInspectorLoad = deferred<{ data: typeof h.inspectorData }>();
+    const staleLineageLoad = deferred<{ lineage: typeof h.lineageData }>();
+    const staleInspector = {
+      ...h.inspectorData,
+      element: { ...h.inspectorData.element, title: "Stale extract" },
+    };
+    const staleLineage = {
+      ...h.lineageData,
+      nodes: [
+        ...h.lineageData.nodes,
+        {
+          id: "stale_card",
+          type: "card",
+          title: "Stale card",
+          stage: "active_card",
+          depth: 2,
+          meta: "stale",
+          active: false,
+        },
+      ],
+    };
+    const freshInspector = {
+      ...h.inspectorData,
+      element: { ...h.inspectorData.element, id: "ex_2", title: "Fresh extract" },
+    };
+    const freshLineage = {
+      ...h.lineageData,
+      elementId: "ex_2",
+      nodes: [
+        h.lineageData.nodes[0],
+        {
+          id: "ex_2",
+          type: "extract",
+          title: "Fresh extract",
+          stage: "raw_extract",
+          depth: 1,
+          meta: "this",
+          active: true,
+        },
+        {
+          id: "fresh_card",
+          type: "card",
+          title: "Fresh card",
+          stage: "active_card",
+          depth: 2,
+          meta: "fresh",
+          active: false,
+        },
+      ],
+    };
+    h.getInspectorData
+      .mockReturnValueOnce(staleInspectorLoad.promise)
+      .mockResolvedValueOnce({ data: freshInspector });
+    h.getLineage
+      .mockReturnValueOnce(staleLineageLoad.promise)
+      .mockResolvedValueOnce({ lineage: freshLineage });
+
+    const view = render(<ExtractView />);
+    h.routeId = "ex_2";
+    view.rerender(<ExtractView />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("extract-title")).toHaveTextContent("Fresh extract"),
+    );
+    expect(await lineageNode("fresh_card")).toBeInTheDocument();
+
+    staleInspectorLoad.resolve({ data: staleInspector });
+    staleLineageLoad.resolve({ lineage: staleLineage });
+    await staleInspectorLoad.promise;
+    await staleLineageLoad.promise;
+    await Promise.resolve();
+
+    expect(screen.getByTestId("extract-title")).toHaveTextContent("Fresh extract");
+    expect(screen.queryByText("Stale extract")).not.toBeInTheDocument();
+    expect(screen.queryByText("Stale card")).not.toBeInTheDocument();
+  });
+
+  it("ignores stale removal completion when another embedded card is already open", async () => {
+    const cardTwo = {
+      ...h.reviewCardData,
+      id: "card_2",
+      prompt: "What does card two ask?",
+      answer: "The second card answer.",
+    };
+    h.getLineage.mockResolvedValue({
+      lineage: {
+        ...h.lineageData,
+        nodes: [
+          ...h.lineageData.nodes,
+          {
+            id: "card_2",
+            type: "card",
+            title: "Second linked card",
+            stage: "active_card",
+            depth: 2,
+            meta: "active_card",
+            active: false,
+          },
+        ],
+      },
+    });
+    h.reviewCard.mockImplementation(({ cardId }: { cardId: string }) =>
+      Promise.resolve({ card: cardId === "card_2" ? cardTwo : h.reviewCardData }),
+    );
+    const removal = deferred<{ card: typeof h.cardSummary }>();
+    h.suspendCard.mockReturnValueOnce(removal.promise);
+    render(<ExtractView />);
+
+    fireEvent.click(await lineageNode("card_1"));
+    await screen.findByTestId("card-detail");
+    fireEvent.click(screen.getByTestId("review-repair-suspend"));
+    await waitFor(() => expect(h.suspendCard).toHaveBeenCalledWith({ cardId: "card_1" }));
+
+    fireEvent.click(await lineageNode("card_2"));
+    await waitFor(() =>
+      expect(screen.getByTestId("card-detail")).toHaveAttribute("data-card-id", "card_2"),
+    );
+    h.getLineage.mockClear();
+
+    removal.resolve({ card: h.cardSummary });
+    await removal.promise;
+    await Promise.resolve();
+
+    expect(screen.getByTestId("card-detail")).toHaveAttribute("data-card-id", "card_2");
+    expect(screen.queryByTestId("extract-distill")).not.toBeInTheDocument();
+    expect(h.getLineage).not.toHaveBeenCalled();
   });
 });
 
@@ -518,6 +882,66 @@ describe("ExtractView — sub-extract (T025)", () => {
     await waitFor(() => expect(h.createExtraction).toHaveBeenCalledTimes(1));
     expect(h.createExtraction).toHaveBeenCalledWith(
       expect.objectContaining({ parentId: "ex_1", sourceElementId: "src_1" }),
+    );
+  });
+
+  it("does not create a sub-extract from stale lineage while a new route inspector is loading", async () => {
+    const pendingInspector = deferred<{ data: typeof h.inspectorData }>();
+    const pendingLineage = deferred<{ lineage: typeof h.lineageData }>();
+    const freshInspector = {
+      ...h.inspectorData,
+      element: { ...h.inspectorData.element, id: "ex_2", title: "Fresh extract" },
+      source: { ...h.inspectorData.source, id: "src_2" },
+      location: { ...h.inspectorData.location, sourceElementId: "src_2", blockIds: ["blk_ex_2"] },
+    };
+    const freshLineage = {
+      ...h.lineageData,
+      elementId: "ex_2",
+      rootId: "src_2",
+      nodes: h.lineageData.nodes.map((node) =>
+        node.id === "ex_1"
+          ? { ...node, id: "ex_2", title: "Fresh extract" }
+          : node.id === "src_1"
+            ? { ...node, id: "src_2" }
+            : node,
+      ),
+    };
+    h.getInspectorData
+      .mockResolvedValueOnce({ data: h.inspectorData })
+      .mockReturnValueOnce(pendingInspector.promise);
+    h.getLineage
+      .mockResolvedValueOnce({ lineage: h.lineageData })
+      .mockReturnValueOnce(pendingLineage.promise);
+    h.selectionLocation.current = {
+      selectedText: "fresh selection",
+      blockIds: ["blk_ex_2"],
+      startOffset: 0,
+      endOffset: 15,
+    };
+    const view = render(<ExtractView />);
+    await waitFor(() =>
+      expect(screen.getByTestId("extract-title")).toHaveTextContent("A clean idea"),
+    );
+
+    h.routeId = "ex_2";
+    view.rerender(<ExtractView />);
+    await waitFor(() => expect(h.selectSpy).toHaveBeenLastCalledWith("ex_2"));
+    fireEvent.click(await screen.findByTestId("extract-split"));
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(h.createExtraction).not.toHaveBeenCalled();
+
+    pendingInspector.resolve({ data: freshInspector });
+    pendingLineage.resolve({ lineage: freshLineage });
+    await waitFor(() =>
+      expect(screen.getByTestId("extract-title")).toHaveTextContent("Fresh extract"),
+    );
+
+    fireEvent.click(screen.getByTestId("extract-split"));
+
+    await waitFor(() => expect(h.createExtraction).toHaveBeenCalledTimes(1));
+    expect(h.createExtraction).toHaveBeenCalledWith(
+      expect.objectContaining({ parentId: "ex_2", sourceElementId: "src_2" }),
     );
   });
 

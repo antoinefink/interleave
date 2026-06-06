@@ -195,12 +195,15 @@ const h = vi.hoisted(() => {
     sourceLocationLabel: "¶1",
   };
   return {
+    search: {} as Record<string, string>,
     navigateSpy: vi.fn(),
     selectSpy: vi.fn(),
     navigateToLocationSpy: vi.fn(),
     reviewSessionNext: vi.fn(),
     reviewPreview: vi.fn(),
     reviewGrade: vi.fn(),
+    reviewModeDeck: vi.fn(),
+    updateCard: vi.fn(),
     getInspectorData: vi.fn(),
     suspendCard: vi.fn(),
     deleteCard: vi.fn(),
@@ -225,6 +228,8 @@ vi.mock("../lib/appApi", async () => {
       reviewSessionNext: h.reviewSessionNext,
       reviewPreview: h.reviewPreview,
       reviewGrade: h.reviewGrade,
+      reviewModeDeck: h.reviewModeDeck,
+      updateCard: h.updateCard,
       getInspectorData: h.getInspectorData,
       suspendCard: h.suspendCard,
       deleteCard: h.deleteCard,
@@ -236,7 +241,7 @@ vi.mock("../lib/appApi", async () => {
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => h.navigateSpy,
-  useSearch: () => ({}),
+  useSearch: () => h.search,
 }));
 
 vi.mock("../shell/selection", () => ({
@@ -261,9 +266,41 @@ function singleDeck(card: ReviewCardView): ReviewSessionNextResult {
   return { card, remaining: 0, total: 1 };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  h.search = {};
   h.reviewPreview.mockResolvedValue({ intervals: PREVIEWS });
+  h.reviewModeDeck.mockResolvedValue({ deck: [], total: 0, truncated: false });
+  h.updateCard.mockResolvedValue({
+    card: {
+      id: "card-qa",
+      type: "card",
+      status: "active",
+      stage: "active_card",
+      priority: 0.875,
+      title: "card",
+      kind: "qa",
+      prompt: "Dirty review prompt?",
+      answer: "As skill-acquisition efficiency over a scope of tasks.",
+      cloze: null,
+      parentId: "ex-1",
+      sourceId: "src-1",
+      flagged: false,
+      leech: false,
+      retired: false,
+      deleted: false,
+    },
+  });
   // Suspend/delete remove the current card from the live deck; the repair bar
   // ignores their return value (it only awaits, then calls `onCardRemoved`).
   h.suspendCard.mockResolvedValue({});
@@ -488,6 +525,147 @@ describe("ReviewScreen", () => {
     expect(h.reviewSessionNext.mock.calls[1]?.[0]?.burySiblings).toBeUndefined();
   });
 
+  it("blocks grading while a removal repair is pending", async () => {
+    const removal = deferred<void>();
+    h.suspendCard.mockReturnValueOnce(removal.promise);
+    h.reviewSessionNext
+      .mockResolvedValueOnce({ card: h.qaCard, remaining: 1, total: 2 })
+      .mockResolvedValueOnce({ card: { ...h.clozeCard, id: "card-2" }, remaining: 0, total: 1 });
+    render(<ReviewScreen />);
+
+    await screen.findByTestId("review-card");
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-repair-suspend");
+    fireEvent.click(screen.getByTestId("review-repair-suspend"));
+    await waitFor(() => expect(h.suspendCard).toHaveBeenCalledWith({ cardId: "card-qa" }));
+
+    await waitFor(() => expect(screen.getByTestId("review-grade-good")).toBeDisabled());
+    fireEvent.click(screen.getByTestId("review-grade-good"));
+    fireEvent.keyDown(window, { key: "3", code: "Digit3" });
+    expect(h.reviewGrade).not.toHaveBeenCalled();
+    expect(h.reviewSessionNext).toHaveBeenCalledTimes(1);
+
+    removal.resolve();
+    await removal.promise;
+
+    await waitFor(() =>
+      expect(screen.getByTestId("review-card")).toHaveAttribute("data-card-id", "card-2"),
+    );
+    expect(h.reviewSessionNext).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the current card retryable when a removal repair fails", async () => {
+    const removal = deferred<void>();
+    h.suspendCard.mockReturnValueOnce(removal.promise);
+    h.reviewSessionNext.mockResolvedValueOnce({ card: h.qaCard, remaining: 0, total: 1 });
+    render(<ReviewScreen />);
+
+    await screen.findByTestId("review-card");
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-repair-suspend");
+    fireEvent.click(screen.getByTestId("review-repair-suspend"));
+    await waitFor(() => expect(screen.getByTestId("review-grade-good")).toBeDisabled());
+
+    removal.reject(new Error("suspend failed"));
+    await removal.promise.catch(() => undefined);
+
+    expect(await screen.findByTestId("review-edit-error")).toHaveTextContent("suspend failed");
+    expect(screen.getByTestId("review-card")).toHaveAttribute("data-card-id", "card-qa");
+    expect(screen.getByTestId("review-grade-good")).toBeEnabled();
+    expect(screen.getByTestId("review-repair-source")).toBeEnabled();
+    expect(h.reviewSessionNext).toHaveBeenCalledTimes(1);
+    expect(h.reviewGrade).not.toHaveBeenCalled();
+  });
+
+  it("blocks grading while a dirty edit is waiting for autosave", async () => {
+    h.reviewSessionNext.mockResolvedValueOnce({ card: h.qaCard, remaining: 0, total: 1 });
+    render(<ReviewScreen />);
+
+    await screen.findByTestId("review-card");
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-repair-edit");
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const prompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(prompt, { target: { value: "Dirty review prompt?" } });
+
+    await waitFor(() => expect(screen.getByTestId("review-grade-good")).toBeDisabled());
+    fireEvent.click(screen.getByTestId("review-grade-good"));
+    fireEvent.keyDown(window, { key: "3", code: "Digit3" });
+
+    expect(h.reviewGrade).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("review-edit-done"));
+    await waitFor(() => expect(h.updateCard).toHaveBeenCalledTimes(1));
+  });
+
+  it("blocks ending the session while a repair edit is dirty", async () => {
+    h.reviewSessionNext.mockResolvedValueOnce({ card: h.qaCard, remaining: 0, total: 1 });
+    render(<ReviewScreen />);
+
+    await screen.findByTestId("review-card");
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-repair-edit");
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const prompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(prompt, { target: { value: "Dirty review prompt?" } });
+
+    await waitFor(() => expect(screen.getByTestId("review-end")).toBeDisabled());
+    fireEvent.click(screen.getByTestId("review-end"));
+
+    expect(h.navigateSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId("review-edit")).toBeInTheDocument();
+  });
+
+  it("ignores stale next-card reads after the review screen unmounts", async () => {
+    const firstRead = deferred<ReviewSessionNextResult>();
+    h.reviewSessionNext.mockReturnValueOnce(firstRead.promise);
+    const view = render(<ReviewScreen />);
+
+    await waitFor(() => expect(h.reviewSessionNext).toHaveBeenCalledTimes(1));
+    view.unmount();
+
+    firstRead.resolve({ card: h.qaCard, remaining: 0, total: 1 });
+    await firstRead.promise;
+    await Promise.resolve();
+
+    expect(h.selectSpy).not.toHaveBeenCalledWith("card-qa");
+  });
+
+  it("ignores stale daily next-card reads while a targeted mode deck is loading", async () => {
+    const staleDailyRead = deferred<ReviewSessionNextResult>();
+    const modeDeckRead = deferred<{
+      deck: ReviewCardView[];
+      total: number;
+      truncated: boolean;
+    }>();
+    h.reviewSessionNext.mockReturnValueOnce(staleDailyRead.promise);
+    h.reviewModeDeck.mockReturnValueOnce(modeDeckRead.promise);
+    const view = render(<ReviewScreen />);
+    await waitFor(() => expect(h.reviewSessionNext).toHaveBeenCalledTimes(1));
+
+    h.search = { mode: "leech" };
+    view.rerender(<ReviewScreen />);
+    await waitFor(() =>
+      expect(h.reviewModeDeck).toHaveBeenCalledWith({ selector: { kind: "leech" } }),
+    );
+
+    staleDailyRead.resolve({ card: h.qaCard, remaining: 0, total: 1 });
+    await staleDailyRead.promise;
+    await Promise.resolve();
+
+    expect(h.selectSpy).not.toHaveBeenCalledWith("card-qa");
+    expect(screen.queryByTestId("review-card")).not.toBeInTheDocument();
+
+    modeDeckRead.resolve({
+      deck: [{ ...h.leechCard, id: "card-leech-mode" }],
+      total: 1,
+      truncated: false,
+    });
+    await waitFor(() =>
+      expect(screen.getByTestId("review-card")).toHaveAttribute("data-card-id", "card-leech-mode"),
+    );
+  });
+
   it("tallies per-grade counts in the completion summary", async () => {
     // Two cards: grade the first Again, the second Good, then the deck empties.
     h.reviewSessionNext
@@ -599,7 +777,9 @@ describe("ReviewScreen", () => {
     // 1 of 2 → the bar is half full while the second card is still pending.
     expect(filledBefore?.style.width).toBe("50%");
 
-    // Suspend the second card: it leaves the deck WITHOUT a grade.
+    // Reveal, then suspend the second card: it leaves the deck WITHOUT a grade.
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-repair-suspend");
     fireEvent.click(screen.getByTestId("review-repair-suspend"));
     await waitFor(() => expect(h.suspendCard).toHaveBeenCalledTimes(1));
 
@@ -630,8 +810,9 @@ describe("ReviewScreen", () => {
     // The leech lapse badge renders with the lapse count + the warn `badge--leech` class.
     const badge = screen.getByText(/leech · 8 lapses/i);
     expect(badge).toHaveClass("badge--leech");
-    // The banner exposes the kit's inline "Add context" remediation action.
-    expect(screen.getByTestId("review-leech-add-context")).toBeInTheDocument();
+    // The banner exposes the kit's inline remediation action, but source context
+    // stays behind the reveal gate.
+    expect(screen.getByTestId("review-leech-add-context")).toBeDisabled();
   });
 
   it("does NOT show the leech banner for a non-leech card", async () => {
@@ -647,6 +828,12 @@ describe("ReviewScreen", () => {
 
     await screen.findByTestId("review-card");
     expect(screen.queryByTestId("review-context-drawer")).not.toBeInTheDocument();
+    expect(screen.getByTestId("review-leech-add-context")).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-grades");
+
+    expect(screen.getByTestId("review-leech-add-context")).toBeEnabled();
     fireEvent.click(screen.getByTestId("review-leech-add-context"));
     expect(await screen.findByTestId("review-context-drawer")).toBeInTheDocument();
   });
@@ -692,7 +879,28 @@ describe("ReviewScreen", () => {
     expect(h.reviewGrade).not.toHaveBeenCalled();
   });
 
-  it("keyboard: `o` resolves the card's location via lineage and jumps to source (T022/T048)", async () => {
+  it("keeps repair/source actions behind the reveal gate in the review session", async () => {
+    h.reviewSessionNext.mockResolvedValue(singleDeck(h.qaCard));
+    render(<ReviewScreen />);
+
+    await screen.findByTestId("review-card");
+
+    expect(screen.queryByTestId("review-repair-edit")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("review-repair-source")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("review-repair-context")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "o", code: "KeyO" });
+    expect(h.getInspectorData).not.toHaveBeenCalled();
+    expect(h.navigateToLocationSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("review-reveal"));
+
+    expect(await screen.findByTestId("review-repair-edit")).toBeInTheDocument();
+    expect(screen.getByTestId("review-repair-source")).toBeInTheDocument();
+    expect(screen.getByTestId("review-repair-context")).toBeInTheDocument();
+  });
+
+  it("keyboard: `o` resolves the revealed card's location via lineage and jumps to source (T022/T048)", async () => {
     // The load-bearing actionable-lineage jump-back: pressing `o` resolves the
     // card's full source location (block ids/offsets) via `getInspectorData` then
     // calls `navigateToLocation` with it — card → location → source, no SQL in the
@@ -713,13 +921,220 @@ describe("ReviewScreen", () => {
     render(<ReviewScreen />);
 
     await screen.findByTestId("review-card");
-    // The jump works before reveal (ground a card without leaking the answer).
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-grades");
+
     fireEvent.keyDown(window, { key: "o", code: "KeyO" });
 
     await waitFor(() => expect(h.getInspectorData).toHaveBeenCalledWith({ id: "card-qa" }));
     await waitFor(() => expect(h.navigateToLocationSpy).toHaveBeenCalledWith(location));
     // Pressing `o` is a navigation convenience — it never grades.
     expect(h.reviewGrade).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale open-source lookups after the review advances to another card", async () => {
+    const sourceRead = deferred<{ data: { location: unknown } }>();
+    const location = {
+      label: "¶ 4",
+      selectedText: "Intelligence is a measure of skill-acquisition efficiency…",
+      page: null,
+      sourceElementId: "src-1",
+      blockIds: ["blk-7"],
+      startOffset: 12,
+      endOffset: 40,
+    };
+    h.reviewSessionNext
+      .mockResolvedValueOnce({ card: h.qaCard, remaining: 1, total: 2 })
+      .mockResolvedValueOnce({ card: { ...h.clozeCard, id: "card-2" }, remaining: 0, total: 1 });
+    h.getInspectorData.mockReturnValueOnce(sourceRead.promise);
+    render(<ReviewScreen />);
+
+    await screen.findByTestId("review-card");
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-repair-source");
+    fireEvent.click(screen.getByTestId("review-repair-source"));
+
+    fireEvent.click(screen.getByTestId("review-grade-good"));
+    await waitFor(() =>
+      expect(screen.getByTestId("review-card")).toHaveAttribute("data-card-id", "card-2"),
+    );
+
+    sourceRead.resolve({ data: { location } });
+    await sourceRead.promise;
+    await Promise.resolve();
+
+    expect(h.navigateToLocationSpy).not.toHaveBeenCalled();
+  });
+
+  it("invalidates source lookups as soon as a revealed card starts grading", async () => {
+    const sourceRead = deferred<{ data: { location: unknown } }>();
+    const gradeWrite = deferred<unknown>();
+    const nextRead = deferred<ReviewSessionNextResult>();
+    const location = {
+      label: "¶ 4",
+      selectedText: "Intelligence is a measure of skill-acquisition efficiency…",
+      page: null,
+      sourceElementId: "src-1",
+      blockIds: ["blk-7"],
+      startOffset: 12,
+      endOffset: 40,
+    };
+    h.reviewSessionNext
+      .mockResolvedValueOnce({ card: h.qaCard, remaining: 1, total: 2 })
+      .mockReturnValueOnce(nextRead.promise);
+    h.reviewGrade.mockReturnValueOnce(gradeWrite.promise);
+    h.getInspectorData.mockReturnValueOnce(sourceRead.promise);
+    render(<ReviewScreen />);
+
+    await screen.findByTestId("review-card");
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-repair-source");
+    fireEvent.click(screen.getByTestId("review-repair-source"));
+
+    fireEvent.click(screen.getByTestId("review-grade-good"));
+    await waitFor(() => expect(h.reviewGrade).toHaveBeenCalledTimes(1));
+
+    sourceRead.resolve({ data: { location } });
+    await sourceRead.promise;
+    await Promise.resolve();
+
+    expect(h.navigateToLocationSpy).not.toHaveBeenCalled();
+
+    gradeWrite.resolve({});
+    await gradeWrite.promise;
+    nextRead.resolve({ card: { ...h.clozeCard, id: "card-2" }, remaining: 0, total: 1 });
+    await waitFor(() =>
+      expect(screen.getByTestId("review-card")).toHaveAttribute("data-card-id", "card-2"),
+    );
+  });
+
+  it("invalidates source lookups as soon as repair editing becomes dirty", async () => {
+    const sourceRead = deferred<{ data: { location: unknown } }>();
+    const location = {
+      label: "¶ 4",
+      selectedText: "Intelligence is a measure of skill-acquisition efficiency…",
+      page: null,
+      sourceElementId: "src-1",
+      blockIds: ["blk-7"],
+      startOffset: 12,
+      endOffset: 40,
+    };
+    h.reviewSessionNext.mockResolvedValueOnce({ card: h.qaCard, remaining: 0, total: 1 });
+    h.getInspectorData.mockReturnValueOnce(sourceRead.promise);
+    render(<ReviewScreen />);
+
+    await screen.findByTestId("review-card");
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-repair-source");
+    fireEvent.click(screen.getByTestId("review-repair-source"));
+    await waitFor(() => expect(h.getInspectorData).toHaveBeenCalledWith({ id: "card-qa" }));
+
+    fireEvent.click(screen.getByTestId("review-repair-edit"));
+    const prompt = await screen.findByTestId("review-edit-prompt");
+    fireEvent.change(prompt, { target: { value: "Dirty review prompt?" } });
+    await waitFor(() => expect(screen.getByTestId("review-grade-good")).toBeDisabled());
+
+    sourceRead.resolve({ data: { location } });
+    await sourceRead.promise;
+    await Promise.resolve();
+
+    expect(h.navigateToLocationSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("review-edit-done"));
+    await waitFor(() => expect(h.updateCard).toHaveBeenCalledTimes(1));
+  });
+
+  it("clears a durably removed card when advancing after repair fails", async () => {
+    h.reviewSessionNext
+      .mockResolvedValueOnce({ card: h.qaCard, remaining: 0, total: 1 })
+      .mockRejectedValueOnce(new Error("next read failed"));
+    render(<ReviewScreen />);
+
+    await screen.findByTestId("review-card");
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-repair-suspend");
+    fireEvent.click(screen.getByTestId("review-repair-suspend"));
+
+    await waitFor(() => expect(h.suspendCard).toHaveBeenCalledWith({ cardId: "card-qa" }));
+    expect(await screen.findByTestId("review-error")).toHaveTextContent("next read failed");
+    expect(screen.queryByTestId("review-card")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("review-repair-suspend")).not.toBeInTheDocument();
+    expect(h.reviewGrade).not.toHaveBeenCalled();
+  });
+
+  it("blocks source shortcuts and drawer source jumps while grading is pending", async () => {
+    const gradeWrite = deferred<unknown>();
+    const nextRead = deferred<ReviewSessionNextResult>();
+    h.reviewSessionNext
+      .mockResolvedValueOnce({ card: h.qaCard, remaining: 1, total: 2 })
+      .mockReturnValueOnce(nextRead.promise);
+    h.reviewGrade.mockReturnValueOnce(gradeWrite.promise);
+    render(<ReviewScreen />);
+
+    await screen.findByTestId("review-card");
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-repair-context");
+    fireEvent.click(screen.getByTestId("review-repair-context"));
+    await screen.findByTestId("review-context-drawer");
+
+    fireEvent.click(screen.getByTestId("review-grade-good"));
+    await waitFor(() => expect(screen.getByTestId("review-repair-source")).toBeDisabled());
+    expect(screen.getByTestId("review-drawer-open-source")).toBeDisabled();
+
+    fireEvent.keyDown(window, { key: "o", code: "KeyO" });
+    fireEvent.click(screen.getByTestId("review-drawer-open-source"));
+
+    expect(h.getInspectorData).not.toHaveBeenCalled();
+
+    gradeWrite.resolve({});
+    await gradeWrite.promise;
+    nextRead.resolve({ card: { ...h.clozeCard, id: "card-2" }, remaining: 0, total: 1 });
+    await waitFor(() =>
+      expect(screen.getByTestId("review-card")).toHaveAttribute("data-card-id", "card-2"),
+    );
+  });
+
+  it("ignores stale interval previews from a card that has already advanced", async () => {
+    const stalePreview = deferred<{ intervals: typeof PREVIEWS }>();
+    const freshPreview = deferred<{ intervals: typeof PREVIEWS }>();
+    const oldIntervals = {
+      ...PREVIEWS,
+      good: { ...PREVIEWS.good, label: "old good" },
+    };
+    const freshIntervals = {
+      ...PREVIEWS,
+      good: { ...PREVIEWS.good, label: "fresh good" },
+    };
+    h.reviewPreview
+      .mockReturnValueOnce(stalePreview.promise)
+      .mockReturnValueOnce(freshPreview.promise);
+    h.reviewSessionNext
+      .mockResolvedValueOnce({ card: h.qaCard, remaining: 1, total: 2 })
+      .mockResolvedValueOnce({ card: { ...h.clozeCard, id: "card-2" }, remaining: 0, total: 1 });
+    render(<ReviewScreen />);
+
+    await screen.findByTestId("review-card");
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-grades");
+    fireEvent.click(screen.getByTestId("review-grade-good"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("review-card")).toHaveAttribute("data-card-id", "card-2"),
+    );
+    fireEvent.click(screen.getByTestId("review-reveal"));
+    await screen.findByTestId("review-grades");
+    expect(screen.getByTestId("review-interval-good")).toHaveTextContent("…");
+
+    stalePreview.resolve({ intervals: oldIntervals });
+    await stalePreview.promise;
+    await Promise.resolve();
+
+    expect(screen.getByTestId("review-interval-good")).toHaveTextContent("…");
+
+    freshPreview.resolve({ intervals: freshIntervals });
+    await waitFor(() =>
+      expect(screen.getByTestId("review-interval-good")).toHaveTextContent("fresh good"),
+    );
   });
 
   it("a failed grade shows the error, leaves the card in place, and stays retryable", async () => {

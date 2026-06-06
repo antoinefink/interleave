@@ -111,6 +111,37 @@
   padding: 0 24px 24px;
 }
 
+.extract-card-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--canvas);
+}
+
+.extract-card-detail .rv-top {
+  flex: none;
+  background: var(--canvas);
+}
+
+.extract-card-detail .rv-page {
+  justify-content: flex-start;
+  align-items: stretch;
+  min-height: 0;
+  padding: 20px 24px 24px;
+}
+
+.extract-card-detail .rv-stage,
+.extract-card-detail .rv-summary {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.extract-card-detail .rcard__face {
+  padding: 28px 26px;
+}
+
 .extract-distill__head {
   display: flex;
   align-items: center;
