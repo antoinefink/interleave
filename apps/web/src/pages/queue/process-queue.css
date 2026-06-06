@@ -271,6 +271,8 @@
   max-width: 320px;
 }
 .pq-source__editor {
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--surface);
@@ -278,6 +280,8 @@
   min-height: 260px;
 }
 .pq-source__editor .reader {
+  flex: 1 1 auto;
+  min-height: 0;
   max-height: min(520px, 52vh);
   overflow-y: auto;
   font-size: var(--t-base);
@@ -318,6 +322,8 @@
   overflow: auto;
 }
 .pq-extract__editor {
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--border);
   border-radius: var(--r-md);
   background: var(--surface);
@@ -325,6 +331,8 @@
   min-height: 190px;
 }
 .pq-extract__editor .reader {
+  flex: 1 1 auto;
+  min-height: 0;
   max-height: 360px;
   overflow-y: auto;
   font-size: var(--t-base);
@@ -341,7 +349,8 @@
   display: flex;
   justify-content: space-between;
   gap: var(--s-3);
-  margin-top: var(--s-3);
+  margin-top: auto;
+  padding-top: var(--s-3);
   color: var(--text-3);
   font-family: var(--font-mono);
   font-size: var(--t-2xs);
