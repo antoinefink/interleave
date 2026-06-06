@@ -278,9 +278,13 @@
   background: var(--surface);
   padding: var(--s-4);
   min-height: 260px;
+  cursor: text;
 }
 .pq-source__editor .reader {
   flex: 1 1 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
   min-height: 0;
   max-height: min(520px, 52vh);
   overflow-y: auto;
@@ -290,9 +294,10 @@
 .pq-source__editor .ProseMirror {
   outline: none;
   min-height: 190px;
+  box-shadow: none;
 }
 .pq-source__editor .ProseMirror:focus {
-  box-shadow: inset 0 0 0 1px var(--accent-soft-bd);
+  box-shadow: none;
 }
 
 /* ---------- Inline extract distillation workbench ---------- */
@@ -329,9 +334,13 @@
   background: var(--surface);
   padding: var(--s-4);
   min-height: 190px;
+  cursor: text;
 }
 .pq-extract__editor .reader {
   flex: 1 1 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
   min-height: 0;
   max-height: 360px;
   overflow-y: auto;
@@ -341,9 +350,10 @@
 .pq-extract__editor .ProseMirror {
   outline: none;
   min-height: 130px;
+  box-shadow: none;
 }
 .pq-extract__editor .ProseMirror:focus {
-  box-shadow: inset 0 0 0 1px var(--accent-soft-bd);
+  box-shadow: none;
 }
 .pq-extract__meta {
   display: flex;
