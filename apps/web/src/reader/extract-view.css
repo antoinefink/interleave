@@ -227,6 +227,10 @@
   flex-wrap: wrap;
 }
 
+.ai-assist {
+  margin-top: var(--s-5);
+}
+
 .extract-flash__pill {
   position: fixed;
   bottom: 24px;
