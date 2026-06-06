@@ -29,6 +29,7 @@ import { QueueQuery } from "./queue-query";
 import { ReviewRepository } from "./review-repository";
 import { SourceRepository } from "./source-repository";
 import { createInMemoryDb } from "./test-db";
+import { UndoService } from "./undo-service";
 
 let handle: DbHandle;
 
@@ -300,5 +301,190 @@ describe("QueueActionService — removing actions leave the due read", () => {
 
     if (res.undo) service.undo(id, res.undo);
     expect(queueIds()).toContain(id);
+  });
+
+  it("bulkPostpone emits one shared batch id and skips deleted ids", () => {
+    const service = new QueueActionService(handle.db);
+    const elements = new ElementRepository(handle.db);
+
+    const topicA = seedExtract(handle);
+    const topicB = seedExtract(handle, 0.75);
+    const cardA = seedCard(handle);
+    const deleted = seedExtract(handle);
+    elements.softDelete(deleted);
+
+    const now = "2027-06-01T10:00:00.000Z" as IsoTimestamp;
+    const result = service.bulkPostpone([topicA, cardA, deleted, "el_missing" as ElementId, topicB], now);
+
+    expect(result.batchId).toBeTruthy();
+    expect(result.elements).toHaveLength(3);
+
+    const expectedIds = [topicA, topicB, cardA] as const;
+    const resultIds = new Set(result.elements.map((element) => element.id));
+    for (const id of expectedIds) {
+      expect(resultIds.has(id)).toBe(true);
+
+      const ops = handle.db
+        .select()
+        .from(operationLog)
+        .where(eq(operationLog.elementId, id))
+        .all()
+        .filter((op) => op.opType === "reschedule_element");
+      expect(ops).toHaveLength(1);
+
+      const payload = JSON.parse(ops[0]?.payload as string) as {
+        batchId?: string;
+        postpone?: boolean;
+        cardDefer?: boolean;
+      };
+      expect(payload.batchId).toBe(result.batchId);
+      expect(payload.postpone).toBe(true);
+      if (id === cardA) {
+        expect(payload.cardDefer).toBe(true);
+      } else {
+        expect(payload.cardDefer).toBeUndefined();
+      }
+    }
+
+    const topicAState = elements.findById(topicA);
+    const topicBState = elements.findById(topicB);
+    const cardAState = elements.findById(cardA);
+
+    expect(topicAState?.status).toBe("scheduled");
+    expect(topicBState?.status).toBe("scheduled");
+    expect(cardAState?.status).toBe("pending");
+    expect(cardAState?.dueAt).toBeTruthy();
+
+    const cardReview = new ReviewRepository(handle.db).findReviewState(cardA);
+    expect(cardReview?.dueAt).toBeTruthy();
+    expect(Date.parse(cardReview?.dueAt ?? "")).toBeGreaterThan(Date.parse(now));
+
+    expect(elements.findById(deleted)?.status).toBe("deleted");
+    expect(elements.findById(deleted)?.deletedAt).not.toBeNull();
+
+    const deletedRescheduleOps = handle.db
+      .select()
+      .from(operationLog)
+      .where(eq(operationLog.elementId, deleted))
+      .all()
+      .filter((op) => op.opType === "reschedule_element");
+    expect(deletedRescheduleOps).toHaveLength(0);
+  });
+
+  it("undoing a bulkPostpone restores all elements under one UndoService batch", () => {
+    const service = new QueueActionService(handle.db);
+    const elements = new ElementRepository(handle.db);
+    const review = new ReviewRepository(handle.db);
+    const undo = new UndoService(handle.db);
+
+    const dueA = "2027-05-01T07:00:00.000Z" as IsoTimestamp;
+    const dueB = "2027-05-02T07:00:00.000Z" as IsoTimestamp;
+    const topicA = seedExtract(handle, 0.45);
+    const topicB = seedExtract(handle, 0.55);
+    const cardA = seedCard(handle);
+
+    elements.reschedule(topicA, dueA);
+    elements.reschedule(topicB, dueB);
+
+    const beforeTopicADue = elements.findById(topicA)?.dueAt;
+    const beforeTopicBDue = elements.findById(topicB)?.dueAt;
+    const beforeCardDue = elements.findById(cardA)?.dueAt;
+    const beforeCardReviewDue = review.findReviewState(cardA)?.dueAt;
+
+    expect(beforeTopicADue).toBe(dueA);
+    expect(beforeTopicBDue).toBe(dueB);
+    expect(beforeCardReviewDue).toBeTruthy();
+
+    const now = "2027-06-01T10:00:00.000Z" as IsoTimestamp;
+    const result = service.bulkPostpone([topicA, topicB, cardA], now);
+
+    expect(result.elements).toHaveLength(3);
+    expect(result.elements.map((row) => row.id).sort()).toEqual(
+      [topicA, topicB, cardA].slice().sort(),
+    );
+
+    const batchReschedules = handle.db
+      .select()
+      .from(operationLog)
+      .all()
+      .filter((op) => op.opType === "reschedule_element")
+      .map((op) => JSON.parse(op.payload as string) as { batchId?: string })
+      .filter((payload) => payload.batchId === result.batchId);
+    expect(batchReschedules).toHaveLength(3);
+    expect(batchReschedules.every((payload) => payload.batchId === result.batchId)).toBe(true);
+    expect(batchReschedules.every((payload) => payload.postpone === true)).toBe(true);
+
+    expect(elements.findById(topicA)?.dueAt).not.toBe(beforeTopicADue);
+    expect(elements.findById(topicB)?.dueAt).not.toBe(beforeTopicBDue);
+    expect(elements.findById(topicA)?.status).toBe("scheduled");
+    expect(elements.findById(topicB)?.status).toBe("scheduled");
+    expect(elements.findById(topicA)?.dueAt).not.toBeNull();
+    expect(elements.findById(topicB)?.dueAt).not.toBeNull();
+    expect(Date.parse(elements.findById(topicA)?.dueAt as string)).toBeGreaterThan(Date.parse(now));
+    expect(Date.parse(elements.findById(topicB)?.dueAt as string)).toBeGreaterThan(Date.parse(now));
+
+    const cardAfterReview = review.findReviewState(cardA);
+    expect(cardAfterReview?.dueAt).not.toBe(beforeCardReviewDue);
+    expect(elements.findById(cardA)?.status).toBe("pending");
+    expect(cardAfterReview?.dueAt).toBe(elements.findById(cardA)?.dueAt);
+
+    const undoResult = undo.undoLast();
+    expect(undoResult.undone).toBe(true);
+    expect(undoResult.opType).toBe("reschedule_element");
+    expect(undoResult.count).toBe(3);
+
+    expect(elements.findById(topicA)?.dueAt).toBe(beforeTopicADue);
+    expect(elements.findById(topicB)?.dueAt).toBe(beforeTopicBDue);
+    expect(elements.findById(topicA)?.status).toBe("active");
+    expect(elements.findById(topicB)?.status).toBe("active");
+    expect(elements.findById(cardA)?.dueAt).toBe(beforeCardDue);
+    expect(review.findReviewState(cardA)?.dueAt).toBe(beforeCardReviewDue);
+    expect(review.findReviewState(cardA)?.dueAt).toBe(elements.findById(cardA)?.dueAt);
+  });
+
+  it("cardDeferTo lands on the exact target date, preserving FSRS state", () => {
+    const service = new QueueActionService(handle.db);
+    const cardId = seedCard(handle);
+
+    const beforeReview = handle.db
+      .select()
+      .from(reviewStates)
+      .where(eq(reviewStates.elementId, cardId))
+      .get();
+
+    expect(beforeReview?.dueAt).toBeTruthy();
+    const targetDue = "2027-09-12T00:00:00.000Z" as IsoTimestamp;
+    const now = "2027-09-01T05:00:00.000Z" as IsoTimestamp;
+
+    const card = service.cardDeferTo(cardId, now, targetDue);
+
+    const afterReview = handle.db
+      .select()
+      .from(reviewStates)
+      .where(eq(reviewStates.elementId, cardId))
+      .get();
+
+    expect(card.dueAt).toBe(targetDue);
+    expect(afterReview?.dueAt).toBe(targetDue);
+    expect(afterReview?.stability).toBe(beforeReview?.stability);
+    expect(afterReview?.difficulty).toBe(beforeReview?.difficulty);
+    expect(afterReview?.reps).toBe(beforeReview?.reps);
+    expect(afterReview?.lapses).toBe(beforeReview?.lapses);
+    expect(afterReview?.fsrsState).toBe(beforeReview?.fsrsState);
+    expect(card.status).toBe("pending");
+
+    const op = handle.db
+      .select()
+      .from(operationLog)
+      .where(eq(operationLog.elementId, cardId))
+      .all()
+      .find((row) => row.opType === "reschedule_element");
+    expect(op).toBeDefined();
+    expect(JSON.parse(op?.payload as string)).toMatchObject({
+      postpone: true,
+      cardDefer: true,
+      prevReviewDueAt: beforeReview?.dueAt,
+    });
+    expect(JSON.parse(op?.payload as string).batchId).toBeUndefined();
   });
 });
