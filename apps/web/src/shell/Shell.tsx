@@ -257,7 +257,6 @@ function Sidebar({
                   );
                 })}
               </fieldset>
-              <hr className="shell-usermenu__sep" data-testid="shell-usermenu-theme-sep" />
               <Link
                 to="/settings"
                 className="shell-usermenu__item"
