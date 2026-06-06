@@ -202,6 +202,13 @@ const h = vi.hoisted(() => {
     selectedId: { current: null as string | null },
     listQueue: vi.fn().mockResolvedValue(result),
     actOnQueueItem: vi.fn(),
+    undoLast: vi.fn().mockResolvedValue({
+      undone: true,
+      opType: "reschedule_element",
+      elementId: "extract-1",
+      label: "Undid change",
+      count: 1,
+    }),
     undoQueueAction: vi.fn().mockResolvedValue({ item: extractRow }),
     result,
     extractRow,
@@ -219,6 +226,7 @@ vi.mock("../../lib/appApi", async () => {
     appApi: {
       listQueue: h.listQueue,
       actOnQueueItem: h.actOnQueueItem,
+      undoLast: h.undoLast,
       undoQueueAction: h.undoQueueAction,
     },
   };
@@ -481,7 +489,7 @@ describe("QueueScreen", () => {
   });
 
   // -------------------------------------------------------------------------
-  // T030 — in-place per-row actions + undo snackbar.
+  // T030 — quiet in-place per-row actions.
   // -------------------------------------------------------------------------
 
   it("exposes the in-place action buttons on every row", async () => {
@@ -597,7 +605,7 @@ describe("QueueScreen", () => {
     expect(screen.queryByTestId("tooltip")).toBeNull();
   });
 
-  it("delete removes the row and shows an undo snackbar that restores it", async () => {
+  it("delete removes the row without showing a per-item undo snackbar", async () => {
     render(<QueueScreen />);
     const rows = await screen.findAllByTestId("queue-item");
     const extract = rows.find((el) => el.getAttribute("data-element-id") === "extract-1");
@@ -627,17 +635,24 @@ describe("QueueScreen", () => {
     });
 
     fireEvent.click(del);
-    // The undo snackbar appears.
-    await screen.findByTestId("queue-snackbar");
-    expect(screen.getByTestId("queue-snackbar")).toHaveTextContent(/deleted/i);
-
-    // Undo calls the typed undo surface with the recipe.
-    fireEvent.click(screen.getByTestId("queue-snackbar-undo"));
     await waitFor(() =>
-      expect(h.undoQueueAction).toHaveBeenCalledWith({
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({
         id: "extract-1",
-        undo: { kind: "restore", previousStatus: "scheduled" },
+        action: { kind: "delete" },
       }),
     );
+    await waitFor(() => expect(screen.queryByTestId("queue-item")).toBeNull());
+    expect(screen.queryByTestId("queue-snackbar")).toBeNull();
+    expect(h.undoQueueAction).not.toHaveBeenCalled();
+  });
+
+  it("re-reads the queue after a global undo event", async () => {
+    render(<QueueScreen />);
+    await screen.findAllByTestId("queue-item");
+
+    h.listQueue.mockClear();
+    window.dispatchEvent(new CustomEvent("interleave:undo"));
+
+    await waitFor(() => expect(h.listQueue).toHaveBeenCalledWith({}));
   });
 });

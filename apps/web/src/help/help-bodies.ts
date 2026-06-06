@@ -260,7 +260,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     {
       type: "callout",
       icon: "warn",
-      text: "Recoverable process actions show the same undo snackbar as the Queue list. Click <b>Undo</b> or press <kbd>⌘Z</kbd> while the snackbar is visible to restore the item and return the session cursor to it.",
+      text: "Recoverable process actions stay quiet. Press <kbd>⌘Z</kbd> after the action to restore the item and return the session cursor to it.",
     },
     {
       type: "h2",
@@ -2459,14 +2459,14 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
         "<kbd>p</kbd> — postpone the current item.",
         "<kbd>d</kbd> — mark done.",
         "<kbd>x</kbd> — dismiss.",
-        "<kbd>Backspace</kbd> or <kbd>Delete</kbd> — soft-delete to Trash. <strong>There is no undo snackbar in the process loop</strong> — recover from <code>/trash</code> or use <kbd>⌘Z</kbd>.",
+        "<kbd>Backspace</kbd> or <kbd>Delete</kbd> — soft-delete to Trash. There is no per-item undo snackbar; recover from <code>/trash</code> or use <kbd>⌘Z</kbd>.",
         "<kbd>o</kbd> or <kbd>Enter</kbd> — open the item in its full view (reader, extract view, etc.).",
       ],
     },
     {
       type: "callout",
       icon: "warn",
-      text: "Delete in the process loop is silent — it does not show an undo snackbar the way the queue list does. The item goes to Trash and <kbd>⌘Z</kbd> still works globally, but there is no in-loop confirmation prompt.",
+      text: "Delete in the process loop is silent. The item goes to Trash and <kbd>⌘Z</kbd> still works, but there is no in-loop confirmation prompt.",
     },
     {
       type: "h2",

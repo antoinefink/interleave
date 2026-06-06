@@ -522,7 +522,7 @@ describe("ProcessQueue", () => {
     expect(h.navigateSpy).not.toHaveBeenCalled();
   });
 
-  it("offers recipe undo after a lifecycle action and restores the process cursor", async () => {
+  it("keeps recipe undo after a lifecycle action without showing a snackbar", async () => {
     h.actOnQueueItem.mockResolvedValueOnce({
       item: null,
       removed: true,
@@ -533,11 +533,10 @@ describe("ProcessQueue", () => {
 
     fireEvent.click(screen.getByTestId("process-action-markDone"));
 
-    await screen.findByTestId("queue-snackbar");
-    expect(screen.getByTestId("queue-snackbar")).toHaveTextContent("Card marked done");
     await waitFor(() => expect(currentItemId()).toBe("source-1"));
+    expect(screen.queryByTestId("queue-snackbar")).toBeNull();
 
-    fireEvent.click(screen.getByTestId("queue-snackbar-undo"));
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
 
     await waitFor(() =>
       expect(h.undoQueueAction).toHaveBeenCalledWith({
@@ -559,8 +558,8 @@ describe("ProcessQueue", () => {
     await screen.findByTestId("process-item");
 
     fireEvent.click(screen.getByTestId("process-action-markDone"));
-    await screen.findByTestId("queue-snackbar");
     await waitFor(() => expect(currentItemId()).toBe("source-1"));
+    expect(screen.queryByTestId("queue-snackbar")).toBeNull();
 
     fireEvent.keyDown(window, { key: "z", metaKey: true });
 
@@ -573,17 +572,16 @@ describe("ProcessQueue", () => {
     await waitFor(() => expect(currentItemId()).toBe("card-1"));
   });
 
-  it("offers command-log undo after postponing and restores the process cursor", async () => {
+  it("keeps command-log undo after postponing and restores the process cursor", async () => {
     render(<ProcessQueue />);
     await moveToSource();
 
     fireEvent.click(screen.getByTestId("process-action-postpone"));
 
-    await screen.findByTestId("queue-snackbar");
-    expect(screen.getByTestId("queue-snackbar")).toHaveTextContent("Source postponed");
     await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+    expect(screen.queryByTestId("queue-snackbar")).toBeNull();
 
-    fireEvent.click(screen.getByTestId("queue-snackbar-undo"));
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
 
     await waitFor(() => expect(h.undoLast).toHaveBeenCalledTimes(1));
     expect(h.undoQueueAction).not.toHaveBeenCalled();
@@ -591,7 +589,7 @@ describe("ProcessQueue", () => {
     expect(screen.getByTestId("process-progress")).toHaveTextContent("2 / 3");
   });
 
-  it("offers command-log undo after explicit scheduling and restores the process cursor", async () => {
+  it("keeps command-log undo after explicit scheduling and restores the process cursor", async () => {
     render(<ProcessQueue />);
     await moveToSource();
 
@@ -604,17 +602,16 @@ describe("ProcessQueue", () => {
         choice: { kind: "tomorrow" },
       }),
     );
-    await screen.findByTestId("queue-snackbar");
-    expect(screen.getByTestId("queue-snackbar")).toHaveTextContent("Source scheduled");
     await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+    expect(screen.queryByTestId("queue-snackbar")).toBeNull();
 
-    fireEvent.click(screen.getByTestId("queue-snackbar-undo"));
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
 
     await waitFor(() => expect(h.undoLast).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(currentItemId()).toBe("source-1"));
   });
 
-  it("replaces a pending undo with the next process mutation", async () => {
+  it("replaces a pending silent undo with the next process mutation", async () => {
     h.actOnQueueItem
       .mockResolvedValueOnce({
         item: null,
@@ -626,14 +623,14 @@ describe("ProcessQueue", () => {
     await screen.findByTestId("process-item");
 
     fireEvent.click(screen.getByTestId("process-action-markDone"));
-    await screen.findByTestId("queue-snackbar");
-    expect(screen.getByTestId("queue-snackbar")).toHaveTextContent("Card marked done");
     await waitFor(() => expect(currentItemId()).toBe("source-1"));
+    expect(screen.queryByTestId("queue-snackbar")).toBeNull();
 
     fireEvent.click(screen.getByTestId("process-action-postpone"));
-    await waitFor(() => expect(screen.getByTestId("queue-snackbar")).toHaveTextContent("Source"));
+    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+    expect(screen.queryByTestId("queue-snackbar")).toBeNull();
 
-    fireEvent.click(screen.getByTestId("queue-snackbar-undo"));
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
 
     await waitFor(() => expect(h.undoLast).toHaveBeenCalledTimes(1));
     expect(h.undoQueueAction).not.toHaveBeenCalled();

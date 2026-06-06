@@ -1,11 +1,11 @@
 /**
- * QueueSnackbar (T030) — the undo snackbar for the daily queue's removing actions.
+ * QueueSnackbar — the queue-scoped undo snackbar.
  *
  * Now a thin wrapper over the shared {@link Snackbar} (generalized in T044) so the
  * queue keeps its `queue-snackbar` test hooks while the toast presentation lives in
- * one place. The queue surfaces it after done / dismiss / delete so the action is
- * recoverable WITHOUT navigating away from the list — undo restores the row (the
- * queue's recipe undo). Pure presentation: the parent owns the undo call.
+ * one place. The queue now reserves it for larger batch operations such as overload
+ * recovery; ordinary per-row advancement stays quiet. Pure presentation: the parent
+ * owns the undo call.
  */
 
 import { Snackbar } from "../Snackbar";

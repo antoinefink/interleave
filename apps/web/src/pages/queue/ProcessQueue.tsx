@@ -53,7 +53,6 @@ import {
   stageLabel,
   TypeIcon,
 } from "../../components/inspector/primitives";
-import { QueueSnackbar } from "../../components/queue/QueueSnackbar";
 import { ScheduleMenu } from "../../components/queue/ScheduleMenu";
 import { RefBlock } from "../../components/RefBlock";
 import "../../components/inspector/inspector.css";
@@ -124,7 +123,6 @@ type LoopActionKind = QueueActAction["kind"];
 type ProcessUndoState = {
   readonly id: string;
   readonly index: number;
-  readonly message: string;
   readonly undo:
     | { readonly kind: "queue"; readonly recipe: QueueActUndo }
     | { readonly kind: "last" };
@@ -196,29 +194,6 @@ function cardChipSignals(card: ReviewCardView): SchedulerSignals {
     postponed: 0,
     lastProcessedAt: null,
   };
-}
-
-function nounFor(item: QueueItemSummary): string {
-  if (item.type === "card") return "Card";
-  if (item.type === "source") return "Source";
-  if (item.type === "extract") return "Extract";
-  if (item.type === "topic") return "Topic";
-  if (item.type === "task") return "Task";
-  return "Item";
-}
-
-function actionUndoMessage(item: QueueItemSummary, kind: LoopActionKind): string {
-  const noun = nounFor(item);
-  if (kind === "postpone") return `${noun} postponed`;
-  if (kind === "raise") return `${noun} priority raised`;
-  if (kind === "lower") return `${noun} priority lowered`;
-  if (kind === "delete") return `${noun} deleted`;
-  if (kind === "markDone") return `${noun} marked done`;
-  return `${noun} dismissed`;
-}
-
-function scheduleUndoMessage(item: QueueItemSummary): string {
-  return `${nounFor(item)} scheduled`;
 }
 
 export function ProcessQueue() {
@@ -475,8 +450,9 @@ export function ProcessQueue() {
    * Apply one in-place action through the SAME typed mutation path as the list
    * (T030), then ADVANCE to the next item. postpone/raise/lower/done/dismiss/delete
    * all route through `queue.act`; the loop never returns to the list — it just
-   * moves the cursor. Recoverable mutations raise a snackbar that restores the
-   * item and cursor in place, preserving flow after accidental actions.
+   * moves the cursor. Recoverable mutations keep a local undo recipe so ⌘Z can
+   * restore the item and cursor in place, but they do not raise a snackbar on every
+   * item transition.
    */
   const act = useCallback(
     async (kind: LoopActionKind) => {
@@ -498,7 +474,6 @@ export function ProcessQueue() {
           setUndoState({
             id: current.id,
             index: undoIndex,
-            message: actionUndoMessage(current, kind),
             undo,
           });
         }
@@ -531,7 +506,6 @@ export function ProcessQueue() {
         setUndoState({
           id: current.id,
           index: undoIndex,
-          message: scheduleUndoMessage(current),
           undo: { kind: "last" },
         });
       } catch (e) {
@@ -1240,11 +1214,6 @@ export function ProcessQueue() {
           </span>
         </div>
       ) : null}
-      <QueueSnackbar
-        message={undoState?.message ?? null}
-        onUndo={undoState ? () => void undoLastProcessAction() : undefined}
-        onClose={() => setUndoState(null)}
-      />
     </div>
   );
 }

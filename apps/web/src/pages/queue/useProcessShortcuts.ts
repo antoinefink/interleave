@@ -14,7 +14,7 @@
  *   + / =          → raise priority
  *   -              → lower priority
  *   o / Enter      → open the current item in full (the only navigation)
- *   ⌘Z / Ctrl+Z    → undo the last process action while the snackbar is pending
+ *   ⌘Z / Ctrl+Z    → undo the last process action while local undo is available
  *
  * When the current item is a CARD, the loop's review keys take over (consistent
  * with the review session, T037):
@@ -67,7 +67,7 @@ export interface ProcessShortcutHandlers {
   raise(): void;
   lower(): void;
   open(): void;
-  /** True while the local process snackbar has a pending undo. */
+  /** True while the process loop has a pending local undo. */
   canUndo: boolean;
   /** Undo the pending process action, restoring the process cursor. */
   undo(): void;
@@ -108,7 +108,7 @@ export function useProcessShortcuts(handlers: ProcessShortcutHandlers, enabled: 
       const h = ref.current;
 
       // Local process undo wins over the global command-level undo ONLY while the
-      // process snackbar has a pending recipe. If there is no pending process undo,
+      // process loop has a pending recipe. If there is no pending process undo,
       // this capture listener returns without preventing default so the shell's
       // global ⌘Z/Ctrl+Z handler still runs.
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z") {

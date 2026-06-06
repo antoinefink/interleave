@@ -42,6 +42,7 @@ import {
   type QueueScheduleChoice,
   type SchedulerSignals,
 } from "../../lib/appApi";
+import { UNDO_EVENT } from "../../shell/nav";
 import { useSelection } from "../../shell/selection";
 import "./queue.css";
 import { HelpLink } from "../../help/Contextual";
@@ -247,14 +248,8 @@ export function QueueScreen() {
   const [error, setError] = useState<string | null>(null);
   /** The id of the row whose action is currently in flight (its buttons disable). */
   const [busyId, setBusyId] = useState<string | null>(null);
-  /** The pending undo (for done/dismiss/delete) shown in the snackbar. */
-  const [undoState, setUndoState] = useState<{
-    id: string;
-    message: string;
-    // `restore`/`status` → the queue's per-row recipe undo (T030); `batch` → the overload
-    // auto-postpone sweep, reversed via the general command-level `undo.last` (T044/T077).
-    undo: { kind: "restore" | "status" | "batch"; previousStatus: string } | null;
-  } | null>(null);
+  /** Batch queue operations keep a snackbar because they are not simple row advancement. */
+  const [batchUndoState, setBatchUndoState] = useState<{ message: string } | null>(null);
 
   const refresh = useCallback(async () => {
     if (!isDesktop()) return;
@@ -279,6 +274,15 @@ export function QueueScreen() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!desktop) return;
+    const onUndo = () => {
+      void refresh();
+    };
+    window.addEventListener(UNDO_EVENT, onUndo);
+    return () => window.removeEventListener(UNDO_EVENT, onUndo);
+  }, [desktop, refresh]);
 
   // The sorted rows from the read, then the stable seeded jitter, then the active
   // filter. The read already sorted priority-then-due-date; jitter + filter are the
@@ -321,32 +325,20 @@ export function QueueScreen() {
     void navigate({ to: "/process", search: asOf ? { asOf } : {} });
   }, [navigate, asOf]);
 
-  /** Human label for the snackbar after a removing action (T030). */
-  const removedMessage = useCallback((item: QueueItemSummary, kind: RowActionKind): string => {
-    const noun = item.type === "card" ? "Card" : item.type === "extract" ? "Extract" : "Item";
-    if (kind === "delete") return `${noun} deleted`;
-    if (kind === "markDone") return `${noun} marked done`;
-    return `${noun} dismissed`;
-  }, []);
-
   /**
    * Apply one in-place queue action through the SAME typed `appApi` mutation path
    * (T030). postpone / raise / lower update the row in place (the read re-sorts);
-   * markDone / dismiss / delete remove it and raise an undo snackbar. No navigation
-   * happens — only the explicit "open" navigates. The whole queue is re-read after
-   * the mutation so the sort + counts + budget stay authoritative.
+   * markDone / dismiss / delete remove it. No navigation happens — only the explicit
+   * "open" navigates. The whole queue is re-read after the mutation so the sort +
+   * counts + budget stay authoritative. The mutation remains command-logged, so the
+   * shell-level ⌘Z can still restore it without a per-row snackbar.
    */
   const onAction = useCallback(
     async (item: QueueItemSummary, kind: RowActionKind) => {
       if (!isDesktop() || busyId) return;
       setBusyId(item.id);
       try {
-        const res = await appApi.actOnQueueItem({ id: item.id, action: { kind } });
-        // A removing/postponing action drops the row from the due list; show an undo
-        // snackbar for the recoverable lifecycle changes (done/dismiss/delete).
-        if (res.removed) {
-          setUndoState({ id: item.id, message: removedMessage(item, kind), undo: res.undo });
-        }
+        await appApi.actOnQueueItem({ id: item.id, action: { kind } });
         await refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -354,7 +346,7 @@ export function QueueScreen() {
         setBusyId(null);
       }
     },
-    [busyId, refresh, removedMessage],
+    [busyId, refresh],
   );
 
   /**
@@ -380,46 +372,33 @@ export function QueueScreen() {
   );
 
   /**
-   * Undo the last removing action — restore a soft-deleted row or re-set the prior
-   * status (done/dismiss) — through the typed `queue.undo` surface, then re-read the
-   * queue so the row reappears. The kit's 5s snackbar window gates this.
+   * Undo the last batch queue action through the command log, then re-read the queue.
+   * Per-row lifecycle actions intentionally rely on the shell-level ⌘Z path instead
+   * of showing a snackbar on every row transition.
    */
   const onUndo = useCallback(async () => {
-    const pending = undoState;
-    setUndoState(null);
-    if (!pending?.undo || !isDesktop()) return;
+    const pending = batchUndoState;
+    setBatchUndoState(null);
+    if (!pending || !isDesktop()) return;
     try {
-      // A `batch` undo (the overload auto-postpone sweep) reverses the WHOLE batch via the
-      // general command-level undo (`undo.last` reverses every op sharing the last op's
-      // batchId — restoring both `elements.due_at` and `review_states.due_at`). A normal
-      // removing action restores via the queue's recipe undo.
-      if (pending.undo.kind === "batch") {
-        await appApi.undoLast();
-      } else {
-        await appApi.undoQueueAction({
-          id: pending.id,
-          undo: { kind: pending.undo.kind, previousStatus: pending.undo.previousStatus },
-        });
-      }
+      await appApi.undoLast();
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [undoState, refresh]);
+  }, [batchUndoState, refresh]);
 
   /**
    * After a successful overload auto-postpone (T077): re-read the queue (the sweep moved N
    * items out of the due set) and raise a "Postponed N · Undo" snackbar. Undo reverses the
-   * whole batch through the general command-level `undo.last` (the `batch` recipe above).
+   * whole batch through the general command-level `undo.last`.
    */
   const onPostponed = useCallback(
     (count: number) => {
       void refresh();
       if (count > 0) {
-        setUndoState({
-          id: "auto-postpone",
+        setBatchUndoState({
           message: `Postponed ${count} low-priority item${count === 1 ? "" : "s"}`,
-          undo: { kind: "batch", previousStatus: "scheduled" },
         });
       }
     },
@@ -435,10 +414,8 @@ export function QueueScreen() {
     (label: string, count: number) => {
       void refresh();
       if (count > 0) {
-        setUndoState({
-          id: "recovery",
+        setBatchUndoState({
           message: `${label} ${count} item${count === 1 ? "" : "s"}`,
-          undo: { kind: "batch", previousStatus: "scheduled" },
         });
       }
     },
@@ -667,11 +644,11 @@ export function QueueScreen() {
         )}
       </div>
 
-      {/* Undo snackbar for the recoverable removing actions (done/dismiss/delete). */}
+      {/* Undo snackbar for larger queue batches; ordinary row advancement stays quiet. */}
       <QueueSnackbar
-        message={undoState?.message ?? null}
-        onUndo={undoState?.undo ? onUndo : undefined}
-        onClose={() => setUndoState(null)}
+        message={batchUndoState?.message ?? null}
+        onUndo={batchUndoState ? onUndo : undefined}
+        onClose={() => setBatchUndoState(null)}
       />
     </div>
   );
