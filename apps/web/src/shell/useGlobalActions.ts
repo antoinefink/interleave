@@ -26,10 +26,11 @@
  */
 
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { requestInspectorRefresh } from "../components/inspector/Inspector";
 import { appApi, isDesktop } from "../lib/appApi";
 import { useNavigateToLocation } from "../reader/navigateToLocation";
+import { hasActiveScope } from "./activeScope";
 import { useSelection } from "./selection";
 
 /** The element-targeted global actions, keyed by the registry's `PaletteActionId`. */
@@ -45,12 +46,16 @@ export function useGlobalActions(): GlobalActions {
   const { selectedId } = useSelection();
   const navigate = useNavigate();
   const navigateToLocation = useNavigateToLocation();
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
 
   const openSource = useCallback(() => {
-    if (!isDesktop() || !selectedId) return;
+    if (!isDesktop() || !selectedId || hasActiveScope()) return;
+    const requestedId = selectedId;
     void (async () => {
       try {
-        const res = await appApi.getInspectorData({ id: selectedId });
+        const res = await appApi.getInspectorData({ id: requestedId });
+        if (selectedIdRef.current !== requestedId || hasActiveScope()) return;
         if (!res.data) return;
         const loc = res.data.location;
         if (loc) {
@@ -63,7 +68,7 @@ export function useGlobalActions(): GlobalActions {
         if (sourceId) {
           void navigate({ to: "/source/$id", params: { id: sourceId } });
         } else if (res.data.element.type === "source") {
-          void navigate({ to: "/source/$id", params: { id: selectedId } });
+          void navigate({ to: "/source/$id", params: { id: requestedId } });
         }
       } catch {
         // Non-fatal: open-source is a convenience.
@@ -72,10 +77,12 @@ export function useGlobalActions(): GlobalActions {
   }, [selectedId, navigate, navigateToLocation]);
 
   const openParent = useCallback(() => {
-    if (!isDesktop() || !selectedId) return;
+    if (!isDesktop() || !selectedId || hasActiveScope()) return;
+    const requestedId = selectedId;
     void (async () => {
       try {
-        const res = await appApi.getInspectorData({ id: selectedId });
+        const res = await appApi.getInspectorData({ id: requestedId });
+        if (selectedIdRef.current !== requestedId || hasActiveScope()) return;
         const parent = res.data?.parent;
         if (!parent) return;
         if (parent.type === "source" || parent.type === "topic") {
@@ -91,7 +98,7 @@ export function useGlobalActions(): GlobalActions {
 
   const setPriority = useCallback(
     (kind: "raise" | "lower") => {
-      if (!isDesktop() || !selectedId) return;
+      if (!isDesktop() || !selectedId || hasActiveScope()) return;
       void appApi
         .setElementPriority({ id: selectedId, action: { kind } })
         .then(() => requestInspectorRefresh())

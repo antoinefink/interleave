@@ -278,7 +278,7 @@ export function LibraryScreen() {
     (r: SearchResult) => {
       if (r.type === "source") void navigate({ to: "/source/$id", params: { id: r.id } });
       else if (r.type === "extract") void navigate({ to: "/extract/$id", params: { id: r.id } });
-      else void navigate({ to: "/review" });
+      else if (r.type === "card") void navigate({ to: "/card/$id", params: { id: r.id } });
     },
     [navigate],
   );

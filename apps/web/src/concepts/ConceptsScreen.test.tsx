@@ -8,7 +8,7 @@
  *  - clicking a node calls `conceptMembers(conceptId)` and renders the member rows;
  *  - the by-volume rail shows member/child counts;
  *  - selecting a concept with no members shows the empty-state;
- *  - opening a member row navigates per type (source/extract/card);
+ *  - opening a member row navigates per type (source/extract/card detail);
  *  - the non-desktop path renders the `route-concepts` fallback.
  *
  * `appApi` + the router are mocked so the test exercises ONLY this component's
@@ -209,7 +209,10 @@ describe("ConceptsScreen", () => {
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/extract/$id", params: { id: "ext-1" } });
 
     fireEvent.doubleClick(rowFor("card-1"));
-    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/review" });
+    expect(h.navigateSpy).toHaveBeenCalledWith({
+      to: "/card/$id",
+      params: { id: "card-1" },
+    });
   });
 
   it("opens a member row on Enter (keyboard)", async () => {

@@ -61,8 +61,11 @@ describe("openQueueItem", () => {
     });
 
     openQueueItem({ item: queueItem({ type: "card", id: "card-1" }), ...h });
-    expect(h.select).toHaveBeenCalledWith("card-1");
-    expect(h.navigate).toHaveBeenLastCalledWith({ to: "/review" });
+    expect(h.select).toHaveBeenCalledWith(null);
+    expect(h.navigate).toHaveBeenLastCalledWith({
+      to: "/card/$id",
+      params: { id: "card-1" },
+    });
 
     openQueueItem({ item: queueItem({ type: "topic", id: "topic-1" }), ...h });
     expect(h.select).toHaveBeenCalledWith("topic-1");
@@ -112,10 +115,10 @@ describe("openQueueItem", () => {
       asOf: "2026-06-06T12:00:00.000Z",
       ...h,
     });
-    expect(h.select).toHaveBeenLastCalledWith("card-1");
+    expect(h.select).toHaveBeenLastCalledWith(null);
     expect(h.navigate).toHaveBeenLastCalledWith({
-      to: "/review",
-      search: { asOf: "2026-06-06T12:00:00.000Z" },
+      to: "/card/$id",
+      params: { id: "card-1" },
     });
   });
 

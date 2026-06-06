@@ -220,14 +220,14 @@ export function SynthesisNote() {
     [id, toast],
   );
 
-  // Jump to a linked extract/card's surface (extract view / review for a card).
+  // Jump to a linked extract/card's surface (extract view / card detail).
   const openLinked = useCallback(
     (target: { id: string; type: string }) => {
       if (target.type === "extract") {
         void navigate({ to: "/extract/$id", params: { id: target.id } });
       } else if (target.type === "card") {
-        // A card has no dedicated reader page — select it so the inspector shows it.
-        select(target.id);
+        select(null);
+        void navigate({ to: "/card/$id", params: { id: target.id } });
       }
     },
     [navigate, select],

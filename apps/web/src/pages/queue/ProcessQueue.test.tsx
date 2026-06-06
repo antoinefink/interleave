@@ -1223,7 +1223,7 @@ describe("ProcessQueue", () => {
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/source/$id", params: { id: "source-1" } });
   });
 
-  it("opens a card-linked task by selecting the protected card and routing to review", async () => {
+  it("opens a card-linked task by clearing inspector selection and routing to card detail", async () => {
     const task: QueueItemSummary = {
       id: "task-1",
       type: "task",
@@ -1274,8 +1274,8 @@ describe("ProcessQueue", () => {
     await waitFor(() => expect(currentItemId()).toBe("task-1"));
     fireEvent.click(screen.getByTestId("process-action-open"));
 
-    expect(h.selectSpy).toHaveBeenCalledWith("card-1");
-    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/review" });
+    expect(h.selectSpy).toHaveBeenCalledWith(null);
+    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/card/$id", params: { id: "card-1" } });
   });
 
   it("T076: requests queue.list with mode `full` on mount", async () => {

@@ -13,7 +13,7 @@
  *    routes to /maintenance/leeches;
  *  - "Start session" navigates to /process and a top-due preview row navigates to
  *    the right element route, RESPECTING the FSRS-vs-attention split and linked
- *    task jumps (source → /source/$id, extract → /extract/$id, card → /review,
+ *    task jumps (source → /source/$id, extract → /extract/$id, card → /card/$id,
  *    topic/unlinked task → /process, linked task → protected element surface);
  *  - a failed read shows the error line + a calm "—" placeholder (never fabricated
  *    zeros / a false "Queue clear" empty state);
@@ -132,8 +132,8 @@ const h = vi.hoisted(() => {
     due: "today",
     dueLabel: "Due today",
   };
-  // A due CARD — an FSRS-scheduled element. Clicking it must route into the FSRS
-  // active-recall /review session (cards ONLY ride the FSRS seam).
+  // A due CARD — an FSRS-scheduled element. Clicking it must route into direct
+  // card detail, while batch review stays behind the dedicated /review affordances.
   const cardRow: QueueItemSummary = {
     id: "card-1",
     type: "card",
@@ -360,9 +360,9 @@ describe("HomeScreen", () => {
     fireEvent.click(rowFor("extract-1"));
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/extract/$id", params: { id: "extract-1" } });
 
-    // card → the FSRS active-recall review session (cards ONLY).
+    // card → the direct card detail surface.
     fireEvent.click(rowFor("card-1"));
-    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/review" });
+    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/card/$id", params: { id: "card-1" } });
 
     // topic (an attention element) → the one-at-a-time /process loop, NOT /review —
     // sending an attention-scheduled element into the card review would land on an
@@ -373,7 +373,7 @@ describe("HomeScreen", () => {
     expect(h.navigateSpy).not.toHaveBeenCalledWith({ to: "/review" });
   });
 
-  it("a linked task preview row jumps to the protected card review surface", async () => {
+  it("a linked task preview row jumps to the protected card detail surface", async () => {
     h.listQueue.mockResolvedValue({
       ...h.queue,
       items: [h.taskRow],
@@ -385,8 +385,8 @@ describe("HomeScreen", () => {
 
     fireEvent.click(screen.getByTestId("home-preview-row"));
 
-    expect(h.selectSpy).toHaveBeenCalledWith("card-1");
-    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/review" });
+    expect(h.selectSpy).toHaveBeenCalledWith(null);
+    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/card/$id", params: { id: "card-1" } });
   });
 
   it("'See full queue' navigates to /queue", async () => {

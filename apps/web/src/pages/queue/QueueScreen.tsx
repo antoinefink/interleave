@@ -306,7 +306,11 @@ export function QueueScreen() {
 
   const onSelect = useCallback(
     (item: QueueItemSummary) => {
-      select(item.id);
+      const targetType =
+        item.type === "task" && item.linkedElementId ? item.linkedElementType : item.type;
+      const targetId =
+        item.type === "task" && item.linkedElementId ? item.linkedElementId : item.id;
+      select(targetType === "card" ? null : targetId);
     },
     [select],
   );

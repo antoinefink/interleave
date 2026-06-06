@@ -7,7 +7,7 @@
  *    card (FSRS) vs an extract (attention) — the load-bearing two-scheduler split;
  *  - a filter chip narrows the visible list;
  *  - clicking a row selects it in the shell inspector (`useSelection().select`);
- *  - the `next-action` opens the row (source → reader, card → review).
+ *  - the `next-action` opens the row (source → reader, card → card detail).
  *
  * The collaborators are mocked so the test exercises ONLY this component's wiring:
  * `window.appApi.queue.list` is a fake whose payload is rendered, and the router +
@@ -374,7 +374,7 @@ describe("QueueScreen", () => {
     expect(h.navigateSpy).not.toHaveBeenCalledWith({ to: "/process", search: {} });
   });
 
-  it("opens a card-linked verification task by selecting the card and routing to review", async () => {
+  it("opens a card-linked verification task by clearing inspector selection and routing to card detail", async () => {
     h.useSearch.mockReturnValue({ asOf: "2026-06-06T12:00:00.000Z" });
     h.listQueue.mockResolvedValue({
       items: [h.cardTaskRow],
@@ -401,10 +401,10 @@ describe("QueueScreen", () => {
 
     fireEvent.click(open);
 
-    expect(h.selectSpy).toHaveBeenCalledWith("card-1");
+    expect(h.selectSpy).toHaveBeenCalledWith(null);
     expect(h.navigateSpy).toHaveBeenCalledWith({
-      to: "/review",
-      search: { asOf: "2026-06-06T12:00:00.000Z" },
+      to: "/card/$id",
+      params: { id: "card-1" },
     });
   });
 

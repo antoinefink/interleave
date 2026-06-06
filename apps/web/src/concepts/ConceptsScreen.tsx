@@ -209,7 +209,7 @@ export function ConceptsScreen() {
     (m: ConceptMemberSummary) => {
       if (m.type === "source") void navigate({ to: "/source/$id", params: { id: m.id } });
       else if (m.type === "extract") void navigate({ to: "/extract/$id", params: { id: m.id } });
-      else if (m.type === "card") void navigate({ to: "/review" });
+      else if (m.type === "card") void navigate({ to: "/card/$id", params: { id: m.id } });
     },
     [navigate],
   );

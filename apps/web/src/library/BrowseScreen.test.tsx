@@ -334,7 +334,7 @@ describe("BrowseScreen", () => {
     );
   });
 
-  it("Open navigates per type (source → reader, card → review)", async () => {
+  it("Open navigates per type (source → reader, card → detail)", async () => {
     render(<BrowseScreen />);
     const sourceGroup = await screen.findByTestId("library-group-source");
     fireEvent.click(within(sourceGroup).getByTestId("library-result"));
@@ -344,10 +344,13 @@ describe("BrowseScreen", () => {
     const cardGroup = screen.getByTestId("library-group-card");
     fireEvent.click(within(cardGroup).getByTestId("library-result"));
     fireEvent.click(await screen.findByTestId("library-detail-open"));
-    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/review" });
+    expect(h.navigateSpy).toHaveBeenCalledWith({
+      to: "/card/$id",
+      params: { id: "card-1" },
+    });
   });
 
-  it("Open task jumps to the protected card review surface, not the task row itself", async () => {
+  it("Open task jumps to the protected card detail surface, not the task row itself", async () => {
     h.libraryBrowse.mockResolvedValue({
       items: [h.taskRow],
       counts: {
@@ -363,8 +366,11 @@ describe("BrowseScreen", () => {
     fireEvent.click(within(taskGroup).getByTestId("library-result"));
     fireEvent.click(await screen.findByTestId("library-detail-open"));
 
-    expect(h.selectSpy).toHaveBeenCalledWith("card-1");
-    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/review" });
+    expect(h.selectSpy).toHaveBeenCalledWith(null);
+    expect(h.navigateSpy).toHaveBeenCalledWith({
+      to: "/card/$id",
+      params: { id: "card-1" },
+    });
     expect(h.navigateSpy).not.toHaveBeenCalledWith({
       to: "/source/$id",
       params: { id: "task-1" },

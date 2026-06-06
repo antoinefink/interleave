@@ -351,7 +351,7 @@ describe("LibraryScreen", () => {
     expect(await screen.findByTestId("library-empty")).toBeTruthy();
   });
 
-  it("opens a result in context on click + open button", async () => {
+  it("opens source and card results in their detail surfaces", async () => {
     render(<LibraryScreen />);
     fireEvent.change(screen.getByTestId("library-search-input"), {
       target: { value: "intelligence" },
@@ -362,6 +362,14 @@ describe("LibraryScreen", () => {
     // The detail panel shows; clicking Open navigates to the source reader.
     fireEvent.click(await screen.findByTestId("library-detail-open"));
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/source/$id", params: { id: "src-1" } });
+
+    const cardGroup = screen.getByTestId("library-group-card");
+    fireEvent.click(within(cardGroup).getByTestId("library-result"));
+    fireEvent.click(await screen.findByTestId("library-detail-open"));
+    expect(h.navigateSpy).toHaveBeenCalledWith({
+      to: "/card/$id",
+      params: { id: "card-1" },
+    });
   });
 
   it("shows the scheduler chip + due badge in the selection detail (kit parity)", async () => {

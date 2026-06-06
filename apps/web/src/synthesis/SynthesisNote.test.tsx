@@ -165,15 +165,19 @@ describe("SynthesisNote", () => {
     expect(getByTestId("mock-source-editor")).toBeInTheDocument();
   });
 
-  it("opens linked extracts through navigation and cards through selection", async () => {
+  it("opens linked extracts through navigation and cards through cleared selection plus card detail navigation", async () => {
     const { getAllByTestId } = render(<SynthesisNote />);
 
     await waitFor(() => expect(getAllByTestId("synthesis-linked-open")).toHaveLength(2));
+    h.navigate.mockClear();
+    h.select.mockClear();
+
     fireEvent.click(getAllByTestId("synthesis-linked-open")[0] as HTMLElement);
     expect(h.navigate).toHaveBeenCalledWith({ to: "/extract/$id", params: { id: "ext-1" } });
 
     fireEvent.click(getAllByTestId("synthesis-linked-open")[1] as HTMLElement);
-    expect(h.select).toHaveBeenCalledWith("card-1");
+    expect(h.select).toHaveBeenCalledWith(null);
+    expect(h.navigate).toHaveBeenLastCalledWith({ to: "/card/$id", params: { id: "card-1" } });
   });
 
   it("schedules return and refreshes inspector state", async () => {

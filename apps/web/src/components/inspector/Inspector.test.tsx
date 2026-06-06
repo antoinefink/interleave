@@ -66,6 +66,7 @@ vi.mock("../../lib/appApi", async () => {
   };
 });
 
+import { pushActiveScope } from "../../shell/activeScope";
 import { Inspector, requestInspectorRefresh } from "./Inspector";
 
 function element(id: string, title: string): ElementSummary {
@@ -106,6 +107,93 @@ function topicData(title: string): InspectorData {
     concepts: [],
     review: null,
     lifetime: null,
+  };
+}
+
+function extractDataWithCardChild(): InspectorData {
+  const data = topicData("Linked extract");
+  return {
+    ...data,
+    element: {
+      ...element("ext-1", "Linked extract"),
+      type: "extract",
+      stage: "clean_extract",
+    },
+    children: [
+      {
+        id: "card-1",
+        title: "Linked card",
+        type: "card",
+        stage: "active_card",
+      },
+    ],
+  };
+}
+
+function cardDataWithSourceContext(): InspectorData {
+  const data = topicData("What is intelligence?");
+  return {
+    ...data,
+    element: {
+      ...element("card-1", "What is intelligence?"),
+      type: "card",
+      stage: "active_card",
+    },
+    scheduler: {
+      kind: "fsrs",
+      retrievability: 0.82,
+      stability: 9,
+      difficulty: 4,
+      reps: 3,
+      lapses: 0,
+      fsrsState: "review",
+      stage: "active_card",
+      postponed: 0,
+      lastProcessedAt: null,
+      yield: null,
+    },
+    source: {
+      id: "src-1",
+      title: "Source paper",
+      type: "source",
+      stage: "raw_source",
+    },
+    sourceRef: {
+      sourceElementId: "src-1",
+      sourceTitle: "Source paper",
+      url: "https://example.test/source",
+      author: "Ada",
+      publishedAt: "2026-01-01T00:00:00.000Z",
+      locationLabel: "¶ 3",
+      snippet: "Hidden source context",
+      sourceType: null,
+      reliabilityTier: null,
+      confidence: null,
+      reliabilityNotes: null,
+    },
+    location: {
+      label: "¶ 3",
+      selectedText: "Hidden source context",
+      page: null,
+      region: null,
+      clip: null,
+      timestampMs: null,
+      sourceElementId: "src-1",
+      blockIds: ["block-1"],
+      startOffset: 0,
+      endOffset: 5,
+    },
+    review: {
+      dueAt: "2026-06-06T12:00:00.000Z",
+      stability: 9,
+      difficulty: 4,
+      reps: 3,
+      lapses: 0,
+      fsrsState: "review",
+      lastReviewedAt: null,
+      logCount: 3,
+      isRetired: false,
+    },
   };
 }
 
@@ -227,5 +315,91 @@ describe("Inspector", () => {
       "href",
       "https://www.maths.ed.ac.uk/~v1ranick/papers/wigner.pdf?utm_source=test",
     );
+  });
+
+  it("redacts card source context while the review scope owns reveal state", async () => {
+    h.selectedId = "card-1";
+    h.getInspectorData.mockResolvedValue({ data: cardDataWithSourceContext() });
+    const release = pushActiveScope("review");
+    try {
+      render(<Inspector />);
+
+      await screen.findByTestId("inspector-content");
+      expect(screen.getByTestId("meta-type")).toHaveTextContent("Card");
+      expect(screen.queryByTestId("source-section")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("source-ref-section")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("location-section")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("location-jump")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("parent-section")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("lineage-section")).not.toBeInTheDocument();
+    } finally {
+      release();
+    }
+  });
+
+  it("opens card child lineage rows by clearing selection and navigating to card detail", async () => {
+    h.selectedId = "ext-1";
+    h.getInspectorData.mockResolvedValue({ data: extractDataWithCardChild() });
+
+    render(<Inspector />);
+
+    const row = await screen.findByTestId("lineage-row");
+    fireEvent.click(row);
+
+    expect(h.select).toHaveBeenCalledWith(null);
+    expect(h.navigate).toHaveBeenCalledWith({ to: "/card/$id", params: { id: "card-1" } });
+  });
+
+  it("opens card lineage tree nodes by clearing selection and navigating to card detail", async () => {
+    h.selectedId = "ext-1";
+    h.getInspectorData.mockResolvedValue({ data: extractDataWithCardChild() });
+    h.getLineage.mockResolvedValue({
+      lineage: {
+        elementId: "ext-1",
+        rootId: "src-1",
+        nodes: [
+          {
+            id: "src-1",
+            title: "Source",
+            type: "source",
+            stage: "raw_source",
+            depth: 0,
+            meta: "source",
+            active: false,
+          },
+          {
+            id: "ext-1",
+            title: "Linked extract",
+            type: "extract",
+            stage: "clean_extract",
+            depth: 1,
+            meta: "clean extract",
+            active: true,
+          },
+          {
+            id: "card-1",
+            title: "Linked card",
+            type: "card",
+            stage: "active_card",
+            depth: 2,
+            meta: "active card",
+            active: false,
+          },
+        ],
+      },
+    });
+
+    render(<Inspector />);
+
+    await screen.findByTestId("lineage-tree");
+    const cardNode = screen
+      .getAllByTestId("lineage-tree-node")
+      .find((node) => node.getAttribute("data-element-id") === "card-1");
+    expect(cardNode).toBeDefined();
+
+    fireEvent.click(cardNode as HTMLElement);
+
+    expect(h.select).toHaveBeenCalledWith(null);
+    expect(h.navigate).toHaveBeenCalledWith({ to: "/card/$id", params: { id: "card-1" } });
   });
 });

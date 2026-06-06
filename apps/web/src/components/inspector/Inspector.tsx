@@ -50,6 +50,7 @@ import {
 import { useNavigateToLocation } from "../../reader/navigateToLocation";
 import { ReviewModeButton } from "../../review/ReviewModeButton";
 import "../../review/review.css";
+import { isScopeActive } from "../../shell/activeScope";
 import { useSelection } from "../../shell/selection";
 import { ConflictSection } from "../ConflictSection";
 import { ExternalUrlLink } from "../ExternalUrlLink";
@@ -98,15 +99,15 @@ function fmtDate(iso: string | null): string {
   ).padStart(2, "0")}`;
 }
 
-/** A clickable lineage row that re-selects the target element. */
-function LineageRow({ item, onSelect }: { item: LineageItem; onSelect: (id: string) => void }) {
+/** A clickable lineage row that re-selects the target element and may open its detail surface. */
+function LineageRow({ item, onOpen }: { item: LineageItem; onOpen: (item: LineageItem) => void }) {
   return (
     <button
       type="button"
       className="tree-node"
       data-testid="lineage-row"
       data-element-id={item.id}
-      onClick={() => onSelect(item.id)}
+      onClick={() => onOpen(item)}
     >
       <TypeIcon type={item.type} />
       <span className="tree-node__title">{item.title}</span>
@@ -1753,6 +1754,7 @@ function InspectorBody({
   lineage,
   allConcepts,
   onSelect,
+  onOpenLineageItem,
   onPickLineageNode,
   onJumpToLocation,
   onSetPriority,
@@ -1764,6 +1766,7 @@ function InspectorBody({
   lineage: LineageData | null;
   allConcepts: readonly ConceptNode[];
   onSelect: (id: string) => void;
+  onOpenLineageItem: (item: LineageItem) => void;
   onPickLineageNode: (node: LineageNode) => void;
   onJumpToLocation: (location: NonNullable<InspectorData["location"]>) => void;
   onSetPriority: (action: ElementsSetPriorityAction) => void;
@@ -1785,6 +1788,7 @@ function InspectorBody({
     review,
     lifetime,
   } = data;
+  const redactCardSourceContext = element.type === "card" && isScopeActive("review");
   return (
     <div className="insp" data-testid="inspector-content" data-element-type={element.type}>
       {/* Header: type icon + title + the at-a-glance chips. */}
@@ -1933,11 +1937,11 @@ function InspectorBody({
       )}
 
       {/* Owning source (lineage root) for non-source elements. */}
-      {source && (
+      {!redactCardSourceContext && source && (
         <div className="insp-sec" data-testid="source-section">
           <div className="insp-sec__title">From source</div>
           <div className="tree">
-            <LineageRow item={source} onSelect={onSelect} />
+            <LineageRow item={source} onOpen={onOpenLineageItem} />
           </div>
         </div>
       )}
@@ -1947,7 +1951,7 @@ function InspectorBody({
           provenance above; extracts/cards show the shared RefBlock resolved from
           lineage (title/URL/author/date/location + snippet), with the jump-to-source
           affordance. A missing/soft-deleted source degrades to a calm placeholder. */}
-      {element.type !== "source" && sourceRef && (
+      {!redactCardSourceContext && element.type !== "source" && sourceRef && (
         <div className="insp-sec" data-testid="source-ref-section">
           <div className="insp-sec__title">Source reference</div>
           <RefBlock
@@ -1961,7 +1965,7 @@ function InspectorBody({
       )}
 
       {/* Source location — actionable lineage (jump-to-paragraph, T022). */}
-      {location && (
+      {!redactCardSourceContext && location && (
         <div className="insp-sec" data-testid="location-section">
           <div className="insp-sec__title">
             <span>Source location</span>
@@ -1985,11 +1989,11 @@ function InspectorBody({
       )}
 
       {/* Parent (lineage up). */}
-      {parent && (
+      {!redactCardSourceContext && parent && (
         <div className="insp-sec" data-testid="parent-section">
           <div className="insp-sec__title">Parent</div>
           <div className="tree">
-            <LineageRow item={parent} onSelect={onSelect} />
+            <LineageRow item={parent} onOpen={onOpenLineageItem} />
           </div>
         </div>
       )}
@@ -2003,7 +2007,7 @@ function InspectorBody({
         {children.length > 0 ? (
           <div className="tree">
             {children.map((child) => (
-              <LineageRow key={child.id} item={child} onSelect={onSelect} />
+              <LineageRow key={child.id} item={child} onOpen={onOpenLineageItem} />
             ))}
           </div>
         ) : (
@@ -2014,7 +2018,7 @@ function InspectorBody({
       {/* Lineage (T023): the full navigable tree — source → extract → sub-extract
           → card — rooted at the lineage root, with the active element highlighted.
           Clicking any node navigates there (up OR down the chain). */}
-      {lineage && lineage.nodes.length > 0 && (
+      {!redactCardSourceContext && lineage && lineage.nodes.length > 0 && (
         <div className="insp-sec" data-testid="lineage-section">
           <div className="insp-sec__title">
             <span>Lineage</span>
@@ -2209,6 +2213,18 @@ export function Inspector() {
 
   const onSelect = useCallback((id: string) => select(id), [select]);
 
+  const onOpenLineageItem = useCallback(
+    (item: LineageItem) => {
+      if (item.type === "card") {
+        select(null);
+        void navigate({ to: "/card/$id", params: { id: item.id } });
+      } else {
+        select(item.id);
+      }
+    },
+    [select, navigate],
+  );
+
   // After a concept/tag assign/unassign/add/remove (T041), re-read the inspected
   // element so its concepts + tags reflect the change, and bump the picker/concept
   // list so a freshly-created concept appears in the picker.
@@ -2247,14 +2263,18 @@ export function Inspector() {
   // Clicking a lineage node navigates BOTH directions (T023): re-select the node
   // (driving the inspector) and open its dedicated page — a source/topic opens its
   // reader at `/source/$id`, an extract opens its review view at `/extract/$id`
-  // (T024). Cards select in the inspector (their dedicated view lands in M6).
+  // (T024), and a card opens the stable detail route for that card.
   const onPickLineageNode = useCallback(
     (node: LineageNode) => {
-      select(node.id);
       if (node.type === "source" || node.type === "topic") {
+        select(node.id);
         void navigate({ to: "/source/$id", params: { id: node.id } });
       } else if (node.type === "extract") {
+        select(node.id);
         void navigate({ to: "/extract/$id", params: { id: node.id } });
+      } else if (node.type === "card") {
+        select(null);
+        void navigate({ to: "/card/$id", params: { id: node.id } });
       }
     },
     [select, navigate],
@@ -2301,6 +2321,7 @@ export function Inspector() {
             lineage={lineage}
             allConcepts={allConcepts}
             onSelect={onSelect}
+            onOpenLineageItem={onOpenLineageItem}
             onPickLineageNode={onPickLineageNode}
             onJumpToLocation={navigateToLocation}
             onSetPriority={onSetPriority}

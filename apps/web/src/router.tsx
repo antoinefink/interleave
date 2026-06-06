@@ -9,6 +9,7 @@
  *   /process             focused one-at-a-time process session (T031)
  *   /source/$id          source reader (typed dynamic param)
  *   /extract/$id         extract review mode (T024 — typed dynamic param)
+ *   /card/$id            card detail/edit surface (typed dynamic param)
  *   /review              active-recall review session
  *   /maintenance/leeches leech cleanup (T040)
  *   /search              library / search (keyword FTS5)
@@ -47,6 +48,7 @@ import { QueueScreen } from "./pages/queue/QueueScreen";
 import { Settings } from "./pages/Settings";
 import { SourceReader } from "./pages/source/SourceReader";
 import { ExtractView } from "./reader/ExtractView";
+import { CardScreen } from "./review/CardScreen";
 import { ReviewScreen } from "./review/ReviewScreen";
 import { Shell } from "./shell/Shell";
 import { SynthesisCreate } from "./synthesis/SynthesisCreate";
@@ -105,6 +107,18 @@ const extractRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/extract/$id",
   component: ExtractView,
+});
+
+/**
+ * Card detail (active_card) — opens ONE card by id for reading and repair. This is
+ * intentionally separate from `/review`, which remains the FSRS due-card session.
+ * The view fetches the target through `review.card` and edits through `cards.update`;
+ * no renderer-side SQL/filesystem access or new mutation path.
+ */
+const cardRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/card/$id",
+  component: CardScreen,
 });
 
 /**
@@ -322,6 +336,7 @@ const routeTree = rootRoute.addChildren([
   processRoute,
   sourceRoute,
   extractRoute,
+  cardRoute,
   synthesisNewRoute,
   synthesisRoute,
   reviewRoute,

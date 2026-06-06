@@ -102,7 +102,7 @@ const TILES: readonly {
  * One read-only top-due preview row — a slim variant of the kit's `qitem`. It shows
  * the `TypeIcon`, the prefixed title, the load-bearing `SchedulerChip`, the `Prio`
  * band, and the `DueBadge`, and navigates to the element on click (source → reader,
- * extract → extract view, card → review). It deliberately omits the actionable
+ * extract → extract view, card → card detail). It deliberately omits the actionable
  * controls (postpone/raise/lower/done/dismiss/delete, schedule menu) — those stay on
  * the full `/queue` list.
  */

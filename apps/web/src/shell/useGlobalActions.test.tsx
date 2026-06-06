@@ -39,6 +39,7 @@ vi.mock("../lib/appApi", async () => {
   };
 });
 
+import { pushActiveScope } from "./activeScope";
 import { useGlobalActions } from "./useGlobalActions";
 
 const location = {
@@ -50,6 +51,16 @@ const location = {
   label: "P1",
   selectedText: "hello",
 };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 beforeEach(() => {
   h.desktop = true;
@@ -140,5 +151,44 @@ describe("useGlobalActions", () => {
     expect(h.getInspectorData).not.toHaveBeenCalled();
     expect(h.setElementPriority).not.toHaveBeenCalled();
     expect(h.navigate).toHaveBeenCalledWith({ to: "/search" });
+  });
+
+  it("suppresses element actions while a screen scope owns the selected element", () => {
+    const release = pushActiveScope("review");
+    try {
+      const { result } = renderHook(() => useGlobalActions());
+
+      act(() => {
+        result.current.openSource();
+        result.current.openParent();
+        result.current.raisePriority();
+        result.current.search();
+      });
+
+      expect(h.getInspectorData).not.toHaveBeenCalled();
+      expect(h.setElementPriority).not.toHaveBeenCalled();
+      expect(h.navigate).toHaveBeenCalledWith({ to: "/search" });
+    } finally {
+      release();
+    }
+  });
+
+  it("ignores delayed open-source responses after the selected element changes", async () => {
+    const sourceRead = deferred<{
+      data: { location: typeof location; element: { type: string } };
+    }>();
+    h.getInspectorData.mockReturnValueOnce(sourceRead.promise);
+    const { result, rerender } = renderHook(() => useGlobalActions());
+
+    act(() => result.current.openSource());
+    expect(h.getInspectorData).toHaveBeenCalledWith({ id: "el-1" });
+
+    h.selectedId = "el-2";
+    rerender();
+    sourceRead.resolve({ data: { location, element: { type: "extract" } } });
+
+    await sourceRead.promise;
+    await Promise.resolve();
+    expect(h.navigateToLocation).not.toHaveBeenCalled();
   });
 });

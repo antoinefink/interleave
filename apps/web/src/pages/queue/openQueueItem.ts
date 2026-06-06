@@ -10,7 +10,7 @@ export interface OpenableItem {
 interface OpenQueueItemOptions {
   readonly item: OpenableItem;
   readonly navigate: NavigateFn;
-  readonly select: (id: string) => void;
+  readonly select: (id: string | null) => void;
   readonly asOf?: string | undefined;
 }
 
@@ -18,8 +18,8 @@ function routeToProcess(navigate: NavigateFn, asOf?: string): void {
   void navigate({ to: "/process", search: asOf ? { asOf } : {} });
 }
 
-function routeToReview(navigate: NavigateFn, asOf?: string): void {
-  void navigate(asOf ? { to: "/review", search: { asOf } } : { to: "/review" });
+function routeToCard(navigate: NavigateFn, id: string): void {
+  void navigate({ to: "/card/$id", params: { id } });
 }
 
 function routeToElement(
@@ -40,7 +40,7 @@ function routeToElement(
   }
 
   if (type === "card") {
-    routeToReview(navigate, asOf);
+    routeToCard(navigate, id);
     return;
   }
 
@@ -53,13 +53,13 @@ function routeToElement(
  */
 export function openQueueItem({ item, navigate, select, asOf }: OpenQueueItemOptions): void {
   if (item.type === "task" && item.linkedElementId) {
-    select(item.linkedElementId);
+    select(item.linkedElementType === "card" ? null : item.linkedElementId);
     routeToElement(item.linkedElementType ?? null, item.linkedElementId, navigate, asOf, {
       linkedTaskTarget: true,
     });
     return;
   }
 
-  select(item.id);
+  select(item.type === "card" ? null : item.id);
   routeToElement(item.type, item.id, navigate, asOf);
 }

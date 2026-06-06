@@ -24,6 +24,26 @@ The inbox action that accepts a source into active processing and immediately op
 
 The local reading surface for processing a source inside the app, distinct from opening the source's external canonical URL.
 
+## Active Recall
+
+### Card
+
+An active-recall prompt and answer derived from earlier knowledge-processing work, reviewed to test whether the user can recall the idea.
+
+### Active card
+
+A card that has left drafting and participates in active recall review.
+
+### Review session
+
+The flow that presents due cards for recall practice and records the user's grading outcome.
+
+### Reveal
+
+The review action that intentionally exposes a card's answer and source context after the user has attempted recall.
+
+Before reveal, answer and source context stay hidden across the review surface, global shortcuts, and persistent inspector so the user cannot accidentally inspect the evidence first.
+
 ## Local Durability
 
 ### Local backup
