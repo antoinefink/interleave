@@ -444,6 +444,7 @@ export class UrlImportService {
           accessedAt,
           snapshotKey: cleanedRel,
           reasonAdded,
+          sourceType: "article",
           conversion,
         });
         this.assetsRepo.createWithin(tx, {

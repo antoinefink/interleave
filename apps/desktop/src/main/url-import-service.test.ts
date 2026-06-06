@@ -122,8 +122,10 @@ describe("UrlImportService.importFromUrl (T060 happy path)", () => {
     expect(source?.source.snapshotKey).toBe(`sources/${id}/cleaned.html`);
     expect(source?.source.originalUrl).toBe("https://example.com/spacing");
     expect(source?.source.canonicalUrl).toBe("https://example.com/spacing");
+    expect(source?.source.sourceType).toBe("article");
     expect(source?.source.author).toContain("Ebbinghaus");
     expect(source?.source.accessedAt).not.toBeNull();
+    if (result.status === "imported") expect(result.item.srcType).toBe("Web article");
 
     // The document body parses to paragraphs (no bytes in SQLite — only metadata).
     const doc = new DocumentRepository(handle.db).findById(id as never);

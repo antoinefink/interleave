@@ -258,14 +258,78 @@ describe("DbService", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
 
+    const body = `First paragraph.\n\n${"word ".repeat(900)}final word`;
     const { id } = svc.importManualSource({
       title: "Visible provenance",
       url: "https://example.com/a?fbclid=x",
+      body,
     });
     const { detail } = svc.getInboxItem(id);
     expect(detail?.provenance.canonicalUrl).toBe("https://example.com/a");
     expect(detail?.provenance.originalUrl).toBe("https://example.com/a?fbclid=x");
     expect(detail?.provenance.accessedAt).not.toBeNull();
+    expect(detail?.summary.srcType).toBe("Web article");
+    expect(detail?.bodyDoc).toMatchObject({ type: "doc" });
+    expect(JSON.stringify(detail?.bodyDoc)).toContain("final word");
+    expect(detail?.bodyText).toBe(body);
+    expect(detail?.bodyText).toContain("final word");
+    expect(detail?.bodyPreview?.length).toBeLessThan(body.length);
+
+    svc.close();
+  });
+
+  it("keeps URL-backed source labels in triage response summaries", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const { id } = svc.importManualSource({
+      title: "URL-backed inbox item",
+      url: "https://example.com/imported-blog-post",
+    });
+    const result = svc.triageInboxItem({
+      id,
+      action: { kind: "setPriority", priority: "A" },
+    });
+
+    expect(result.item?.srcType).toBe("Web article");
+    expect(result.item?.priority).toBe(0.875);
+
+    svc.close();
+  });
+
+  it("rejects stale inbox triage without mutating non-inbox or deleted sources", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const { id: acceptedId } = svc.importManualSource({ title: "Already accepted" });
+    expect(
+      svc.triageInboxItem({
+        id: acceptedId,
+        action: { kind: "accept" },
+      }).item?.status,
+    ).toBe("active");
+    expect(() =>
+      svc.triageInboxItem({
+        id: acceptedId,
+        action: { kind: "accept" },
+      }),
+    ).toThrow("Inbox item is no longer available.");
+    expect(svc.repos.elements.findById(acceptedId as never)?.status).toBe("active");
+
+    const { id: deletedId } = svc.importManualSource({ title: "Deleted stale item" });
+    svc.triageInboxItem({ id: deletedId, action: { kind: "delete" } });
+    const deletedBefore = svc.repos.elements.findById(deletedId as never);
+    expect(deletedBefore?.status).toBe("deleted");
+    expect(deletedBefore?.deletedAt).not.toBeNull();
+    expect(() =>
+      svc.triageInboxItem({
+        id: deletedId,
+        action: { kind: "accept" },
+      }),
+    ).toThrow("Inbox item is no longer available.");
+    const deletedAfter = svc.repos.elements.findById(deletedId as never);
+    expect(deletedAfter?.status).toBe("deleted");
+    expect(deletedAfter?.deletedAt).toBe(deletedBefore?.deletedAt);
 
     svc.close();
   });

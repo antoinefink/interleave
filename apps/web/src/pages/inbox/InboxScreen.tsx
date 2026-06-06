@@ -4,7 +4,7 @@
  * Rebuilt from the kit's `screen-inbox.jsx` for React 19 + Tailwind v4: an import
  * strip on top, then a two-pane body — a left list of inbox-status sources and a
  * right preview pane with a metadata rail, an A/B/C/D priority chip group, and a
- * triage action list (Activate / Save for later / Delete with keyboard hints).
+ * triage action list (Read now / Save for later / Delete with keyboard hints).
  *
  * Data flows STRICTLY through the typed `window.appApi` bridge (the renderer never
  * touches SQLite): `inbox.list()` / `inbox.get(id)` to read, `sources.importManual`
@@ -19,6 +19,7 @@
  * Scheduling ("Read soon"), dedup/Merge, and the concept field are deferred.
  */
 
+import { buildSchema, SourceEditor } from "@interleave/editor";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { BalanceBanner } from "../../components/BalanceBanner";
@@ -39,6 +40,7 @@ import { useSelection } from "../../shell/selection";
 import { ImportFileModal } from "./ImportFileModal";
 import { ImportUrlModal } from "./ImportUrlModal";
 import { NewSourceModal } from "./NewSourceModal";
+import "../source/reader.css";
 
 /** Numeric priority `0.0`–`1.0` → coarse A/B/C/D label (mirrors core/priority). */
 function priorityToLabel(priority: number): PriorityLabelInput {
@@ -169,6 +171,8 @@ function TriageButton({
   hint,
   danger,
   primary,
+  disabled,
+  ariaLabel,
   onClick,
   testid,
 }: {
@@ -177,6 +181,8 @@ function TriageButton({
   hint: string;
   danger?: boolean;
   primary?: boolean;
+  disabled?: boolean;
+  ariaLabel?: string;
   onClick: () => void;
   testid: string;
 }) {
@@ -189,8 +195,10 @@ function TriageButton({
     <button
       type="button"
       data-testid={testid}
+      disabled={disabled}
+      aria-label={ariaLabel}
       onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 font-medium text-sm ${tone}`}
+      className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 font-medium text-sm disabled:cursor-not-allowed disabled:opacity-55 ${tone}`}
     >
       <Icon name={icon} size={14} />
       <span>{label}</span>
@@ -200,19 +208,35 @@ function TriageButton({
   );
 }
 
+const inboxPreviewSchema = buildSchema();
+
+function validBodyDoc(value: unknown): unknown | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  try {
+    inboxPreviewSchema.nodeFromJSON(value);
+    return value;
+  } catch {
+    return null;
+  }
+}
+
 /** The right preview + metadata + triage rail for the selected item. */
 function PreviewPane({
   detail,
   busy,
+  onReadNow,
   onTriage,
   onSetPriority,
 }: {
   detail: InboxItemDetail;
   busy: boolean;
-  onTriage: (kind: "accept" | "keepForLater" | "delete") => void;
+  onReadNow: () => void;
+  onTriage: (kind: "keepForLater" | "delete") => void;
   onSetPriority: (label: PriorityLabelInput) => void;
 }) {
-  const { summary, provenance, bodyPreview } = detail;
+  const { summary, provenance } = detail;
+  const bodyDoc = validBodyDoc(detail.bodyDoc);
+  const fallbackText = detail.bodyText ?? detail.bodyPreview ?? null;
   const current = priorityToLabel(summary.priority);
   return (
     <div className="flex min-w-0 flex-1" data-testid="inbox-preview">
@@ -244,10 +268,22 @@ function PreviewPane({
             />
           </div>
         ) : null}
-        {bodyPreview ? (
-          <div className="font-read text-[17px] text-text leading-relaxed">
-            {bodyPreview.split("\n\n").map((p, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: static preview paragraphs
+        {bodyDoc ? (
+          <div data-testid="inbox-preview-body">
+            <SourceEditor
+              key={summary.id}
+              initialDoc={bodyDoc}
+              editable={false}
+              className="inbox-preview-reader"
+            />
+          </div>
+        ) : fallbackText ? (
+          <div
+            className="font-read text-[17px] text-text leading-relaxed"
+            data-testid="inbox-preview-body"
+          >
+            {fallbackText.split("\n\n").map((p, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: static fallback paragraphs
               <p key={i} className="mb-4">
                 {p}
               </p>
@@ -344,18 +380,21 @@ function PreviewPane({
           </div>
           <div className="space-y-2">
             <TriageButton
-              testid="inbox-accept"
+              testid="inbox-read-now"
               icon="play"
-              label="Activate"
+              label="Read now"
               hint="1"
+              ariaLabel="Read now: activate and open in reader"
               primary
-              onClick={() => onTriage("accept")}
+              disabled={busy}
+              onClick={onReadNow}
             />
             <TriageButton
               testid="inbox-keep"
               icon="bookmark"
               label="Save for later"
               hint="3"
+              disabled={busy}
               onClick={() => onTriage("keepForLater")}
             />
             <TriageButton
@@ -364,6 +403,7 @@ function PreviewPane({
               label="Delete"
               hint="6"
               danger
+              disabled={busy}
               onClick={() => onTriage("delete")}
             />
           </div>
@@ -496,8 +536,27 @@ export function InboxScreen() {
     }
   }, [busy, refresh]);
 
+  const onReadNow = useCallback(async () => {
+    if (!selId || busy) return;
+    setBusy(true);
+    try {
+      const result = await appApi.triageInboxItem({ id: selId, action: { kind: "accept" } });
+      if (!result.item || result.deleted) {
+        await refresh(null);
+        setError("Inbox item is no longer available.");
+        return;
+      }
+      setError(null);
+      void navigate({ to: "/source/$id", params: { id: selId } });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [selId, busy, navigate, refresh]);
+
   const onTriage = useCallback(
-    async (kind: "accept" | "keepForLater" | "delete") => {
+    async (kind: "keepForLater" | "delete") => {
       if (!selId || busy) return;
       setBusy(true);
       try {
@@ -520,11 +579,17 @@ export function InboxScreen() {
       if (!selId || busy) return;
       setBusy(true);
       try {
-        await appApi.triageInboxItem({ id: selId, action: { kind: "setPriority", priority } });
-        await refresh(selId);
-        // Re-fetch the detail so the rail reflects the new priority.
-        const { detail: next } = await appApi.getInboxItem({ id: selId });
-        setDetail(next);
+        const result = await appApi.triageInboxItem({
+          id: selId,
+          action: { kind: "setPriority", priority },
+        });
+        const updated = result.item;
+        if (updated) {
+          setItems((prev) => prev.map((item) => (item.id === selId ? updated : item)));
+          setDetail((prev) => (prev ? { ...prev, summary: updated } : prev));
+        } else {
+          await refresh(selId);
+        }
         setError(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -535,7 +600,7 @@ export function InboxScreen() {
     [selId, busy, refresh],
   );
 
-  // Keyboard triage: 1 = activate, 3 = save for later, 6 = delete (ignore when a
+  // Keyboard triage: 1 = read now, 3 = save for later, 6 = delete (ignore when a
   // field/modal is focused, matching the kit's 1–6 hints).
   useEffect(() => {
     if (!desktop || modalOpen || urlModalOpen || fileModalOpen || !selId) return;
@@ -543,13 +608,13 @@ export function InboxScreen() {
       const target = e.target as HTMLElement | null;
       if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === "1") void onTriage("accept");
+      if (e.key === "1") void onReadNow();
       else if (e.key === "3") void onTriage("keepForLater");
       else if (e.key === "6") void onTriage("delete");
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [desktop, modalOpen, urlModalOpen, fileModalOpen, selId, onTriage]);
+  }, [desktop, modalOpen, urlModalOpen, fileModalOpen, selId, onReadNow, onTriage]);
 
   // Open the New-source modal when the ⌘K command palette fires its event
   // ("Paste text as source…" / "New manual note…").
@@ -698,6 +763,7 @@ export function InboxScreen() {
               <PreviewPane
                 detail={detail}
                 busy={busy}
+                onReadNow={onReadNow}
                 onTriage={onTriage}
                 onSetPriority={onSetPriority}
               />

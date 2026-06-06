@@ -2,6 +2,28 @@
 
 Shared domain vocabulary for this project — entities, named processes, and status concepts with project-specific meaning. Seeded with core domain vocabulary, then accretes as ce-compound and ce-compound-refresh process learnings; direct edits are fine. Glossary only, not a spec or catch-all.
 
+## Knowledge Processing
+
+### Source
+
+An imported or manually created body of material that the user may read, triage, extract from, and schedule for later processing.
+
+### Inbox source
+
+A source that has been captured but not yet accepted into the user's active knowledge-processing rotation.
+
+### Source provenance
+
+The origin and reliability context attached to a source, including where it came from and how the app should describe that origin to the user.
+
+### Read now
+
+The inbox action that accepts a source into active processing and immediately opens the local reader for that source.
+
+### Source reader
+
+The local reading surface for processing a source inside the app, distinct from opening the source's external canonical URL.
+
 ## Local Durability
 
 ### Local backup

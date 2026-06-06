@@ -1165,7 +1165,7 @@ export interface InboxItemSummary {
   /** Numeric priority `0.0`–`1.0`; the UI derives the A/B/C/D label. */
   readonly priority: number;
   readonly title: string;
-  /** Provenance source-type label (M2: always "Manual note"). */
+  /** Provenance source-type label, e.g. "Manual note", "Web article", or "PDF". */
   readonly srcType: string;
   readonly author: string | null;
   readonly accessedAt: string | null;
@@ -2294,11 +2294,15 @@ export const InboxGetRequestSchema = z.object({
 });
 export type InboxGetRequest = z.infer<typeof InboxGetRequestSchema>;
 
-/** Full preview payload for one inbox item (summary + provenance + body preview). */
+/** Full preview payload for one inbox item (summary + provenance + full body). */
 export interface InboxItemDetail {
   readonly summary: InboxItemSummary;
   readonly provenance: SourceProvenance;
-  /** A longer plain-text body preview (first ~4000 chars), or `null`. */
+  /** Full ProseMirror body JSON for formatted selected-item rendering. */
+  readonly bodyDoc: unknown | null;
+  /** Full plain-text mirror for fallback rendering; never truncated. */
+  readonly bodyText: string | null;
+  /** Deprecated plain-text body preview (first ~4000 chars), or `null`. */
   readonly bodyPreview: string | null;
 }
 

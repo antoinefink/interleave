@@ -48,6 +48,7 @@ import {
 } from "@interleave/core";
 import {
   type DbHandle,
+  elements,
   loadVectorExtension,
   migrateDatabase,
   openDatabase,
@@ -70,6 +71,7 @@ import {
   HEAVY_FIT_REVIEW_THRESHOLD,
   InboxQuery,
   InspectorQuery,
+  inboxSourceTypeLabel,
   type LibraryBrowseFilters,
   LibraryQuery,
   LineageQuery,
@@ -111,6 +113,7 @@ import {
   seedLargeCollection,
   seedMaintenanceCollection,
 } from "@interleave/testing";
+import { eq } from "drizzle-orm";
 import type {
   AiApproveRequest,
   AiApproveResult,
@@ -2481,6 +2484,8 @@ export class DbService {
           confidence: detail.provenance.confidence,
           reliabilityNotes: detail.provenance.reliabilityNotes,
         },
+        bodyDoc: detail.bodyDoc,
+        bodyText: detail.bodyText,
         bodyPreview: detail.bodyPreview,
       },
     };
@@ -2498,24 +2503,40 @@ export class DbService {
   triageInboxItem(request: InboxTriageRequest): InboxTriageResult {
     const id = request.id as ElementId;
     const { action } = request;
-    switch (action.kind) {
-      case "accept": {
-        this.repos.elements.update(id, { status: "active" });
-        break;
+    let deleted = false;
+    this.require().db.transaction((tx) => {
+      const current = tx.select().from(elements).where(eq(elements.id, id)).get();
+      if (
+        !current ||
+        current.deletedAt ||
+        current.type !== "source" ||
+        current.status !== "inbox"
+      ) {
+        throw new Error("Inbox item is no longer available.");
       }
-      case "keepForLater": {
-        this.repos.elements.update(id, { status: "dismissed" });
-        break;
+      switch (action.kind) {
+        case "accept": {
+          this.repos.elements.updateWithin(tx, id, { status: "active" });
+          break;
+        }
+        case "keepForLater": {
+          this.repos.elements.updateWithin(tx, id, { status: "dismissed" });
+          break;
+        }
+        case "setPriority": {
+          this.repos.elements.updateWithin(tx, id, {
+            priority: priorityFromLabel(action.priority),
+          });
+          break;
+        }
+        case "delete": {
+          this.repos.elements.softDeleteWithin(tx, id);
+          deleted = true;
+          break;
+        }
       }
-      case "setPriority": {
-        this.repos.elements.update(id, { priority: priorityFromLabel(action.priority) });
-        break;
-      }
-      case "delete": {
-        this.repos.elements.softDelete(id);
-        return { item: null, deleted: true };
-      }
-    }
+    });
+    if (deleted) return { item: null, deleted: true };
     // After accept/keep the source leaves the inbox; after setPriority it stays.
     // Re-read it as a fresh summary so the renderer reflects the new state.
     const summary: InboxItemSummary | null = this.summaryForId(id);
@@ -2543,7 +2564,7 @@ export class DbService {
       stage: element.stage,
       priority: element.priority,
       title: element.title,
-      srcType: "Manual note",
+      srcType: inboxSourceTypeLabel(provenance),
       author: provenance?.author ?? null,
       accessedAt: provenance?.accessedAt ?? null,
       charCount: plainText.length,

@@ -18,6 +18,37 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => h.navigate,
 }));
 
+vi.mock("@interleave/editor", () => ({
+  buildSchema: () => ({
+    nodeFromJSON(value: unknown) {
+      function validate(node: unknown) {
+        if (!node || typeof node !== "object" || Array.isArray(node)) {
+          throw new Error("Invalid ProseMirror node");
+        }
+        const typed = node as { type?: unknown; content?: unknown };
+        if (typeof typed.type !== "string") throw new Error("Invalid ProseMirror node");
+        if (typed.content === undefined) return;
+        if (!Array.isArray(typed.content)) throw new Error("Invalid ProseMirror content");
+        for (const child of typed.content) validate(child);
+      }
+      validate(value);
+    },
+  }),
+  SourceEditor: ({
+    initialDoc,
+    editable,
+    className,
+  }: {
+    initialDoc: unknown;
+    editable: boolean;
+    className?: string;
+  }) => (
+    <div className={className} data-editable={String(editable)} data-testid="mock-source-editor">
+      {JSON.stringify(initialDoc)}
+    </div>
+  ),
+}));
+
 vi.mock("../../components/BalanceBanner", () => ({
   BalanceBanner: ({ refreshKey }: { refreshKey: number }) => (
     <div data-testid="mock-balance-banner">{refreshKey}</div>
@@ -144,6 +175,27 @@ function detail(id = "src-1") {
       accessedAt: "2026-06-03T00:00:00.000Z",
       reasonAdded: "Research",
     },
+    bodyDoc: {
+      type: "doc",
+      content: [
+        {
+          type: "heading",
+          attrs: { level: 1, blockId: "blk-title" },
+          content: [{ type: "text", text: "Formatted article" }],
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: "blk-body" },
+          content: [{ type: "text", text: "Full article body" }],
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: "blk-tail" },
+          content: [{ type: "text", text: "Formatted tail sentinel" }],
+        },
+      ],
+    },
+    bodyText: "First paragraph.\n\nSecond paragraph.",
     bodyPreview: "First paragraph.\n\nSecond paragraph.",
   };
 }
@@ -161,7 +213,7 @@ beforeEach(() => {
   h.importMediaSource.mockReset();
   h.listInbox.mockResolvedValue({ items });
   h.getInboxItem.mockImplementation(({ id }) => Promise.resolve({ detail: detail(id) }));
-  h.triageInboxItem.mockResolvedValue({});
+  h.triageInboxItem.mockResolvedValue({ item: items[0], deleted: false });
   h.importPdfSource.mockResolvedValue({ status: "imported", id: "pdf-1" });
   h.pickImportFile
     .mockResolvedValueOnce({ paths: ["/vault/video.mp4"] })
@@ -188,25 +240,82 @@ describe("InboxScreen", () => {
     expect(h.select).toHaveBeenCalledWith("src-1");
     expect(getByTestId("inbox-preview-title")).toHaveTextContent("Inbox source");
     expect(getByTestId("inbox-preview-url")).toHaveAttribute("href", "https://example.com/article");
+    expect(getByTestId("inbox-preview-url")).toHaveAttribute("target", "_blank");
     expect(getByTestId("inbox-preview-canonical")).toHaveAttribute(
       "href",
       "https://example.com/article",
     );
+    expect(getByTestId("inbox-preview-canonical")).toHaveAttribute("target", "_blank");
     expect(getByTestId("inbox-preview-canonical")).toHaveClass("external-url-link");
+    expect(getByTestId("mock-source-editor")).toHaveTextContent("Formatted article");
+    expect(getByTestId("mock-source-editor")).toHaveTextContent("Formatted tail sentinel");
+    expect(getByTestId("mock-source-editor")).toHaveClass("inbox-preview-reader");
+    expect(getByTestId("mock-source-editor")).toHaveAttribute("data-editable", "false");
     expect(getByTestId("inbox-count")).toHaveTextContent("2 items awaiting triage");
   });
 
-  it("triages and reprioritizes the selected item through the bridge", async () => {
-    const { getByTestId, findByTestId } = render(<InboxScreen />);
+  it("reads now by activating the selected item and navigating to the source reader", async () => {
+    const { getByTestId, findByTestId, getByRole } = render(<InboxScreen />);
 
-    await findByTestId("inbox-accept");
-    fireEvent.click(getByTestId("inbox-accept"));
+    await findByTestId("inbox-read-now");
+    expect(getByRole("button", { name: /read now/i })).toBeInTheDocument();
+    fireEvent.click(getByTestId("inbox-read-now"));
     await waitFor(() =>
       expect(h.triageInboxItem).toHaveBeenCalledWith({
         id: "src-1",
         action: { kind: "accept" },
       }),
     );
+    expect(h.navigate).toHaveBeenCalledWith({ to: "/source/$id", params: { id: "src-1" } });
+  });
+
+  it("falls back to full body text when a formatted body is unavailable", async () => {
+    h.getInboxItem.mockResolvedValueOnce({
+      detail: {
+        ...detail("src-1"),
+        bodyDoc: null,
+        bodyText: "Full first paragraph.\n\nFull second paragraph with every word.",
+        bodyPreview: "Full first paragraph.",
+      },
+    });
+
+    const { findByTestId, queryByTestId } = render(<InboxScreen />);
+
+    expect(await findByTestId("inbox-preview-body")).toHaveTextContent(
+      "Full second paragraph with every word.",
+    );
+    expect(queryByTestId("mock-source-editor")).not.toBeInTheDocument();
+  });
+
+  it("falls back to full body text when the formatted body is malformed", async () => {
+    h.getInboxItem.mockResolvedValueOnce({
+      detail: {
+        ...detail("src-1"),
+        bodyDoc: { type: "doc", content: [{}] },
+        bodyText: "Full text survives malformed formatted JSON.",
+        bodyPreview: "Full text",
+      },
+    });
+
+    const { findByTestId, queryByTestId } = render(<InboxScreen />);
+
+    expect(await findByTestId("inbox-preview-body")).toHaveTextContent(
+      "Full text survives malformed formatted JSON.",
+    );
+    expect(queryByTestId("mock-source-editor")).not.toBeInTheDocument();
+  });
+
+  it("reprioritizes the selected item through the bridge", async () => {
+    const { getByTestId, findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-priority-A");
+    await waitFor(() => expect(h.getInboxItem).toHaveBeenCalledWith({ id: "src-1" }));
+    h.getInboxItem.mockClear();
+    h.listInbox.mockClear();
+    h.triageInboxItem.mockResolvedValueOnce({
+      item: { ...items[0], priority: 0.875 },
+      deleted: false,
+    });
 
     fireEvent.click(getByTestId("inbox-priority-A"));
     await waitFor(() =>
@@ -215,6 +324,32 @@ describe("InboxScreen", () => {
         action: { kind: "setPriority", priority: "A" },
       }),
     );
+    expect(h.getInboxItem).not.toHaveBeenCalled();
+    expect(h.listInbox).not.toHaveBeenCalled();
+  });
+
+  it("uses the 1 shortcut for Read now and does not navigate when activation fails", async () => {
+    h.triageInboxItem.mockRejectedValueOnce(new Error("cannot activate"));
+    const { findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-read-now");
+    fireEvent.keyDown(window, { key: "1" });
+
+    expect(await findByTestId("inbox-error")).toHaveTextContent("cannot activate");
+    expect(h.navigate).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate when Read now returns a stale inbox result", async () => {
+    h.triageInboxItem.mockResolvedValueOnce({ item: null, deleted: false });
+    const { findByTestId, getByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-read-now");
+    h.listInbox.mockClear();
+    fireEvent.click(getByTestId("inbox-read-now"));
+
+    expect(await findByTestId("inbox-error")).toHaveTextContent("no longer available");
+    expect(h.navigate).not.toHaveBeenCalled();
+    expect(h.listInbox).toHaveBeenCalled();
   });
 
   it("opens import modals and refreshes after child imports", async () => {

@@ -160,6 +160,7 @@ export {
   type InboxItemSummary,
   type InboxProvenance,
   InboxQuery,
+  inboxSourceTypeLabel,
 } from "./inbox-query";
 export {
   type ElementSummary,

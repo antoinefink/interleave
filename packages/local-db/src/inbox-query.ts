@@ -16,7 +16,9 @@ import type {
   ConfidenceLevel,
   Element,
   ElementId,
+  MediaKind,
   ReliabilityTier,
+  Source,
   SourceType,
 } from "@interleave/core";
 import type { Repositories } from "./index";
@@ -59,11 +61,44 @@ export interface InboxProvenance {
 export interface InboxItemDetail {
   readonly summary: InboxItemSummary;
   readonly provenance: InboxProvenance;
+  /** Full ProseMirror body JSON for the selected item; opaque to local-db. */
+  readonly bodyDoc: unknown | null;
+  /** Full plain-text mirror for fallback rendering; never truncated. */
+  readonly bodyText: string | null;
+  /** Deprecated plain-text preview kept for older renderer callers. */
   readonly bodyPreview: string | null;
 }
 
-/** Provenance source-type label. M2 only has manual notes; refined when URL/PDF import lands. */
-const MANUAL_SRC_TYPE = "Manual note";
+/** Human labels for inbox source chips. */
+const SOURCE_TYPE_LABEL: Record<SourceType, string> = {
+  paper: "Paper",
+  book: "Book",
+  article: "Web article",
+  docs: "Docs",
+  reference: "Reference",
+  blog: "Blog post",
+  forum: "Forum thread",
+  video: "Video",
+  dataset: "Dataset",
+  personal_note: "Manual note",
+  other: "Source",
+};
+
+export function inboxSourceTypeLabel(source: Source | null): string {
+  if (!source) return "Manual note";
+  if (source.mediaKind) return mediaSourceLabel(source.mediaKind);
+  if (source.sourceType) return SOURCE_TYPE_LABEL[source.sourceType];
+  if (source.snapshotKey?.toLowerCase().endsWith(".pdf")) return "PDF";
+  if (source.snapshotKey?.toLowerCase().endsWith(".epub")) return "Book";
+  if (source.snapshotKey?.toLowerCase().endsWith(".html")) return "Web article";
+  if (source.url || source.canonicalUrl || source.originalUrl) return "Web article";
+  return "Manual note";
+}
+
+function mediaSourceLabel(kind: MediaKind): string {
+  if (kind === "youtube") return "YouTube";
+  return kind === "audio" ? "Audio" : "Video";
+}
 
 /** Collapse whitespace + trim, then take the first `max` chars (no mid-word ellipsis fuss). */
 function snippet(text: string, max: number): string | null {
@@ -124,11 +159,14 @@ export class InboxQuery {
     };
 
     const doc = this.repos.documents.findById(id);
+    const bodyText = doc ? doc.plainText : null;
     const bodyPreview = doc ? snippet(doc.plainText, 4000) : null;
 
     return {
       summary: this.toSummary(element),
       provenance,
+      bodyDoc: doc?.prosemirrorJson ?? null,
+      bodyText,
       bodyPreview,
     };
   }
@@ -146,7 +184,7 @@ export class InboxQuery {
       stage: element.stage,
       priority: element.priority,
       title: element.title,
-      srcType: MANUAL_SRC_TYPE,
+      srcType: inboxSourceTypeLabel(provenance),
       author: provenance?.author ?? null,
       accessedAt: provenance?.accessedAt ?? null,
       charCount: plainText.length,

@@ -1515,6 +1515,9 @@ export interface InboxGetRequest {
 export interface InboxItemDetail {
   readonly summary: InboxItemSummary;
   readonly provenance: SourceProvenance;
+  readonly bodyDoc: unknown | null;
+  readonly bodyText: string | null;
+  /** Deprecated plain-text preview; use `bodyDoc` for selected-item rendering. */
   readonly bodyPreview: string | null;
 }
 

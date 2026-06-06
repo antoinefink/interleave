@@ -63,6 +63,34 @@ describe("InboxQuery (T012)", () => {
     expect(item?.srcType).toBe("Manual note");
   });
 
+  it("labels inbox sources from provenance instead of treating every source as a manual note", () => {
+    const sources = new SourceRepository(handle.db);
+    const manual = importInbox("Handwritten note").element;
+    const web = sources.create({
+      title: "Fetched article",
+      priority: priorityFromLabel("C"),
+      status: "inbox",
+      stage: "raw_source",
+      url: "https://example.com/post",
+      canonicalUrl: "https://example.com/post",
+      originalUrl: "https://example.com/post",
+      snapshotKey: "sources/web/cleaned.html",
+      sourceType: "article",
+    }).element;
+    const pdf = sources.create({
+      title: "Imported PDF",
+      priority: priorityFromLabel("C"),
+      status: "inbox",
+      stage: "raw_source",
+      snapshotKey: "sources/pdf/original.pdf",
+    }).element;
+
+    const byId = new Map(inbox.list().map((item) => [item.id, item.srcType]));
+    expect(byId.get(manual.id)).toBe("Manual note");
+    expect(byId.get(web.id)).toBe("Web article");
+    expect(byId.get(pdf.id)).toBe("PDF");
+  });
+
   it("list returns only live inbox sources (not active / dismissed / deleted)", () => {
     const elements = new ElementRepository(handle.db);
     const inboxOne = importInbox("Inbox one").element;
@@ -169,16 +197,54 @@ describe("InboxQuery (T012)", () => {
     expect(inbox.get(element.id)).toBeNull();
   });
 
-  it("summary surfaces a body preview + char count when a document exists", () => {
+  it("summary surfaces a body preview, full body doc, and full untruncated body text", () => {
     const { element } = importInbox("With body");
+    const prosemirrorJson = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          attrs: { blockId: "blk-body" },
+          content: [{ type: "text", text: "First paragraph." }],
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: "blk-tail" },
+          content: [{ type: "text", text: "Formatted tail sentinel." }],
+        },
+      ],
+    };
+    const longTail = `First paragraph.\n\n${"word ".repeat(900)}final word`;
     repos.documents.upsert({
       elementId: element.id,
-      prosemirrorJson: { type: "doc", content: [] },
-      plainText: "First paragraph.\n\nSecond paragraph with more words.",
+      prosemirrorJson,
+      plainText: longTail,
     });
     const detail = inbox.get(element.id);
     expect(detail?.summary.charCount).toBeGreaterThan(0);
+    expect(detail?.bodyDoc).toEqual(prosemirrorJson);
+    expect(detail?.bodyText).toBe(longTail);
+    expect(detail?.bodyText).toContain("final word");
     expect(detail?.bodyPreview).toContain("First paragraph");
+    expect(detail?.bodyPreview?.length).toBeLessThan(longTail.length);
     expect(detail?.summary.previewSnippet).toContain("First paragraph");
+  });
+
+  it("returns a formatted body doc even when the plain-text mirror is empty", () => {
+    const { element } = importInbox("Empty formatted body");
+    const prosemirrorJson = {
+      type: "doc",
+      content: [],
+    };
+    repos.documents.upsert({
+      elementId: element.id,
+      prosemirrorJson,
+      plainText: "",
+    });
+
+    const detail = inbox.get(element.id);
+    expect(detail?.bodyDoc).toEqual(prosemirrorJson);
+    expect(detail?.bodyText).toBe("");
+    expect(detail?.bodyPreview).toBeNull();
   });
 });
