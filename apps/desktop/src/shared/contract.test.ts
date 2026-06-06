@@ -87,11 +87,13 @@ import {
   ReviewPreviewRequestSchema,
   ReviewSessionNextRequestSchema,
   SearchQueryRequestSchema,
+  type SearchQueryResult,
   SemanticContradictionsRequestSchema,
   SemanticReindexRequestSchema,
   SemanticRelatedRequestSchema,
   SemanticSearchModeSchema,
   SemanticSearchRequestSchema,
+  type SemanticSearchResult,
   SemanticStatusRequestSchema,
   SettingKeySchema,
   SettingsGetRequestSchema,
@@ -2233,6 +2235,25 @@ describe("Search request schema (T042)", () => {
     expect(() => SearchQueryRequestSchema.parse({ q: "x", limit: 999 })).toThrow();
     expect(() => SearchQueryRequestSchema.parse({ q: "x".repeat(513) })).toThrow();
     expect(() => SearchQueryRequestSchema.parse({})).toThrow();
+  });
+
+  it("SearchQueryResult and SemanticSearchResult carry the full SearchCounts shape", () => {
+    const searchFixture = {
+      results: [],
+      counts: {
+        byType: { source: 1, extract: 2, card: 3 },
+        byConcept: { el_concept: 4 },
+        byPriority: { A: 5, B: 6, C: 7, D: 8 },
+      },
+    } satisfies SearchQueryResult;
+    const semanticFixture = {
+      results: [],
+      mode: "semantic",
+      counts: searchFixture.counts,
+    } satisfies SemanticSearchResult;
+
+    expect(searchFixture.counts.byType.source).toBe(1);
+    expect(semanticFixture.counts.byPriority.D).toBe(8);
   });
 });
 

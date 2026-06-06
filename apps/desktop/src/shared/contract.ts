@@ -4527,9 +4527,9 @@ export const SearchQueryRequestSchema = z.object({
   /**
    * Restrict to elements whose numeric priority maps to this A/B/C/D band (the
    * `/search` priority facet). Applied MAIN-side via the canonical priority-band
-   * boundaries (mirroring `priorityToLabel`) so the result list AND the drill-down
-   * concept-chip counts respect priority together — the chip number then matches the
-   * priority-narrowed list (the count-vs-list invariant).
+   * boundaries (mirroring `priorityToLabel`) so the result list and drill-down
+   * filterbar counts respect priority together — chip numbers then match the
+   * priority-narrowed lists (the count-vs-list invariant).
    */
   priorityLabel: PriorityLabelSchema.optional(),
   /** Cap the result count (1..200; defaults main-side). */
@@ -4538,22 +4538,25 @@ export const SearchQueryRequestSchema = z.object({
 export type SearchQueryRequest = z.infer<typeof SearchQueryRequestSchema>;
 
 /**
- * DRILL-DOWN faceted counts for the `/search` filterbar concept chips. Mirrors the
- * Library browse counts' concept dimension: `byConcept[c]` is the number of result
- * rows you'd get if concept `c` were selected together with the SAME keyword + type
- * + priority (+ tag) — the concept dimension's own predicate is DROPPED — so the
- * chip number always matches the narrowed list. Keyed by concept element id. (The
- * chip MUST use this, NOT the global `ConceptNode.memberCount`, which never matches
- * the narrowed list — the same mismatch class as the reported Library bug.)
+ * DRILL-DOWN faceted counts for the `/search` filterbar. Each dimension respects
+ * the active keyword + tag and every OTHER active facet, but drops its own active
+ * value: `byType` ignores type, `byPriority` ignores priority, and `byConcept`
+ * ignores concept. That makes each chip count equal the rows returned if that chip
+ * were selected with the rest of the current filters. Concept keys are concept
+ * element ids and MUST come from this map, not global `ConceptNode.memberCount`.
  */
 export interface SearchCounts {
+  /** Per searchable type, ignoring the active type filter. */
+  readonly byType: Readonly<Record<SearchableType, number>>;
   /** Per concept (keyed by concept element id), ignoring the active concept filter. */
   readonly byConcept: Readonly<Record<string, number>>;
+  /** Per priority band A/B/C/D, ignoring the active priority filter. */
+  readonly byPriority: Readonly<Record<PriorityLabelInput, number>>;
 }
 
 export interface SearchQueryResult {
   readonly results: readonly SearchResult[];
-  /** Drill-down per-concept counts for the filterbar concept chips. */
+  /** Drill-down counts for the `/search` filterbar chips. */
   readonly counts: SearchCounts;
 }
 
@@ -4590,6 +4593,8 @@ export interface SemanticSearchResult {
   readonly results: readonly SemanticSearchResultRow[];
   /** Which retrieval ran — `disabled`/`fts` tell the UI to show "keyword only". */
   readonly mode: SemanticSearchMode;
+  /** Drill-down counts over the returned fused result universe. */
+  readonly counts: SearchCounts;
 }
 
 export const SemanticStatusRequestSchema = z.object({});

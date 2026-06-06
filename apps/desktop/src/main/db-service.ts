@@ -68,6 +68,7 @@ import {
   ExtractionService,
   ExtractService,
   ExtractStagnationQuery,
+  foldSearchFacetCounts,
   HEAVY_FIT_REVIEW_THRESHOLD,
   InboxQuery,
   InspectorQuery,
@@ -260,6 +261,7 @@ import type {
   ReviewPreviewResult,
   ReviewSessionNextRequest,
   ReviewSessionNextResult,
+  SearchableType,
   SearchQueryRequest,
   SearchQueryResult,
   SearchResult,
@@ -2153,23 +2155,55 @@ export class DbService {
     // Embed the query only when semantics can run (else FTS-only, no job enqueued).
     const queryVector = enabled ? await this.embeddingService.embedQuery(request.q) : null;
 
-    const fused = this.repos.semanticSearch.search(request.q, {
-      semanticEnabled: enabled,
-      ...(queryVector ? { queryVector } : {}),
-      ...(request.type ? { type: request.type } : {}),
-      ...(request.limit !== undefined ? { limit: request.limit } : {}),
-    });
+    const runFused = (type?: SearchableType) =>
+      this.repos.semanticSearch.search(request.q, {
+        semanticEnabled: enabled,
+        ...(queryVector ? { queryVector } : {}),
+        ...(type ? { type } : {}),
+        ...(request.limit !== undefined ? { limit: request.limit } : {}),
+      });
+    const toCountRows = (
+      hits: readonly {
+        id: string;
+        type: "source" | "extract" | "card";
+        title: string;
+        snippet: string;
+        ftsScore?: number;
+        vecDistance?: number;
+        source: "fts" | "semantic" | "both";
+      }[],
+    ) =>
+      hits
+        .map((hit) => this.enrichFusedHit(hit))
+        .filter((r): r is SemanticSearchResultRow => r !== null)
+        .map((row) => ({
+          id: row.id as ElementId,
+          type: row.type,
+          priority: row.priority as Priority,
+        }));
+
+    const fused = runFused(request.type);
 
     const results = fused.hits
       .map((hit) => this.enrichFusedHit(hit))
       .filter((r): r is SemanticSearchResultRow => r !== null);
+    const countRows = toCountRows(fused.hits);
+    const membership = this.repos.concepts.liveMembershipMapForMembers(
+      countRows.map((row) => row.id),
+    );
+    const counts = foldSearchFacetCounts(countRows, membership, {
+      ...(request.type ? { type: request.type } : {}),
+    });
+    for (const type of ["source", "extract", "card"] as const) {
+      counts.byType[type] = toCountRows(runFused(type).hits).length;
+    }
 
     const mode: SemanticSearchMode = !enabled
       ? "disabled"
       : fused.mode === "semantic"
         ? "semantic"
         : "fts";
-    return { results, mode };
+    return { results, mode, counts };
   }
 
   /** Index-coverage + state for the Settings toggle + the library "N of M embedded" affordance. */
@@ -4526,35 +4560,17 @@ export class DbService {
       });
     }
 
-    // DRILL-DOWN per-concept counts for the filterbar concept chips. Like the
-    // Library browse counts, the concept dimension DROPS its own predicate: the
-    // count is taken over the keyword+type+priority+tag match set WITHOUT the active
-    // concept filter, so the number next to a concept chip equals the rows you'd get
-    // if that concept were selected alongside the SAME keyword/type/priority.
-    // (Previously the chip showed `ConceptNode.memberCount` — the GLOBAL member count
-    // across ALL element types — which never matched the narrowed list, the same
-    // mismatch class as the reported Library bug; and the priority facet was applied
-    // renderer-side only, so the chip ignored it — fixed by threading `priorityLabel`
-    // here.) Built in ONE pass by folding the matched ids through the canonical
-    // `concept_membership` map (a Set dedups duplicate edges; soft-deleted
-    // members/concepts already dropped) — never an `elementsForConcept` per concept
-    // (no N+1).
-    const byConcept: Record<string, number> = {};
-    const membership = this.repos.concepts.liveMembershipMap();
-    const countedIds = this.repos.search.matchedIdsForConceptCounts(request.q, {
-      ...(request.type ? { type: request.type } : {}),
+    // DRILL-DOWN faceted counts for the filterbar. The repository computes exact
+    // aggregate counts in SQL (no snippets/ranking/materialized match list), and
+    // each dimension drops only its own active predicate.
+    const counts = this.repos.search.facetCounts(request.q, {
       ...(request.tag ? { tag: request.tag } : {}),
+      ...(request.type ? { type: request.type } : {}),
+      ...(request.conceptId ? { conceptId: request.conceptId as ElementId } : {}),
       ...(request.priorityLabel ? { priorityLabel: request.priorityLabel } : {}),
     });
-    for (const id of countedIds) {
-      const conceptIds = membership.get(id as ElementId);
-      if (!conceptIds) continue;
-      for (const conceptId of conceptIds) {
-        byConcept[conceptId] = (byConcept[conceptId] ?? 0) + 1;
-      }
-    }
 
-    return { results, counts: { byConcept } };
+    return { results, counts };
   }
 
   // -------------------------------------------------------------------------

@@ -263,6 +263,96 @@ describe("SearchRepository (FTS5, T042)", () => {
     expect(search.search("quantum", { type: "card" }).map((h) => h.id)).toEqual([card.element.id]);
   });
 
+  it("matchedRowsForFacetCounts returns one keyword+tag count universe with type and priority", () => {
+    const concept = conceptsRepo.createConcept({ name: "Attention" });
+    const { element: src } = sources.create({ title: "Neuron source", priority: 0.875 });
+    documents.upsert({
+      elementId: src.id,
+      prosemirrorJson: { type: "doc", content: [] },
+      plainText: "neuron body",
+    });
+    conceptsRepo.assignConcept(src.id, concept.id);
+    elementsRepo.addTag(src.id, "focus");
+
+    const { element: host } = sources.create({ title: "Card host", priority: 0.5 });
+    const card = review.createCard({
+      sourceId: host.id,
+      title: "neuron card",
+      kind: "qa",
+      prompt: "neuron question?",
+      answer: "answer",
+      priority: 0.375,
+    });
+    elementsRepo.addTag(card.element.id, "focus");
+
+    const untaggedExtract = elementsRepo.create({
+      type: "extract",
+      status: "active",
+      stage: "raw_extract",
+      priority: 0.625,
+      title: "Neuron extract",
+    });
+    documents.upsert({
+      elementId: untaggedExtract.id,
+      prosemirrorJson: { type: "doc", content: [] },
+      plainText: "neuron extract body",
+    });
+
+    const rows = search.matchedRowsForFacetCounts("neuron", { tag: "focus" });
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        { id: src.id, type: "source", priority: 0.875 },
+        { id: card.element.id, type: "card", priority: 0.375 },
+      ]),
+    );
+    expect(rows.map((r) => r.id)).not.toContain(untaggedExtract.id);
+  });
+
+  it("facetCounts returns exact drill-down counts without duplicate edge inflation", () => {
+    const concept = conceptsRepo.createConcept({ name: "Attention" });
+    const { element: source } = sources.create({ title: "Neuron source", priority: 0.875 });
+    documents.upsert({
+      elementId: source.id,
+      prosemirrorJson: { type: "doc", content: [] },
+      plainText: "neuron body",
+    });
+    const { element: host } = sources.create({ title: "Host", priority: 0.5 });
+    const card = review.createCard({
+      sourceId: host.id,
+      title: "Neuron card",
+      kind: "qa",
+      prompt: "neuron question?",
+      answer: "answer",
+      priority: 0.375,
+    });
+    conceptsRepo.assignConcept(source.id, concept.id);
+    for (let i = 0; i < 3; i++) {
+      elementsRepo.addRelation({
+        fromElementId: card.element.id,
+        toElementId: concept.id,
+        relationType: "concept_membership",
+      });
+    }
+
+    const all = search.facetCounts("neuron");
+    expect(all.byType).toEqual({ source: 1, extract: 0, card: 1 });
+    expect(all.byPriority).toEqual({ A: 1, B: 0, C: 1, D: 0 });
+    expect(all.byConcept[concept.id]).toBe(2);
+
+    const cPriority = search.facetCounts("neuron", { priorityLabel: "C" });
+    expect(cPriority.byConcept[concept.id]).toBe(1);
+    expect(cPriority.byType.card).toBe(1);
+    expect(cPriority.byType.source).toBe(0);
+
+    const activeConceptAndType = search.facetCounts("neuron", {
+      type: "card",
+      conceptId: concept.id,
+    });
+    expect(activeConceptAndType.byType).toEqual({ source: 1, extract: 0, card: 1 });
+    expect(activeConceptAndType.byPriority.C).toBe(1);
+    expect(activeConceptAndType.byConcept[concept.id]).toBe(1);
+  });
+
   describe("concept filter (canonical-substrate liveness/type, T041/T042)", () => {
     /** Seed a source that matches "neuron" and is a member of a fresh concept. */
     function seedSourceInConcept(conceptName: string) {

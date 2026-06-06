@@ -29,7 +29,8 @@
  * validated `search.*` IPC surface; the renderer never issues SQL.
  */
 
-import type { Element, ElementId, ElementType } from "@interleave/core";
+import type { Element, ElementId, ElementType, Priority } from "@interleave/core";
+import { priorityToLabel } from "@interleave/core";
 import { elements, type InterleaveDatabase } from "@interleave/db";
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { rowToElement } from "./mappers";
@@ -55,6 +56,15 @@ const PRIORITY_BANDS: Readonly<
   D: [null, 0.25],
 };
 
+const PRIORITY_LABEL_SQL = sql`
+  CASE
+    WHEN priority >= 0.75 THEN 'A'
+    WHEN priority >= 0.5 THEN 'B'
+    WHEN priority >= 0.25 THEN 'C'
+    ELSE 'D'
+  END
+`;
+
 /** Options narrowing a search. */
 export interface SearchOptions {
   /** Restrict to a single element type. */
@@ -70,12 +80,9 @@ const SEARCHABLE_TYPES = new Set<ElementType>(["source", "extract", "card"]);
 const DEFAULT_LIMIT = 50;
 
 /**
- * Safety cap for the un-narrowed concept-count scan ({@link
- * SearchRepository.matchedIdsForConceptCounts}). The drill-down chip counts want
- * the FULL keyword+type+tag match set (pre-display-cap), but a pathological query
- * must still not pull an unbounded list into memory; this bound is far above any
- * realistic single-keyword result set, so counts stay exact in practice while the
- * scan can never run away.
+ * Safety cap for the `/search` facet-count scan. Drill-down chip counts want the
+ * full keyword+tag match universe before the display cap, but a pathological
+ * query must still stay bounded in SQLite and in memory.
  */
 const MAX_COUNT_SCAN = 10_000;
 
@@ -92,6 +99,74 @@ export interface SearchHit {
   readonly snippet: string;
   /** FTS5 `bm25` rank — lower is a better match. */
   readonly score: number;
+  /** Numeric priority (0..1), carried for bounded faceted count folds. */
+  readonly priority: Priority;
+}
+
+/** Minimal live match row for the `/search` drill-down count fold. */
+export interface SearchFacetCountMatch {
+  readonly id: ElementId;
+  readonly type: SearchableType;
+  readonly priority: Priority;
+}
+
+/** Active filters that shape drill-down counts. Each count dimension drops itself. */
+export interface SearchFacetCountFilters {
+  readonly type?: SearchableType;
+  readonly conceptId?: ElementId;
+  readonly priorityLabel?: SearchPriorityLabel;
+}
+
+/** Faceted drill-down counts for searchable element type, concept, and priority. */
+export interface SearchFacetCounts {
+  readonly byType: Record<SearchableType, number>;
+  readonly byConcept: Record<string, number>;
+  readonly byPriority: Record<SearchPriorityLabel, number>;
+}
+
+export function emptySearchFacetCounts(): SearchFacetCounts {
+  return {
+    byType: { source: 0, extract: 0, card: 0 },
+    byConcept: {},
+    byPriority: { A: 0, B: 0, C: 0, D: 0 },
+  };
+}
+
+/**
+ * Fold one bounded count universe into the `/search` drill-down counts.
+ *
+ * Semantics: every dimension respects the active keyword/tag and every OTHER
+ * active facet, while dropping its own active value. That makes each chip count
+ * equal the rows returned if that chip were selected with the current filters.
+ */
+export function foldSearchFacetCounts(
+  rows: readonly SearchFacetCountMatch[],
+  membership: ReadonlyMap<ElementId, ReadonlySet<ElementId>>,
+  filters: SearchFacetCountFilters = {},
+): SearchFacetCounts {
+  const counts = emptySearchFacetCounts();
+
+  for (const row of rows) {
+    const conceptIds = membership.get(row.id);
+    const label = priorityToLabel(row.priority);
+    const passesType = !filters.type || row.type === filters.type;
+    const passesConcept = !filters.conceptId || (conceptIds?.has(filters.conceptId) ?? false);
+    const passesPriority = !filters.priorityLabel || label === filters.priorityLabel;
+
+    if (passesConcept && passesPriority) {
+      counts.byType[row.type] += 1;
+    }
+    if (passesType && passesConcept) {
+      counts.byPriority[label] += 1;
+    }
+    if (passesType && passesPriority && conceptIds) {
+      for (const conceptId of conceptIds) {
+        counts.byConcept[conceptId] = (counts.byConcept[conceptId] ?? 0) + 1;
+      }
+    }
+  }
+
+  return counts;
 }
 
 /** Options for the richer ranked {@link SearchRepository.search}. */
@@ -106,9 +181,17 @@ export interface SearchQueryOptions {
    * Restrict to elements whose numeric priority maps to this A/B/C/D band (the
    * `/search` priority facet). Band boundaries mirror the canonical
    * `priorityToLabel` thresholds, so a priority-narrowed search matches the
-   * SAME rows the renderer would render — and the drill-down concept-chip counts
-   * stay in lock-step with the priority-narrowed list.
+   * SAME rows the renderer would render — and drill-down count folds stay in
+   * lock-step with the priority-narrowed list.
    */
+  readonly priorityLabel?: SearchPriorityLabel;
+}
+
+/** Options for exact `/search` facet-count aggregates. */
+export interface SearchFacetCountOptions {
+  readonly type?: SearchableType;
+  readonly conceptId?: ElementId;
+  readonly tag?: string;
   readonly priorityLabel?: SearchPriorityLabel;
 }
 
@@ -165,7 +248,9 @@ export class SearchRepository {
     const match = toMatchExpression(query);
     if (match === null) return [];
 
-    const limit = options.limit ?? DEFAULT_LIMIT;
+    const rawLimit = options.limit ?? DEFAULT_LIMIT;
+    const limit = Number.isFinite(rawLimit) ? Math.max(0, Math.trunc(rawLimit)) : DEFAULT_LIMIT;
+    if (limit === 0) return [];
     const typeFilter = options.type;
     if (typeFilter && !SEARCHABLE_TYPES.has(typeFilter)) return [];
 
@@ -255,12 +340,10 @@ export class SearchRepository {
             JOIN tags tf ON tf.id = etf.tag_id AND tf.name = ${options.tag}`
       : sql``;
 
-    // The PRIORITY facet (drill-down): narrow on `elements.priority` by the chosen
+    // The PRIORITY facet: narrow on `elements.priority` by the chosen
     // A/B/C/D band, using the SAME `[lower, upper)` boundaries `priorityToLabel`
     // derives so the SQL filter and the label mapping never diverge. Applied here
-    // (in `search`) means BOTH the result list AND the concept-count scan
-    // (`matchedIdsForConceptCounts`, which reuses `search`) respect priority — so a
-    // concept-chip count always matches the priority-narrowed list.
+    // (in `search`) means the result list respects the same labels rendered in UI.
     const priorityClause = priorityBandClause(options.priorityLabel);
 
     const rows = this.db.all<{
@@ -270,15 +353,17 @@ export class SearchRepository {
       snippet: string;
       tier: number;
       score: number;
+      priority: number;
     }>(sql`
-      SELECT m.id AS id, m.type AS type, e.title AS title, m.snippet AS snippet,
-        m.tier AS tier, m.score AS score
+      SELECT DISTINCT m.id AS id, m.type AS type, e.title AS title, m.snippet AS snippet,
+        m.tier AS tier, m.score AS score, e.priority AS priority
       FROM (${unionSql}) m
       JOIN elements e ON e.id = m.id AND e.deleted_at IS NULL
       ${conceptJoin}
       ${tagJoin}
       WHERE 1 = 1 ${priorityClause}
       ORDER BY m.tier ASC, m.score ASC
+      LIMIT ${limit}
     `);
 
     // Dedupe per element (keep the best-ranked hit), preserving rank order, then cap.
@@ -293,6 +378,7 @@ export class SearchRepository {
         title: row.title,
         snippet: row.snippet ?? "",
         score: row.score,
+        priority: row.priority as Priority,
       });
       if (hits.length >= limit) break;
     }
@@ -300,17 +386,193 @@ export class SearchRepository {
   }
 
   /**
-   * The DISTINCT live element ids matching a query under the keyword + type + tag
-   * filters but with NO concept narrowing and NO result cap — the universe the
-   * library `/search` concept chips count over (DRILL-DOWN semantics: the concept
-   * dimension's own predicate is dropped so a chip count equals the rows you'd get
-   * if that concept were selected alongside the SAME keyword/type/tag). It reuses
-   * the SAME ranked {@link search} (so the matched set is identical to what the
-   * results list draws from) with the concept filter omitted and the cap lifted to
-   * the safety {@link MAX_COUNT_SCAN}, then returns just the ids. Excludes
-   * soft-deleted (the FTS join already does). The CALLER folds these through the
-   * canonical `concept_membership` map to produce per-concept counts — keeping the
-   * single-pass, no-N+1 rule (no `elementsForConcept` per concept).
+   * The DISTINCT live match rows for the `/search` filterbar's faceted drill-down
+   * counts. This intentionally drops the type, concept, and priority predicates so
+   * the caller can compute every dimension from ONE bounded keyword+tag FTS pass:
+   * `byType` drops type, `byPriority` drops priority, and `byConcept` drops concept
+   * while each fold still applies the other active facets. The caller reads the
+   * canonical live concept-membership map once and performs no per-chip queries.
+   */
+  matchedRowsForFacetCounts(
+    query: string,
+    options: {
+      readonly tag?: string;
+    } = {},
+  ): SearchFacetCountMatch[] {
+    const match = toMatchExpression(query);
+    if (match === null) return [];
+
+    const unions: ReturnType<typeof sql>[] = [
+      sql`SELECT element_id AS id, 'source' AS type FROM source_fts WHERE source_fts MATCH ${match}`,
+      sql`SELECT element_id AS id, 'extract' AS type FROM extract_fts WHERE extract_fts MATCH ${match}`,
+      sql`SELECT element_id AS id, 'card' AS type FROM card_fts WHERE card_fts MATCH ${match}`,
+    ];
+    const unionSql = sql.join(unions, sql` UNION ALL `);
+    const tagJoin = options.tag
+      ? sql`JOIN element_tags etf ON etf.element_id = e.id
+            JOIN tags tf ON tf.id = etf.tag_id AND tf.name = ${options.tag}`
+      : sql``;
+
+    const rows = this.db.all<{
+      id: string;
+      type: SearchableType;
+      priority: number;
+    }>(sql`
+      SELECT DISTINCT m.id AS id, m.type AS type, e.priority AS priority
+      FROM (${unionSql}) m
+      JOIN elements e ON e.id = m.id AND e.deleted_at IS NULL
+      ${tagJoin}
+      LIMIT ${MAX_COUNT_SCAN}
+    `);
+
+    return rows.map((row) => ({
+      id: row.id as ElementId,
+      type: row.type,
+      priority: row.priority as Priority,
+    }));
+  }
+
+  /**
+   * Exact drill-down counts for the `/search` filterbar. This intentionally runs
+   * aggregate SQL over the keyword match universe instead of materializing matched
+   * ids in JavaScript: no snippets, no bm25 ranking, no per-chip query loop, and
+   * no safety-cap undercounts on broad queries.
+   */
+  facetCounts(query: string, options: SearchFacetCountOptions = {}): SearchFacetCounts {
+    const match = toMatchExpression(query);
+    if (match === null) return emptySearchFacetCounts();
+
+    const counts = emptySearchFacetCounts();
+    const byTypeUnion = this.matchUnionSql(match);
+    const byOtherUnion = this.matchUnionSql(match, options.type);
+    if (!byTypeUnion || !byOtherUnion) return counts;
+
+    const byTypeRows = this.db.all<{ type: SearchableType; count: number }>(sql`
+      WITH matched AS (${byTypeUnion}),
+      base AS (
+        ${this.facetBaseSql({
+          ...(options.tag ? { tag: options.tag } : {}),
+          ...(options.conceptId ? { conceptId: options.conceptId } : {}),
+          ...(options.priorityLabel ? { priorityLabel: options.priorityLabel } : {}),
+        })}
+      )
+      SELECT type, COUNT(*) AS count
+      FROM base
+      GROUP BY type
+    `);
+    for (const row of byTypeRows) counts.byType[row.type] = Number(row.count);
+
+    const byPriorityRows = this.db.all<{ priorityLabel: SearchPriorityLabel; count: number }>(sql`
+      WITH matched AS (${byOtherUnion}),
+      base AS (
+        ${this.facetBaseSql({
+          ...(options.tag ? { tag: options.tag } : {}),
+          ...(options.conceptId ? { conceptId: options.conceptId } : {}),
+        })}
+      )
+      SELECT ${PRIORITY_LABEL_SQL} AS priorityLabel, COUNT(*) AS count
+      FROM base
+      GROUP BY priorityLabel
+    `);
+    for (const row of byPriorityRows) counts.byPriority[row.priorityLabel] = Number(row.count);
+
+    const byConceptRows = this.db.all<{ conceptId: string; count: number }>(sql`
+      WITH matched AS (${byOtherUnion}),
+      base AS (
+        ${this.facetBaseSql({
+          ...(options.tag ? { tag: options.tag } : {}),
+          ...(options.priorityLabel ? { priorityLabel: options.priorityLabel } : {}),
+        })}
+      )
+      SELECT er.to_element_id AS conceptId, COUNT(DISTINCT base.id) AS count
+      FROM base
+      JOIN element_relations er
+        ON er.from_element_id = base.id
+        AND er.relation_type = 'concept_membership'
+      JOIN elements ce
+        ON ce.id = er.to_element_id
+        AND ce.deleted_at IS NULL
+        AND ce.type = 'concept'
+      GROUP BY er.to_element_id
+    `);
+    for (const row of byConceptRows) counts.byConcept[row.conceptId] = Number(row.count);
+
+    return counts;
+  }
+
+  private matchUnionSql(match: string, typeFilter?: SearchableType): ReturnType<typeof sql> | null {
+    const wantSource = !typeFilter || typeFilter === "source";
+    const wantExtract = !typeFilter || typeFilter === "extract";
+    const wantCard = !typeFilter || typeFilter === "card";
+    const unions: ReturnType<typeof sql>[] = [];
+    if (wantSource) {
+      unions.push(sql`
+        SELECT element_id AS id, 'source' AS type
+        FROM source_fts
+        WHERE source_fts MATCH ${match}
+      `);
+    }
+    if (wantExtract) {
+      unions.push(sql`
+        SELECT element_id AS id, 'extract' AS type
+        FROM extract_fts
+        WHERE extract_fts MATCH ${match}
+      `);
+    }
+    if (wantCard) {
+      unions.push(sql`
+        SELECT element_id AS id, 'card' AS type
+        FROM card_fts
+        WHERE card_fts MATCH ${match}
+      `);
+    }
+    return unions.length > 0 ? sql.join(unions, sql` UNION ALL `) : null;
+  }
+
+  private facetBaseSql(options: {
+    readonly tag?: string;
+    readonly conceptId?: ElementId;
+    readonly priorityLabel?: SearchPriorityLabel;
+  }): ReturnType<typeof sql> {
+    const tagClause = options.tag
+      ? sql`AND EXISTS (
+          SELECT 1
+          FROM element_tags etf
+          JOIN tags tf ON tf.id = etf.tag_id AND tf.name = ${options.tag}
+          WHERE etf.element_id = e.id
+        )`
+      : sql``;
+    const conceptClause = options.conceptId
+      ? sql`AND EXISTS (
+          SELECT 1
+          FROM element_relations cm
+          JOIN elements ce
+            ON ce.id = cm.to_element_id
+            AND ce.deleted_at IS NULL
+            AND ce.type = 'concept'
+          WHERE cm.from_element_id = e.id
+            AND cm.relation_type = 'concept_membership'
+            AND cm.to_element_id = ${options.conceptId}
+        )`
+      : sql``;
+    const priorityClause = priorityBandClause(options.priorityLabel);
+
+    return sql`
+      SELECT DISTINCT m.id AS id, m.type AS type, e.priority AS priority
+      FROM matched m
+      JOIN elements e ON e.id = m.id AND e.deleted_at IS NULL
+      WHERE 1 = 1
+        ${tagClause}
+        ${conceptClause}
+        ${priorityClause}
+    `;
+  }
+
+  /**
+   * Compatibility helper for tests/older callers that need a concept-count
+   * universe. Production count folds use {@link matchedRowsForFacetCounts} plus
+   * {@link foldSearchFacetCounts}; this method keeps the old type/priority
+   * narrowing semantics by filtering the bounded row universe in memory.
    */
   matchedIdsForConceptCounts(
     query: string,
@@ -320,13 +582,17 @@ export class SearchRepository {
       readonly priorityLabel?: SearchPriorityLabel;
     } = {},
   ): ElementId[] {
-    const hits = this.search(query, {
-      ...(options.type ? { type: options.type } : {}),
+    const rows = this.matchedRowsForFacetCounts(query, {
       ...(options.tag ? { tag: options.tag } : {}),
-      ...(options.priorityLabel ? { priorityLabel: options.priorityLabel } : {}),
-      limit: MAX_COUNT_SCAN,
     });
-    return hits.map((h) => h.id);
+    return rows
+      .filter((row) => {
+        const passesType = !options.type || row.type === options.type;
+        const passesPriority =
+          !options.priorityLabel || priorityToLabel(row.priority) === options.priorityLabel;
+        return passesType && passesPriority;
+      })
+      .map((row) => row.id);
   }
 
   /**

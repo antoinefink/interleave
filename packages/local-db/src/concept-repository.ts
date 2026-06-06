@@ -29,7 +29,7 @@ import {
   PRIORITY_LABEL_VALUE,
 } from "@interleave/core";
 import { concepts, elementRelations, elements, type InterleaveDatabase } from "@interleave/db";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { ElementRepository } from "./element-repository";
 import { nowIso } from "./ids";
 import { OperationLogRepository } from "./operation-log-repository";
@@ -210,6 +210,48 @@ export class ConceptRepository {
       // Both endpoints must be live: a soft-deleted member never counts, and a
       // membership to a soft-deleted concept is dropped (matches `firstConceptName`).
       if (!liveElementIds.has(memberId) || !liveConceptIds.has(conceptId)) continue;
+      let set = byMember.get(memberId);
+      if (!set) {
+        set = new Set<ElementId>();
+        byMember.set(memberId, set);
+      }
+      set.add(conceptId);
+    }
+    return byMember;
+  }
+
+  /**
+   * Build the canonical `memberElementId -> Set<liveConceptId>` membership map,
+   * restricted to a caller-provided member-id universe. This keeps hot paths such
+   * as `/search` facet counts bounded by their matched rows instead of scanning
+   * every live element and membership edge in the library.
+   */
+  liveMembershipMapForMembers(memberIds: readonly ElementId[]): Map<ElementId, Set<ElementId>> {
+    const uniqueMemberIds = [...new Set(memberIds)];
+    if (uniqueMemberIds.length === 0) return new Map();
+
+    const memberList = sql.join(
+      uniqueMemberIds.map((id) => sql`${id}`),
+      sql`, `,
+    );
+    const rows = this.db.all<{ memberId: string; conceptId: string }>(sql`
+      SELECT DISTINCT er.from_element_id AS memberId, er.to_element_id AS conceptId
+      FROM element_relations er
+      JOIN elements me
+        ON me.id = er.from_element_id
+        AND me.deleted_at IS NULL
+      JOIN elements ce
+        ON ce.id = er.to_element_id
+        AND ce.deleted_at IS NULL
+        AND ce.type = 'concept'
+      WHERE er.relation_type = 'concept_membership'
+        AND er.from_element_id IN (${memberList})
+    `);
+
+    const byMember = new Map<ElementId, Set<ElementId>>();
+    for (const row of rows) {
+      const memberId = row.memberId as ElementId;
+      const conceptId = row.conceptId as ElementId;
       let set = byMember.get(memberId);
       if (!set) {
         set = new Set<ElementId>();

@@ -12,9 +12,25 @@
  * wiring; no SQLite/IPC — the renderer is a pure UI consumer here.
  */
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ConceptNode, SearchResult } from "../lib/appApi";
+import type { ConceptNode, SearchQueryResult, SearchResult } from "../lib/appApi";
+
+const EMPTY_TEST_SEARCH_COUNTS: SearchQueryResult["counts"] = {
+  byType: { source: 0, extract: 0, card: 0 },
+  byConcept: {},
+  byPriority: { A: 0, B: 0, C: 0, D: 0 },
+};
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 const h = vi.hoisted(() => {
   const attentionScheduler: SearchResult["scheduler"] = {
@@ -125,7 +141,11 @@ beforeEach(() => {
   // matched members of concept-1 (a source + a card).
   h.searchQuery.mockResolvedValue({
     results: [h.sourceHit, h.cardHit],
-    counts: { byConcept: { "concept-1": 2 } },
+    counts: {
+      byType: { source: 1, extract: 0, card: 1 },
+      byConcept: { "concept-1": 2 },
+      byPriority: { A: 2, B: 0, C: 0, D: 0 },
+    },
   });
   h.listConcepts.mockResolvedValue({ concepts: [h.concept] });
   // Semantic search OFF by default → the library uses the FTS `searchQuery` path.
@@ -137,7 +157,11 @@ beforeEach(() => {
     total: 0,
     modelId: "",
   });
-  h.semanticSearch.mockResolvedValue({ results: [], mode: "disabled" });
+  h.semanticSearch.mockResolvedValue({
+    results: [],
+    mode: "disabled",
+    counts: EMPTY_TEST_SEARCH_COUNTS,
+  });
   h.semanticReindex.mockResolvedValue({ enqueued: 0 });
   h.subscribeJobs.mockReturnValue(() => {});
 });
@@ -224,6 +248,273 @@ describe("LibraryScreen", () => {
     expect(rows.some((r) => r.querySelector("em"))).toBe(true);
   });
 
+  it("renders backend byType counts on Type chips after a keyword query", async () => {
+    h.searchQuery.mockResolvedValue({
+      results: [h.sourceHit, h.cardHit],
+      counts: {
+        byType: { source: 7, extract: 3, card: 2 },
+        byConcept: { "concept-1": 9 },
+        byPriority: { A: 6, B: 4, C: 2, D: 0 },
+      },
+    });
+
+    render(<LibraryScreen />);
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+    await waitFor(() => expect(h.searchQuery).toHaveBeenCalled());
+
+    expect(
+      within(screen.getByTestId("library-filter-type-source")).getByText("7", {
+        selector: ".filter-opt__count",
+      }),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByTestId("library-filter-type-extract")).getByText("3", {
+        selector: ".filter-opt__count",
+      }),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByTestId("library-filter-type-card")).getByText("2", {
+        selector: ".filter-opt__count",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("renders backend byPriority counts on Priority chips after a keyword query", async () => {
+    h.searchQuery.mockResolvedValue({
+      results: [h.sourceHit, h.cardHit],
+      counts: {
+        byType: { source: 2, extract: 1, card: 1 },
+        byConcept: { "concept-1": 4 },
+        byPriority: { A: 5, B: 4, C: 3, D: 2 },
+      },
+    });
+
+    render(<LibraryScreen />);
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+    await waitFor(() => expect(h.searchQuery).toHaveBeenCalled());
+
+    for (const [priority, count] of [
+      ["A", "5"],
+      ["B", "4"],
+      ["C", "3"],
+      ["D", "2"],
+    ] as const) {
+      expect(
+        within(screen.getByTestId(`library-filter-prio-${priority}`)).getByText(count, {
+          selector: ".filter-opt__count",
+        }),
+      ).toBeTruthy();
+    }
+  });
+
+  it("renders semantic-search counts instead of zeroing the filterbar", async () => {
+    h.semanticStatus.mockResolvedValue({
+      enabled: true,
+      vecAvailable: true,
+      modelDownloaded: true,
+      embedded: 2,
+      total: 2,
+      modelId: "test-model",
+    });
+    h.semanticSearch.mockResolvedValue({
+      results: [
+        { ...h.sourceHit, semantic: true, vecDistance: 0.12 },
+        { ...h.cardHit, semantic: false, vecDistance: null },
+      ],
+      mode: "semantic",
+      counts: {
+        byType: { source: 3, extract: 1, card: 2 },
+        byConcept: { "concept-1": 4 },
+        byPriority: { A: 5, B: 1, C: 0, D: 0 },
+      },
+    });
+
+    render(<LibraryScreen />);
+    await waitFor(() => expect(h.semanticStatus).toHaveBeenCalled());
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+
+    await waitFor(() =>
+      expect(h.semanticSearch).toHaveBeenCalledWith(expect.objectContaining({ q: "intelligence" })),
+    );
+    expect(h.searchQuery).not.toHaveBeenCalled();
+    expect(
+      within(screen.getByTestId("library-filter-type-source")).getByText("3", {
+        selector: ".filter-opt__count",
+      }),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByTestId("library-filter-prio-A")).getByText("5", {
+        selector: ".filter-opt__count",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("keeps semantic byType counts populated when a type filter is active", async () => {
+    h.semanticStatus.mockResolvedValue({
+      enabled: true,
+      vecAvailable: true,
+      modelDownloaded: true,
+      embedded: 2,
+      total: 2,
+      modelId: "test-model",
+    });
+    h.semanticSearch.mockResolvedValue({
+      results: [{ ...h.sourceHit, semantic: true, vecDistance: 0.12 }],
+      mode: "semantic",
+      counts: {
+        byType: { source: 1, extract: 2, card: 3 },
+        byConcept: { "concept-1": 1 },
+        byPriority: { A: 1, B: 2, C: 3, D: 0 },
+      },
+    });
+
+    render(<LibraryScreen />);
+    await waitFor(() => expect(h.semanticStatus).toHaveBeenCalled());
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+    await waitFor(() => expect(h.semanticSearch).toHaveBeenCalled());
+
+    h.semanticSearch.mockClear();
+    fireEvent.click(screen.getByTestId("library-filter-type-source"));
+
+    await waitFor(() =>
+      expect(h.semanticSearch).toHaveBeenCalledWith(
+        expect.objectContaining({ q: "intelligence", type: "source" }),
+      ),
+    );
+    expect(
+      within(screen.getByTestId("library-filter-type-extract")).getByText("2", {
+        selector: ".filter-opt__count",
+      }),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByTestId("library-filter-type-card")).getByText("3", {
+        selector: ".filter-opt__count",
+      }),
+    ).toBeTruthy();
+  });
+
+  it("clears populated search counters when the query becomes empty", async () => {
+    h.searchQuery.mockResolvedValue({
+      results: [h.sourceHit, h.cardHit],
+      counts: {
+        byType: { source: 7, extract: 3, card: 2 },
+        byConcept: { "concept-1": 9 },
+        byPriority: { A: 6, B: 4, C: 2, D: 0 },
+      },
+    });
+
+    render(<LibraryScreen />);
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+    await waitFor(() => expect(h.searchQuery).toHaveBeenCalled());
+    expect(
+      within(screen.getByTestId("library-filter-type-source")).getByText("7", {
+        selector: ".filter-opt__count",
+      }),
+    ).toBeTruthy();
+
+    h.searchQuery.mockClear();
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "" },
+    });
+
+    await waitFor(() => expect(screen.getByTestId("library-prompt")).toBeTruthy());
+    expect(h.searchQuery).not.toHaveBeenCalled();
+    expect(
+      within(screen.getByTestId("library-filter-type-source")).queryByText("7", {
+        selector: ".filter-opt__count",
+      }),
+    ).toBeNull();
+    const chip = screen.getByTestId("library-filter-concept-concept-1");
+    expect(within(chip).getByText("2", { selector: ".filter-opt__count" })).toBeTruthy();
+  });
+
+  it("keeps stale async search responses from overwriting filterbar counters", async () => {
+    const first = deferred<SearchQueryResult>();
+    const second = deferred<SearchQueryResult>();
+    h.searchQuery.mockImplementation((request: { q: string }) => {
+      if (request.q === "alpha") return first.promise;
+      if (request.q === "beta") return second.promise;
+      return Promise.resolve({
+        results: [],
+        counts: EMPTY_TEST_SEARCH_COUNTS,
+      } satisfies SearchQueryResult);
+    });
+
+    render(<LibraryScreen />);
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "alpha" },
+    });
+    await waitFor(() =>
+      expect(h.searchQuery).toHaveBeenCalledWith(expect.objectContaining({ q: "alpha" })),
+    );
+
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "beta" },
+    });
+    await waitFor(() =>
+      expect(h.searchQuery).toHaveBeenCalledWith(expect.objectContaining({ q: "beta" })),
+    );
+
+    await act(async () => {
+      second.resolve({
+        results: [h.cardHit],
+        counts: {
+          byType: { source: 4, extract: 2, card: 1 },
+          byConcept: { "concept-1": 1 },
+          byPriority: { A: 9, B: 8, C: 0, D: 0 },
+        },
+      });
+    });
+
+    expect(
+      within(screen.getByTestId("library-filter-type-source")).getByText("4", {
+        selector: ".filter-opt__count",
+      }),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByTestId("library-filter-prio-A")).getByText("9", {
+        selector: ".filter-opt__count",
+      }),
+    ).toBeTruthy();
+
+    await act(async () => {
+      first.resolve({
+        results: [h.sourceHit],
+        counts: {
+          byType: { source: 99, extract: 99, card: 99 },
+          byConcept: { "concept-1": 99 },
+          byPriority: { A: 99, B: 99, C: 99, D: 99 },
+        },
+      });
+    });
+
+    expect(
+      within(screen.getByTestId("library-filter-type-source")).getByText("4", {
+        selector: ".filter-opt__count",
+      }),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByTestId("library-filter-prio-A")).getByText("9", {
+        selector: ".filter-opt__count",
+      }),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByTestId("library-filter-type-source")).queryByText("99", {
+        selector: ".filter-opt__count",
+      }),
+    ).toBeNull();
+  });
+
   it("narrows the query when a type filter is clicked", async () => {
     render(<LibraryScreen />);
     fireEvent.change(screen.getByTestId("library-search-input"), {
@@ -234,7 +525,11 @@ describe("LibraryScreen", () => {
     h.searchQuery.mockClear();
     h.searchQuery.mockResolvedValue({
       results: [h.cardHit],
-      counts: { byConcept: { "concept-1": 1 } },
+      counts: {
+        byType: { source: 0, extract: 0, card: 1 },
+        byConcept: { "concept-1": 1 },
+        byPriority: { A: 1, B: 0, C: 0, D: 0 },
+      },
     });
     fireEvent.click(screen.getByTestId("library-filter-type-card"));
 
@@ -274,7 +569,11 @@ describe("LibraryScreen", () => {
     // Backend now returns the A-priority-narrowed set (both fixtures are A).
     h.searchQuery.mockResolvedValue({
       results: [h.sourceHit, h.cardHit],
-      counts: { byConcept: { "concept-1": 2 } },
+      counts: {
+        byType: { source: 1, extract: 0, card: 1 },
+        byConcept: { "concept-1": 2 },
+        byPriority: { A: 2, B: 0, C: 0, D: 0 },
+      },
     });
     fireEvent.click(screen.getByTestId("library-filter-prio-A"));
 
@@ -304,7 +603,11 @@ describe("LibraryScreen", () => {
     // concept and a byConcept of 1 (priority-scoped) — chip 1 must equal the 1 visible row.
     h.searchQuery.mockResolvedValue({
       results: [h.cardHit],
-      counts: { byConcept: { "concept-1": 1 } },
+      counts: {
+        byType: { source: 0, extract: 0, card: 1 },
+        byConcept: { "concept-1": 1 },
+        byPriority: { A: 1, B: 0, C: 0, D: 0 },
+      },
     });
     fireEvent.click(screen.getByTestId("library-filter-prio-A"));
 
@@ -325,7 +628,11 @@ describe("LibraryScreen", () => {
     // it matches the narrowed result list (the reported chip/list mismatch fix).
     h.searchQuery.mockResolvedValue({
       results: [h.cardHit],
-      counts: { byConcept: { "concept-1": 1 } },
+      counts: {
+        byType: { source: 0, extract: 0, card: 1 },
+        byConcept: { "concept-1": 1 },
+        byPriority: { A: 1, B: 0, C: 0, D: 0 },
+      },
     });
     render(<LibraryScreen />);
     await waitFor(() => expect(h.listConcepts).toHaveBeenCalled());
@@ -343,7 +650,14 @@ describe("LibraryScreen", () => {
   });
 
   it("shows the empty state when there are no matches", async () => {
-    h.searchQuery.mockResolvedValue({ results: [], counts: { byConcept: {} } });
+    h.searchQuery.mockResolvedValue({
+      results: [],
+      counts: {
+        byType: { source: 0, extract: 0, card: 0 },
+        byConcept: {},
+        byPriority: { A: 0, B: 0, C: 0, D: 0 },
+      },
+    });
     render(<LibraryScreen />);
     fireEvent.change(screen.getByTestId("library-search-input"), {
       target: { value: "zzzznope" },

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type AppApi, appApi, isDesktop, requireAppApi } from "./appApi";
+import { type AppApi, appApi, isDesktop, requireAppApi, type SearchQueryResult } from "./appApi";
 
 function installAppApi(overrides: Partial<AppApi> = {}): AppApi {
   const fake = {
@@ -16,6 +16,16 @@ function installAppApi(overrides: Partial<AppApi> = {}): AppApi {
       get: vi.fn(async (request: unknown) => ({ data: request })),
     },
     elements: { setPriority: vi.fn(async (request: unknown) => request) },
+    search: {
+      query: vi.fn(async () => ({
+        results: [],
+        counts: {
+          byType: { source: 0, extract: 0, card: 0 },
+          byConcept: {},
+          byPriority: { A: 0, B: 0, C: 0, D: 0 },
+        },
+      })),
+    },
     queue: {
       list: vi.fn(async (request?: unknown) => ({ items: [], request })),
       act: vi.fn(async (request: unknown) => request),
@@ -92,6 +102,23 @@ describe("renderer appApi wrapper", () => {
 
     await appApi.createSynthesisNote({ title: "New note" });
     expect(bridge.synthesis.create).toHaveBeenCalledWith({ title: "New note" });
+  });
+
+  it("forwards searchQuery and preserves the full SearchCounts shape", async () => {
+    const result = {
+      results: [],
+      counts: {
+        byType: { source: 2, extract: 1, card: 3 },
+        byConcept: { "concept-1": 4 },
+        byPriority: { A: 1, B: 2, C: 3, D: 4 },
+      },
+    } satisfies SearchQueryResult;
+    const bridge = installAppApi({
+      search: { query: vi.fn(async () => result) },
+    } as Partial<AppApi>);
+
+    await expect(appApi.searchQuery({ q: "memory" })).resolves.toEqual(result);
+    expect(bridge.search.query).toHaveBeenCalledWith({ q: "memory" });
   });
 
   it("routes document-mark helpers through documents.marks", async () => {

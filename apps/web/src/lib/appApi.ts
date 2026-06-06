@@ -2953,19 +2953,20 @@ export interface SearchQueryRequest {
 }
 
 /**
- * DRILL-DOWN faceted counts for the `/search` filterbar concept chips. `byConcept`
- * is keyed by concept element id: the count of result rows you'd get if that concept
- * were selected alongside the SAME keyword + type (the concept's own predicate is
- * dropped), so the chip number matches the narrowed list. The chip MUST use this,
- * NOT the global `ConceptNode.memberCount`.
+ * DRILL-DOWN faceted counts for the `/search` filterbar. Each dimension respects
+ * the active keyword + tag and every OTHER active facet, but drops its own active
+ * value: `byType` ignores type, `byPriority` ignores priority, and `byConcept`
+ * ignores concept.
  */
 export interface SearchCounts {
+  readonly byType: Readonly<Record<SearchableType, number>>;
   readonly byConcept: Readonly<Record<string, number>>;
+  readonly byPriority: Readonly<Record<PriorityLabel, number>>;
 }
 
 export interface SearchQueryResult {
   readonly results: readonly SearchResult[];
-  /** Drill-down per-concept counts for the filterbar concept chips. */
+  /** Drill-down counts for the `/search` filterbar chips. */
   readonly counts: SearchCounts;
 }
 
@@ -2995,6 +2996,7 @@ export interface SemanticSearchRequest {
 export interface SemanticSearchResult {
   readonly results: readonly SemanticSearchResultRow[];
   readonly mode: SemanticSearchMode;
+  readonly counts: SearchCounts;
 }
 
 /** `semantic.status()` takes no payload. */
@@ -4384,7 +4386,15 @@ export const appApi = {
    */
   semanticSearch(request: SemanticSearchRequest): Promise<SemanticSearchResult> {
     if (!isDesktop() || !window.appApi?.semantic) {
-      return Promise.resolve({ results: [], mode: "disabled" });
+      return Promise.resolve({
+        results: [],
+        mode: "disabled",
+        counts: {
+          byType: { source: 0, extract: 0, card: 0 },
+          byConcept: {},
+          byPriority: { A: 0, B: 0, C: 0, D: 0 },
+        },
+      });
     }
     return window.appApi.semantic.search(request);
   },

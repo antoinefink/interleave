@@ -15,7 +15,7 @@ import path from "node:path";
 import { MIGRATIONS_DIR, openDatabase } from "@interleave/db";
 import { seedDemoCollection } from "@interleave/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SourcesUpdateReliabilityRequestSchema } from "../shared/contract";
+import { type SearchQueryRequest, SourcesUpdateReliabilityRequestSchema } from "../shared/contract";
 import { DbService } from "./db-service";
 
 let dir: string;
@@ -2113,7 +2113,7 @@ describe("DbService — review session (T037)", () => {
     svc.close();
   });
 
-  it("search.query returns DRILL-DOWN per-concept counts that match the keyword/type-narrowed list", () => {
+  it("search.query returns DRILL-DOWN filterbar counts that match chip-selected lists", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
     expect(svc.seedIfEmpty()).toBe(true);
@@ -2125,25 +2125,56 @@ describe("DbService — review session (T037)", () => {
     const intelligence = svc.listConcepts().concepts.find((c) => c.name === "Intelligence");
     expect(intelligence).toBeDefined();
     const conceptId = intelligence?.id ?? "";
+    const assertCountsMatchChipSelections = (request: SearchQueryRequest) => {
+      const counts = svc.search(request).counts;
+      for (const type of ["source", "extract", "card"] as const) {
+        expect(counts.byType[type]).toBe(svc.search({ ...request, type }).results.length);
+      }
+      for (const priorityLabel of ["A", "B", "C", "D"] as const) {
+        expect(counts.byPriority[priorityLabel]).toBe(
+          svc.search({ ...request, priorityLabel }).results.length,
+        );
+      }
+      expect(counts.byConcept[conceptId] ?? 0).toBe(
+        svc.search({ ...request, conceptId }).results.length,
+      );
+    };
 
     // No type filter: 2 of the keyword matches are members of Intelligence.
     const all = svc.search({ q: "intelligence" });
     expect(all.counts.byConcept[conceptId]).toBe(2);
     // And selecting that concept yields exactly those 2 rows (the HARD INVARIANT).
     expect(svc.search({ q: "intelligence", conceptId }).results.length).toBe(2);
+    assertCountsMatchChipSelections({ q: "intelligence" });
 
     // TYPE=extract: the chip drops to 1 (only the extract member), matching the list.
     const onlyExtracts = svc.search({ q: "intelligence", type: "extract" });
     expect(onlyExtracts.counts.byConcept[conceptId]).toBe(1);
     expect(svc.search({ q: "intelligence", type: "extract", conceptId }).results.length).toBe(1);
+    assertCountsMatchChipSelections({ q: "intelligence", type: "extract" });
 
     // TYPE=card: the chip is 0 (the card is not a member) — no surprise-empty list.
     const onlyCards = svc.search({ q: "intelligence", type: "card" });
     expect(onlyCards.counts.byConcept[conceptId] ?? 0).toBe(0);
     expect(svc.search({ q: "intelligence", type: "card", conceptId }).results.length).toBe(0);
 
+    // CONCEPT selected: type counts respect that active concept while dropping only type.
+    assertCountsMatchChipSelections({ q: "intelligence", conceptId });
+
+    // All three facets active: every dimension still drops only itself.
+    const tripleSeed = svc.search({ q: "intelligence", conceptId }).results[0];
+    expect(tripleSeed).toBeDefined();
+    assertCountsMatchChipSelections({
+      q: "intelligence",
+      type: tripleSeed?.type ?? "source",
+      conceptId,
+      priorityLabel: tripleSeed?.priorityLabel ?? "A",
+    });
+
     // An empty query yields no counts (search returns [] for an empty keyword).
     expect(svc.search({ q: "" }).counts.byConcept).toEqual({});
+    expect(svc.search({ q: "" }).counts.byType).toEqual({ source: 0, extract: 0, card: 0 });
+    expect(svc.search({ q: "" }).counts.byPriority).toEqual({ A: 0, B: 0, C: 0, D: 0 });
 
     svc.close();
   });
@@ -2163,6 +2194,24 @@ describe("DbService — review session (T037)", () => {
     expect(tagged.some((r) => r.type === "extract")).toBe(true);
     // A non-matching tag excludes everything.
     expect(svc.search({ q: "intelligence", tag: "no-such-tag" }).results).toEqual([]);
+
+    svc.close();
+  });
+
+  it("semantic.search counts drop the active type filter even in FTS-only degrade", async () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    const semantic = await svc.semanticSearch({ q: "intelligence", type: "source" });
+    expect(semantic.mode).toBe("disabled");
+    expect(semantic.results.length).toBeGreaterThan(0);
+    expect(semantic.results.every((r) => r.type === "source")).toBe(true);
+    for (const type of ["source", "extract", "card"] as const) {
+      expect(semantic.counts.byType[type]).toBe(
+        svc.search({ q: "intelligence", type }).results.length,
+      );
+    }
 
     svc.close();
   });

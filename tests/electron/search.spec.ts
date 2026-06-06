@@ -77,6 +77,39 @@ test("typing a seeded term returns the source, extract, and card grouped + highl
   await expect(page.getByTestId("library-group-source")).toBeVisible();
   await expect(page.getByTestId("library-group-extract")).toBeVisible();
   await expect(page.getByTestId("library-group-card")).toBeVisible();
+  const counts = await page.evaluate(async (term) => {
+    const api = window.appApi as unknown as {
+      search: {
+        query(r: { q: string }): Promise<{
+          counts: {
+            byType: Record<string, number>;
+            byConcept: Record<string, number>;
+            byPriority: Record<string, number>;
+          };
+        }>;
+      };
+    };
+    return (await api.search.query({ q: term })).counts;
+  }, TERM);
+  await expect(
+    page.getByTestId("library-filter-type-source").locator(".filter-opt__count"),
+  ).toHaveText(String(counts.byType.source));
+  await expect(
+    page.getByTestId("library-filter-type-extract").locator(".filter-opt__count"),
+  ).toHaveText(String(counts.byType.extract));
+  await expect(
+    page.getByTestId("library-filter-type-card").locator(".filter-opt__count"),
+  ).toHaveText(String(counts.byType.card));
+  await expect(page.getByTestId("library-filter-prio-A").locator(".filter-opt__count")).toHaveText(
+    String(counts.byPriority.A),
+  );
+  const conceptCount = Object.entries(counts.byConcept).find(([, count]) => count > 0);
+  expect(conceptCount).toBeDefined();
+  if (conceptCount) {
+    await expect(
+      page.getByTestId(`library-filter-concept-${conceptCount[0]}`).locator(".filter-opt__count"),
+    ).toHaveText(String(conceptCount[1]));
+  }
 
   // The matched term is highlighted in at least one result.
   await expect(page.locator('[data-testid="library-result"] em').first()).toBeVisible();
@@ -112,10 +145,14 @@ test("the search bridge returns ranked, type-narrowable results", async () => {
   const res = await page.evaluate(async (term) => {
     const api = window.appApi as unknown as {
       search: {
-        query(r: {
-          q: string;
-          type?: string;
-        }): Promise<{ results: { id: string; type: string; score: number }[] }>;
+        query(r: { q: string; type?: string }): Promise<{
+          results: { id: string; type: string; score: number }[];
+          counts: {
+            byType: Record<string, number>;
+            byConcept: Record<string, number>;
+            byPriority: Record<string, number>;
+          };
+        }>;
       };
     };
     const all = await api.search.query({ q: term });
@@ -130,6 +167,7 @@ test("the search bridge returns ranked, type-narrowable results", async () => {
       cardsOnly: cards.results.every((r) => r.type === "card"),
       cardCount: cards.results.length,
       emptyCount: empty.results.length,
+      counts: all.counts,
     };
   }, TERM);
 
@@ -140,6 +178,11 @@ test("the search bridge returns ranked, type-narrowable results", async () => {
   expect(res.cardsOnly).toBe(true);
   expect(res.cardCount).toBeGreaterThan(0);
   expect(res.emptyCount).toBe(0);
+  expect(res.counts.byType.source).toBeGreaterThan(0);
+  expect(res.counts.byType.extract).toBeGreaterThan(0);
+  expect(res.counts.byType.card).toBeGreaterThan(0);
+  expect(res.counts.byPriority.A).toBeGreaterThanOrEqual(0);
+  expect(Object.values(res.counts.byConcept).some((count) => count > 0)).toBe(true);
 
   await app.close();
 });

@@ -1,22 +1,21 @@
 /**
- * Property-based / fuzzy tests for the `/search` DRILL-DOWN per-concept counts.
+ * Property-based / fuzzy tests for the `/search` DRILL-DOWN faceted counts.
  *
  * Sibling of the reported Library bug: the `/search` concept chips used to render
  * the GLOBAL {@link ConceptRepository.listConcepts} `memberCount` (members across ALL
  * element types), while the visible list is the keyword + type + concept
  * INTERSECTION — so a chip count never matched the narrowed list. The fix computes a
- * drill-down `byConcept` MAIN-side: the count over the keyword+type match set WITHOUT
- * the concept's own predicate, folded through the canonical
- * {@link ConceptRepository.liveMembershipMap} (dedup + soft-delete rules), exactly
- * like {@link LibraryQuery}.
+ * drill-down counts MAIN-side: a bounded keyword match universe folded through
+ * canonical live concept memberships, exactly like the DB service.
  *
  * This pins the SAME hard invariant the Library property test does, at the search
- * layer: for every live concept `c`, the count taken over
- * {@link SearchRepository.matchedIdsForConceptCounts} equals the number of result
- * rows {@link SearchRepository.search} returns when `c` is selected alongside the
- * SAME keyword/type. We fuzz random worlds (varied searchable elements with random
- * indexed words, soft-deleted elements + concepts, duplicate + dead-endpoint edges)
- * and random keyword/type filters. fast-check pins a fixed seed for CI reproducibility.
+ * layer: for each facet value, the count folded from
+ * {@link SearchRepository.matchedRowsForFacetCounts} equals the number of result
+ * rows {@link SearchRepository.search} returns when that chip value is selected
+ * alongside the SAME other facets. We fuzz random worlds (varied searchable elements
+ * with random indexed words, soft-deleted elements + concepts, duplicate +
+ * dead-endpoint edges) and random keyword/type/concept/priority filters. fast-check
+ * pins a fixed seed for CI reproducibility.
  */
 
 import { type ElementId, priorityToLabel } from "@interleave/core";
@@ -27,7 +26,7 @@ import { ConceptRepository } from "./concept-repository";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
 import { ReviewRepository } from "./review-repository";
-import { SearchRepository } from "./search-repository";
+import { type SearchFacetCounts, SearchRepository } from "./search-repository";
 import { SourceRepository } from "./source-repository";
 import { createInMemoryDb } from "./test-db";
 
@@ -95,6 +94,8 @@ interface WorldSpec {
   readonly typeIdx: number;
   readonly usePriority: boolean;
   readonly priorityIdx: number;
+  readonly useConcept: boolean;
+  readonly conceptIdx: number;
 }
 
 const elementSpecArb: fc.Arbitrary<ElementSpec> = fc.record({
@@ -113,24 +114,29 @@ const worldArb: fc.Arbitrary<WorldSpec> = fc
     typeIdx: fc.integer({ min: 0, max: SEARCHABLE.length - 1 }),
     usePriority: fc.boolean(),
     priorityIdx: fc.integer({ min: 0, max: PRIORITY_LABELS.length - 1 }),
+    useConcept: fc.boolean(),
   })
-  .chain(({ elements, concepts, keyword, useType, typeIdx, usePriority, priorityIdx }) => {
-    const edgeArb: fc.Arbitrary<EdgeSpec> = fc.record({
-      memberIdx: fc.integer({ min: 0, max: elements.length - 1 }),
-      conceptIdx: fc.integer({ min: 0, max: concepts.length - 1 }),
-      dup: fc.integer({ min: 0, max: 2 }),
-    });
-    return fc.record({
-      elements: fc.constant(elements),
-      concepts: fc.constant(concepts),
-      edges: fc.array(edgeArb, { minLength: 0, maxLength: 24 }),
-      keyword: fc.constant(keyword),
-      useType: fc.constant(useType),
-      typeIdx: fc.constant(typeIdx),
-      usePriority: fc.constant(usePriority),
-      priorityIdx: fc.constant(priorityIdx),
-    });
-  });
+  .chain(
+    ({ elements, concepts, keyword, useType, typeIdx, usePriority, priorityIdx, useConcept }) => {
+      const edgeArb: fc.Arbitrary<EdgeSpec> = fc.record({
+        memberIdx: fc.integer({ min: 0, max: elements.length - 1 }),
+        conceptIdx: fc.integer({ min: 0, max: concepts.length - 1 }),
+        dup: fc.integer({ min: 0, max: 2 }),
+      });
+      return fc.record({
+        elements: fc.constant(elements),
+        concepts: fc.constant(concepts),
+        edges: fc.array(edgeArb, { minLength: 0, maxLength: 24 }),
+        keyword: fc.constant(keyword),
+        useType: fc.constant(useType),
+        typeIdx: fc.constant(typeIdx),
+        usePriority: fc.constant(usePriority),
+        priorityIdx: fc.constant(priorityIdx),
+        useConcept: fc.constant(useConcept),
+        conceptIdx: fc.integer({ min: 0, max: concepts.length - 1 }),
+      });
+    },
+  );
 
 interface BuiltWorld {
   readonly liveConceptIds: readonly ElementId[];
@@ -140,6 +146,7 @@ interface BuiltWorld {
   readonly deadMemberIds: readonly ElementId[];
   readonly keyword: string;
   readonly type?: SearchableSpecType;
+  readonly conceptId?: ElementId;
   readonly priorityLabel?: PriorityLabel;
 }
 
@@ -239,6 +246,7 @@ function buildWorld(world: WorldSpec): BuiltWorld {
   }
 
   const type = world.useType ? SEARCHABLE[world.typeIdx] : undefined;
+  const conceptId = world.useConcept ? conceptIds[world.conceptIdx] : undefined;
   const priorityLabel = world.usePriority ? PRIORITY_LABELS[world.priorityIdx] : undefined;
   return {
     liveConceptIds,
@@ -246,33 +254,39 @@ function buildWorld(world: WorldSpec): BuiltWorld {
     deadMemberIds,
     keyword: world.keyword,
     ...(type ? { type } : {}),
+    ...(conceptId ? { conceptId } : {}),
     ...(priorityLabel ? { priorityLabel } : {}),
   };
 }
 
-/** The db-service fold: matchedIds × liveMembershipMap → per-concept count. */
-function foldByConcept(
+/** The production exact aggregate count path. */
+function foldCounts(
   keyword: string,
-  type?: SearchableSpecType,
-  priorityLabel?: PriorityLabel,
-): Record<string, number> {
-  const membership = conceptsRepo.liveMembershipMap();
-  const byConcept: Record<string, number> = {};
-  for (const id of search.matchedIdsForConceptCounts(keyword, {
-    ...(type ? { type } : {}),
-    ...(priorityLabel ? { priorityLabel } : {}),
-  })) {
-    for (const c of membership.get(id) ?? []) byConcept[c] = (byConcept[c] ?? 0) + 1;
-  }
-  return byConcept;
+  filters: {
+    readonly type?: SearchableSpecType;
+    readonly conceptId?: ElementId;
+    readonly priorityLabel?: PriorityLabel;
+  } = {},
+): SearchFacetCounts {
+  return search.facetCounts(keyword, filters);
 }
 
-describe("search drill-down byConcept — property invariants", () => {
+describe("search drill-down faceted counts — property invariants", () => {
   it("INVARIANT: byConcept[c] equals the rows when c is selected alongside the SAME keyword/type/priority", () => {
     fc.assert(
       fc.property(worldArb, (world) => {
-        const { liveConceptIds, keyword, type, priorityLabel } = buildWorld(world);
-        const byConcept = foldByConcept(keyword, type, priorityLabel);
+        const {
+          liveConceptIds,
+          keyword,
+          type,
+          conceptId: selectedConceptId,
+          priorityLabel,
+        } = buildWorld(world);
+        const { byConcept } = foldCounts(keyword, {
+          ...(type ? { type } : {}),
+          ...(selectedConceptId ? { conceptId: selectedConceptId } : {}),
+          ...(priorityLabel ? { priorityLabel } : {}),
+        });
 
         for (const conceptId of liveConceptIds) {
           const rerun = search
@@ -289,6 +303,52 @@ describe("search drill-down byConcept — property invariants", () => {
     );
   });
 
+  it("INVARIANT: byType[t] equals the rows when t is selected alongside the SAME keyword/concept/priority", () => {
+    fc.assert(
+      fc.property(worldArb, (world) => {
+        const { keyword, type, conceptId, priorityLabel } = buildWorld(world);
+        const { byType } = foldCounts(keyword, {
+          ...(type ? { type } : {}),
+          ...(conceptId ? { conceptId } : {}),
+          ...(priorityLabel ? { priorityLabel } : {}),
+        });
+
+        for (const typeValue of SEARCHABLE) {
+          const rerun = search.search(keyword, {
+            type: typeValue,
+            ...(conceptId ? { conceptId } : {}),
+            ...(priorityLabel ? { priorityLabel } : {}),
+          });
+          expect(byType[typeValue] ?? 0).toBe(rerun.length);
+        }
+      }),
+      FC,
+    );
+  });
+
+  it("INVARIANT: byPriority[p] equals the rows when p is selected alongside the SAME keyword/type/concept", () => {
+    fc.assert(
+      fc.property(worldArb, (world) => {
+        const { keyword, type, conceptId, priorityLabel } = buildWorld(world);
+        const { byPriority } = foldCounts(keyword, {
+          ...(type ? { type } : {}),
+          ...(conceptId ? { conceptId } : {}),
+          ...(priorityLabel ? { priorityLabel } : {}),
+        });
+
+        for (const priorityValue of PRIORITY_LABELS) {
+          const rerun = search.search(keyword, {
+            ...(type ? { type } : {}),
+            ...(conceptId ? { conceptId } : {}),
+            priorityLabel: priorityValue,
+          });
+          expect(byPriority[priorityValue] ?? 0).toBe(rerun.length);
+        }
+      }),
+      FC,
+    );
+  });
+
   it("INVARIANT: soft-deleted members/concepts NEVER inflate a count; live siblings still count", () => {
     // Strengthened (was vacuously true): liveMembershipMap already drops dead-concept
     // KEYS, so the old 'a dead concept gets no byConcept entry' assertion could never
@@ -299,8 +359,12 @@ describe("search drill-down byConcept — property invariants", () => {
     fc.assert(
       fc.property(worldArb, (world) => {
         const built = buildWorld(world);
-        const { keyword, type, priorityLabel } = built;
-        const byConcept = foldByConcept(keyword, type, priorityLabel);
+        const { keyword, type, conceptId, priorityLabel } = built;
+        const { byConcept } = foldCounts(keyword, {
+          ...(type ? { type } : {}),
+          ...(conceptId ? { conceptId } : {}),
+          ...(priorityLabel ? { priorityLabel } : {}),
+        });
 
         // (a) No soft-deleted MEMBER element appears in the count scan.
         const scan = new Set(

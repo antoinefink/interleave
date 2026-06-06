@@ -294,7 +294,13 @@ export {
 } from "./review-session-service";
 export { type ScheduleResult, SchedulerService } from "./scheduler-service";
 export {
+  emptySearchFacetCounts,
+  foldSearchFacetCounts,
   type SearchableType,
+  type SearchFacetCountFilters,
+  type SearchFacetCountMatch,
+  type SearchFacetCountOptions,
+  type SearchFacetCounts,
   type SearchHit,
   type SearchOptions,
   type SearchQueryOptions,

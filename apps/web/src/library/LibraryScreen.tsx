@@ -33,6 +33,7 @@ import {
   type ConceptNode,
   isDesktop,
   type SearchableType,
+  type SearchCounts,
   type SearchResult,
   type SemanticSearchMode,
 } from "../lib/appApi";
@@ -58,6 +59,12 @@ const TYPE_GROUPS: readonly { type: SearchableType; title: string }[] = [
 
 const PRIORITIES = ["A", "B", "C", "D"] as const;
 type PriorityLetter = (typeof PRIORITIES)[number];
+
+const EMPTY_SEARCH_COUNTS: SearchCounts = {
+  byType: { source: 0, extract: 0, card: 0 },
+  byConcept: {},
+  byPriority: { A: 0, B: 0, C: 0, D: 0 },
+};
 
 /** A due-state badge (overdue / today / soon) — matches the queue's `DueBadge`. */
 function DueBadge({ result }: { result: SearchResult }) {
@@ -101,10 +108,9 @@ export function LibraryScreen() {
   const [priorityFilter, setPriorityFilter] = useState<PriorityLetter | null>(null);
 
   const [results, setResults] = useState<readonly LibraryRow[]>([]);
-  // DRILL-DOWN per-concept counts (keyed by concept id), scoped to the active
-  // keyword + type — so the concept chip number matches the narrowed result list,
-  // NOT the global ConceptNode.memberCount.
-  const [conceptCounts, setConceptCounts] = useState<Readonly<Record<string, number>>>({});
+  // DRILL-DOWN filterbar counts scoped to the active keyword and all OTHER active
+  // facets. Concepts fall back to ConceptNode.memberCount when no keyword exists.
+  const [searchCounts, setSearchCounts] = useState<SearchCounts>(EMPTY_SEARCH_COUNTS);
   const [concepts, setConcepts] = useState<readonly ConceptNode[]>([]);
   const [selId, setSelId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -197,7 +203,7 @@ export function LibraryScreen() {
       // `ConceptRepository.elementsForConcept` / the queue concept filter — out of
       // scope for the keyword-search milestone, tracked as a follow-up.
       setResults([]);
-      setConceptCounts({});
+      setSearchCounts(EMPTY_SEARCH_COUNTS);
       setLoading(false);
       return;
     }
@@ -207,8 +213,8 @@ export function LibraryScreen() {
     // Semantic path (T087): when on-device semantics are enabled AND no
     // concept/priority facet is active (the fused KNN path doesn't take those
     // facets), use `semantic.search` so conceptually-related material surfaces
-    // without a keyword match. The concept-chip counts come from the FTS path, so
-    // when semantics run we clear them (the fused list is not concept-faceted).
+    // without a keyword match. It returns counts over the fused result universe so
+    // the filterbar never shows zeroed chips while semantic rows are visible.
     // Otherwise — or when a facet is active — use the FTS keyword search unchanged.
     const useSemantic = semanticEnabled && !conceptFilter && !priorityFilter;
     if (useSemantic) {
@@ -217,7 +223,7 @@ export function LibraryScreen() {
         .then((res) => {
           if (cancelled) return;
           setResults(res.results);
-          setConceptCounts({});
+          setSearchCounts(res.counts);
           setSearchMode(res.mode);
           setError(null);
         })
@@ -244,7 +250,7 @@ export function LibraryScreen() {
         setResults(res.results);
         // Guarded by the SAME cancelled flag as setResults so an out-of-order
         // response can never leave the chip counts pointing at a different query.
-        setConceptCounts(res.counts.byConcept);
+        setSearchCounts(res.counts);
         setSearchMode(semanticEnabled ? "fts" : "disabled");
         setError(null);
       })
@@ -327,8 +333,9 @@ export function LibraryScreen() {
 
   // The Map tab's "members" volume — the GLOBAL member count across all element
   // types (NOT filter-scoped). This is intentionally distinct from the filterbar
-  // concept chip's drill-down `conceptCounts` (keyword/type-scoped): the Map shows
-  // a concept's total reach, while the chip must match the narrowed result list.
+  // concept chip's drill-down `searchCounts.byConcept` (keyword/type/priority
+  // scoped): the Map shows a concept's total reach, while the chip must match the
+  // narrowed result list.
   const conceptVolume = useMemo(() => {
     const m = new Map<string, number>();
     for (const c of concepts) m.set(c.id, c.memberCount);
@@ -341,7 +348,7 @@ export function LibraryScreen() {
   // `memberCount` (the concept's total reach, the same number the Map shows) so the
   // empty-search state reads as a browsable facet column — not a wall of `0`s. Once
   // a keyword is typed, the chips switch to the keyword-scoped DRILL-DOWN
-  // `conceptCounts`, preserving the count-matches-the-narrowed-list invariant.
+  // `searchCounts`, preserving the count-matches-the-narrowed-list invariant.
   const hasQuery = debouncedQuery.trim().length > 0;
 
   if (!desktop) {
@@ -416,6 +423,9 @@ export function LibraryScreen() {
               >
                 <TypeIcon type={g.type} />
                 <span>{g.title}</span>
+                {hasQuery ? (
+                  <span className="filter-opt__count">{searchCounts.byType[g.type] ?? 0}</span>
+                ) : null}
               </button>
             ))}
           </div>
@@ -433,14 +443,15 @@ export function LibraryScreen() {
                 >
                   <ConceptTag name={c.name} />
                   {/* With a keyword active: the DRILL-DOWN count (members of this
-                      concept that ALSO match the keyword + type), so the chip number
-                      always matches the narrowed result list. With NO keyword: the
-                      GLOBAL `memberCount` (the concept's total reach) so the empty
-                      state reads as a browsable facet — not a wall of `0`s — since
-                      keyword search returns [] (and thus no drill-down counts) for an
-                      empty query. */}
+                      concept that ALSO match the keyword + type + priority), so the
+                      chip number always matches the narrowed result list. With NO
+                      keyword: the GLOBAL `memberCount` (the concept's total reach) so
+                      the empty state reads as a browsable facet — not a wall of `0`s`
+                      since keyword search returns [] for an empty query. */}
                   <span className="filter-opt__count">
-                    {hasQuery ? (conceptCounts[c.id] ?? 0) : (conceptVolume.get(c.id) ?? 0)}
+                    {hasQuery
+                      ? (searchCounts.byConcept[c.id] ?? 0)
+                      : (conceptVolume.get(c.id) ?? 0)}
                   </span>
                 </button>
               ))}
@@ -459,6 +470,9 @@ export function LibraryScreen() {
               >
                 <span className={`prio-dot prio-dot--${p.toLowerCase()}`} />
                 <span>Priority {p}</span>
+                {hasQuery ? (
+                  <span className="filter-opt__count">{searchCounts.byPriority[p] ?? 0}</span>
+                ) : null}
               </button>
             ))}
           </div>

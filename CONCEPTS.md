@@ -24,6 +24,26 @@ The inbox action that accepts a source into active processing and immediately op
 
 The local reading surface for processing a source inside the app, distinct from opening the source's external canonical URL.
 
+## Discovery
+
+### Search result
+
+A source, extract, or card returned from a user's library search, enriched enough for the user to inspect its priority, concept context, scheduling state, and source lineage before opening it.
+
+### Facet
+
+A filter dimension on a search or library surface that narrows a result set by a project-specific attribute such as element type, concept, or priority.
+
+### Drill-down count
+
+A facet count that answers how many results would appear if that facet value were selected while keeping the other active facets.
+
+The count deliberately drops its own facet predicate but preserves the other active predicates, so it is distinct from a global volume or total membership count.
+
+### Concept volume
+
+The global count of live elements assigned to a concept, independent of any active search query or filter.
+
 ## Active Recall
 
 ### Card
