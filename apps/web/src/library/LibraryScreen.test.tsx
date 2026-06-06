@@ -6,7 +6,7 @@
  *  - typing a query calls `appApi.searchQuery` (debounced) with the trimmed term;
  *  - grouped results render with the query highlighted (`<em>`);
  *  - clicking a type/concept filter narrows the call;
- *  - an empty result set shows the EmptyState; an empty query shows the prompt.
+ *  - an empty result set shows the EmptyState; the empty default view browses Sources.
  *
  * `appApi` + the router are mocked so the test exercises ONLY this component's
  * wiring; no SQLite/IPC — the renderer is a pure UI consumer here.
@@ -16,8 +16,10 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ConceptNode,
+  LibraryBrowseRequest,
   LibraryBrowseResult,
   LibraryItem,
+  SearchQueryRequest,
   SearchQueryResult,
   SearchResult,
 } from "../lib/appApi";
@@ -210,20 +212,39 @@ import { LibraryScreen } from "./LibraryScreen";
 beforeEach(() => {
   vi.clearAllMocks();
   // The backend now returns DRILL-DOWN per-concept counts alongside the rows; the
-  // chip renders these (NOT the global ConceptNode.memberCount). Default world: 2
-  // matched members of concept-1 (a source + a card).
-  h.searchQuery.mockResolvedValue({
-    results: [h.sourceHit, h.cardHit],
-    counts: {
-      byType: { source: 1, extract: 0, card: 1 },
-      byConcept: { "concept-1": 2 },
-      byPriority: { A: 2, B: 0, C: 0, D: 0 },
-    },
+  // chip renders these (NOT the global ConceptNode.memberCount). The mock honors
+  // the active type facet so the default Sources view behaves like the real bridge.
+  h.searchQuery.mockImplementation((request: SearchQueryRequest) => {
+    const allResults = [h.sourceHit, h.cardHit];
+    const results = allResults.filter((result) => {
+      if (request.type && result.type !== request.type) return false;
+      if (request.priorityLabel && result.priorityLabel !== request.priorityLabel) return false;
+      if (request.conceptId && result.concept !== h.concept.name) return false;
+      return true;
+    });
+    return Promise.resolve({
+      results,
+      counts: {
+        byType: { source: 1, extract: 0, card: 1 },
+        byConcept: { "concept-1": results.length },
+        byPriority: { A: results.length, B: 0, C: 0, D: 0 },
+      },
+    });
   });
   h.listConcepts.mockResolvedValue({ concepts: [h.concept] });
-  h.libraryBrowse.mockResolvedValue({
-    items: [h.sourceBrowseItem, h.cardBrowseItem],
-    counts: h.browseCounts,
+  h.libraryBrowse.mockImplementation((request?: LibraryBrowseRequest) => {
+    const items = [h.sourceBrowseItem, h.cardBrowseItem, h.topicBrowseItem].filter((item) => {
+      if (request?.types && !request.types.includes(item.type)) return false;
+      if (request?.priorityLabel && item.priorityLabel !== request.priorityLabel) return false;
+      // All concept-bearing fixtures belong to concept-1; keep the mock focused on
+      // the renderer request shape instead of duplicating the main-side membership read.
+      if (request?.conceptId && item.concept !== h.concept.name) return false;
+      return true;
+    });
+    return Promise.resolve({
+      items,
+      counts: h.browseCounts,
+    });
   });
   // Semantic search OFF by default → the library uses the FTS `searchQuery` path.
   h.semanticStatus.mockResolvedValue({
@@ -244,17 +265,19 @@ beforeEach(() => {
 });
 
 describe("LibraryScreen", () => {
-  it("starts with the search prompt and no query call", async () => {
+  it("starts by browsing Sources and no query call", async () => {
     render(<LibraryScreen />);
-    expect(screen.getByTestId("library-prompt")).toBeTruthy();
+    expect(screen.queryByTestId("library-prompt")).toBeNull();
     // The concept list loads for the filterbar/map, and the browse bridge loads
-    // empty-query counters bounded to the searchable source/extract/card universe.
+    // the default Sources view instead of leaving the page on a blank prompt.
     await waitFor(() => expect(h.listConcepts).toHaveBeenCalled());
     await waitFor(() =>
       expect(h.libraryBrowse).toHaveBeenCalledWith({
-        types: ["source", "extract", "card"],
+        types: ["source"],
       }),
     );
+    expect(await screen.findByTestId("library-group-source")).toBeTruthy();
+    expect(screen.queryByTestId("library-group-card")).toBeNull();
     expect(h.searchQuery).not.toHaveBeenCalled();
   });
 
@@ -292,20 +315,25 @@ describe("LibraryScreen", () => {
     expect(h.searchQuery).not.toHaveBeenCalled();
   });
 
-  it("browses source rows when a Type facet is clicked with no query", async () => {
+  it("clears the default Sources facet back to the search prompt", async () => {
     render(<LibraryScreen />);
-    await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalled());
+    await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalledWith({ types: ["source"] }));
+    expect(await screen.findByTestId("library-group-source")).toBeTruthy();
 
     h.libraryBrowse.mockClear();
     h.libraryBrowse.mockResolvedValueOnce({
-      items: [h.sourceBrowseItem],
-      counts: { ...h.browseCounts, all: 1, byType: { ...h.browseCounts.byType, source: 1 } },
+      items: [h.sourceBrowseItem, h.cardBrowseItem],
+      counts: h.browseCounts,
     });
     fireEvent.click(screen.getByTestId("library-filter-type-source"));
 
-    await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalledWith({ types: ["source"] }));
-    expect(await screen.findByTestId("library-group-source")).toBeTruthy();
-    expect(screen.queryByTestId("library-prompt")).toBeNull();
+    await waitFor(() =>
+      expect(h.libraryBrowse).toHaveBeenCalledWith({
+        types: ["source", "extract", "card"],
+      }),
+    );
+    expect(screen.getByTestId("library-prompt")).toBeTruthy();
+    expect(screen.queryByTestId("library-group-source")).toBeNull();
     expect(screen.queryByTestId("library-group-card")).toBeNull();
     expect(h.searchQuery).not.toHaveBeenCalled();
   });
@@ -323,7 +351,7 @@ describe("LibraryScreen", () => {
 
     await waitFor(() =>
       expect(h.libraryBrowse).toHaveBeenCalledWith({
-        types: ["source", "extract", "card"],
+        types: ["source"],
         conceptId: "concept-1",
       }),
     );
@@ -345,7 +373,7 @@ describe("LibraryScreen", () => {
 
     await waitFor(() =>
       expect(h.libraryBrowse).toHaveBeenCalledWith({
-        types: ["source", "extract", "card"],
+        types: ["source"],
         priorityLabel: "A",
       }),
     );
@@ -386,29 +414,31 @@ describe("LibraryScreen", () => {
       modelId: "local:all-MiniLM-L6-v2",
     });
     render(<LibraryScreen />);
-    // The no-query prompt is shown, but with the index complete there is no button.
-    expect(await screen.findByTestId("library-prompt")).toBeTruthy();
+    // The no-query default Sources view is shown, but with the index complete there is no button.
+    expect(await screen.findByTestId("library-group-source")).toBeTruthy();
     await waitFor(() => expect(h.semanticStatus).toHaveBeenCalled());
     expect(screen.queryByTestId("library-build-index")).toBeNull();
   });
 
-  it("searches (debounced) on input and renders grouped, highlighted results", async () => {
+  it("searches (debounced) on input inside the default Sources view", async () => {
     render(<LibraryScreen />);
     fireEvent.change(screen.getByTestId("library-search-input"), {
       target: { value: "intelligence" },
     });
 
     await waitFor(() =>
-      expect(h.searchQuery).toHaveBeenCalledWith(expect.objectContaining({ q: "intelligence" })),
+      expect(h.searchQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ q: "intelligence", type: "source" }),
+      ),
     );
 
-    // Both groups render.
+    // The default Source facet remains active until the user changes it.
     expect(await screen.findByTestId("library-group-source")).toBeTruthy();
-    expect(screen.getByTestId("library-group-card")).toBeTruthy();
+    expect(screen.queryByTestId("library-group-card")).toBeNull();
 
     // The matched term is highlighted in a result title.
     const rows = screen.getAllByTestId("library-result");
-    expect(rows.length).toBe(2);
+    expect(rows.length).toBe(1);
     expect(rows.some((r) => r.querySelector("em"))).toBe(true);
   });
 
@@ -546,11 +576,11 @@ describe("LibraryScreen", () => {
     await waitFor(() => expect(h.semanticSearch).toHaveBeenCalled());
 
     h.semanticSearch.mockClear();
-    fireEvent.click(screen.getByTestId("library-filter-type-source"));
+    fireEvent.click(screen.getByTestId("library-filter-type-card"));
 
     await waitFor(() =>
       expect(h.semanticSearch).toHaveBeenCalledWith(
-        expect.objectContaining({ q: "intelligence", type: "source" }),
+        expect.objectContaining({ q: "intelligence", type: "card" }),
       ),
     );
     expect(
@@ -587,11 +617,14 @@ describe("LibraryScreen", () => {
     ).toBeTruthy();
 
     h.searchQuery.mockClear();
+    h.libraryBrowse.mockClear();
     fireEvent.change(screen.getByTestId("library-search-input"), {
       target: { value: "" },
     });
 
-    await waitFor(() => expect(screen.getByTestId("library-prompt")).toBeTruthy());
+    await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalledWith({ types: ["source"] }));
+    expect(await screen.findByTestId("library-group-source")).toBeTruthy();
+    expect(screen.queryByTestId("library-prompt")).toBeNull();
     expect(h.searchQuery).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(
@@ -757,14 +790,6 @@ describe("LibraryScreen", () => {
 
   it("clears stale empty-query facet rows while the next facet browse is pending or failed", async () => {
     render(<LibraryScreen />);
-    await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalled());
-
-    h.libraryBrowse.mockClear();
-    h.libraryBrowse.mockResolvedValueOnce({
-      items: [h.sourceBrowseItem],
-      counts: { ...h.browseCounts, all: 1, byType: { ...h.browseCounts.byType, source: 1 } },
-    });
-    fireEvent.click(screen.getByTestId("library-filter-type-source"));
     await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalledWith({ types: ["source"] }));
     const sourceGroup = await screen.findByTestId("library-group-source");
     fireEvent.click(within(sourceGroup).getByTestId("library-result"));
@@ -791,14 +816,6 @@ describe("LibraryScreen", () => {
 
   it("clears empty-query rows and selection immediately when the final facet is cleared", async () => {
     render(<LibraryScreen />);
-    await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalled());
-
-    h.libraryBrowse.mockClear();
-    h.libraryBrowse.mockResolvedValueOnce({
-      items: [h.sourceBrowseItem],
-      counts: { ...h.browseCounts, all: 1, byType: { ...h.browseCounts.byType, source: 1 } },
-    });
-    fireEvent.click(screen.getByTestId("library-filter-type-source"));
     await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalledWith({ types: ["source"] }));
     const sourceGroup = await screen.findByTestId("library-group-source");
     fireEvent.click(within(sourceGroup).getByTestId("library-result"));
@@ -985,6 +1002,11 @@ describe("LibraryScreen", () => {
     fireEvent.change(screen.getByTestId("library-search-input"), {
       target: { value: "intelligence" },
     });
+    await waitFor(() =>
+      expect(h.searchQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ q: "intelligence", type: "source" }),
+      ),
+    );
     const sourceGroup = await screen.findByTestId("library-group-source");
     fireEvent.click(within(sourceGroup).getByTestId("library-result"));
 
@@ -992,7 +1014,14 @@ describe("LibraryScreen", () => {
     fireEvent.click(await screen.findByTestId("library-detail-open"));
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/source/$id", params: { id: "src-1" } });
 
-    const cardGroup = screen.getByTestId("library-group-card");
+    h.searchQuery.mockClear();
+    fireEvent.click(screen.getByTestId("library-filter-type-card"));
+    await waitFor(() =>
+      expect(h.searchQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ q: "intelligence", type: "card" }),
+      ),
+    );
+    const cardGroup = await screen.findByTestId("library-group-card");
     fireEvent.click(within(cardGroup).getByTestId("library-result"));
     fireEvent.click(await screen.findByTestId("library-detail-open"));
     expect(h.navigateSpy).toHaveBeenCalledWith({
@@ -1003,9 +1032,15 @@ describe("LibraryScreen", () => {
 
   it("shows the scheduler chip + due badge in the selection detail (kit parity)", async () => {
     render(<LibraryScreen />);
+    fireEvent.click(screen.getByTestId("library-filter-type-card"));
     fireEvent.change(screen.getByTestId("library-search-input"), {
       target: { value: "intelligence" },
     });
+    await waitFor(() =>
+      expect(h.searchQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ q: "intelligence", type: "card" }),
+      ),
+    );
     // Select the card hit (FSRS scheduler + a due date).
     const cardGroup = await screen.findByTestId("library-group-card");
     fireEvent.click(within(cardGroup).getByTestId("library-result"));

@@ -11,7 +11,7 @@
  * behind the typed `window.appApi.search.query` command; empty-query facet
  * counters/browsing use the typed `window.appApi.library.browse` command. The
  * renderer holds no SQL, no ranking, and no index logic. Typing debounces the
- * query; an empty no-facet search stays on the prompt while loading counters.
+ * query; an empty no-facet search defaults to browsing Sources while loading counters.
  */
 
 import { useNavigate } from "@tanstack/react-router";
@@ -60,6 +60,7 @@ const TYPE_GROUPS: readonly { type: SearchableType; title: string }[] = [
   { type: "card", title: "Cards" },
 ];
 const SEARCHABLE_TYPES = TYPE_GROUPS.map((g) => g.type);
+const DEFAULT_TYPE_FILTER: SearchableType = "source";
 
 const PRIORITIES = ["A", "B", "C", "D"] as const;
 type PriorityLetter = (typeof PRIORITIES)[number];
@@ -161,7 +162,7 @@ export function LibraryScreen() {
   const [tab, setTab] = useState<Tab>("results");
   const [rawQuery, setRawQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
-  const [typeFilter, setTypeFilter] = useState<SearchableType | null>(null);
+  const [typeFilter, setTypeFilter] = useState<SearchableType | null>(DEFAULT_TYPE_FILTER);
   const [conceptFilter, setConceptFilter] = useState<string | null>(null);
   const [priorityFilter, setPriorityFilter] = useState<PriorityLetter | null>(null);
 
@@ -187,6 +188,8 @@ export function LibraryScreen() {
   const hasQuery = debouncedTerm.length > 0;
   const hasActiveFacet = typeFilter !== null || conceptFilter !== null || priorityFilter !== null;
   const hasEmptyFacetBrowse = !hasQuery && hasActiveFacet;
+  const showSemanticBuildIndex =
+    !hasQuery && semanticEnabled && semanticIndex.embedded < semanticIndex.total;
 
   // Debounce the raw input into the query that actually hits the bridge.
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -614,6 +617,19 @@ export function LibraryScreen() {
                     ) : null}
                   </div>
                 ) : null}
+                {showSemanticBuildIndex ? (
+                  <button
+                    type="button"
+                    className="lib-build-index"
+                    data-testid="library-build-index"
+                    disabled={reindexing}
+                    onClick={() => void onReindex()}
+                  >
+                    {reindexing
+                      ? "Building index…"
+                      : `Build index (${semanticIndex.embedded} of ${semanticIndex.total} embedded)`}
+                  </button>
+                ) : null}
                 {!hasQuery && !hasEmptyFacetBrowse ? (
                   <div className="lib-empty" data-testid="library-prompt">
                     <div className="lib-empty__icon">
@@ -623,23 +639,6 @@ export function LibraryScreen() {
                     <p className="lib-empty__body">
                       Find any source, extract, or card by title, body, prompt, answer, or tag.
                     </p>
-                    {/* Semantic index affordance (T087): when on-device semantics are
-                        enabled but not everything is embedded yet, offer a one-click
-                        "Build index (N of M embedded)" that enqueues the embed jobs and
-                        updates live off `jobs.subscribe`. Pure UI — one command. */}
-                    {semanticEnabled && semanticIndex.embedded < semanticIndex.total ? (
-                      <button
-                        type="button"
-                        className="lib-build-index"
-                        data-testid="library-build-index"
-                        disabled={reindexing}
-                        onClick={() => void onReindex()}
-                      >
-                        {reindexing
-                          ? "Building index…"
-                          : `Build index (${semanticIndex.embedded} of ${semanticIndex.total} embedded)`}
-                      </button>
-                    ) : null}
                   </div>
                 ) : loading && visible.length === 0 ? (
                   <p className="lib-loading" data-testid="library-loading">
