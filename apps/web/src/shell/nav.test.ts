@@ -39,14 +39,13 @@ const VALID_ROUTES = new Set([
 ]);
 
 describe("shell nav config", () => {
-  it("leads with Home, then the kit's five primary + the Organize entries", () => {
+  it("leads with Home, then the primary sidebar entries + the Organize entries", () => {
     expect(PRIMARY_NAV.map((n) => n.label)).toEqual([
       "Home",
       "Queue",
       "Inbox",
       "Library",
       "Review",
-      "Search",
     ]);
     expect(SECONDARY_NAV.map((n) => n.label)).toEqual([
       "Concepts",
@@ -137,6 +136,7 @@ describe("shell nav config", () => {
   });
 
   it("exposes route-only sections that are not sidebar entries", () => {
+    expect(COMMAND_ITEMS.find((c) => c.label === "Search")?.to).toBe("/search");
     expect(COMMAND_ITEMS.find((c) => c.label === "Process queue")?.to).toBe("/process");
     expect(COMMAND_ITEMS.find((c) => c.label === "Retired cards")?.to).toBe("/maintenance/retired");
   });
@@ -167,55 +167,47 @@ describe("nav active-state exclusivity (resolveActiveNavId)", () => {
   });
 
   it("activates exactly one nav item on each entry's own route", () => {
-    // Every nav route is now uniquely owned by a single entry (Library → /library,
-    // Concepts → /concepts, Search → /search), so each lights up exactly itself.
+    // Every sidebar route is uniquely owned by a single entry.
     for (const item of ALL_NAV) {
       expect(resolveActiveNavId(item.to)).toBe(item.id);
       expect(activeCount(item.to)).toBe(1);
     }
   });
 
-  it("on /concepts highlights ONLY Concepts — never Search or Library (canonical owner)", () => {
+  it("on /concepts highlights ONLY Concepts — never Library (canonical owner)", () => {
     // Concepts owns its OWN dedicated route now; it must light up exclusively there.
     expect(resolveActiveNavId("/concepts")).toBe("concepts");
     expect(activeCount("/concepts")).toBe(1);
-    expect(resolveActiveNavId("/concepts")).not.toBe("search");
     expect(resolveActiveNavId("/concepts")).not.toBe("library");
   });
 
-  it("on /library highlights ONLY Library — never Search or Concepts", () => {
+  it("on /library highlights ONLY Library — never Concepts", () => {
     // Library owns its OWN dedicated route now; it must light up exclusively there.
     expect(resolveActiveNavId("/library")).toBe("library");
     expect(activeCount("/library")).toBe(1);
-    expect(resolveActiveNavId("/library")).not.toBe("search");
     expect(resolveActiveNavId("/library")).not.toBe("concepts");
   });
 
-  it("on /search highlights ONLY Search — not Library or Concepts (the reported bug)", () => {
-    // Search owns /search alone now — Concepts moved to its own /concepts route and
-    // Library to /library. Exactly one entry (Search) is active on /search, and it
-    // must NOT resolve to Library or Concepts (guards the ac73484 triple-highlight).
-    expect(resolveActiveNavId("/search")).toBe("search");
-    expect(activeCount("/search")).toBe(1);
+  it("on /search highlights no sidebar item because Search is command-only chrome", () => {
+    expect(resolveActiveNavId("/search")).toBeNull();
+    expect(activeCount("/search")).toBe(0);
     expect(resolveActiveNavId("/search")).not.toBe("library");
     expect(resolveActiveNavId("/search")).not.toBe("concepts");
   });
 
-  it("resolves /library and /search to DISTINCT owners (no triple-highlight regression)", () => {
-    // The two surfaces are kept apart: /library → Library, /search → Search. This
-    // is the core guarantee the dedicated Library route adds.
+  it("keeps /library sidebar-owned and /search route-only", () => {
     expect(resolveActiveNavId("/library")).toBe("library");
-    expect(resolveActiveNavId("/search")).toBe("search");
+    expect(resolveActiveNavId("/search")).toBeNull();
     expect(activeCount("/library")).toBe(1);
-    expect(activeCount("/search")).toBe(1);
+    expect(activeCount("/search")).toBe(0);
   });
 
   it("activates a nav item for its child routes (longest-prefix), not shallow ones", () => {
     // A child path of Leeches activates Leeches, and the deeper `/maintenance/leeches`
     // owner beats any shallower `/maintenance` match.
     expect(resolveActiveNavId("/maintenance/leeches")).toBe("leeches");
-    expect(resolveActiveNavId("/search/some-id")).toBe("search");
-    expect(activeCount("/search/some-id")).toBe(1);
+    expect(resolveActiveNavId("/settings/profile")).toBe("settings");
+    expect(activeCount("/settings/profile")).toBe(1);
   });
 
   it("highlights nothing for routes no nav item owns", () => {
@@ -223,6 +215,8 @@ describe("nav active-state exclusivity (resolveActiveNavId)", () => {
     expect(resolveActiveNavId("/source/abc")).toBeNull();
     expect(resolveActiveNavId("/extract/abc")).toBeNull();
     expect(resolveActiveNavId("/process")).toBeNull();
+    expect(resolveActiveNavId("/search")).toBeNull();
+    expect(resolveActiveNavId("/search/some-id")).toBeNull();
   });
 
   it("on `/` highlights EXACTLY the Home entry (its canonical owner)", () => {
@@ -232,6 +226,6 @@ describe("nav active-state exclusivity (resolveActiveNavId)", () => {
     expect(activeCount("/")).toBe(1);
     // The deeper routes still resolve to their own owners — `/` does not leak.
     expect(resolveActiveNavId("/queue")).toBe("queue");
-    expect(resolveActiveNavId("/search")).toBe("search");
+    expect(resolveActiveNavId("/search")).toBeNull();
   });
 });

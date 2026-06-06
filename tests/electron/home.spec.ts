@@ -18,7 +18,7 @@
  *      `asOf`'s day → a 1-day streak) — proving the streak is real, not invented;
  *   3. clicking `home-start-session` lands on the /process loop;
  *   4. NAV-EXCLUSIVITY — on `/` exactly one `.shell-nav [aria-current="page"]`
- *      exists and it is `nav-home` (and nav-search/nav-library/nav-concepts are NOT
+ *      exists and it is `nav-home` (and nav-library/nav-concepts are NOT
  *      current), preserving the ac73484 single-active-nav fix;
  *   5. the due counts SURVIVE AN APP RESTART (relaunch the same data dir → same
  *      count), per the definition-of-done restart requirement.
@@ -146,7 +146,7 @@ test("Library quick tile opens the Collection Explorer Browse mode", async () =>
   await expect(page).toHaveURL(/\/library/);
   await expect(page.getByTestId("route-library")).toBeVisible();
   await expect(page.getByTestId("nav-library")).toHaveAttribute("aria-current", "page");
-  await expect(page.getByTestId("nav-search")).not.toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("nav-search")).toHaveCount(0);
 
   await app.close();
 });
@@ -158,12 +158,11 @@ test("NAV-EXCLUSIVITY — on `/` exactly one nav item is current, and it is nav-
 
   await openHome(page);
 
-  // Exactly one sidebar entry carries aria-current="page", and it is Home — the new
-  // canonical owner of `/`. The Library/Search/Concepts `/search` triple stays off.
+  // Exactly one sidebar entry carries aria-current="page", and it is Home.
   const activeNav = page.locator('.shell-nav [aria-current="page"]');
   await expect(activeNav).toHaveCount(1);
   await expect(page.getByTestId("nav-home")).toHaveAttribute("aria-current", "page");
-  await expect(page.getByTestId("nav-search")).not.toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("nav-search")).toHaveCount(0);
   await expect(page.getByTestId("nav-library")).not.toHaveAttribute("aria-current", "page");
   await expect(page.getByTestId("nav-concepts")).not.toHaveAttribute("aria-current", "page");
 

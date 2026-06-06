@@ -30,7 +30,7 @@ The current UI blurs that distinction. Search defaults to a Source filter and us
 
 - R1. `/library` and `/search` render the same Collection Explorer shell with explicit Browse and Search modes.
 - R2. Route intent selects the initial mode: `/library` starts in Browse, `/search` starts in Search.
-- R3. The sidebar, command palette, `g l`, and `/` shortcuts keep distinct route intent: Library navigates to `/library`, Search navigates to `/search`.
+- R3. The sidebar, command palette, `g l`, and `/` shortcuts keep distinct route intent: Library appears in the sidebar and navigates to `/library`; Search is command/shortcut/direct-route access to `/search`.
 - R4. Home must not label a Search route as Library.
 - R5. Both modes retain the Results and Map tabs, and the Map remains a filtering aid rather than replacing `/concepts`.
 
@@ -167,7 +167,7 @@ Mode transitions normalize state:
 ## Acceptance Examples
 
 - AE1. From Home, choosing the Library tile opens `/library`, highlights Library, and shows browse rows without typing.
-- AE2. From the sidebar or `/` shortcut, Search opens `/search`, highlights Search, focuses the query input, and shows a prompt until a query is typed.
+- AE2. From `/`, the command palette, or direct `/search` navigation, Search opens `/search`, focuses the query input, shows no sidebar item as current, and shows a prompt until a query is typed.
 - AE3. In Browse, selecting Concept `Intelligence` and Priority `A`, then typing `memory` switches to Search and searches within those compatible constraints.
 - AE4. In Browse, selecting Type `topic`, then switching to Search drops the Type filter and explains only compatible constraints are pending.
 - AE5. In Search, selecting Type `Card` with an empty query shows no card rows; typing a query shows only matching card rows with snippets and review affordances.

@@ -9,8 +9,8 @@
  *
  * Routes here mirror the typed routes registered in `router.tsx`. Library has its
  * own dedicated `/library` browse surface and Concepts has its own `/concepts`
- * knowledge-map surface — each is the sole canonical owner of its route, so each
- * highlights exclusively (no Library/Search/Concepts triple-highlight).
+ * knowledge-map surface. Search remains a route and command-palette destination,
+ * but it is not a sidebar entry.
  */
 import type { IconName } from "../components/Icon";
 import { CHEAT_GROUP_ORDER, type PaletteActionId, paletteShortcuts, SHORTCUTS } from "./shortcuts";
@@ -32,20 +32,19 @@ export type NavItem = {
   readonly liveBadge?: boolean;
   /**
    * Whether THIS entry is the canonical owner of its `to` route when several
-   * entries point at the same path. Home/Library/Concepts/Search each own their
-   * own distinct route (`/`, `/library`, `/concepts`, `/search`) as the canonical
-   * owner, so the active-state stays exclusive (exactly one item highlighted). See
-   * `resolveActiveNavId`. When a route has no canonical owner, the first matching
-   * entry wins.
+   * entries point at the same path. Home/Library/Concepts own their sidebar routes
+   * as canonical owners, so the active-state stays exclusive (exactly one item
+   * highlighted). See `resolveActiveNavId`. When a route has no canonical owner,
+   * the first matching entry wins.
    */
   readonly canonical?: boolean;
 };
 
 /**
- * Primary nav, shown above the "Organize" divider — matches the kit's first
- * five entries (Queue, Inbox, Library, Review, Search). Queue / Inbox / Review
- * carry a LIVE count badge wired to real `window.appApi` data (see
- * `useNavBadges`) — no hardcoded counts.
+ * Primary nav, shown above the "Organize" divider. Search is intentionally not a
+ * sidebar entry; it remains reachable through `/`, ⌘K, and `/search`. Queue /
+ * Inbox / Review carry a LIVE count badge wired to real `window.appApi` data
+ * (see `useNavBadges`) — no hardcoded counts.
  */
 export const PRIMARY_NAV: readonly NavItem[] = [
   // Home command center (the `/` landing dashboard). Canonical owner of `/`, so the
@@ -55,23 +54,16 @@ export const PRIMARY_NAV: readonly NavItem[] = [
   { id: "home", label: "Home", icon: "layers", to: "/", canonical: true },
   { id: "queue", label: "Queue", icon: "queue", to: "/queue", liveBadge: true },
   { id: "inbox", label: "Inbox", icon: "inbox", to: "/inbox", liveBadge: true },
-  // Library now has its OWN dedicated browse-everything route (`/library`) and is
-  // its sole canonical owner, so it highlights EXCLUSIVELY there — no longer
-  // sharing the `/search` highlight with Search/Concepts (the triple-highlight bug
-  // fixed in ac73484 stays fixed: distinct routes resolve to distinct owners).
+  // Library has its OWN dedicated browse-everything route (`/library`) and is its
+  // sole canonical owner, so it highlights exclusively there.
   { id: "library", label: "Library", icon: "library", to: "/library", canonical: true },
   { id: "review", label: "Review", icon: "review", to: "/review", liveBadge: true },
-  // Canonical owner of `/search`. Concepts now owns its own `/concepts` route, so
-  // Search is the ONLY entry pointing at `/search` and highlights there exclusively.
-  { id: "search", label: "Search", icon: "search", to: "/search", canonical: true },
 ];
 
 /** Secondary "Organize" group — Concepts, Analytics, Settings in the kit. */
 export const SECONDARY_NAV: readonly NavItem[] = [
-  // Concepts now has its OWN dedicated `/concepts` knowledge-map route and is its
-  // sole canonical owner, so it highlights EXCLUSIVELY there — no longer sharing the
-  // `/search` highlight with Search (the triple-highlight bug fixed in ac73484 stays
-  // fixed: distinct routes resolve to distinct owners).
+  // Concepts has its OWN dedicated `/concepts` knowledge-map route and is its
+  // sole canonical owner, so it highlights exclusively there.
   { id: "concepts", label: "Concepts", icon: "concepts", to: "/concepts", canonical: true },
   { id: "analytics", label: "Analytics", icon: "analytics", to: "/analytics", canonical: true },
   // The per-source yield view (T083) — ranked, lowest-yield-first per-source rollup
@@ -110,14 +102,13 @@ export const ALL_NAV: readonly NavItem[] = [...PRIMARY_NAV, ...SECONDARY_NAV];
  *    other `to` is a longer/different prefix.
  *  - Otherwise an entry matches when the pathname equals its `to` or is a child
  *    of it (`${to}/…`) — so `/maintenance/leeches` activates Leeches, and a
- *    future `/search/abc` would still activate the search owner.
+ *    future `/maintenance/abc` would still activate the maintenance owner.
  *  - The BEST (longest `to`) match wins, so nested routes beat shallow ones.
  *  - When several entries tie on the same `to`, the `canonical` entry wins; absent
  *    a canonical owner, the first entry in render order wins. This guarantees AT
  *    MOST ONE active id per render — fixing the bug where multiple `/search`
- *    entries highlighted. Library and Concepts now own their own `/library` and
- *    `/concepts` routes, so each resolves uniquely to its own id and only Search
- *    points at `/search`.
+ *    entries highlighted. Library and Concepts own their own `/library` and
+ *    `/concepts` routes, while `/search` is route-only and has no sidebar owner.
  */
 export function resolveActiveNavId(pathname: string): string | null {
   let best: NavItem | null = null;

@@ -206,7 +206,7 @@ test("(c) the reader renders in both light and dark themes", async () => {
   // Flip the theme via the shell's user-chip menu.
   await page.getByTestId("user-chip").click();
   await page
-    .getByRole("menuitemradio", { name: before === "light" ? /Dark mode/ : /Light mode/ })
+    .getByTestId(before === "light" ? "shell-theme-option-dark" : "shell-theme-option-light")
     .click();
   const after = await html.getAttribute("data-theme");
   expect(after).not.toBe(before);

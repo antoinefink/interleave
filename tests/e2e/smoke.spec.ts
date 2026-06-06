@@ -61,21 +61,20 @@ test("navigates between routes via the sidebar", async ({ page }) => {
   await expect(page.getByTestId("route-review")).toBeVisible();
 });
 
-test("the sidebar highlights exactly one nav item — and on /search it is Search, not Library/Concepts", async ({
+test("the sidebar highlights at most one nav item — and /search has no sidebar owner", async ({
   page,
 }) => {
-  // Regression for the active-state bug: Library, Search and Concepts all point
-  // at /search, so a per-item prefix test lit up all three. Active-state is now
-  // resolved by item identity (resolveActiveNavId), so exactly one item carries
-  // aria-current="page" on every route.
+  // Regression for sidebar active-state bugs: active-state is resolved by item
+  // identity (resolveActiveNavId), so sidebar-owned routes highlight one item and
+  // route-only screens such as Search highlight none.
   const activeNav = page.locator('.shell-nav [aria-current="page"]');
 
-  // On /search the canonical owner (Search) is the only highlighted entry.
   await page.goto("/search");
-  await expect(page.getByTestId("nav-search")).toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("route-search")).toBeVisible();
+  await expect(page.getByTestId("nav-search")).toHaveCount(0);
   await expect(page.getByTestId("nav-library")).not.toHaveAttribute("aria-current", "page");
   await expect(page.getByTestId("nav-concepts")).not.toHaveAttribute("aria-current", "page");
-  await expect(activeNav).toHaveCount(1);
+  await expect(activeNav).toHaveCount(0);
 
   // Each uniquely-owned route highlights exactly its own entry — including the new
   // `/` home command center (its canonical owner, nav-home), so the index no longer
@@ -154,7 +153,7 @@ test("the shell renders in both light and dark themes", async ({ page }) => {
   // The theme toggle lives in the user-chip menu.
   await page.getByTestId("user-chip").click();
   await page
-    .getByRole("menuitemradio", { name: before === "light" ? /Dark mode/ : /Light mode/ })
+    .getByTestId(before === "light" ? "shell-theme-option-dark" : "shell-theme-option-light")
     .click();
 
   const after = await html.getAttribute("data-theme");

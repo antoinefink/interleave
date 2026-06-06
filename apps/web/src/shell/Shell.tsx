@@ -80,7 +80,7 @@ function NavButton({
   /**
    * Whether THIS entry is the single active one — resolved once per render by
    * `resolveActiveNavId` (by item identity), so exactly one entry highlights even
-   * when several share a route (Library / Search / Concepts → `/search`).
+   * when several routes or route-only screens exist.
    */
   active: boolean;
   badges: NavBadgeCounts;
@@ -93,8 +93,7 @@ function NavButton({
   // anchor) via useLinkProps, but OVERRIDE its built-in active markers. The Link
   // auto-stamps `aria-current="page"` + `data-status="active"` + an `active` class
   // on EVERY anchor whose `to` matches the URL — and those win over our own props
-  // because the library spreads them last. Library / Search / Concepts all share
-  // `/search`, so that would light up (and announce "current page" for) all three.
+  // because the library spreads them last.
   // Instead we strip the auto markers and drive them from the single resolved
   // `active` flag (resolveActiveNavId), so exactly one entry is active in the DOM.
   const {
@@ -148,9 +147,8 @@ function Sidebar({
   // Live Queue / Inbox / Review count badges from window.appApi (queue.list /
   // inbox.list), not hardcoded numbers. Empty (every badge hidden) outside desktop.
   const badges = useNavBadges();
-  // The SINGLE active nav entry for this route, resolved by item identity (not a
-  // shared-route prefix test). Library / Search / Concepts all point at `/search`,
-  // but only the canonical owner (Search) lights up there — exactly one highlight.
+  // The SINGLE active nav entry for this route, resolved by item identity. Some
+  // routes, including `/search`, intentionally have no sidebar owner.
   const activeId = resolveActiveNavId(pathname);
 
   // Close the user menu on a click outside the chip/menu, or on Escape.

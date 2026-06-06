@@ -208,13 +208,12 @@ test("NAV-EXCLUSIVITY — on /library exactly one nav item is current, and it is
   await page.waitForLoadState("domcontentloaded");
   await openLibrary(page);
 
-  // Exactly one sidebar entry carries aria-current="page", and it is Library —
-  // NOT Search or Concepts (the triple-highlight bug stays fixed for the new route).
+  // Exactly one sidebar entry carries aria-current="page", and it is Library.
   const activeNav = page.locator('.shell-nav [aria-current="page"]');
   await expect(activeNav).toHaveCount(1);
   await expect(page.getByTestId("nav-library")).toHaveAttribute("aria-current", "page");
   await expect(page.getByTestId("nav-library")).toHaveAttribute("data-status", "active");
-  await expect(page.getByTestId("nav-search")).not.toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("nav-search")).toHaveCount(0);
   await expect(page.getByTestId("nav-concepts")).not.toHaveAttribute("aria-current", "page");
 
   await app.close();

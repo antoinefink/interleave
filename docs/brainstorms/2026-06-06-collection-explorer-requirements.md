@@ -21,7 +21,7 @@ The current separation is defensible, but the product surface feels blurry becau
 
 ## Key Decisions
 
-- **Collection Explorer is the umbrella.** Product copy may describe the shared shell as Collection Explorer, while sidebar entries continue to say Library and Search because those are the user's actual intents.
+- **Collection Explorer is the umbrella.** Product copy may describe the shared shell as Collection Explorer. The sidebar says Library for browse-first collection access; Search remains a command/shortcut/direct-route entry point rather than a sidebar item.
 - **Route intent selects mode.** `/library` opens Browse mode and `/search` opens Search mode with the query focused; neither route should remember a last-used mode that overrides its meaning.
 - **Search does not browse by default.** Empty Search shows a prompt, even when compatible filters are active; filters become pending constraints for the next query.
 - **The first pass is UI/product consolidation.** The initial work should reuse the existing search and browse reads instead of reshaping backend contracts.
@@ -34,7 +34,7 @@ The current separation is defensible, but the product surface feels blurry becau
 
 - R1. The Collection Explorer must expose Browse and Search as explicit modes in one shared shell.
 - R2. The Library sidebar entry, `g l`, and Library command-palette action must open Browse mode.
-- R3. The Search sidebar entry, `/`, and Search command-palette action must open Search mode and focus the query box.
+- R3. The `/` shortcut, direct `/search` route, and Search command-palette action must open Search mode and focus the query box.
 - R4. The Home quick tile must not label a Search destination as Library; it must either open Browse as Library or use Search wording for a Search destination.
 
 **Browse Mode**
@@ -112,7 +112,7 @@ The current separation is defensible, but the product surface feels blurry becau
 
 - Users can state the difference between Browse and Search after seeing the integrated surface.
 - Empty Search no longer implies that Search can browse every element type.
-- Library and Search sidebar entries remain fast entry points for their respective intents.
+- Library remains the sidebar entry for collection exploration; Search remains a fast command/shortcut/direct-route entry point.
 - Compatible filters survive mode switches without making results appear to vanish mysteriously.
 - Existing search ranking, semantic search behavior, review-mode entry points, and browse coverage remain intact.
 

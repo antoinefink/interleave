@@ -311,7 +311,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: 'The sidebar has two groups. The <strong>primary group</strong> (above the "Organize" divider) contains: <b>Home</b>, <b>Queue</b>, <b>Inbox</b>, <b>Library</b>, <b>Review</b>, and <b>Search</b>. The <strong>Organize group</strong> (below the divider) contains: <b>Concepts</b>, <b>Analytics</b>, <b>Source yield</b>, <b>Maintenance</b>, <b>Leeches</b>, <b>Stagnant</b>, <b>Trash</b>, and <b>Settings</b>.',
+      text: 'The sidebar has two groups. The <strong>primary group</strong> (above the "Organize" divider) contains: <b>Home</b>, <b>Queue</b>, <b>Inbox</b>, <b>Library</b>, and <b>Review</b>. The <strong>Organize group</strong> (below the divider) contains: <b>Concepts</b>, <b>Analytics</b>, <b>Source yield</b>, <b>Maintenance</b>, <b>Leeches</b>, <b>Stagnant</b>, <b>Trash</b>, and <b>Settings</b>.',
     },
     {
       type: "p",
@@ -323,7 +323,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: 'The bar at the top of every screen reads <em>"Search, import, or run command…"</em> and opens the command palette when clicked. Press <kbd>⌘</kbd><kbd>K</kbd> (or <kbd>Ctrl</kbd><kbd>K</kbd>) to open it from the keyboard. The palette\'s <b>Go to</b> group navigates to: Home command center, Daily Queue, Inbox triage, Review session, Library, Concept map, and Settings. The <b>Create</b> group opens import flows. The <b>Actions</b> group runs element commands (raise/lower priority, open source) on the currently selected element. Press <kbd>/</kbd> anywhere to jump directly to Search.',
+      text: 'The bar at the top of every screen reads <em>"Search, import, or run command…"</em> and opens the command palette when clicked. Press <kbd>⌘</kbd><kbd>K</kbd> (or <kbd>Ctrl</kbd><kbd>K</kbd>) to open it from the keyboard. The palette\'s <b>Go to</b> group navigates to: Home command center, Daily Queue, Inbox triage, Review session, Library, Search, Concept map, and Settings. The <b>Create</b> group opens import flows. The <b>Actions</b> group runs element commands (raise/lower priority, open source) on the currently selected element. Press <kbd>/</kbd> anywhere to jump directly to Search.',
     },
     {
       type: "callout",
@@ -2806,7 +2806,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: "Reach Search with <kbd>/</kbd> from anywhere, via <kbd>⌘K</kbd> → <code>Search</code>, or from the sidebar.",
+      text: "Reach Search with <kbd>/</kbd> from anywhere, via <kbd>⌘K</kbd> → <code>Search</code>, or by opening <code>/search</code> directly.",
     },
     {
       type: "h2",

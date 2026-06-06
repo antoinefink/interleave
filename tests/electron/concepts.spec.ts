@@ -122,13 +122,12 @@ test("NAV-EXCLUSIVITY — g+c navigates to /concepts and highlights Concepts exc
 
   await expect(page.getByTestId("route-concepts")).toBeVisible();
 
-  // Exactly one sidebar entry carries aria-current="page", and it is Concepts —
-  // NOT Search or Library (the triple-highlight bug stays fixed for the new route).
+  // Exactly one sidebar entry carries aria-current="page", and it is Concepts.
   const activeNav = page.locator('.shell-nav [aria-current="page"]');
   await expect(activeNav).toHaveCount(1);
   await expect(page.getByTestId("nav-concepts")).toHaveAttribute("aria-current", "page");
   await expect(page.getByTestId("nav-concepts")).toHaveAttribute("data-status", "active");
-  await expect(page.getByTestId("nav-search")).not.toHaveAttribute("aria-current", "page");
+  await expect(page.getByTestId("nav-search")).toHaveCount(0);
   await expect(page.getByTestId("nav-library")).not.toHaveAttribute("aria-current", "page");
 
   await app.close();
