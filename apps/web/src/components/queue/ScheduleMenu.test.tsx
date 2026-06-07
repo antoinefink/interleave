@@ -23,7 +23,10 @@ describe("ScheduleMenu", () => {
     render(<ScheduleMenu onSchedule={vi.fn()} />);
     expect(screen.queryByTestId("schedule-menu-pop")).toBeNull();
 
-    fireEvent.click(screen.getByTestId("schedule-menu-trigger"));
+    const trigger = screen.getByTestId("schedule-menu-trigger");
+    expect(trigger).toHaveClass("schedmenu__trigger");
+
+    fireEvent.click(trigger);
     expect(screen.getByTestId("schedule-menu-pop")).not.toBeNull();
     expect(screen.getByTestId("schedule-tomorrow")).not.toBeNull();
     expect(screen.getByTestId("schedule-nextWeek")).not.toBeNull();

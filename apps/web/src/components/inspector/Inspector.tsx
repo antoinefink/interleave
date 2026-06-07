@@ -24,7 +24,7 @@
 
 import { taskTypeLabel } from "@interleave/core";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   appApi,
   type ConceptNode,
@@ -39,6 +39,7 @@ import {
   type LineageItem,
   type LineageNode,
   type PriorityLabel as PriorityLabelType,
+  type QueueScheduleChoice,
   type ReliabilityTierInput,
   type SemanticRelatedItem,
   type SemanticRelatedResult,
@@ -55,6 +56,8 @@ import { useSelection } from "../../shell/selection";
 import { ConflictSection } from "../ConflictSection";
 import { ExternalUrlLink } from "../ExternalUrlLink";
 import { Icon } from "../Icon";
+import { requestQueueRefresh } from "../queue/queueRefresh";
+import { ScheduleMenu } from "../queue/ScheduleMenu";
 import { RefBlock } from "../RefBlock";
 import "./inspector.css";
 import { LineageTree } from "./LineageTree";
@@ -65,8 +68,9 @@ import {
   Prio,
   priorityLabel,
   SchedulerChip,
-  Stage,
   Status,
+  stageLabel,
+  statusLabel,
   Tag,
   TypeIcon,
   typeLabel,
@@ -97,6 +101,38 @@ function fmtDate(iso: string | null): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(
     d.getUTCDate(),
   ).padStart(2, "0")}`;
+}
+
+/** Format an ISO timestamp as a compact attention-scheduler recency label. */
+function seenLabel(iso: string | null): string {
+  if (!iso) return "Not seen yet";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return `Seen ${iso}`;
+
+  const seen = new Date(t);
+  const today = new Date();
+  const seenDay = new Date(seen.getFullYear(), seen.getMonth(), seen.getDate()).getTime();
+  const todayDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const diff = Math.round((todayDay - seenDay) / dayMs);
+  if (diff === 0) return "Seen today";
+  if (diff === 1) return "Seen yesterday";
+  if (diff > 1 && diff < 7) return `Seen ${diff}d ago`;
+  return `Seen ${fmtDate(iso)}`;
+}
+
+function headerStateLine(
+  element: InspectorData["element"],
+  review: InspectorData["review"],
+): string {
+  const parts = [
+    typeLabel(element.type),
+    priorityLabel(element.priority),
+    statusLabel(element.status),
+    stageLabel(element.stage),
+  ];
+  if (review?.isRetired) parts.push("Retired");
+  return parts.join(" · ");
 }
 
 /** A clickable lineage row that re-selects the target element and may open its detail surface. */
@@ -512,6 +548,17 @@ const EXPORTABLE_TYPES = new Set<ElementSummary["type"]>([
  * under it, outside scheduling). A `card`/`task`/`concept` has no reviewable subtree.
  */
 const BRANCH_REVIEWABLE_TYPES = new Set<ElementSummary["type"]>(["source", "topic", "extract"]);
+
+/** Element types expected to preserve source evidence even when the source is missing. */
+const SOURCE_LINEAGE_TYPES = new Set<ElementSummary["type"]>(["extract", "card", "media_fragment"]);
+
+type AttentionScheduler = InspectorData["scheduler"] & { kind: "attention" };
+
+function isAttentionScheduler(
+  scheduler: InspectorData["scheduler"],
+): scheduler is AttentionScheduler {
+  return scheduler.kind === "attention";
+}
 
 /**
  * "Export to Markdown" action (T068) — serializes the element's stored document
@@ -1748,6 +1795,125 @@ export function RelatedSection({
   );
 }
 
+function AttentionSummary({
+  scheduler,
+  busy,
+  onSchedule,
+}: {
+  scheduler: InspectorData["scheduler"] & { kind: "attention" };
+  busy: boolean;
+  onSchedule: (choice: QueueScheduleChoice) => void;
+}) {
+  return (
+    <div className="attention-summary" data-testid="attention-summary">
+      <div className="attention-summary__main">
+        <span>{seenLabel(scheduler.lastProcessedAt)}</span>
+        {scheduler.postponed === 0 ? <span>Postponed 0x</span> : null}
+      </div>
+      {scheduler.yield ? (
+        <div className="attention-summary__yield" data-testid="inspector-yield">
+          <span data-testid="inspector-yield-read">
+            {Math.round(scheduler.yield.readPct * 100)}% read
+          </span>
+          <span>
+            {scheduler.yield.extractsCreated} extract
+            {scheduler.yield.extractsCreated === 1 ? "" : "s"}
+          </span>
+          <span>
+            {scheduler.yield.cardsCreated} card{scheduler.yield.cardsCreated === 1 ? "" : "s"}
+          </span>
+        </div>
+      ) : null}
+      <div className="attention-summary__actions">
+        <ScheduleMenu disabled={busy} onSchedule={onSchedule} />
+      </div>
+    </div>
+  );
+}
+
+function SourceLineageSection({
+  source,
+  sourceRef,
+  location,
+  onOpenLineageItem,
+  onJumpToLocation,
+}: {
+  source: LineageItem | null;
+  sourceRef: InspectorData["sourceRef"];
+  location: InspectorData["location"];
+  onOpenLineageItem: (item: LineageItem) => void;
+  onJumpToLocation: (location: NonNullable<InspectorData["location"]>) => void;
+}) {
+  const quote = location?.selectedText || sourceRef?.snippet || "";
+  const canJump = Boolean(location && location.blockIds.length > 0);
+  const hasSourceContext = Boolean(source || sourceRef || location);
+  const showLocationLabel = Boolean(location?.label);
+
+  if (!hasSourceContext) {
+    return (
+      <div className="insp-sec" data-testid="source-lineage-section">
+        <div className="insp-sec__title">Source lineage</div>
+        <p className="insp-empty">Source unavailable.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="insp-sec source-lineage" data-testid="source-lineage-section">
+      <div className="insp-sec__title">
+        <span>Source lineage</span>
+        {canJump && location ? (
+          <button
+            type="button"
+            className="insp-jump"
+            data-testid="location-jump"
+            title="Open the source and scroll to this paragraph"
+            onClick={() => onJumpToLocation(location)}
+          >
+            <Icon name="external" size={13} /> Jump to source
+          </button>
+        ) : null}
+      </div>
+
+      {source ? (
+        <div className="tree" data-testid="source-lineage-source">
+          <LineageRow item={source} onOpen={onOpenLineageItem} />
+        </div>
+      ) : sourceRef?.sourceTitle ? (
+        <div className="source-lineage__title" data-testid="source-lineage-source-title">
+          {sourceRef.sourceTitle}
+        </div>
+      ) : null}
+
+      {quote ? (
+        <blockquote className="insp-quote" data-testid="source-lineage-quote">
+          {quote}
+        </blockquote>
+      ) : null}
+
+      {sourceRef ? (
+        <RefBlock ref={sourceRef} testId="inspector-refblock" showSnippet={false} />
+      ) : (
+        <p className="insp-empty">Source reference unavailable.</p>
+      )}
+
+      {location ? (
+        <div className="meta-list source-lineage__location" data-testid="source-lineage-location">
+          {showLocationLabel ? <MetaRow k="Location">{location.label}</MetaRow> : null}
+          {location.blockIds.length > 0 ? (
+            <MetaRow k="Blocks">{location.blockIds.length}</MetaRow>
+          ) : null}
+          {location.startOffset !== null || location.endOffset !== null ? (
+            <MetaRow k="Offsets">
+              {location.startOffset ?? "—"}-{location.endOffset ?? "—"}
+            </MetaRow>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** The full metadata view for one inspected element. */
 function InspectorBody({
   data,
@@ -1758,8 +1924,10 @@ function InspectorBody({
   onPickLineageNode,
   onJumpToLocation,
   onSetPriority,
+  onScheduleAttention,
   onOrganizeChanged,
   priorityBusy,
+  scheduleBusy,
   refreshTick,
 }: {
   data: InspectorData;
@@ -1770,8 +1938,10 @@ function InspectorBody({
   onPickLineageNode: (node: LineageNode) => void;
   onJumpToLocation: (location: NonNullable<InspectorData["location"]>) => void;
   onSetPriority: (action: ElementsSetPriorityAction) => void;
+  onScheduleAttention: (elementId: string, choice: QueueScheduleChoice) => void;
   onOrganizeChanged: () => void;
   priorityBusy: boolean;
+  scheduleBusy: boolean;
   refreshTick: number;
 }) {
   const {
@@ -1789,41 +1959,34 @@ function InspectorBody({
     lifetime,
   } = data;
   const redactCardSourceContext = element.type === "card" && isScopeActive("review");
+  const showSourceLineage =
+    !redactCardSourceContext &&
+    element.type !== "source" &&
+    (SOURCE_LINEAGE_TYPES.has(element.type) || Boolean(source || sourceRef || location));
   return (
     <div className="insp" data-testid="inspector-content" data-element-type={element.type}>
-      {/* Header: type icon + title + the at-a-glance chips. */}
+      {/* Header: identity + one compact state line. */}
       <div className="insp-head">
         <TypeIcon type={element.type} lg />
         <div style={{ minWidth: 0 }}>
           <h2 className="insp-head__title" data-testid="inspector-title">
             {element.title}
           </h2>
-          <div className="insp-head__row">
-            <Prio priority={element.priority} />
-            <Status status={element.status} />
-            {review?.isRetired ? (
-              <span className="badge badge--retired" data-testid="inspector-retired-badge">
-                <Icon name="archive" size={11} />
-                Retired
-              </span>
-            ) : null}
-            <SchedulerChip scheduler={scheduler} />
+          <div className="insp-head__state" data-testid="inspector-state-line">
+            {headerStateLine(element, review)}
           </div>
         </div>
       </div>
 
-      {/* Metadata */}
+      {/* Properties: the editable control surface. */}
       <div className="insp-sec">
-        <div className="insp-sec__title">Metadata</div>
+        <div className="insp-sec__title">Properties</div>
         <div className="meta-list">
           <MetaRow k="Type">
             <span data-testid="meta-type">{typeLabel(element.type)}</span>
           </MetaRow>
           <MetaRow k="Status">
-            <span data-testid="meta-status">{element.status}</span>
-          </MetaRow>
-          <MetaRow k="Stage">
-            <Stage stage={element.stage} />
+            <Status status={element.status} />
           </MetaRow>
           <MetaRow k="Priority">
             <span data-testid="meta-priority">
@@ -1849,46 +2012,28 @@ function InspectorBody({
         </div>
       </div>
 
-      {/* Export to Markdown (T068) — document-bearing elements only. */}
-      {EXPORTABLE_TYPES.has(element.type) && <ExportMarkdownSection elementId={element.id} />}
-
-      {/* Export to Anki (T070) — cards only; scope = this card / a concept / all. */}
-      {element.type === "card" && <ExportAnkiSection cardId={element.id} concepts={concepts} />}
-
       {/* Scheduler — the FSRS vs attention split, surfaced explicitly. */}
       <div className="insp-sec" data-testid="scheduler-section">
         <div className="insp-sec__title">
           <span>{scheduler.kind === "fsrs" ? "Recall (FSRS)" : "Attention"}</span>
           <SchedulerChip scheduler={scheduler} />
         </div>
-        {scheduler.kind === "fsrs" && review ? (
-          <FsrsStats scheduler={scheduler} />
+        {scheduler.kind === "fsrs" ? (
+          review ? (
+            <FsrsStats scheduler={scheduler} />
+          ) : (
+            <p className="insp-empty" data-testid="fsrs-review-missing">
+              Review state unavailable.
+            </p>
+          )
+        ) : isAttentionScheduler(scheduler) ? (
+          <AttentionSummary
+            scheduler={scheduler}
+            busy={scheduleBusy}
+            onSchedule={(choice) => onScheduleAttention(element.id, choice)}
+          />
         ) : (
-          <div className="meta-list">
-            <MetaRow k="Stage">
-              <Stage stage={scheduler.stage} />
-            </MetaRow>
-            <MetaRow k="Postponed">{scheduler.postponed}×</MetaRow>
-            <MetaRow k="Last seen">{fmtDate(scheduler.lastProcessedAt)}</MetaRow>
-            {/* Source-yield chip (T083): read % + extracts/cards produced. */}
-            {scheduler.yield ? (
-              <>
-                <MetaRow k="Read">
-                  <span data-testid="inspector-yield-read">
-                    {Math.round(scheduler.yield.readPct * 100)}%
-                  </span>
-                </MetaRow>
-                <MetaRow k="Yield">
-                  <span data-testid="inspector-yield">
-                    {scheduler.yield.extractsCreated} extract
-                    {scheduler.yield.extractsCreated === 1 ? "" : "s"} ·{" "}
-                    {scheduler.yield.cardsCreated} card
-                    {scheduler.yield.cardsCreated === 1 ? "" : "s"}
-                  </span>
-                </MetaRow>
-              </>
-            ) : null}
-          </div>
+          <p className="insp-empty">Scheduler unavailable.</p>
         )}
       </div>
 
@@ -1936,57 +2081,20 @@ function InspectorBody({
         />
       )}
 
-      {/* Owning source (lineage root) for non-source elements. */}
-      {!redactCardSourceContext && source && (
-        <div className="insp-sec" data-testid="source-section">
-          <div className="insp-sec__title">From source</div>
-          <div className="tree">
-            <LineageRow item={source} onOpen={onOpenLineageItem} />
-          </div>
-        </div>
+      {/* Source lineage — source/title/quote/citation/location + one jump action. */}
+      {showSourceLineage && (
+        <SourceLineageSection
+          source={source}
+          sourceRef={sourceRef}
+          location={location}
+          onOpenLineageItem={onOpenLineageItem}
+          onJumpToLocation={onJumpToLocation}
+        />
       )}
 
-      {/* Source reference (T043) — the originating refblock for an extract/card, so
-          opening the inspector on a card never feels orphaned. Sources show their
-          provenance above; extracts/cards show the shared RefBlock resolved from
-          lineage (title/URL/author/date/location + snippet), with the jump-to-source
-          affordance. A missing/soft-deleted source degrades to a calm placeholder. */}
-      {!redactCardSourceContext && element.type !== "source" && sourceRef && (
-        <div className="insp-sec" data-testid="source-ref-section">
-          <div className="insp-sec__title">Source reference</div>
-          <RefBlock
-            ref={sourceRef}
-            testId="inspector-refblock"
-            {...(location && location.blockIds.length > 0
-              ? { onOpenSource: () => onJumpToLocation(location) }
-              : {})}
-          />
-        </div>
-      )}
-
-      {/* Source location — actionable lineage (jump-to-paragraph, T022). */}
-      {!redactCardSourceContext && location && (
-        <div className="insp-sec" data-testid="location-section">
-          <div className="insp-sec__title">
-            <span>Source location</span>
-            {location.blockIds.length > 0 && (
-              <button
-                type="button"
-                className="insp-jump"
-                data-testid="location-jump"
-                title="Open the source and scroll to this paragraph"
-                onClick={() => onJumpToLocation(location)}
-              >
-                <Icon name="external" size={13} /> Jump to source
-              </button>
-            )}
-          </div>
-          {location.label && <MetaRow k="Label">{location.label}</MetaRow>}
-          <blockquote className="insp-quote" data-testid="location-quote">
-            {location.selectedText}
-          </blockquote>
-        </div>
-      )}
+      {/* Export utilities — lower priority than properties, scheduler, and lineage. */}
+      {EXPORTABLE_TYPES.has(element.type) && <ExportMarkdownSection elementId={element.id} />}
+      {element.type === "card" && <ExportAnkiSection cardId={element.id} concepts={concepts} />}
 
       {/* Parent (lineage up). */}
       {!redactCardSourceContext && parent && (
@@ -2132,6 +2240,9 @@ export function Inspector() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [priorityBusy, setPriorityBusy] = useState(false);
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+  const selectedIdRef = useRef<string | null>(selectedId);
+  selectedIdRef.current = selectedId;
   // Bumped by the `INSPECTOR_REFRESH_EVENT` so the panel re-fetches the selected
   // element + the picker list after a mutation elsewhere (e.g. T021 extraction adds
   // a child extract) — surfacing the new lineage WITHOUT a navigation/reload.
@@ -2260,6 +2371,37 @@ export function Inspector() {
     [selectedId, priorityBusy],
   );
 
+  const onScheduleAttention = useCallback(
+    async (elementId: string, choice: QueueScheduleChoice) => {
+      if (!isDesktop() || scheduleBusy) return;
+      setScheduleBusy(true);
+      try {
+        await appApi.scheduleQueueItem({ id: elementId, choice });
+        requestQueueRefresh();
+        const res = await appApi.getInspectorData({ id: elementId });
+        if (selectedIdRef.current !== elementId) return;
+        const refreshed = res.data;
+        if (!refreshed) {
+          setData(null);
+          setError("Element unavailable.");
+          return;
+        }
+        setData(refreshed);
+        setElements((items) =>
+          items.map((item) => (item.id === elementId ? refreshed.element : item)),
+        );
+        setError(null);
+      } catch (e) {
+        if (selectedIdRef.current === elementId) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        setScheduleBusy(false);
+      }
+    },
+    [scheduleBusy],
+  );
+
   // Clicking a lineage node navigates BOTH directions (T023): re-select the node
   // (driving the inspector) and open its dedicated page — a source/topic opens its
   // reader at `/source/$id`, an extract opens its review view at `/extract/$id`
@@ -2325,8 +2467,10 @@ export function Inspector() {
             onPickLineageNode={onPickLineageNode}
             onJumpToLocation={navigateToLocation}
             onSetPriority={onSetPriority}
+            onScheduleAttention={onScheduleAttention}
             onOrganizeChanged={onOrganizeChanged}
             priorityBusy={priorityBusy}
+            scheduleBusy={scheduleBusy}
             refreshTick={refreshTick}
           />
         ) : selectedId && !data ? (

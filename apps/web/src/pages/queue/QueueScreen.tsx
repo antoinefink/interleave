@@ -29,6 +29,7 @@ import { Icon, type IconName } from "../../components/Icon";
 import { Prio, SchedulerChip, TypeIcon } from "../../components/inspector/primitives";
 import { BudgetMeter } from "../../components/queue/BudgetMeter";
 import { QueueSnackbar } from "../../components/queue/QueueSnackbar";
+import { listenQueueRefresh } from "../../components/queue/queueRefresh";
 import { ScheduleMenu } from "../../components/queue/ScheduleMenu";
 import { Tooltip } from "../../components/Tooltip";
 import { AutoVirtualList } from "../../components/VirtualList";
@@ -274,6 +275,13 @@ export function QueueScreen() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (!desktop) return;
+    return listenQueueRefresh(() => {
+      void refresh();
+    });
+  }, [desktop, refresh]);
 
   useEffect(() => {
     if (!desktop) return;

@@ -16,6 +16,12 @@ A source that has been captured but not yet accepted into the user's active know
 
 The origin and reliability context attached to a source, including where it came from and how the app should describe that origin to the user.
 
+### Source lineage
+
+The chain that lets a derived element point back to the source evidence it came from, including source identity, selected text, citation or link metadata, and a location the reader can jump to.
+
+Source lineage is different from general hierarchy: it is evidence grounding, so it must stay coherent when extracts, cards, or media fragments are inspected or reviewed.
+
 ### Browser capture
 
 A browser-extension initiated import flow that turns the current page or selected browser content into a Source while leaving validation, activation, and local reader navigation inside the desktop app.

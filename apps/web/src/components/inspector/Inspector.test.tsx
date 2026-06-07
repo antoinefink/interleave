@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElementSummary, InspectorData } from "../../lib/appApi";
 
@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   getInspectorData: vi.fn(),
   getLineage: vi.fn(),
   setElementPriority: vi.fn(),
+  scheduleQueueItem: vi.fn(),
   semanticRelated: vi.fn(),
   listTasks: vi.fn(),
   createTask: vi.fn(),
@@ -51,6 +52,7 @@ vi.mock("../../lib/appApi", async () => {
       getInspectorData: h.getInspectorData,
       getLineage: h.getLineage,
       setElementPriority: h.setElementPriority,
+      scheduleQueueItem: h.scheduleQueueItem,
       semanticRelated: h.semanticRelated,
       listTasks: h.listTasks,
       createTask: h.createTask,
@@ -68,6 +70,16 @@ vi.mock("../../lib/appApi", async () => {
 
 import { pushActiveScope } from "../../shell/activeScope";
 import { Inspector, requestInspectorRefresh } from "./Inspector";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 function element(id: string, title: string): ElementSummary {
   return {
@@ -127,6 +139,65 @@ function extractDataWithCardChild(): InspectorData {
         stage: "active_card",
       },
     ],
+  };
+}
+
+function extractDataWithSourceLineage(): InspectorData {
+  const data = topicData("Linked extract");
+  return {
+    ...data,
+    element: {
+      ...element("ext-1", "Linked extract"),
+      type: "extract",
+      status: "scheduled",
+      stage: "clean_extract",
+      priority: 0.64,
+      dueAt: "2026-06-10T12:00:00.000Z",
+    },
+    scheduler: {
+      kind: "attention",
+      retrievability: null,
+      stability: null,
+      difficulty: null,
+      reps: null,
+      lapses: null,
+      fsrsState: null,
+      stage: "clean_extract",
+      postponed: 0,
+      lastProcessedAt: new Date().toISOString(),
+      yield: null,
+    },
+    source: {
+      id: "src-1",
+      title: "Source paper",
+      type: "source",
+      stage: "raw_source",
+    },
+    sourceRef: {
+      sourceElementId: "src-1",
+      sourceTitle: "Source paper",
+      url: "https://example.test/source",
+      author: "Ada",
+      publishedAt: "2026-01-01T00:00:00.000Z",
+      locationLabel: "¶ 3",
+      snippet: "The selected source text.",
+      sourceType: null,
+      reliabilityTier: null,
+      confidence: null,
+      reliabilityNotes: null,
+    },
+    location: {
+      label: "¶ 3",
+      selectedText: "The selected source text.",
+      page: null,
+      region: null,
+      clip: null,
+      timestampMs: null,
+      sourceElementId: "src-1",
+      blockIds: ["block-1"],
+      startOffset: 10,
+      endOffset: 35,
+    },
   };
 }
 
@@ -239,6 +310,12 @@ beforeEach(() => {
   h.getLineage.mockResolvedValue({ lineage: { rootId: "topic-1", nodes: [] } });
   h.setElementPriority.mockReset();
   h.setElementPriority.mockResolvedValue({ element: null });
+  h.scheduleQueueItem.mockReset();
+  h.scheduleQueueItem.mockResolvedValue({
+    item: null,
+    dueAt: "2026-06-08T12:00:00.000Z",
+    intervalDays: 1,
+  });
   h.semanticRelated.mockReset();
   h.semanticRelated.mockResolvedValue({
     similar: [],
@@ -317,6 +394,195 @@ describe("Inspector", () => {
     );
   });
 
+  it("renders extract identity, properties, attention, and source lineage without duplicated facts", async () => {
+    h.selectedId = "ext-1";
+    h.getInspectorData.mockResolvedValue({ data: extractDataWithSourceLineage() });
+
+    render(<Inspector />);
+
+    await screen.findByTestId("inspector-content");
+
+    expect(screen.getByTestId("inspector-state-line")).toHaveTextContent(
+      "Extract · B · Scheduled · Clean extract",
+    );
+    const header = screen.getByTestId("inspector-state-line").closest(".insp-head");
+    if (!(header instanceof HTMLElement)) throw new Error("Missing inspector header");
+    expect(within(header).queryByTestId("scheduler-chip")).not.toBeInTheDocument();
+    expect(header.querySelector(".badge")).toBeNull();
+    expect(screen.getByTestId("meta-type")).toHaveTextContent("Extract");
+    expect(screen.getByTestId("meta-priority")).toHaveTextContent("B · 0.640");
+    expect(screen.getByText("Set priority")).toBeInTheDocument();
+    expect(screen.getByTestId("meta-due")).toHaveTextContent("2026-06-10");
+    const propertiesSection = screen.getByText("Properties").closest(".insp-sec");
+    if (!(propertiesSection instanceof HTMLElement)) throw new Error("Missing Properties section");
+    expect(within(propertiesSection).queryByText("Stage")).not.toBeInTheDocument();
+
+    expect(screen.getByTestId("scheduler-section")).toHaveTextContent("Clean extract");
+    expect(screen.getByTestId("attention-summary")).not.toHaveTextContent("Clean extract");
+    expect(screen.getByTestId("attention-summary")).toHaveTextContent("Seen today");
+    expect(screen.getByTestId("attention-summary")).toHaveTextContent("Postponed 0x");
+
+    expect(screen.getByTestId("source-lineage-section")).toBeInTheDocument();
+    expect(screen.queryByTestId("source-section")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("source-ref-section")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("location-section")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("inspector-refblock-open-source")).not.toBeInTheDocument();
+    expect(screen.getByTestId("source-lineage-section")).toHaveTextContent("Source paper");
+    expect(screen.getByTestId("source-lineage-quote")).toHaveTextContent(
+      "The selected source text.",
+    );
+    expect(screen.getByTestId("inspector-refblock-citation")).toHaveTextContent("Ada");
+    expect(screen.getByTestId("inspector-refblock-url")).toHaveAttribute(
+      "href",
+      "https://example.test/source",
+    );
+    expect(screen.getAllByText("¶ 3")).toHaveLength(1);
+
+    const jumpButtons = screen.getAllByRole("button", { name: /jump to source/i });
+    expect(jumpButtons).toHaveLength(1);
+    const jumpButton = jumpButtons[0] as HTMLElement;
+    fireEvent.click(jumpButton);
+    expect(h.navigateToLocation).toHaveBeenCalledWith({
+      label: "¶ 3",
+      selectedText: "The selected source text.",
+      page: null,
+      region: null,
+      clip: null,
+      timestampMs: null,
+      sourceElementId: "src-1",
+      blockIds: ["block-1"],
+      startOffset: 10,
+      endOffset: 35,
+    });
+  });
+
+  it("schedules an attention item through the existing queue schedule bridge", async () => {
+    h.selectedId = "ext-1";
+    const initial = extractDataWithSourceLineage();
+    const refreshed = {
+      ...initial,
+      element: {
+        ...initial.element,
+        dueAt: "2026-06-08T12:00:00.000Z",
+      },
+    };
+    h.getInspectorData
+      .mockResolvedValueOnce({ data: initial })
+      .mockResolvedValueOnce({ data: refreshed });
+
+    render(<Inspector />);
+
+    const trigger = await screen.findByTestId("schedule-menu-trigger");
+    h.getInspectorData.mockClear();
+    h.getLineage.mockClear();
+    h.listConcepts.mockClear();
+    h.listInspectableElements.mockClear();
+
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByTestId("schedule-tomorrow"));
+
+    await waitFor(() =>
+      expect(h.scheduleQueueItem).toHaveBeenCalledWith({
+        id: "ext-1",
+        choice: { kind: "tomorrow" },
+      }),
+    );
+    expect(h.getInspectorData).toHaveBeenCalledWith({ id: "ext-1" });
+    expect(h.getInspectorData).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByTestId("meta-due")).toHaveTextContent("2026-06-08"));
+    expect(h.getLineage).not.toHaveBeenCalled();
+    expect(h.listConcepts).not.toHaveBeenCalled();
+    expect(h.listInspectableElements).not.toHaveBeenCalled();
+  });
+
+  it("ignores stale schedule refreshes after the selection changes", async () => {
+    h.selectedId = "ext-1";
+    const schedule = deferred<{
+      item: null;
+      dueAt: string;
+      intervalDays: number;
+    }>();
+    const staleRefresh = deferred<{ data: InspectorData }>();
+    h.scheduleQueueItem.mockReturnValue(schedule.promise);
+    h.getInspectorData
+      .mockResolvedValueOnce({ data: extractDataWithSourceLineage() })
+      .mockResolvedValueOnce({ data: topicData("New selection") })
+      .mockReturnValueOnce(staleRefresh.promise);
+
+    const view = render(<Inspector />);
+
+    fireEvent.click(await screen.findByTestId("schedule-menu-trigger"));
+    fireEvent.click(screen.getByTestId("schedule-tomorrow"));
+
+    h.selectedId = "topic-1";
+    view.rerender(<Inspector />);
+    expect(await screen.findByText("New selection")).toBeInTheDocument();
+
+    await act(async () => {
+      schedule.resolve({
+        item: null,
+        dueAt: "2026-06-08T12:00:00.000Z",
+        intervalDays: 1,
+      });
+      await schedule.promise;
+    });
+    await act(async () => {
+      staleRefresh.resolve({
+        data: {
+          ...extractDataWithSourceLineage(),
+          element: {
+            ...extractDataWithSourceLineage().element,
+            title: "Stale extract",
+          },
+        },
+      });
+      await staleRefresh.promise;
+    });
+
+    await waitFor(() => expect(screen.getByText("New selection")).toBeInTheDocument());
+    expect(screen.queryByText("Stale extract")).not.toBeInTheDocument();
+  });
+
+  it("does not expose the attention schedule menu when an FSRS item has no review state", async () => {
+    h.selectedId = "card-1";
+    h.getInspectorData.mockResolvedValue({
+      data: {
+        ...cardDataWithSourceContext(),
+        review: null,
+      },
+    });
+
+    render(<Inspector />);
+
+    expect(await screen.findByTestId("fsrs-review-missing")).toHaveTextContent(
+      "Review state unavailable.",
+    );
+    expect(screen.queryByTestId("attention-summary")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("schedule-menu-trigger")).not.toBeInTheDocument();
+  });
+
+  it("shows source lineage without an unanchored jump when no source block is available", async () => {
+    h.selectedId = "ext-1";
+    const data = extractDataWithSourceLineage();
+    h.getInspectorData.mockResolvedValue({
+      data: {
+        ...data,
+        location: {
+          ...data.location,
+          blockIds: [],
+        },
+      },
+    });
+
+    render(<Inspector />);
+
+    await screen.findByTestId("source-lineage-section");
+    expect(screen.getByTestId("source-lineage-quote")).toHaveTextContent(
+      "The selected source text.",
+    );
+    expect(screen.queryByRole("button", { name: /jump to source/i })).not.toBeInTheDocument();
+  });
+
   it("redacts card source context while the review scope owns reveal state", async () => {
     h.selectedId = "card-1";
     h.getInspectorData.mockResolvedValue({ data: cardDataWithSourceContext() });
@@ -329,7 +595,13 @@ describe("Inspector", () => {
       expect(screen.queryByTestId("source-section")).not.toBeInTheDocument();
       expect(screen.queryByTestId("source-ref-section")).not.toBeInTheDocument();
       expect(screen.queryByTestId("location-section")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("source-lineage-section")).not.toBeInTheDocument();
       expect(screen.queryByTestId("location-jump")).not.toBeInTheDocument();
+      expect(screen.queryByText("Source paper")).not.toBeInTheDocument();
+      expect(screen.queryByText("Hidden source context")).not.toBeInTheDocument();
+      expect(screen.queryByText("Ada")).not.toBeInTheDocument();
+      expect(screen.queryByText("¶ 3")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("inspector-refblock-url")).not.toBeInTheDocument();
       expect(screen.queryByTestId("parent-section")).not.toBeInTheDocument();
       expect(screen.queryByTestId("lineage-section")).not.toBeInTheDocument();
     } finally {

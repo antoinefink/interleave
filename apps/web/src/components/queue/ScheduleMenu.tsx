@@ -84,7 +84,7 @@ export function ScheduleMenu({
       <Tooltip label="Schedule for later" disabled={open}>
         <button
           type="button"
-          className="qitem__act"
+          className="schedmenu__trigger"
           disabled={disabled}
           aria-label="Schedule for tomorrow, next week, next month, or a manual date"
           aria-haspopup="menu"

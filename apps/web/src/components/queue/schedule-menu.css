@@ -2,13 +2,36 @@
  * ScheduleMenu styles (T028/T030) — the explicit reschedule popover.
  *
  * Token-only (no hard-coded colors/spacing): the popover reuses the surface/border/
- * shadow tokens the rest of the queue uses, and the trigger reuses the `qitem__act`
- * icon-button styling so it sits flush in the row's action cluster.
+ * shadow tokens the rest of the queue uses, and the trigger owns its icon-button
+ * styling so it can be reused outside queue rows.
  */
 
 .schedmenu {
   position: relative;
   display: inline-flex;
+}
+
+.schedmenu__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all var(--fast) var(--ease);
+}
+.schedmenu__trigger:hover:not(:disabled) {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text);
+}
+.schedmenu__trigger:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .schedmenu__pop {

@@ -27,4 +27,8 @@ describe("inspector CSS", () => {
     expect(row).toContain("flex-wrap: wrap;");
     expect(row).toContain("gap: 6px;");
   });
+
+  it("does not depend on queue-row action classes for embedded controls", () => {
+    expect(inspectorCss).not.toContain(".insp .qitem__act");
+  });
 });

@@ -53,6 +53,7 @@ import {
   stageLabel,
   TypeIcon,
 } from "../../components/inspector/primitives";
+import { listenQueueRefresh } from "../../components/queue/queueRefresh";
 import { ScheduleMenu } from "../../components/queue/ScheduleMenu";
 import { RefBlock } from "../../components/RefBlock";
 import "../../components/inspector/inspector.css";
@@ -370,6 +371,13 @@ export function ProcessQueue() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!desktop) return;
+    return listenQueueRefresh(() => {
+      void load();
+    });
+  }, [desktop, load]);
 
   // Load the current card's full reveal-ready view OR the current attention item's
   // inspector context. The body itself comes from `useDocument`, so extract editing

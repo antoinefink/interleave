@@ -77,6 +77,11 @@ export function Status({ status }: { status: string }) {
   return <span className={`badge ${entry.cls}`}>{entry.label}</span>;
 }
 
+/** Human label for a canonical lifecycle status. */
+export function statusLabel(status: string): string {
+  return STATUS_BADGE[status]?.label ?? status;
+}
+
 /** Canonical distillation stage → kit display label + dot color token. */
 const STAGE_META: Record<string, { label: string; dot: string }> = {
   raw_source: { label: "Reading", dot: "var(--el-source)" },
