@@ -30,8 +30,9 @@ This bundles the TS entry points (`background` / `options` / `popup` /
 there is no standing `content` script in T062 — T063 adds one if it needs to.)
 
 Regenerate the icons with `node apps/extension/scripts/make-icons.mjs` (they are
-committed PNGs derived from a layered-stack glyph — a Chrome manifest icon cannot
-be an SVG). Production bundles are **minified** (the worker bundles zod via
+committed PNGs downscaled from the canonical brand mark `brand/logo.png` — the
+layered-stack glyph on a transparent ground; a Chrome manifest icon cannot be an
+SVG). Production bundles are **minified** (the worker bundles zod via
 `@interleave/capture-contract`); `--watch` builds stay unminified for debugging.
 
 ### Permissions (manifest)
