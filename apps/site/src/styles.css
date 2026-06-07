@@ -844,6 +844,7 @@ a {
 
 .pipe-step {
   position: relative;
+  isolation: isolate;
   display: flex;
   align-items: center;
   flex: 1;
@@ -872,6 +873,7 @@ a {
 }
 
 .pipe-step__dot {
+  position: relative;
   z-index: 1;
   display: grid;
   width: 26px;
@@ -880,12 +882,13 @@ a {
   border: 1.5px solid var(--border);
   border-radius: 50%;
   background: var(--surface-2);
+  box-shadow: 0 0 0 var(--s-1) var(--surface);
   color: var(--text-3);
 }
 
 .pipe-step--done .pipe-step__dot {
   border-color: var(--el-card);
-  background: color-mix(in oklch, var(--el-card) 14%, transparent);
+  background: color-mix(in oklch, var(--el-card) 14%, var(--surface-2));
   color: var(--el-card);
 }
 
@@ -893,7 +896,9 @@ a {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--text-on-accent);
-  box-shadow: 0 0 0 var(--s-1) var(--accent-soft);
+  box-shadow:
+    0 0 0 var(--s-1) var(--surface),
+    0 0 0 calc(var(--s-1) * 2) var(--accent-soft);
 }
 
 .pipe-step__lbl {

@@ -298,15 +298,22 @@ describe("reader demo actions", () => {
     expect(document.querySelector("mark")).toBeNull();
   });
 
-  it("cross-paragraph selections no-op instead of rewriting reader structure", () => {
+  it("extract supports cross-paragraph selections without rewriting reader structure", () => {
     const { first, second } = setupReaderDemoWithTwoParagraphs();
     selectAcrossTextNodes(first, "learning", second, "Deep sleep");
 
-    expect(handleReaderAction("extract", document, window)).toBe(false);
+    expect(handleReaderAction("extract", document, window)).toBe(true);
 
-    expect(document.getElementById("railCount")?.textContent).toBe("1");
-    expect(document.querySelectorAll("#railBody .xcard")).toHaveLength(1);
-    expect(document.querySelector("mark")).toBeNull();
+    expect(document.getElementById("railCount")?.textContent).toBe("2");
+    expect(document.querySelectorAll("#railBody .xcard")).toHaveLength(2);
+    expect(document.querySelector("#railBody .xcard")?.textContent).toContain(
+      "learning saves new memory. Deep sleep",
+    );
+    expect(document.querySelectorAll("mark.extracted")).toHaveLength(2);
+    expect(document.querySelectorAll("mark.extracted")[0]?.textContent).toBe(
+      "learning saves new memory.",
+    );
+    expect(document.querySelectorAll("mark.extracted")[1]?.textContent).toBe("Deep sleep");
     expect(document.querySelectorAll("#readerBody p")).toHaveLength(2);
     expect(document.getElementById("readerBody")?.textContent).toContain(
       "Sleep after learning saves new memory.",
@@ -314,6 +321,38 @@ describe("reader demo actions", () => {
     expect(document.getElementById("readerBody")?.textContent).toContain(
       "Deep sleep consolidates yesterday's lessons.",
     );
+  });
+
+  it("shows the toolbar for cross-paragraph selections", () => {
+    const { first, second } = setupReaderDemoWithTwoParagraphs();
+    selectAcrossTextNodes(first, "learning", second, "Deep sleep");
+
+    const range = window.getSelection()?.getRangeAt(0) as
+      | (Range & { getBoundingClientRect: () => DOMRect })
+      | undefined;
+    const toolbar = document.getElementById("selFloat");
+
+    if (!range || !toolbar) {
+      throw new Error("Selection toolbar fixture was not created");
+    }
+
+    range.getBoundingClientRect = () =>
+      DOMRect.fromRect({ height: 96, width: 480, x: 180, y: 420 });
+    Object.defineProperty(toolbar, "offsetWidth", { configurable: true, value: 210 });
+    Object.defineProperty(toolbar, "offsetHeight", { configurable: true, value: 42 });
+
+    expect(
+      updateSelectionToolbar(document, {
+        getSelection: () => window.getSelection(),
+        innerWidth: 900,
+        scrollX: 0,
+        scrollY: 0,
+      } as unknown as Window),
+    ).toBe(true);
+
+    expect(toolbar.style.left).toBe("315px");
+    expect(toolbar.style.top).toBe("368px");
+    expect(toolbar.classList.contains("sel-float--on")).toBe(true);
   });
 
   it("bindReaderDemo wires toolbar button actions", () => {

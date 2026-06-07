@@ -237,9 +237,57 @@ function selectionRangeRect(range: Range): DOMRect | null {
   return rangeWithRect.getBoundingClientRect();
 }
 
-function selectionNodeBlock(node: Node | null): Element | null {
-  const element = node instanceof Element ? node : node?.parentElement;
-  return element?.closest("p") ?? null;
+type TextSelectionSegment = {
+  node: Text;
+  start: number;
+  end: number;
+};
+
+function selectedTextSegments(reader: Element, range: Range): TextSelectionSegment[] {
+  const doc = reader.ownerDocument;
+  const showText = doc.defaultView?.NodeFilter.SHOW_TEXT ?? 4;
+  const walker = doc.createTreeWalker(reader, showText);
+  const segments: TextSelectionSegment[] = [];
+
+  let current = walker.nextNode();
+
+  while (current) {
+    if (current.nodeType === 3 && range.intersectsNode(current)) {
+      const textNode = current as Text;
+      const start = textNode === range.startContainer ? range.startOffset : 0;
+      const end = textNode === range.endContainer ? range.endOffset : textNode.data.length;
+
+      if (start < end && textNode.data.slice(start, end).trim().length > 0) {
+        segments.push({ node: textNode, start, end });
+      }
+    }
+
+    current = walker.nextNode();
+  }
+
+  return segments;
+}
+
+function wrapTextSegment(
+  doc: Document,
+  segment: TextSelectionSegment,
+  className: string,
+): HTMLElement | null {
+  const parent = segment.node.parentNode;
+
+  if (!parent) {
+    return null;
+  }
+
+  const selected = segment.node.splitText(segment.start);
+  selected.splitText(segment.end - segment.start);
+
+  const mark = doc.createElement("mark");
+  mark.className = className;
+  parent.insertBefore(mark, selected);
+  mark.appendChild(selected);
+
+  return mark;
 }
 
 export function getReaderSelection(doc?: Document, win?: ReaderWindow): ReaderSelection | null {
@@ -263,13 +311,6 @@ export function getReaderSelection(doc?: Document, win?: ReaderWindow): ReaderSe
     !selectionNodeInside(reader, range.commonAncestorContainer) ||
     !selectionNodeInside(reader, selection.anchorNode) ||
     !selectionNodeInside(reader, selection.focusNode)
-  ) {
-    return null;
-  }
-
-  if (
-    range.startContainer !== range.endContainer ||
-    selectionNodeBlock(range.startContainer) !== selectionNodeBlock(range.endContainer)
   ) {
     return null;
   }
@@ -336,14 +377,28 @@ function markReaderSelection(
   readerSelection: ReaderSelection,
   action: ReaderAction,
 ): HTMLElement {
-  const mark = doc.createElement("mark");
-  mark.className = action === "highlight" ? "hl flash" : "extracted flash";
-  mark.textContent = readerSelection.text;
-  readerSelection.range.deleteContents();
-  readerSelection.range.insertNode(mark);
+  const reader = doc.getElementById("readerBody");
+  const markClass = action === "highlight" ? "hl flash" : "extracted flash";
+  const segments = reader ? selectedTextSegments(reader, readerSelection.range) : [];
+  const marks: HTMLElement[] = [];
+
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index];
+
+    if (!segment) {
+      continue;
+    }
+
+    const mark = wrapTextSegment(doc, segment, markClass);
+
+    if (mark) {
+      marks.unshift(mark);
+    }
+  }
+
   readerSelection.selection.removeAllRanges();
 
-  return mark;
+  return marks[0] ?? doc.createElement("mark");
 }
 
 export function handleReaderAction(
