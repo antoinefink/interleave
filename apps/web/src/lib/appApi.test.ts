@@ -136,8 +136,10 @@ describe("renderer appApi wrapper", () => {
       search: { query: vi.fn(async () => result) },
     } as Partial<AppApi>);
 
-    await expect(appApi.searchQuery({ q: "memory" })).resolves.toEqual(result);
-    expect(bridge.search.query).toHaveBeenCalledWith({ q: "memory" });
+    await expect(appApi.searchQuery({ q: "memory", includeCounts: false })).resolves.toEqual(
+      result,
+    );
+    expect(bridge.search.query).toHaveBeenCalledWith({ q: "memory", includeCounts: false });
   });
 
   it("routes document-mark helpers through documents.marks", async () => {

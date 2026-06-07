@@ -629,6 +629,53 @@
   flex: 1;
   min-width: 0;
 }
+.shell-cmdk__item--source {
+  align-items: flex-start;
+  height: auto;
+  min-height: calc(var(--s-10) + var(--s-1));
+  padding-block: var(--s-2);
+}
+.shell-cmdk__source {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: calc(var(--s-1) / 2);
+}
+.shell-cmdk__source-title,
+.shell-cmdk__source-snippet {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shell-cmdk__source-title {
+  font-weight: 500;
+}
+.shell-cmdk__source-snippet {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: var(--lh-tight);
+}
+.shell-cmdk__return {
+  align-self: center;
+  margin-left: auto;
+  color: var(--text-3);
+}
+.shell-cmdk__state {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  min-height: calc(var(--s-9) + var(--s-2));
+  padding: 0 var(--s-4);
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+.shell-cmdk__state svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: var(--text-3);
+}
 
 /* ---- Cheat sheet (?) ---- */
 .shell-cheat-overlay {

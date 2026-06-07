@@ -68,6 +68,7 @@ import {
   ExtractionService,
   ExtractService,
   ExtractStagnationQuery,
+  emptySearchFacetCounts,
   foldSearchFacetCounts,
   HEAVY_FIT_REVIEW_THRESHOLD,
   InboxQuery,
@@ -4587,15 +4588,17 @@ export class DbService {
       });
     }
 
-    // DRILL-DOWN faceted counts for the filterbar. The repository computes exact
-    // aggregate counts in SQL (no snippets/ranking/materialized match list), and
-    // each dimension drops only its own active predicate.
-    const counts = this.repos.search.facetCounts(request.q, {
-      ...(request.tag ? { tag: request.tag } : {}),
-      ...(request.type ? { type: request.type } : {}),
-      ...(request.conceptId ? { conceptId: request.conceptId as ElementId } : {}),
-      ...(request.priorityLabel ? { priorityLabel: request.priorityLabel } : {}),
-    });
+    // DRILL-DOWN faceted counts for the filterbar. Compact lookup surfaces such as
+    // the command palette can opt out because they render only bounded rows.
+    const counts =
+      request.includeCounts === false
+        ? emptySearchFacetCounts()
+        : this.repos.search.facetCounts(request.q, {
+            ...(request.tag ? { tag: request.tag } : {}),
+            ...(request.type ? { type: request.type } : {}),
+            ...(request.conceptId ? { conceptId: request.conceptId as ElementId } : {}),
+            ...(request.priorityLabel ? { priorityLabel: request.priorityLabel } : {}),
+          });
 
     return { results, counts };
   }

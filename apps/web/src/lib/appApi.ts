@@ -2950,6 +2950,11 @@ export interface SearchQueryRequest {
    */
   readonly priorityLabel?: PriorityLabel;
   readonly limit?: number;
+  /**
+   * Palette and other compact lookup surfaces can opt out of drill-down counts
+   * they do not render. `/search` omits this and keeps exact facet counts.
+   */
+  readonly includeCounts?: boolean;
 }
 
 /**

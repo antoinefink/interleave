@@ -2196,6 +2196,29 @@ describe("DbService — review session (T037)", () => {
     svc.close();
   });
 
+  it("search.query can skip drill-down counts for compact lookup surfaces", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    const { results, counts } = svc.search({
+      q: "intelligence",
+      type: "source",
+      limit: 8,
+      includeCounts: false,
+    });
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.every((r) => r.type === "source")).toBe(true);
+    expect(counts).toEqual({
+      byType: { source: 0, extract: 0, card: 0 },
+      byConcept: {},
+      byPriority: { A: 0, B: 0, C: 0, D: 0 },
+    });
+
+    svc.close();
+  });
+
   it("search.query validates the payload, filters by tag, and returns [] for an empty query (T042)", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });

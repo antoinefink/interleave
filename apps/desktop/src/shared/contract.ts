@@ -4534,6 +4534,11 @@ export const SearchQueryRequestSchema = z.object({
   priorityLabel: PriorityLabelSchema.optional(),
   /** Cap the result count (1..200; defaults main-side). */
   limit: z.number().int().min(1).max(200).optional(),
+  /**
+   * Compact lookup surfaces may skip drill-down counts they do not render. The
+   * default remains `true` for `/search` so existing facet semantics are intact.
+   */
+  includeCounts: z.boolean().optional(),
 });
 export type SearchQueryRequest = z.infer<typeof SearchQueryRequestSchema>;
 

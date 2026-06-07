@@ -2218,7 +2218,7 @@ describe("Tag request schemas (T041)", () => {
 });
 
 describe("Search request schema (T042)", () => {
-  it("SearchQueryRequestSchema accepts a query + optional type/concept/tag/limit and rejects bad values", () => {
+  it("SearchQueryRequestSchema accepts a query + optional type/concept/tag/limit/count flag and rejects bad values", () => {
     expect(SearchQueryRequestSchema.parse({ q: "memory" })).toEqual({ q: "memory" });
     expect(
       SearchQueryRequestSchema.parse({
@@ -2227,8 +2227,16 @@ describe("Search request schema (T042)", () => {
         conceptId: "el_c",
         tag: "definitions",
         limit: 10,
+        includeCounts: false,
       }),
-    ).toEqual({ q: "memory", type: "extract", conceptId: "el_c", tag: "definitions", limit: 10 });
+    ).toEqual({
+      q: "memory",
+      type: "extract",
+      conceptId: "el_c",
+      tag: "definitions",
+      limit: 10,
+      includeCounts: false,
+    });
 
     // An empty query is allowed (it degrades to [] main-side), but only the
     // searchable types are accepted, and the limit is bounded.

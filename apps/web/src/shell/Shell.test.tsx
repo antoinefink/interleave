@@ -100,10 +100,15 @@ vi.mock("./CommandPalette", () => ({
     open,
     hasSelection,
     onAction,
+    onNavigate,
   }: {
     open: boolean;
     hasSelection: boolean;
     onAction: (id: "cheat-sheet" | "create-backup") => void;
+    onNavigate: (
+      to: string,
+      options?: { readonly params?: Readonly<Record<string, string>> },
+    ) => void;
   }) => (
     <div
       data-testid="command-palette"
@@ -115,6 +120,13 @@ vi.mock("./CommandPalette", () => ({
       </button>
       <button type="button" data-testid="command-backup" onClick={() => onAction("create-backup")}>
         Backup
+      </button>
+      <button
+        type="button"
+        data-testid="command-source"
+        onClick={() => onNavigate("/source/$id", { params: { id: "src-alpha" } })}
+      >
+        Source
       </button>
     </div>
   ),
@@ -188,6 +200,17 @@ describe("Shell", () => {
 
     fireEvent.click(screen.getByTestId("command-cheat"));
     expect(screen.getByTestId("cheat-sheet")).toHaveAttribute("data-open", "true");
+  });
+
+  it("forwards command-palette source route params into TanStack navigation", () => {
+    render(<Shell />);
+
+    fireEvent.click(screen.getByTestId("command-source"));
+
+    expect(h.navigate).toHaveBeenCalledWith({
+      to: "/source/$id",
+      params: { id: "src-alpha" },
+    });
   });
 
   it("persists theme changes through the desktop settings bridge", () => {

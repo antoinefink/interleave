@@ -385,17 +385,13 @@ function ShellInner() {
   const [seen, setSeen] = useState<Set<string>>(() => new Set());
   const tourSteps = useMemo(() => getTourSteps(), []);
 
-  const onNavigate = (to: string) => {
-    void navigate({ to });
+  const onNavigate = (
+    to: string,
+    options?: { readonly params?: Readonly<Record<string, string>> },
+  ) => {
+    void navigate({ to, ...(options?.params ? { params: options.params } : {}) });
   };
 
-  /**
-   * Run a registry-backed palette/shortcut ACTION (T048). This is the single map
-   * from the closed `PaletteActionId` set to the shared handlers — both the `⌘K`
-   * palette and (for `cheat-sheet`) the menus route through here, and the element
-   * actions delegate to `useGlobalActions` (same `window.appApi` commands as the
-   * inspector buttons). No domain logic here — pure dispatch.
-   */
   /**
    * Create a backup now (T050) — the single handler the ⌘B shortcut, the ⌘K
    * "Create a backup" command, and the native File → "Back up…" menu all route
@@ -417,6 +413,13 @@ function ShellInner() {
   const createBackupRef = useRef(onCreateBackup);
   createBackupRef.current = onCreateBackup;
 
+  /**
+   * Run a registry-backed palette/shortcut ACTION (T048). This is the single map
+   * from the closed `PaletteActionId` set to the shared handlers — both the `⌘K`
+   * palette and (for `cheat-sheet`) the menus route through here, and the element
+   * actions delegate to `useGlobalActions` (same `window.appApi` commands as the
+   * inspector buttons). No domain logic here — pure dispatch.
+   */
   const runAction = (actionId: PaletteActionId) => {
     switch (actionId) {
       case "open-source":
