@@ -69,10 +69,12 @@ describe("useProcessedSpans", () => {
     const { result } = renderHook(() => useProcessedSpans("src-1"));
     await waitFor(() => expect(h.listDocumentMarks).toHaveBeenCalledTimes(1));
 
+    let marked = false;
     await act(async () => {
-      await result.current.mark("blk-b");
+      marked = await result.current.mark("blk-b");
     });
 
+    expect(marked).toBe(true);
     expect(h.addDocumentMark).toHaveBeenCalledWith({
       elementId: "src-1",
       blockId: "blk-b",
@@ -86,15 +88,34 @@ describe("useProcessedSpans", () => {
     const { result } = renderHook(() => useProcessedSpans("src-1"));
     await waitFor(() => expect(result.current.isProcessed("blk-a")).toBe(true));
 
+    let marked = false;
     await act(async () => {
-      await result.current.mark("blk-a");
+      marked = await result.current.mark("blk-a");
     });
+    expect(marked).toBe(true);
     expect(h.addDocumentMark).not.toHaveBeenCalled();
 
+    let toggled: "marked" | "restored" | null = null;
     await act(async () => {
-      await result.current.toggle("blk-a");
+      toggled = await result.current.toggle("blk-a");
     });
+    expect(toggled).toBe("restored");
     expect(h.removeDocumentMark).toHaveBeenCalledWith({ markId: "m-1" });
+  });
+
+  it("returns a failed toggle result and exposes the mutation error", async () => {
+    h.listDocumentMarks.mockResolvedValueOnce({ marks: [] });
+    h.addDocumentMark.mockRejectedValueOnce(new Error("disk full"));
+    const { result } = renderHook(() => useProcessedSpans("src-1"));
+    await waitFor(() => expect(h.listDocumentMarks).toHaveBeenCalledTimes(1));
+
+    let toggled: "marked" | "restored" | null = "marked";
+    await act(async () => {
+      toggled = await result.current.toggle("blk-b");
+    });
+
+    expect(toggled).toBeNull();
+    expect(result.current.error).toBe("disk full");
   });
 
   it("does not call IPC outside desktop mode", () => {

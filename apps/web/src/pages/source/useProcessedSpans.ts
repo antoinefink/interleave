@@ -40,11 +40,11 @@ export interface UseProcessedSpansResult {
   /** The `document_marks.id` dimming a block, or `null` if it is not processed. */
   readonly markIdFor: (blockId: string) => string | null;
   /** Mark a block processed (persists a `processed_span` row + refreshes). */
-  readonly mark: (blockId: string) => Promise<void>;
+  readonly mark: (blockId: string) => Promise<boolean>;
   /** Restore a block by its `document_marks` id (deletes the row + refreshes). */
-  readonly restore: (markId: string) => Promise<void>;
+  readonly restore: (markId: string) => Promise<boolean>;
   /** Toggle a block's processed state (mark if clear, restore if already set). */
-  readonly toggle: (blockId: string) => Promise<void>;
+  readonly toggle: (blockId: string) => Promise<"marked" | "restored" | null>;
   /** The last load/mutate error message, if any. */
   readonly error: string | null;
 }
@@ -112,9 +112,9 @@ export function useProcessedSpans(elementId: string | null | undefined): UseProc
 
   const mark = useCallback(
     async (blockId: string) => {
-      if (!elementId || !isDesktop() || blockId.length === 0) return;
+      if (!elementId || !isDesktop() || blockId.length === 0) return false;
       // Already processed ⇒ nothing to add (avoid a duplicate row).
-      if (processed.some((p) => p.blockId === blockId)) return;
+      if (processed.some((p) => p.blockId === blockId)) return true;
       try {
         await appApi.addDocumentMark({
           elementId,
@@ -123,8 +123,10 @@ export function useProcessedSpans(elementId: string | null | undefined): UseProc
           range: [0, BLOCK_END],
         });
         await reload();
+        return true;
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
+        return false;
       }
     },
     [elementId, processed, reload],
@@ -132,12 +134,14 @@ export function useProcessedSpans(elementId: string | null | undefined): UseProc
 
   const restore = useCallback(
     async (markId: string) => {
-      if (!isDesktop()) return;
+      if (!isDesktop()) return false;
       try {
         await appApi.removeDocumentMark({ markId });
         await reload();
+        return true;
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
+        return false;
       }
     },
     [reload],
@@ -147,10 +151,9 @@ export function useProcessedSpans(elementId: string | null | undefined): UseProc
     async (blockId: string) => {
       const existing = processed.find((p) => p.blockId === blockId);
       if (existing) {
-        await restore(existing.markId);
-      } else {
-        await mark(blockId);
+        return (await restore(existing.markId)) ? "restored" : null;
       }
+      return (await mark(blockId)) ? "marked" : null;
     },
     [processed, mark, restore],
   );

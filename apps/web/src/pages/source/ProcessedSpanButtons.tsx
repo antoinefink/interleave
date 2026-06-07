@@ -49,6 +49,8 @@ export interface ProcessedSpanButtonsProps {
    * the right confirmation toast ("Marked processed" vs "Restored").
    */
   readonly onToggled?: (result: "marked" | "restored") => void;
+  /** Notified when persistence failed, so the host can show an error toast. */
+  readonly onToggleFailed?: () => void;
 }
 
 /** The element this button toggles is a body paragraph (the kit only marks `<p>`). */
@@ -81,6 +83,7 @@ export function ProcessedSpanButtons({
   processed,
   revision,
   onToggled,
+  onToggleFailed,
 }: ProcessedSpanButtonsProps) {
   const [anchors, setAnchors] = useState<readonly BlockAnchor[]>([]);
 
@@ -152,13 +155,16 @@ export function ProcessedSpanButtons({
               data-testid={`processed-toggle-${a.blockId}`}
               data-processed={isProc ? "true" : "false"}
               onClick={() => {
-                const willMark = !isProc;
-                void processed.toggle(a.blockId).then(() => {
-                  onToggled?.(willMark ? "marked" : "restored");
-                });
+                void processed
+                  .toggle(a.blockId)
+                  .then((result) => {
+                    if (result) onToggled?.(result);
+                    else onToggleFailed?.();
+                  })
+                  .catch(() => onToggleFailed?.());
               }}
             >
-              <Icon name={isProc ? "restore" : "check"} size={13} />
+              <Icon name={isProc ? "restore" : "archive"} size={13} />
             </button>
           );
         })}

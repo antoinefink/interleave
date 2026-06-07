@@ -215,8 +215,26 @@ mark.extracted {
   padding: 0.5px 1px;
   cursor: pointer;
 }
-.dimmed {
-  color: var(--text-3);
+.reader .dimmed {
+  color: color-mix(in oklch, var(--text-3) 78%, var(--canvas));
+  opacity: 0.58;
+}
+.reader p.dimmed {
+  position: relative;
+}
+.reader p.dimmed::before {
+  content: "";
+  position: absolute;
+  top: 0.34em;
+  bottom: 0.44em;
+  left: -14px;
+  width: 2px;
+  border-radius: var(--r-full);
+  background: var(--border-strong);
+}
+.reader p.dimmed mark.hl,
+.reader p.dimmed mark.extracted {
+  opacity: 0.68;
 }
 
 /* The read-point divider: a dashed accent rule before the first unread block. */
@@ -437,9 +455,10 @@ mark.extracted {
 
 /* ---------- Per-paragraph "mark processed" affordance (T026) ---------- */
 /* Ported from design/kit/styles/app.css (`.readpara__mark`) against the canonical
-   tokens. The buttons live in an absolutely-positioned overlay over the live editor
-   (we never mutate the ProseMirror DOM); each is anchored to its block's measured
-   top. The right column (-34px past the 680px column) keeps them in the margin. */
+   tokens, with the shape adjusted from checkbox-like square to circular action.
+   The buttons live in an absolutely-positioned overlay over the live editor (we
+   never mutate the ProseMirror DOM); each is anchored to its block's measured top.
+   The right column (-36px past the 680px column) keeps them in the margin. */
 .readpara-overlay {
   position: absolute;
   inset: 0;
@@ -447,10 +466,10 @@ mark.extracted {
 }
 .readpara__mark {
   position: absolute;
-  right: -34px;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--r-sm);
+  right: -36px;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--r-full);
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-3);
@@ -460,8 +479,10 @@ mark.extracted {
   /* Buttons are individually clickable even though the overlay is pass-through. */
   pointer-events: auto;
   opacity: 0;
+  box-shadow: 0 1px 2px color-mix(in oklch, var(--text) 10%, transparent);
   transition:
     opacity var(--fast) var(--ease),
+    background-color var(--fast) var(--ease),
     color var(--fast) var(--ease),
     border-color var(--fast) var(--ease);
 }
@@ -474,10 +495,12 @@ mark.extracted {
 .readpara__mark:hover {
   color: var(--accent-text);
   border-color: var(--accent);
+  background: var(--accent-soft);
 }
 .readpara__mark[data-processed="true"] {
+  background: var(--accent-soft);
   color: var(--accent-text);
-  border-color: var(--accent-soft);
+  border-color: var(--accent-soft-bd);
 }
 .reader-railhead {
   display: flex;

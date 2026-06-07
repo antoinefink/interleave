@@ -485,10 +485,9 @@ export function SourceReader() {
       const markId = blockEl.getAttribute("data-processed-mark-id");
       if (!markId) return;
       e.preventDefault();
-      void proc.restore(markId).then(
-        () => toast("Restored"),
-        () => toast("Could not restore"),
-      );
+      void proc.restore(markId).then((restored) => {
+        toast(restored ? "Restored" : "Could not restore");
+      });
     }
     document.addEventListener("click", onClick);
     return () => document.removeEventListener("click", onClick);
@@ -831,6 +830,7 @@ export function SourceReader() {
                 processed={proc}
                 revision={processedRevision}
                 onToggled={(result) => toast(result === "marked" ? "Marked processed" : "Restored")}
+                onToggleFailed={() => toast("Could not update processed mark")}
               />
             </>
           )}

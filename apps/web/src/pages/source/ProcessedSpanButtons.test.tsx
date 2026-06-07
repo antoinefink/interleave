@@ -51,9 +51,11 @@ function processed(processedIds: readonly string[] = []): UseProcessedSpansResul
     processed: processedIds.map((blockId) => ({ blockId, markId: `mark-${blockId}` })),
     isProcessed: (blockId: string) => processedIds.includes(blockId),
     markIdFor: (blockId: string) => (processedIds.includes(blockId) ? `mark-${blockId}` : null),
-    mark: vi.fn(),
-    restore: vi.fn(),
-    toggle: vi.fn(async () => {}),
+    mark: vi.fn(async () => true),
+    restore: vi.fn(async () => true),
+    toggle: vi.fn(async (blockId: string) =>
+      processedIds.includes(blockId) ? "restored" : "marked",
+    ),
     error: null,
   };
 }
@@ -75,8 +77,13 @@ describe("ProcessedSpanButtons", () => {
     expect(queryByTestId("processed-toggle-blk-heading")).not.toBeInTheDocument();
     expect(getByTestId("processed-toggle-blk-a")).toHaveStyle({ top: "40px" });
     expect(getByTestId("processed-toggle-blk-a")).toHaveAttribute("aria-pressed", "false");
+    expect(getByTestId("processed-toggle-blk-a")).toHaveAccessibleName("Mark paragraph processed");
+    expect(getByTestId("processed-toggle-blk-a")).toHaveAttribute("title", "Mark processed (dim)");
     expect(getByTestId("processed-toggle-blk-b")).toHaveStyle({ top: "90px" });
     expect(getByTestId("processed-toggle-blk-b")).toHaveAttribute("aria-pressed", "true");
+    expect(getByTestId("processed-toggle-blk-b")).toHaveAccessibleName(
+      "Restore processed paragraph",
+    );
   });
 
   it("delegates toggle and reports whether the action marked or restored", async () => {
@@ -102,6 +109,30 @@ describe("ProcessedSpanButtons", () => {
     expect(model.toggle).toHaveBeenNthCalledWith(2, "blk-b");
     await waitFor(() => expect(onToggled).toHaveBeenCalledWith("marked"));
     expect(onToggled).toHaveBeenCalledWith("restored");
+  });
+
+  it("reports a toggle failure without calling the success handler", async () => {
+    const { editor } = buildEditorDom();
+    const onToggled = vi.fn();
+    const onToggleFailed = vi.fn();
+    const model = processed();
+    vi.mocked(model.toggle).mockResolvedValue(null);
+    const { getByTestId } = render(
+      <ProcessedSpanButtons
+        editor={editor}
+        editorReady
+        processed={model}
+        revision={0}
+        onToggled={onToggled}
+        onToggleFailed={onToggleFailed}
+      />,
+    );
+    await waitFor(() => expect(getByTestId("processed-toggle-blk-a")).toBeInTheDocument());
+
+    fireEvent.click(getByTestId("processed-toggle-blk-a"));
+
+    await waitFor(() => expect(onToggleFailed).toHaveBeenCalled());
+    expect(onToggled).not.toHaveBeenCalled();
   });
 
   it("clears anchors when the editor is not ready", () => {

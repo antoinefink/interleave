@@ -27,4 +27,20 @@ describe("source reader CSS", () => {
     expect(hint).toContain("line-height: 1;");
     expect(hint).not.toMatch(/\btop\s*:/);
   });
+
+  it("makes processed paragraphs visibly dimmed", () => {
+    const dimmed = cssBlock(".reader .dimmed");
+    const marker = cssBlock(".reader p.dimmed::before");
+
+    expect(dimmed).toContain("opacity: 0.58;");
+    expect(marker).toContain("background: var(--border-strong);");
+  });
+
+  it("renders the processed toggle as an action button, not a checkbox", () => {
+    const button = cssBlock(".readpara__mark");
+
+    expect(button).toContain("border-radius: var(--r-full);");
+    expect(button).toContain("width: 26px;");
+    expect(button).toContain("height: 26px;");
+  });
 });
