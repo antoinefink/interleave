@@ -39,6 +39,26 @@ describe("static homepage contract", () => {
     expect(downloadLinks.some((link) => /\.(dmg|zip|pkg)$/i.test(link.href))).toBe(false);
   });
 
+  it("keeps the footer link lists trimmed", () => {
+    const doc = parseHomepage();
+    const footerLinks = Array.from(
+      doc.querySelectorAll<HTMLAnchorElement>(".site-footer .footer-col a"),
+    );
+
+    expect(
+      footerLinks.map((link) => ({
+        href: link.href,
+        label: link.textContent?.replace(/\s+/g, " ").trim(),
+      })),
+    ).toEqual(
+      [
+        ["Releases", releasesUrl],
+        ["Source code", "https://github.com/antoinefink/incremental-reading"],
+        ["@antoinefink", "https://antoine.fi/"],
+      ].map(([label, href]) => ({ href, label })),
+    );
+  });
+
   it("does not reintroduce removed prototype affordances or desktop-only runtime hooks", () => {
     const html = readFileSync(resolve(import.meta.dirname, "../index.html"), "utf8");
 
