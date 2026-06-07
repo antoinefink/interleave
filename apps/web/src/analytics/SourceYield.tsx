@@ -161,6 +161,7 @@ export function SourceYield() {
             <div className="sy-row sy-row--head">
               <span className="sy-cell sy-cell--src">Source</span>
               <span className="sy-cell sy-cell--read">Read</span>
+              <span className="sy-cell sy-cell--blocks">Blocks</span>
               <span className="sy-cell sy-cell--num">Extracts</span>
               <span className="sy-cell sy-cell--num">Cards</span>
               <span className="sy-cell sy-cell--num">Mature</span>
@@ -197,6 +198,10 @@ export function SourceYield() {
                   <span className="sy-read__pct">{formatPct(row.readPct)}</span>
                 </span>
 
+                <span className="sy-cell sy-cell--blocks">
+                  {formatPct(row.processedBlockRatio)}
+                  <span className="sy-cell__sub">{row.unresolvedBlocks} open</span>
+                </span>
                 <span className="sy-cell sy-cell--num">{row.extractsCreated}</span>
                 <span className="sy-cell sy-cell--num">{row.cardsCreated}</span>
                 <span className="sy-cell sy-cell--num">{row.matureCards}</span>

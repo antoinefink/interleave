@@ -81,6 +81,8 @@ describe("schema migration", () => {
       "review_logs",
       "review_states",
       "settings",
+      "source_block_processing",
+      "source_block_processing_outputs",
       "source_locations",
       "sources",
       "tags",

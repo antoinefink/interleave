@@ -112,6 +112,19 @@ const STATUS_FILTERS: readonly {
   { id: "scheduled", label: "Scheduled", statuses: ["scheduled"] },
 ];
 
+async function actionWithSourceDoneGate(
+  item: QueueItemSummary,
+  kind: RowActionKind,
+): Promise<QueueActAction | null> {
+  if (kind !== "markDone" || item.type !== "source") return { kind };
+  const { summary } = await appApi.getBlockProcessingSummary({ sourceElementId: item.id });
+  if (summary.canMarkDoneWithoutConfirmation) return { kind };
+  const ok = window.confirm(
+    `This source still has ${summary.unresolvedBlocks} unresolved blocks. Mark it done anyway?`,
+  );
+  return ok ? { kind, confirmUnresolvedBlocks: true } : null;
+}
+
 /** One queue row (the kit's `qitem`). */
 function QueueItem({
   item,
@@ -350,7 +363,9 @@ export function QueueScreen() {
       if (!isDesktop() || busyId) return;
       setBusyId(item.id);
       try {
-        await appApi.actOnQueueItem({ id: item.id, action: { kind } });
+        const action = await actionWithSourceDoneGate(item, kind);
+        if (!action) return;
+        await appApi.actOnQueueItem({ id: item.id, action });
         await refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));

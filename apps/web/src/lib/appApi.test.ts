@@ -61,6 +61,14 @@ function installAppApi(overrides: Partial<AppApi> = {}): AppApi {
         list: vi.fn(async (request: unknown) => request),
       },
     },
+    blockProcessing: {
+      list: vi.fn(async (request: unknown) => ({ blocks: [], summary: request })),
+      summary: vi.fn(async (request: unknown) => ({ summary: request })),
+      markIgnored: vi.fn(async (request: unknown) => ({ block: request, summary: request })),
+      markProcessed: vi.fn(async (request: unknown) => ({ block: request, summary: request })),
+      markNeedsLater: vi.fn(async (request: unknown) => ({ block: request, summary: request })),
+      markUnread: vi.fn(async (request: unknown) => ({ block: request, summary: request })),
+    },
     synthesis: {
       create: vi.fn(async (request: unknown) => request),
       link: vi.fn(async (request: unknown) => request),
@@ -293,6 +301,40 @@ describe("renderer appApi wrapper", () => {
     expect(bridge.documents.marks.list).toHaveBeenCalledWith({
       elementId: "src-1",
       markType: "processed_span",
+    });
+  });
+
+  it("routes block-processing helpers through blockProcessing", async () => {
+    const bridge = installAppApi();
+
+    await appApi.listBlockProcessing({ sourceElementId: "src-1" });
+    expect(bridge.blockProcessing.list).toHaveBeenCalledWith({ sourceElementId: "src-1" });
+
+    await appApi.getBlockProcessingSummary({ sourceElementId: "src-1" });
+    expect(bridge.blockProcessing.summary).toHaveBeenCalledWith({ sourceElementId: "src-1" });
+
+    await appApi.markBlockProcessed({ sourceElementId: "src-1", stableBlockId: "blk-1" });
+    expect(bridge.blockProcessing.markProcessed).toHaveBeenCalledWith({
+      sourceElementId: "src-1",
+      stableBlockId: "blk-1",
+    });
+
+    await appApi.markBlockIgnored({ sourceElementId: "src-1", stableBlockId: "blk-1" });
+    expect(bridge.blockProcessing.markIgnored).toHaveBeenCalledWith({
+      sourceElementId: "src-1",
+      stableBlockId: "blk-1",
+    });
+
+    await appApi.markBlockNeedsLater({ sourceElementId: "src-1", stableBlockId: "blk-1" });
+    expect(bridge.blockProcessing.markNeedsLater).toHaveBeenCalledWith({
+      sourceElementId: "src-1",
+      stableBlockId: "blk-1",
+    });
+
+    await appApi.markBlockUnread({ sourceElementId: "src-1", stableBlockId: "blk-1" });
+    expect(bridge.blockProcessing.markUnread).toHaveBeenCalledWith({
+      sourceElementId: "src-1",
+      stableBlockId: "blk-1",
     });
   });
 });

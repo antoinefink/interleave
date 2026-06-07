@@ -28,6 +28,7 @@ import {
   type SchedulerAction,
   scheduleForChoice,
 } from "@interleave/scheduler";
+import { BlockProcessingService } from "./block-processing-service";
 import { ElementRepository } from "./element-repository";
 import { nowIso } from "./ids";
 import { OperationLogRepository } from "./operation-log-repository";
@@ -38,17 +39,21 @@ export interface ScheduleResult {
   readonly element: Element;
   /** The interval (in days) from `now` that produced the new `due_at`. */
   readonly intervalDays: number;
+  /** Low-yield source signal from block processing, when applicable. */
+  readonly retirementSuggestion?: boolean;
 }
 
 export class SchedulerService {
   private readonly elements: ElementRepository;
   private readonly operationLog: OperationLogRepository;
   private readonly settings: SettingsRepository;
+  private readonly blockProcessing: BlockProcessingService;
 
   constructor(private readonly db: InterleaveDatabase) {
     this.elements = new ElementRepository(db);
     this.operationLog = new OperationLogRepository(db);
     this.settings = new SettingsRepository(db);
+    this.blockProcessing = new BlockProcessingService(db);
   }
 
   /**
@@ -98,6 +103,10 @@ export class SchedulerService {
   private toSchedulable(element: Element, lastAction?: SchedulerAction): Schedulable {
     const defaultTopicIntervalDays =
       element.type === "topic" ? this.settings.getAppSettings().defaultTopicIntervalDays : null;
+    const blockSummary =
+      element.type === "source"
+        ? this.blockProcessing.getSourceProcessingSummary(element.id)
+        : null;
     return {
       type: element.type,
       stage: element.stage,
@@ -106,6 +115,17 @@ export class SchedulerService {
       postponeCount: this.countPostpones(element.id),
       ...(lastAction ? { lastAction } : {}),
       defaultTopicIntervalDays,
+      sourceProcessing: blockSummary
+        ? {
+            unresolvedRatio:
+              blockSummary.totalBlocks === 0
+                ? 0
+                : blockSummary.unresolvedBlocks / blockSummary.totalBlocks,
+            terminalRatio: blockSummary.terminalRatio,
+            ignoredRatio: blockSummary.ignoredRatio,
+            extractedOutputCount: blockSummary.extractedOutputCount,
+          }
+        : null,
     };
   }
 
@@ -147,7 +167,13 @@ export class SchedulerService {
         "scheduled",
         opExtras,
       );
-      return { element: rescheduled, intervalDays: decision.intervalDays };
+      return {
+        element: rescheduled,
+        intervalDays: decision.intervalDays,
+        ...(decision.retirementSuggestion
+          ? { retirementSuggestion: decision.retirementSuggestion }
+          : {}),
+      };
     });
   }
 

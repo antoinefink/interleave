@@ -26,6 +26,8 @@ import type {
   BackupsResetLocalDataRequest,
   BackupsRestoreRequest,
   BalanceGetRequest,
+  BlockProcessingMarkBlockRequest,
+  BlockProcessingSourceRequest,
   CaptureSetEnabledRequest,
   CardsAddContextRequest,
   CardsBackToExtractRequest,
@@ -273,6 +275,20 @@ const appApi: AppApi = {
       list: (request: DocumentMarksListRequest) =>
         ipcRenderer.invoke(IPC_CHANNELS.documentsMarksList, request),
     },
+  },
+  blockProcessing: {
+    list: (request: BlockProcessingSourceRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.blockProcessingList, request),
+    summary: (request: BlockProcessingSourceRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.blockProcessingSummary, request),
+    markIgnored: (request: BlockProcessingMarkBlockRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.blockProcessingMarkIgnored, request),
+    markProcessed: (request: BlockProcessingMarkBlockRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.blockProcessingMarkProcessed, request),
+    markNeedsLater: (request: BlockProcessingMarkBlockRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.blockProcessingMarkNeedsLater, request),
+    markUnread: (request: BlockProcessingMarkBlockRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.blockProcessingMarkUnread, request),
   },
   extractions: {
     create: (request: ExtractionCreateRequest) =>

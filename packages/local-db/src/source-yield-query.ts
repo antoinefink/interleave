@@ -46,15 +46,15 @@
  *   the latest review on its cards (`MAX(review_logs.reviewedAt)`), read off the same
  *   grouped descendant set — for the "stale source" read.
  *
- * ## Performance (grouped, not N+1)
+ * ## Performance
  *
- * It runs a small fixed number of reads regardless of source count: one live-source
- * read, one live-descendant read grouped by `sourceId`, one `review_logs` read for
- * the descendant cards grouped by `elementId`, and one `sources` read for the
- * url/title. The read-% needs each source's OWN read-point + blocks; those are two
- * indexed reads per source (`read_points_element_idx` / `document_blocks_document_idx`)
- * — bounded by the source count, not the collection size, and only for sources that
- * HAVE a read-point. No new schema; the existing indexes cover every read.
+ * The yield/read/review rollups use grouped reads for sources, descendants, review
+ * logs, and source metadata. Read-% and block-processing progress need each source's
+ * own block/read-point state, so they use indexed per-source reads
+ * (`read_points_element_idx`, `document_blocks_document_idx`, and the
+ * `source_block_processing_*` indexes). This keeps the MVP implementation simple
+ * while preserving a clear seam for a batched block-processing aggregate if the
+ * analytics table grows large.
  */
 
 import {
@@ -74,6 +74,7 @@ import {
 } from "@interleave/db";
 import { isCardMature } from "@interleave/scheduler";
 import { and, eq, inArray, isNull } from "drizzle-orm";
+import { BlockProcessingService } from "./block-processing-service";
 import { DocumentRepository } from "./document-repository";
 
 /** Default cap so a broad rollup can't return an unbounded list (like `LibraryQuery`). */
@@ -109,6 +110,14 @@ export interface SourceYieldRow {
   readonly timeSpentMs: number;
   /** Number of `review_logs` rows on the source's cards (denominator context). */
   readonly reviewCount: number;
+  /** Terminal source blocks / total blocks from durable block processing. */
+  readonly processedBlockRatio: number;
+  /** Ignored source blocks / total blocks from durable block processing. */
+  readonly ignoredBlockRatio: number;
+  /** Unresolved source blocks that remain in the block-processing model. */
+  readonly unresolvedBlocks: number;
+  /** Output links created from extracted blocks. */
+  readonly extractedOutputCount: number;
   /** Most recent activity (descendant `updatedAt` / latest review), or `null`. */
   readonly lastActivityAt: IsoTimestamp | null;
   /** The derived productivity score (higher = better) — ranks the view. */
@@ -153,9 +162,11 @@ interface DescendantTally {
  */
 export class SourceYieldQuery {
   private readonly documents: DocumentRepository;
+  private readonly blockProcessing: BlockProcessingService;
 
   constructor(private readonly db: InterleaveDatabase) {
     this.documents = new DocumentRepository(db);
+    this.blockProcessing = new BlockProcessingService(db);
   }
 
   /**
@@ -306,6 +317,7 @@ export class SourceYieldQuery {
       }
 
       const readPct = this.computeReadPct(s.id as ElementId);
+      const blockSummary = this.blockProcessing.getSourceProcessingSummary(s.id as ElementId);
 
       // Most recent activity: the latest of the descendant updatedAt + the latest
       // review on its cards (the source itself has no review_logs of its own).
@@ -336,6 +348,10 @@ export class SourceYieldQuery {
         leeches,
         timeSpentMs,
         reviewCount,
+        processedBlockRatio: blockSummary.terminalRatio,
+        ignoredBlockRatio: blockSummary.ignoredRatio,
+        unresolvedBlocks: blockSummary.unresolvedBlocks,
+        extractedOutputCount: blockSummary.extractedOutputCount,
         lastActivityAt,
         yieldScore: verdict.score,
         yieldBand: verdict.band,

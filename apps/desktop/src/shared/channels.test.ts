@@ -14,6 +14,7 @@ describe("IPC_CHANNELS", () => {
     expect(IPC_CHANNELS.appHealth).toBe("app:health");
     expect(IPC_CHANNELS.dbGetStatus).toBe("db:getStatus");
     expect(IPC_CHANNELS.documentsSave).toBe("documents:save");
+    expect(IPC_CHANNELS.blockProcessingList).toBe("blockProcessing:list");
     expect(IPC_CHANNELS.sourcesOpenReader).toBe("sources:openReader");
     expect(IPC_CHANNELS.jobsUpdated).toBe("jobs:updated");
     expect(IPC_CHANNELS.analyticsReviewActivity).toBe("analytics:reviewActivity");

@@ -54,6 +54,7 @@ import type {
 import { plainTextToProseMirrorDoc, richSelectionToProseMirrorDoc } from "@interleave/core";
 import type { InterleaveDatabase } from "@interleave/db";
 import { addDays, rawExtractIntervalDays } from "@interleave/scheduler";
+import { BlockProcessingService } from "./block-processing-service";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
 import { newElementId, nowIso } from "./ids";
@@ -167,11 +168,13 @@ export class ExtractionService {
   private readonly elements: ElementRepository;
   private readonly sources: SourceRepository;
   private readonly documents: DocumentRepository;
+  private readonly blockProcessing: BlockProcessingService;
 
   constructor(private readonly db: InterleaveDatabase) {
     this.elements = new ElementRepository(db);
     this.sources = new SourceRepository(db);
     this.documents = new DocumentRepository(db);
+    this.blockProcessing = new BlockProcessingService(db);
   }
 
   /**
@@ -277,6 +280,16 @@ export class ExtractionService {
           markType: "extracted_span",
           range: [start, end],
           attrs: { extractId: element.id },
+        });
+      }
+
+      if (locationSource === input.sourceElementId) {
+        this.blockProcessing.deriveBlockStateFromExtractionWithin(tx, {
+          sourceElementId: input.sourceElementId,
+          outputElementId: element.id,
+          outputType: "extract",
+          sourceLocationId: location.id,
+          blockIds: input.blockIds,
         });
       }
 

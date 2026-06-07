@@ -1,6 +1,12 @@
 import { getTableColumns, getTableName } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { documentBlocks, documentMarks, documents } from "./documents";
+import {
+  documentBlocks,
+  documentMarks,
+  documents,
+  sourceBlockProcessing,
+  sourceBlockProcessingOutputs,
+} from "./documents";
 
 describe("document schema", () => {
   it("stores editable bodies and stable block lineage anchors separately", () => {
@@ -41,5 +47,43 @@ describe("document schema", () => {
       "attrs",
     ]);
     expect(columns.blockId.name).toBe("block_id");
+  });
+
+  it("stores durable source block processing separately from visual marks", () => {
+    const columns = getTableColumns(sourceBlockProcessing);
+
+    expect(getTableName(sourceBlockProcessing)).toBe("source_block_processing");
+    expect(Object.keys(columns)).toEqual([
+      "id",
+      "sourceElementId",
+      "stableBlockId",
+      "state",
+      "blockContentHash",
+      "metadata",
+      "createdAt",
+      "updatedAt",
+      "lastAction",
+      "lastActionAt",
+    ]);
+    expect(columns.sourceElementId.name).toBe("source_element_id");
+    expect(columns.stableBlockId.name).toBe("stable_block_id");
+    expect(columns.blockContentHash.name).toBe("block_content_hash");
+  });
+
+  it("links source block processing rows to multiple durable outputs", () => {
+    const columns = getTableColumns(sourceBlockProcessingOutputs);
+
+    expect(getTableName(sourceBlockProcessingOutputs)).toBe("source_block_processing_outputs");
+    expect(Object.keys(columns)).toEqual([
+      "id",
+      "sourceElementId",
+      "stableBlockId",
+      "outputElementId",
+      "outputType",
+      "sourceLocationId",
+      "createdAt",
+    ]);
+    expect(columns.outputElementId.name).toBe("output_element_id");
+    expect(columns.sourceLocationId.name).toBe("source_location_id");
   });
 });

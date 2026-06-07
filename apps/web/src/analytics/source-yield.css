@@ -88,7 +88,7 @@
 .sy-row {
   display: grid;
   grid-template-columns:
-    minmax(180px, 2.4fr) minmax(96px, 1.2fr) 64px 56px 64px 70px
+    minmax(180px, 2.3fr) minmax(92px, 1fr) minmax(82px, 0.8fr) 64px 56px 64px 70px
     minmax(78px, 0.9fr) minmax(108px, 1fr) 72px;
   align-items: center;
   gap: var(--s-2, 8px);
@@ -122,6 +122,7 @@
 }
 .sy-cell--num,
 .sy-cell--read,
+.sy-cell--blocks,
 .sy-cell--time {
   font-variant-numeric: tabular-nums;
 }
@@ -132,6 +133,16 @@
 .sy-cell--warn {
   color: var(--danger, #e5484d);
   font-weight: 600;
+}
+.sy-cell--blocks {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(var(--s-1) / 4);
+  color: var(--text-1);
+}
+.sy-cell__sub {
+  font-size: var(--t-2xs, 11px);
+  color: var(--text-3);
 }
 .sy-cell--time {
   color: var(--text-2);

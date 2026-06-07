@@ -47,6 +47,18 @@ export {
   type PostponePreviewRow,
 } from "./auto-postpone-service";
 export {
+  BlockProcessingRepository,
+  type LiveBlockOutput,
+  type SourceBlockProcessingRow,
+} from "./block-processing-repository";
+export {
+  BlockProcessingService,
+  computeBlockContentHashes,
+  type DeriveExtractionInput,
+  type DoneGateResult,
+  type MarkBlockInput,
+} from "./block-processing-service";
+export {
   type BulkActionResult,
   BulkActionService,
   type BulkArchiveMode,
@@ -384,6 +396,8 @@ export interface Repositories {
   readonly assets: import("./asset-repository").AssetRepository;
   readonly settings: import("./settings-repository").SettingsRepository;
   readonly operationLog: import("./operation-log-repository").OperationLogRepository;
+  /** Durable per-source-block processing state and output links. */
+  readonly blockProcessing: import("./block-processing-repository").BlockProcessingRepository;
   /** The Trash view's read + terminal hard-delete (T044). */
   readonly trash: import("./trash-query").TrashRepository;
   /** The system-wide analytics aggregation (T045) — read-only. */
@@ -454,6 +468,7 @@ import type { InterleaveDatabase } from "@interleave/db";
 import { AiSuggestionRepository } from "./ai-suggestion-repository";
 import { AnalyticsService } from "./analytics-query";
 import { AssetRepository } from "./asset-repository";
+import { BlockProcessingRepository } from "./block-processing-repository";
 import { BulkActionService } from "./bulk-action-service";
 import { ConceptRepository } from "./concept-repository";
 import { DedupReportQuery } from "./dedup-report-query";
@@ -518,6 +533,7 @@ export function createRepositories(
     assets,
     settings: new SettingsRepository(db),
     operationLog: new OperationLogRepository(db),
+    blockProcessing: new BlockProcessingRepository(db),
     trash: new TrashRepository(db),
     analytics: new AnalyticsService(db),
     sourceDedup: new SourceDedupQuery(db, assets),

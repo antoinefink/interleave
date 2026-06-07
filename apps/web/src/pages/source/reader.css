@@ -462,9 +462,15 @@ mark.extracted {
   inset: 0;
   pointer-events: none;
 }
-.readpara__mark {
+.readpara__actions {
   position: absolute;
-  right: -34px;
+  right: -88px;
+  display: inline-flex;
+  gap: var(--s-1);
+  pointer-events: none;
+}
+.readpara__mark {
+  position: static;
   width: 24px;
   height: 24px;
   border-radius: var(--r-sm);
@@ -493,6 +499,9 @@ mark.extracted {
   border-color: var(--accent);
   background: var(--accent-soft);
 }
+.readpara__mark:disabled {
+  cursor: default;
+}
 .readpara__mark[data-processed="true"] {
   opacity: 0.74;
   background: var(--surface-2);
@@ -505,6 +514,14 @@ mark.extracted {
   color: var(--text-2);
   border-color: var(--border-strong);
 }
+.readpara__mark--secondary {
+  width: 22px;
+  height: 22px;
+  background: color-mix(in oklch, var(--surface) 92%, var(--canvas));
+}
+.readpara__actions:hover .readpara__mark {
+  opacity: 1;
+}
 .reader-railhead {
   display: flex;
   align-items: center;
@@ -513,6 +530,84 @@ mark.extracted {
   font-family: var(--font-mono);
   font-size: var(--t-2xs);
   color: var(--text-3);
+}
+.reader-block-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  min-inline-size: 0;
+  margin: calc(-1 * var(--s-6)) 0 var(--s-7);
+  padding: 0;
+  border: 0;
+}
+.reader-block-filters__legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.reader-filter-btn {
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  color: var(--text-2);
+  padding: 0 var(--s-3);
+  font-size: var(--t-xs);
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+.reader-filter-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.reader-filter-btn[aria-pressed="true"] {
+  border-color: var(--accent-soft-bd);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+.reader [data-block-processing-state="needs_later"] {
+  border-inline-start: 2px solid var(--warn);
+  padding-inline-start: var(--s-4);
+}
+.reader [data-block-processing-state="stale_after_edit"] {
+  border-inline-start: 2px solid var(--danger);
+  padding-inline-start: var(--s-4);
+}
+.reader-page[data-hide-ignored="true"] .reader [data-block-processing-state="ignored"],
+.reader-page[data-processing-filter="hide_processed"]
+  .reader
+  [data-block-processing-state="ignored"],
+.reader-page[data-processing-filter="hide_processed"]
+  .reader
+  [data-block-processing-state="extracted"],
+.reader-page[data-processing-filter="hide_processed"]
+  .reader
+  [data-block-processing-state="processed_without_output"],
+.reader-page[data-processing-filter="unresolved"] .reader [data-block-processing-state="ignored"],
+.reader-page[data-processing-filter="unresolved"] .reader [data-block-processing-state="extracted"],
+.reader-page[data-processing-filter="unresolved"]
+  .reader
+  [data-block-processing-state="processed_without_output"],
+.reader-page[data-processing-filter="extracted"]
+  .reader
+  [data-block-processing-state]:not([data-block-processing-state="extracted"]) {
+  display: none;
+}
+.reader-page[data-hide-ignored="true"] .reader [data-jumped="true"],
+.reader-page[data-hide-ignored="true"] .reader [data-readpoint-block="true"],
+.reader-page[data-processing-filter="hide_processed"] .reader [data-jumped="true"],
+.reader-page[data-processing-filter="hide_processed"] .reader [data-readpoint-block="true"],
+.reader-page[data-processing-filter="unresolved"] .reader [data-jumped="true"],
+.reader-page[data-processing-filter="unresolved"] .reader [data-readpoint-block="true"],
+.reader-page[data-processing-filter="extracted"] .reader [data-jumped="true"],
+.reader-page[data-processing-filter="extracted"] .reader [data-readpoint-block="true"] {
+  display: revert;
 }
 
 /* ---------- Floating selection toolbar (T019) ---------- */

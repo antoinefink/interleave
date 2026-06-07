@@ -34,6 +34,7 @@ import type {
 } from "@interleave/core";
 import type { InterleaveDatabase } from "@interleave/db";
 import {
+  BlockProcessingService,
   type DocumentBlockInput,
   newBlockId,
   type OcrPage,
@@ -76,19 +77,24 @@ export interface OcrServiceDeps {
   readonly db: InterleaveDatabase;
   readonly repositories: Repositories;
   readonly assetVault: AssetVaultService;
+  readonly blockProcessing?: Pick<BlockProcessingService, "reconcileSourceDocumentWithin">;
   /** Resolve the runner lazily so a contract-only test that never OCRs can open the DB. */
   readonly getRunner: () => JobRunner;
 }
 
 export class OcrService {
+  private readonly db: InterleaveDatabase;
   private readonly repositories: Repositories;
   private readonly ocrPages: OcrPagesRepository;
+  private readonly blockProcessing: Pick<BlockProcessingService, "reconcileSourceDocumentWithin">;
   private readonly assetVault: AssetVaultService;
   private readonly getRunner: () => JobRunner;
 
   constructor(deps: OcrServiceDeps) {
+    this.db = deps.db;
     this.repositories = deps.repositories;
     this.ocrPages = deps.repositories.ocrPages;
+    this.blockProcessing = deps.blockProcessing ?? new BlockProcessingService(deps.db);
     this.assetVault = deps.assetVault;
     this.getRunner = deps.getRunner;
   }
@@ -201,13 +207,16 @@ export class OcrService {
     const merged = mergeOcrIntoBody(doc.prosemirrorJson, existingBlocks, page, ocr.text);
     if (!merged) return { accepted: false };
 
-    this.repositories.documents.upsert({
-      elementId: sourceElementId,
-      prosemirrorJson: merged.doc,
-      plainText: merged.plainText,
-      blocks: merged.blocks,
+    this.db.transaction((tx) => {
+      this.repositories.documents.upsertWithin(tx, {
+        elementId: sourceElementId,
+        prosemirrorJson: merged.doc,
+        plainText: merged.plainText,
+        blocks: merged.blocks,
+      });
+      this.blockProcessing.reconcileSourceDocumentWithin(tx, sourceElementId, merged.doc);
+      this.ocrPages.setStatusWithin(tx, ocr.id, "accepted");
     });
-    this.ocrPages.setStatus(ocr.id, "accepted");
     return { accepted: true };
   }
 

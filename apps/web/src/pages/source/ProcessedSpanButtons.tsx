@@ -1,12 +1,11 @@
 /**
- * Per-paragraph "mark processed" affordance for the reader (T026).
+ * Per-paragraph block-processing affordance for the reader.
  *
  * Matches `design/kit/app/screen-reader.jsx`'s `.readpara__mark` button: a small
  * control anchored to each body paragraph that toggles the block between "Mark
- * processed (dim)" and "Processed — click to restore". Marking a paragraph processed
- * DIMS it (`.dimmed`, applied as a ProseMirror node decoration by `reader-decorations`)
- * so the user can declutter a long source WITHOUT deleting content; restoring removes
- * the `processed_span` `document_marks` row (fully reversible).
+ * The primary button toggles processed-without-output/unread; the compact adjacent
+ * buttons mark a paragraph ignored or needing a later pass. The visual dimming is
+ * a projection of durable block-processing state.
  *
  * Because the body is a live ProseMirror editor (we must NOT mutate its DOM directly —
  * the kit's per-paragraph wrapper would fight the editor's MutationObserver and be
@@ -28,6 +27,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../../components/Icon";
 import type { UseProcessedSpansResult } from "./useProcessedSpans";
 
+export type ProcessingFilter = "all" | "hide_processed" | "unresolved" | "extracted";
+
 /** A measured anchor for one body paragraph: its stable id + top offset in the rail. */
 interface BlockAnchor {
   readonly blockId: string;
@@ -42,6 +43,10 @@ export interface ProcessedSpanButtonsProps {
   readonly editorReady: boolean;
   /** The processed-span hook (toggle + current state). */
   readonly processed: UseProcessedSpansResult;
+  /** Active reader filter; overlay controls should match visible blocks. */
+  readonly processingFilter?: ProcessingFilter;
+  /** Whether ignored blocks are currently hidden. */
+  readonly hideIgnored?: boolean;
   /** A monotonically-changing token to force a re-measure (doc/decoration change). */
   readonly revision: number;
   /**
@@ -77,10 +82,53 @@ function measureAnchors(rail: HTMLElement): BlockAnchor[] {
   return anchors;
 }
 
+function stateTitle(state: string | null): string {
+  switch (state) {
+    case "extracted":
+      return "Extracted";
+    case "ignored":
+      return "Ignored";
+    case "processed_without_output":
+      return "Processed";
+    case "needs_later":
+      return "Needs later";
+    case "stale_after_edit":
+      return "Stale after edit";
+    case "read":
+      return "Read";
+    default:
+      return "Unread";
+  }
+}
+
+function isTerminalState(state: string | null): boolean {
+  return state === "extracted" || state === "ignored" || state === "processed_without_output";
+}
+
+function isVisibleUnderFilter(
+  state: string | null,
+  processingFilter: ProcessingFilter,
+  hideIgnored: boolean,
+): boolean {
+  if (hideIgnored && state === "ignored") return false;
+  switch (processingFilter) {
+    case "hide_processed":
+      return !isTerminalState(state);
+    case "unresolved":
+      return !isTerminalState(state);
+    case "extracted":
+      return state === "extracted";
+    default:
+      return true;
+  }
+}
+
 export function ProcessedSpanButtons({
   editor,
   editorReady,
   processed,
+  processingFilter = "all",
+  hideIgnored = false,
   revision,
   onToggled,
   onToggleFailed,
@@ -98,8 +146,12 @@ export function ProcessedSpanButtons({
       setAnchors([]);
       return;
     }
-    setAnchors(measureAnchors(rail));
-  }, [editor]);
+    setAnchors(
+      measureAnchors(rail).filter((anchor) =>
+        isVisibleUnderFilter(processed.stateFor(anchor.blockId), processingFilter, hideIgnored),
+      ),
+    );
+  }, [editor, hideIgnored, processed, processingFilter]);
 
   // Re-measure when the editor (re)mounts, the doc/decoration set changes, the
   // viewport resizes, OR the editor dispatches a transaction (e.g. the T016 block-id
@@ -143,29 +195,84 @@ export function ProcessedSpanButtons({
       {editorReady &&
         anchors.map((a) => {
           const isProc = processed.isProcessed(a.blockId);
+          const state = processed.stateFor(a.blockId);
+          const isExtracted = state === "extracted";
           return (
-            <button
-              key={a.blockId}
-              type="button"
-              className="readpara__mark"
-              style={{ top: a.top }}
-              title={isProc ? "Processed — click to restore" : "Mark processed (dim)"}
-              aria-label={isProc ? "Restore processed paragraph" : "Mark paragraph processed"}
-              aria-pressed={isProc}
-              data-testid={`processed-toggle-${a.blockId}`}
-              data-processed={isProc ? "true" : "false"}
-              onClick={() => {
-                void processed
-                  .toggle(a.blockId)
-                  .then((result) => {
-                    if (result) onToggled?.(result);
-                    else onToggleFailed?.();
-                  })
-                  .catch(() => onToggleFailed?.());
-              }}
-            >
-              <Icon name={isProc ? "restore" : "archive"} size={13} />
-            </button>
+            <div key={a.blockId} className="readpara__actions" style={{ top: a.top }}>
+              <button
+                type="button"
+                className="readpara__mark"
+                title={
+                  isExtracted
+                    ? "Extracted blocks stay linked to their output"
+                    : isProc
+                      ? `${stateTitle(state)} — click to restore`
+                      : "Mark processed without output"
+                }
+                aria-label={
+                  isExtracted
+                    ? "Extracted paragraph"
+                    : isProc
+                      ? "Restore processed paragraph"
+                      : "Mark paragraph processed"
+                }
+                aria-pressed={isProc}
+                disabled={isExtracted}
+                data-testid={`processed-toggle-${a.blockId}`}
+                data-processed={isProc ? "true" : "false"}
+                onClick={() => {
+                  void processed
+                    .toggle(a.blockId)
+                    .then((result) => {
+                      if (result) onToggled?.(result);
+                      else onToggleFailed?.();
+                    })
+                    .catch(() => onToggleFailed?.());
+                }}
+              >
+                <Icon name={isExtracted ? "extract" : isProc ? "restore" : "archive"} size={13} />
+              </button>
+              <button
+                type="button"
+                className="readpara__mark readpara__mark--secondary"
+                title={
+                  isExtracted ? "Extracted blocks stay linked to their output" : "Ignore paragraph"
+                }
+                aria-label={
+                  isExtracted ? "Extracted paragraph cannot be ignored" : "Ignore paragraph"
+                }
+                disabled={isExtracted}
+                data-testid={`processed-ignore-${a.blockId}`}
+                onClick={() => {
+                  void processed.markIgnored(a.blockId).then(
+                    (ok) => (ok ? onToggled?.("marked") : onToggleFailed?.()),
+                    () => onToggleFailed?.(),
+                  );
+                }}
+              >
+                <Icon name="x" size={12} />
+              </button>
+              <button
+                type="button"
+                className="readpara__mark readpara__mark--secondary"
+                title={isExtracted ? "Extracted blocks stay linked to their output" : "Needs later"}
+                aria-label={
+                  isExtracted
+                    ? "Extracted paragraph cannot be marked needs later"
+                    : "Mark paragraph needs later"
+                }
+                disabled={isExtracted}
+                data-testid={`processed-needs-later-${a.blockId}`}
+                onClick={() => {
+                  void processed.markNeedsLater(a.blockId).then(
+                    (ok) => (ok ? onToggled?.("marked") : onToggleFailed?.()),
+                    () => onToggleFailed?.(),
+                  );
+                }}
+              >
+                <Icon name="clock" size={12} />
+              </button>
+            </div>
           );
         })}
     </div>

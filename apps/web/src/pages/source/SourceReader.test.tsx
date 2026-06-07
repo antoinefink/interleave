@@ -67,7 +67,42 @@ const h = vi.hoisted(() => ({
   },
   processedState: {
     processed: [] as unknown[],
+    blocks: [] as unknown[],
+    summary: {
+      sourceElementId: "src-1",
+      totalBlocks: 2,
+      processedBlocks: 1,
+      terminalBlocks: 1,
+      unresolvedBlocks: 1,
+      highPriorityUnresolvedBlocks: 1,
+      extractedBlockCount: 0,
+      extractedOutputCount: 0,
+      ignoredBlocks: 0,
+      ignoredRatio: 0,
+      terminalRatio: 0.5,
+      staleAfterEditBlocks: 0,
+      legacyProjectedBlocks: 0,
+      canMarkDoneWithoutConfirmation: false,
+      stateCounts: {
+        unread: 1,
+        read: 0,
+        extracted: 0,
+        ignored: 0,
+        processed_without_output: 1,
+        needs_later: 0,
+        stale_after_edit: 0,
+      },
+    },
+    isProcessed: vi.fn(() => false),
+    markIdFor: vi.fn(() => null),
+    stateFor: vi.fn(() => "unread"),
+    mark: vi.fn(),
     restore: vi.fn(),
+    toggle: vi.fn(),
+    markIgnored: vi.fn(),
+    markNeedsLater: vi.fn(),
+    reload: vi.fn(),
+    error: null as string | null,
   },
   selectionState: {
     position: null as { x: number; y: number } | null,
@@ -276,7 +311,44 @@ beforeEach(() => {
   h.highlightsState.add.mockResolvedValue(undefined);
   h.highlightsState.remove.mockReset();
   h.processedState.processed = [];
+  h.processedState.summary = {
+    sourceElementId: "src-1",
+    totalBlocks: 2,
+    processedBlocks: 1,
+    terminalBlocks: 1,
+    unresolvedBlocks: 1,
+    highPriorityUnresolvedBlocks: 1,
+    extractedBlockCount: 0,
+    extractedOutputCount: 0,
+    ignoredBlocks: 0,
+    ignoredRatio: 0,
+    terminalRatio: 0.5,
+    staleAfterEditBlocks: 0,
+    legacyProjectedBlocks: 0,
+    canMarkDoneWithoutConfirmation: false,
+    stateCounts: {
+      unread: 1,
+      read: 0,
+      extracted: 0,
+      ignored: 0,
+      processed_without_output: 1,
+      needs_later: 0,
+      stale_after_edit: 0,
+    },
+  };
+  h.processedState.isProcessed.mockReset();
+  h.processedState.isProcessed.mockReturnValue(false);
+  h.processedState.markIdFor.mockReset();
+  h.processedState.markIdFor.mockReturnValue(null);
+  h.processedState.stateFor.mockReset();
+  h.processedState.stateFor.mockReturnValue("unread");
+  h.processedState.mark.mockReset();
   h.processedState.restore.mockReset();
+  h.processedState.toggle.mockReset();
+  h.processedState.markIgnored.mockReset();
+  h.processedState.markNeedsLater.mockReset();
+  h.processedState.reload.mockReset();
+  h.processedState.error = null;
   h.selectionState.position = null;
   h.selectionState.location = null;
   h.selectionState.dismiss.mockReset();
@@ -303,7 +375,7 @@ describe("SourceReader", () => {
     expect(h.select).toHaveBeenCalledWith("src-1");
     expect(h.getInspectorData).toHaveBeenCalledWith({ id: "src-1" });
     expect(getByTestId("reader-url")).toHaveAttribute("href", "https://example.com/source");
-    expect(getByTestId("reader-progress")).toHaveTextContent("block 1 of 2");
+    expect(getByTestId("reader-progress")).toHaveTextContent("1/2 processed");
     expect(getByTestId("reader-pbar-fill")).toHaveStyle({ width: "50%" });
     expect(getByTestId("mock-source-editor")).toBeInTheDocument();
   });
@@ -333,6 +405,22 @@ describe("SourceReader", () => {
     expect(h.navigate).toHaveBeenCalledWith({ to: "/queue" });
   });
 
+  it("confirms unresolved blocks before marking the source done", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const { getByTestId, findByTestId } = render(<SourceReader />);
+    await findByTestId("mock-source-editor");
+
+    fireEvent.click(getByTestId("reader-mark-done"));
+
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({
+        id: "src-1",
+        action: { kind: "markDone", confirmUnresolvedBlocks: true },
+      }),
+    );
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("1 unresolved block"));
+  });
+
   it("lifts a selection into an extract and refreshes lineage", async () => {
     h.selectionState.position = { x: 12, y: 34 };
     h.selectionState.location = {
@@ -357,6 +445,7 @@ describe("SourceReader", () => {
     expect(h.documentState.markExtracted).toHaveBeenCalledWith(["blk-1", "blk-2"]);
     expect(h.readPointState.markReadThrough).toHaveBeenCalledWith(h.editor, "blk-2");
     expect(h.refreshInspector).toHaveBeenCalled();
+    expect(h.processedState.reload).toHaveBeenCalled();
     expect(h.selectionState.dismiss).toHaveBeenCalled();
     expect(getByTestId("reader-flash")).toHaveTextContent("Extracted");
   });

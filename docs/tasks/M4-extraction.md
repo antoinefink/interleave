@@ -620,9 +620,9 @@ path so the sub-extract is also an independent, scheduled, source-anchored eleme
 
 ---
 
-## T026 — Mark processed on source text  _(specced now; built next run)_
+## T026 — Mark processed on source text  _(historical; superseded by source block processing)_
 
-- **Status:** `[ ]`  · **Depends on:** T020
+- **Status:** `[x]`  · **Depends on:** T020
 - **Roadmap line:** Done when: processed spans can be collapsed/dimmed so the user can hide
   processed text without deleting the archived source.
 
@@ -630,48 +630,48 @@ path so the sub-extract is also an independent, scheduled, source-anchored eleme
 
 After extracting/reading a passage, the user can mark it **processed** so it visually
 collapses/dims (`.dimmed`) in the reader — decluttering long sources without deleting any
-content. Processed state is a removable `document_marks` annotation (`processed_span`), fully
-reversible; the source body is never destroyed.
+content. This was originally implemented as a removable `document_marks` annotation
+(`processed_span`), then superseded by the 2026-06-07 source block processing system:
+per-stable-block outcomes are now the durable source of truth, and `processed_span` is only a
+visual projection or legacy annotation.
 
 ### Context to load first
 
 - Reference: `domain-model.md` "Document/editor rules" (processed-span mark); `design-system.md`
   reading marks (`.dimmed`); `CLAUDE.md` "Data rules" (never silently destroy user data).
 - Existing code to inspect: `design/kit/app/screen-reader.jsx` (`readpara` + `readpara__mark`
-  toggle, the `.dimmed` class, `restore`/`check` icons), `packages/local-db/src/document-repository.ts`
-  (the T020 mark methods — reuse with `markType: "processed_span"`), the T020
-  `documents.marks.*` `appApi` surface (reuse; no new command needed).
-- Invariants in play: processed is an annotation, not a deletion; reversible; logged under
-  `update_document`; ranges keyed by stable block ID.
+  toggle, the `.dimmed` class, `restore`/`check` icons), `packages/local-db/src/block-processing-service.ts`,
+  `packages/local-db/src/block-processing-repository.ts`, `packages/editor/src/reader-decorations.ts`,
+  and the typed `blockProcessing.*` app API surface.
+- Invariants in play: processed/ignored/needs-later/extracted outcomes are durable block state,
+  not deletion; extracted state follows live output lineage; stale-after-edit rows force
+  re-evaluation after source text changes; all renderer behavior goes through typed APIs.
 
 ### Deliverables
 
-- [ ] A Tiptap **processed-span mark** (or reuse the generic mark extension with
-      `markType: "processed_span"`) in `packages/editor` rendering `.dimmed`, with
-      toggle/remove commands; export it.
-- [ ] Reader affordance matching `design/kit/app/screen-reader.jsx`: a per-paragraph
-      `readpara__mark` button ("Mark processed (dim)" / "Processed — click to restore") that
-      adds/removes a `processed_span` `document_marks` row via the **existing T020**
-      `documents.marks.add` / `documents.marks.remove` commands (no new IPC surface).
-- [ ] Processed spans render dimmed/collapsed on load and after **app restart**; restoring
-      removes the mark and the text returns to normal.
-- [ ] Tests: a Vitest repository test that a `processed_span` mark add/remove round-trips and
-      logs `update_document` while leaving the document body unchanged; extend the reader
-      component/E2E coverage with a mark-processed + restore step that survives restart.
+- [x] Durable SQLite model for per-source-block processing outcomes plus optional output links.
+- [x] Reader affordances for processed, ignored, needs-later, unread restore, and extracted-state
+      protection, projected into the legacy visual controls where appropriate.
+- [x] Reader filters for show all, hide processed, unresolved only, extracted only, and ignored hidden.
+- [x] Source progress summaries for processed/terminal blocks, unresolved blocks, extracted yield,
+      ignored ratio, and stale-after-edit rows.
+- [x] Scheduler/source-yield/mark-done behavior uses durable block summaries rather than
+      `processed_span` marks.
+- [x] Tests cover repository/service behavior, renderer controls, typed APIs, IPC, scheduling,
+      source-yield analytics, queue mark-done confirmation, and Electron restart persistence.
 
 ### Done when
 
-- Processed spans collapse/dim in the reader and can be restored; the underlying source body
-  is unchanged and survives **app restart**.
+- Source block outcomes survive app restart, drive reader filters/progress/scheduling/action
+  gating, and can be restored or reconciled without changing the underlying source body.
 - `pnpm typecheck`, `pnpm test`, `pnpm lint` pass.
 
 ### Notes / risks
 
-- Reuse the T020 mark infrastructure (`document_marks` + `documents.marks.*` + the mark
-  extension) — `processed_span` is just another `markType`; do not add a new table/op/command.
-- "Collapse" can start as dimming (the kit's `.dimmed`); a true height-collapse is a
-  presentation refinement, not a data change.
-- This is the only M4 task **deferred to the next run** — the current run builds T019–T025.
+- `processed_span` is no longer the domain source of truth. Keep it only as a visual projection
+  or compatibility mark where needed.
+- "Collapse" can remain a reader filter/dimming mode; source progress and completion come from
+  block-processing summaries, not from CSS or editor marks.
 
 ---
 

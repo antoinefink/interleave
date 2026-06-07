@@ -202,6 +202,12 @@ const h = vi.hoisted(() => {
     selectedId: { current: null as string | null },
     listQueue: vi.fn().mockResolvedValue(result),
     actOnQueueItem: vi.fn(),
+    getBlockProcessingSummary: vi.fn().mockResolvedValue({
+      summary: {
+        canMarkDoneWithoutConfirmation: true,
+        unresolvedBlocks: 0,
+      },
+    }),
     undoLast: vi.fn().mockResolvedValue({
       undone: true,
       opType: "reschedule_element",
@@ -211,6 +217,7 @@ const h = vi.hoisted(() => {
     }),
     undoQueueAction: vi.fn().mockResolvedValue({ item: extractRow }),
     result,
+    sourceRow,
     extractRow,
     topicRow,
     taskRow,
@@ -226,6 +233,7 @@ vi.mock("../../lib/appApi", async () => {
     appApi: {
       listQueue: h.listQueue,
       actOnQueueItem: h.actOnQueueItem,
+      getBlockProcessingSummary: h.getBlockProcessingSummary,
       undoLast: h.undoLast,
       undoQueueAction: h.undoQueueAction,
     },
@@ -248,6 +256,12 @@ beforeEach(() => {
   h.selectedId.current = null;
   h.useSearch.mockReturnValue({});
   h.listQueue.mockResolvedValue(h.result);
+  h.getBlockProcessingSummary.mockResolvedValue({
+    summary: {
+      canMarkDoneWithoutConfirmation: true,
+      unresolvedBlocks: 0,
+    },
+  });
 });
 
 describe("QueueScreen", () => {
@@ -561,6 +575,72 @@ describe("QueueScreen", () => {
         action: { kind: "lower" },
       }),
     );
+  });
+
+  it("marks source rows done without confirmation when block processing is complete", async () => {
+    render(<QueueScreen />);
+    const rows = await screen.findAllByTestId("queue-item");
+    const source = rows.find((el) => el.getAttribute("data-element-id") === "source-1");
+    const done = source?.querySelector('[data-testid="queue-action-markDone"]') as HTMLElement;
+
+    h.actOnQueueItem.mockResolvedValueOnce({ item: null, removed: true, undo: null });
+
+    fireEvent.click(done);
+
+    await waitFor(() =>
+      expect(h.getBlockProcessingSummary).toHaveBeenCalledWith({ sourceElementId: "source-1" }),
+    );
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({
+        id: "source-1",
+        action: { kind: "markDone" },
+      }),
+    );
+  });
+
+  it("confirms unresolved source rows before marking them done", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(true);
+    h.getBlockProcessingSummary.mockResolvedValueOnce({
+      summary: {
+        canMarkDoneWithoutConfirmation: false,
+        unresolvedBlocks: 2,
+      },
+    });
+    render(<QueueScreen />);
+    const rows = await screen.findAllByTestId("queue-item");
+    const source = rows.find((el) => el.getAttribute("data-element-id") === "source-1");
+    const done = source?.querySelector('[data-testid="queue-action-markDone"]') as HTMLElement;
+
+    h.actOnQueueItem.mockResolvedValueOnce({ item: null, removed: true, undo: null });
+
+    fireEvent.click(done);
+
+    await waitFor(() => expect(confirm).toHaveBeenCalledWith(expect.stringContaining("2")));
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({
+        id: "source-1",
+        action: { kind: "markDone", confirmUnresolvedBlocks: true },
+      }),
+    );
+  });
+
+  it("cancels source mark-done when unresolved blocks are not confirmed", async () => {
+    vi.spyOn(window, "confirm").mockReturnValueOnce(false);
+    h.getBlockProcessingSummary.mockResolvedValueOnce({
+      summary: {
+        canMarkDoneWithoutConfirmation: false,
+        unresolvedBlocks: 2,
+      },
+    });
+    render(<QueueScreen />);
+    const rows = await screen.findAllByTestId("queue-item");
+    const source = rows.find((el) => el.getAttribute("data-element-id") === "source-1");
+    const done = source?.querySelector('[data-testid="queue-action-markDone"]') as HTMLElement;
+
+    fireEvent.click(done);
+
+    await waitFor(() => expect(h.getBlockProcessingSummary).toHaveBeenCalledTimes(1));
+    expect(h.actOnQueueItem).not.toHaveBeenCalled();
   });
 
   it("maps the ↑ arrow to raise and the ↓ arrow to lower (direction is not swapped)", async () => {

@@ -33,6 +33,7 @@ import { lowerPriority, raisePriority } from "@interleave/core";
 import type { InterleaveDatabase } from "@interleave/db";
 import { reviewStates } from "@interleave/db";
 import { eq } from "drizzle-orm";
+import { BlockProcessingService } from "./block-processing-service";
 import { ElementRepository } from "./element-repository";
 import { newRowId, nowIso } from "./ids";
 import { ReviewRepository } from "./review-repository";
@@ -41,6 +42,10 @@ import type { DbClient } from "./types";
 
 /** The mutating queue actions (open is renderer-only navigation, never an IPC call). */
 export type QueueActionKind = "postpone" | "raise" | "lower" | "markDone" | "dismiss" | "delete";
+
+export interface QueueActionOptions {
+  readonly confirmUnresolvedBlocks?: boolean;
+}
 
 /** How far forward a card's FSRS due is nudged on an M5 thin postpone-defer. */
 export const CARD_DEFER_DAYS = 1;
@@ -125,11 +130,13 @@ export class QueueActionService {
   private readonly elements: ElementRepository;
   private readonly scheduler: SchedulerService;
   private readonly review: ReviewRepository;
+  private readonly blockProcessing: BlockProcessingService;
 
   constructor(private readonly db: InterleaveDatabase) {
     this.elements = new ElementRepository(db);
     this.scheduler = new SchedulerService(db);
     this.review = new ReviewRepository(db);
+    this.blockProcessing = new BlockProcessingService(db);
   }
 
   /** Load a live (non-deleted) element by id, throwing when missing/deleted. */
@@ -147,7 +154,12 @@ export class QueueActionService {
    * correct existing op. Returns the post-action element + whether the row leaves
    * the list + the undo recipe for the snackbar.
    */
-  act(id: ElementId, kind: QueueActionKind, now: IsoTimestamp = nowIso()): QueueActionResult {
+  act(
+    id: ElementId,
+    kind: QueueActionKind,
+    now: IsoTimestamp = nowIso(),
+    options: QueueActionOptions = {},
+  ): QueueActionResult {
     const element = this.requireLive(id);
     switch (kind) {
       case "postpone":
@@ -157,12 +169,24 @@ export class QueueActionService {
       case "lower":
         return this.changePriority(element, lowerPriority(element.priority));
       case "markDone":
-        return this.setStatus(element, "done");
+        return this.markDone(element, options);
       case "dismiss":
         return this.setStatus(element, "dismissed");
       case "delete":
         return this.softDelete(element);
     }
+  }
+
+  private markDone(element: Element, options: QueueActionOptions): QueueActionResult {
+    if (element.type === "source" && !options.confirmUnresolvedBlocks) {
+      const gate = this.blockProcessing.getDoneGate(element.id);
+      if (!gate.canMarkDone) {
+        throw new Error(
+          `QueueActionService.markDone: source has ${gate.unresolvedBlocks} unresolved block(s)`,
+        );
+      }
+    }
+    return this.setStatus(element, "done");
   }
 
   /**

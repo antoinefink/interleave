@@ -28,6 +28,7 @@ describe("local-db repository factory", () => {
       "assets",
       "settings",
       "operationLog",
+      "blockProcessing",
       "trash",
       "analytics",
       "sourceDedup",

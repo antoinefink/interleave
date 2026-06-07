@@ -121,6 +121,16 @@ export interface Schedulable {
    * Ignored for non-topic types (extracts use by-stage; sources use by-priority).
    */
   readonly defaultTopicIntervalDays?: number | null;
+  /**
+   * Source-only block-processing signals. They are ignored for topics/extracts/cards.
+   * These counters come from durable source-block outcomes, not visual marks.
+   */
+  readonly sourceProcessing?: {
+    readonly unresolvedRatio: number;
+    readonly terminalRatio: number;
+    readonly ignoredRatio: number;
+    readonly extractedOutputCount: number;
+  } | null;
 }
 
 /** The result of a scheduling decision: the new due time + the interval chosen. */
@@ -129,6 +139,8 @@ export interface ScheduleDecision {
   readonly dueAt: IsoTimestamp;
   /** The interval (in days) from `now` that produced `dueAt` — for tests/telemetry. */
   readonly intervalDays: number;
+  /** Low-yield source signal: mostly processed/ignored with no extracted output. */
+  readonly retirementSuggestion?: boolean;
 }
 
 /**
@@ -264,6 +276,30 @@ function heuristicIntervalDays(input: Schedulable): number {
   return sourceIntervalDays(input.priority);
 }
 
+function adjustForSourceProcessing(
+  input: Schedulable,
+  intervalDays: number,
+): { intervalDays: number; retirementSuggestion?: boolean } {
+  if (input.type !== "source" || !input.sourceProcessing) return { intervalDays };
+  const priorityLabel = priorityToLabel(input.priority);
+  const highValue = priorityLabel === "A" || priorityLabel === "B";
+  const signals = input.sourceProcessing;
+  if (highValue && signals.unresolvedRatio > 0.25) {
+    return { intervalDays: Math.max(1, Math.floor(intervalDays / 2)) };
+  }
+  if (
+    signals.terminalRatio >= 0.9 &&
+    signals.extractedOutputCount === 0 &&
+    signals.ignoredRatio >= 0.5
+  ) {
+    return {
+      intervalDays: Math.min(POSTPONE_CEILING_DAYS, intervalDays * 2),
+      retirementSuggestion: true,
+    };
+  }
+  return { intervalDays };
+}
+
 /**
  * Compute the next attention `due_at` for a non-card element from priority, stage,
  * last action, and postpone count. The action override (postpone/done) takes
@@ -279,8 +315,15 @@ function heuristicIntervalDays(input: Schedulable): number {
  */
 export function nextDueAt(input: Schedulable, now: IsoTimestamp): ScheduleDecision {
   const override = actionOverrideIntervalDays(input);
-  const intervalDays = override ?? heuristicIntervalDays(input);
-  return { dueAt: addDays(now, intervalDays), intervalDays };
+  const baseIntervalDays = override ?? heuristicIntervalDays(input);
+  const adjusted = adjustForSourceProcessing(input, baseIntervalDays);
+  return {
+    dueAt: addDays(now, adjusted.intervalDays),
+    intervalDays: adjusted.intervalDays,
+    ...(adjusted.retirementSuggestion
+      ? { retirementSuggestion: adjusted.retirementSuggestion }
+      : {}),
+  };
 }
 
 /** Schedule for TOMORROW (+1 day from `now`). The roadmap's explicit choice. */

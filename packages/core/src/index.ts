@@ -294,8 +294,28 @@ export {
   THEMES,
   TOPIC_INTERVAL_OPTIONS,
 } from "./settings";
-// Source provenance + editable document body (./source).
-export type { Document, DocumentSchemaVersion, MediaKind, Source } from "./source";
+// Source provenance + editable document body + durable block-processing vocabulary (./source).
+export type {
+  Document,
+  DocumentSchemaVersion,
+  MediaKind,
+  Source,
+  SourceBlockOutputType,
+  SourceBlockProcessing,
+  SourceBlockProcessingAction,
+  SourceBlockProcessingDerivation,
+  SourceBlockProcessingOutput,
+  SourceBlockProcessingState,
+  SourceBlockProcessingSummary,
+  SourceBlockProcessingView,
+} from "./source";
+export {
+  isTerminalSourceBlockProcessingState,
+  SOURCE_BLOCK_OUTPUT_TYPES,
+  SOURCE_BLOCK_PROCESSING_ACTIONS,
+  SOURCE_BLOCK_PROCESSING_STATES,
+  TERMINAL_SOURCE_BLOCK_PROCESSING_STATES,
+} from "./source";
 // Source reference (the refblock) — citation formatter, one source of truth (./source-ref).
 // Source-reliability metadata (T091) — tier/type/confidence tuples + the badge summary.
 export type {

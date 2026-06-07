@@ -58,6 +58,7 @@ import { parseYouTubeId } from "@interleave/importers";
 import {
   SchedulerService as AttentionScheduleService,
   AutoPostponeService,
+  BlockProcessingService,
   CardEditService,
   CardRemediationService,
   CardRetirementService,
@@ -134,6 +135,11 @@ import type {
   AutoPostponePreview,
   BalanceGetRequest,
   BalanceGetResult,
+  BlockProcessingListResult,
+  BlockProcessingMarkBlockRequest,
+  BlockProcessingMarkBlockResult,
+  BlockProcessingSourceRequest,
+  BlockProcessingSummaryResult,
   CardEditSummary,
   CardsAddContextRequest,
   CardsAddContextResult,
@@ -451,6 +457,7 @@ export class DbService {
   private extractStagnation: ExtractStagnationQuery | null = null;
   private inboxQuery: InboxQuery | null = null;
   private queueAction: QueueActionService | null = null;
+  private blockProcessing: BlockProcessingService | null = null;
   /** The overload AUTO-POSTPONE apply seam (T077) — preview + apply, one `batchId` per sweep. */
   private autoPostpone: AutoPostponeService | null = null;
   /** The CATCH-UP & VACATION apply seam (T078) — previewed, reversible, one `batchId` per plan. */
@@ -748,6 +755,7 @@ export class DbService {
     // delete suggestions. No mutation, no `operation_log`, no schedule change.
     this.extractStagnation = new ExtractStagnationQuery(this.handle.db);
     this.queueAction = new QueueActionService(this.handle.db);
+    this.blockProcessing = new BlockProcessingService(this.handle.db);
     // The overload AUTO-POSTPONE apply seam (T077): reads the merged due set + budget,
     // runs the pure `planAutoPostpone`, and applies each victim through its CORRECT
     // scheduler (attention reschedule / FSRS card defer) under one `batchId`.
@@ -807,6 +815,7 @@ export class DbService {
     this.queue = null;
     this.library = null;
     this.queueAction = null;
+    this.blockProcessing = null;
     this.autoPostpone = null;
     this.recoveryMode = null;
     this.inboxQuery = null;
@@ -1146,6 +1155,13 @@ export class DbService {
     return this.queueAction;
   }
 
+  private get blockProcessingService(): BlockProcessingService {
+    if (!this.blockProcessing) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.blockProcessing;
+  }
+
   /**
    * Apply one in-place queue action (T030) — postpone / raise / lower / done /
    * dismiss / delete — through the {@link QueueActionService}, a thin DISPATCHER over
@@ -1161,7 +1177,10 @@ export class DbService {
    */
   actOnQueueItem(request: QueueActRequest): QueueActResult {
     const id = request.id as ElementId;
-    const result = this.queueActionService.act(id, request.action.kind);
+    const result = this.queueActionService.act(id, request.action.kind, nowIso(), {
+      confirmUnresolvedBlocks:
+        request.action.kind === "markDone" && request.action.confirmUnresolvedBlocks === true,
+    });
     // A removing action (done/dismiss/delete) drops the row from the list; a
     // postpone recedes it from the DUE set (so it has no due row either). Only an
     // in-place change (raise/lower) returns a refreshed, still-due summary.
@@ -2791,26 +2810,38 @@ export class DbService {
    * omitted, the existing block set is left untouched.
    */
   saveDocument(request: DocumentsSaveRequest): DocumentsSaveResult {
-    const saved = this.repos.documents.upsert({
-      elementId: request.elementId as ElementId,
-      prosemirrorJson: request.prosemirrorJson,
-      plainText: request.plainText,
-      ...(request.schemaVersion !== undefined ? { schemaVersion: request.schemaVersion } : {}),
-      ...(request.blocks !== undefined
-        ? {
-            blocks: request.blocks.map((b) => ({
-              blockType: b.blockType,
-              order: b.order,
-              stableBlockId: b.stableBlockId as BlockId,
-            })),
-          }
-        : {}),
+    const elementId = request.elementId as ElementId;
+    const element = this.repos.elements.findById(elementId);
+    const saved = this.require().db.transaction((tx) => {
+      const document = this.repos.documents.upsertWithin(tx, {
+        elementId,
+        prosemirrorJson: request.prosemirrorJson,
+        plainText: request.plainText,
+        ...(request.schemaVersion !== undefined ? { schemaVersion: request.schemaVersion } : {}),
+        ...(request.blocks !== undefined
+          ? {
+              blocks: request.blocks.map((b) => ({
+                blockType: b.blockType,
+                order: b.order,
+                stableBlockId: b.stableBlockId as BlockId,
+              })),
+            }
+          : {}),
+      });
+      if (element?.type === "source") {
+        this.blockProcessingService.reconcileSourceDocumentWithin(
+          tx,
+          elementId,
+          request.prosemirrorJson,
+        );
+      }
+      return document;
     });
     // T087 auto-embed: re-embed the owning source AFTER the document write committed
     // (inside `documents.upsert`'s own tx) — never inside that tx (embedding is async
     // + off-main and must not ride the write transaction). The content hash skips an
     // unchanged body.
-    this.autoEmbed(request.elementId as ElementId);
+    this.autoEmbed(elementId);
     return {
       document: {
         prosemirrorJson: saved.prosemirrorJson,
@@ -2860,6 +2891,60 @@ export class DbService {
       ? this.repos.documents.listMarksByType(elementId, request.markType as MarkType)
       : this.repos.documents.listMarks(elementId);
     return { marks: marks.map(markToPayload) };
+  }
+
+  listBlockProcessing(request: BlockProcessingSourceRequest): BlockProcessingListResult {
+    const sourceElementId = request.sourceElementId as ElementId;
+    return {
+      blocks: this.blockProcessingService.listBlockViews(sourceElementId),
+      summary: this.blockProcessingService.getSourceProcessingSummary(sourceElementId),
+    };
+  }
+
+  getBlockProcessingSummary(request: BlockProcessingSourceRequest): BlockProcessingSummaryResult {
+    return {
+      summary: this.blockProcessingService.getSourceProcessingSummary(
+        request.sourceElementId as ElementId,
+      ),
+    };
+  }
+
+  markBlockIgnored(request: BlockProcessingMarkBlockRequest): BlockProcessingMarkBlockResult {
+    return this.markBlockWithSummary(request, "ignored");
+  }
+
+  markBlockProcessed(request: BlockProcessingMarkBlockRequest): BlockProcessingMarkBlockResult {
+    return this.markBlockWithSummary(request, "processed");
+  }
+
+  markBlockNeedsLater(request: BlockProcessingMarkBlockRequest): BlockProcessingMarkBlockResult {
+    return this.markBlockWithSummary(request, "needsLater");
+  }
+
+  markBlockUnread(request: BlockProcessingMarkBlockRequest): BlockProcessingMarkBlockResult {
+    return this.markBlockWithSummary(request, "unread");
+  }
+
+  private markBlockWithSummary(
+    request: BlockProcessingMarkBlockRequest,
+    action: "ignored" | "processed" | "needsLater" | "unread",
+  ): BlockProcessingMarkBlockResult {
+    const input = {
+      sourceElementId: request.sourceElementId as ElementId,
+      stableBlockId: request.stableBlockId as BlockId,
+    };
+    const block =
+      action === "ignored"
+        ? this.blockProcessingService.markBlockIgnored(input)
+        : action === "processed"
+          ? this.blockProcessingService.markBlockProcessed(input)
+          : action === "needsLater"
+            ? this.blockProcessingService.markBlockNeedsLater(input)
+            : this.blockProcessingService.markBlockUnread(input);
+    return {
+      block,
+      summary: this.blockProcessingService.getSourceProcessingSummary(input.sourceElementId),
+    };
   }
 
   /** The extraction service (T021), bound to the open database. */

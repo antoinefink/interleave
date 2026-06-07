@@ -21,6 +21,7 @@ import type { DbHandle } from "@interleave/db";
 import { elements, operationLog, reviewStates } from "@interleave/db";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BlockProcessingService } from "./block-processing-service";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
 import { ExtractionService } from "./extraction-service";
@@ -95,8 +96,9 @@ describe("SchedulerService.rescheduleForAction", () => {
     expect(element.status).toBe("scheduled");
     expect(element.dueAt).toBeTruthy();
     expect(Date.parse(element.dueAt as string)).toBeGreaterThan(before);
-    // B source heuristic interval = 7 days.
-    expect(intervalDays).toBe(7);
+    // B source base interval is 7 days, halved because its high-priority blocks
+    // are still unresolved.
+    expect(intervalDays).toBe(3);
 
     // Persisted: re-reading the row reflects the new schedule.
     const persisted = new ElementRepository(handle.db).findById(sourceId);
@@ -114,7 +116,7 @@ describe("SchedulerService.rescheduleForAction", () => {
     const before = Date.now();
     const first = service.rescheduleForAction(sourceId, "postpone");
     const firstDays = Math.round((Date.parse(first.element.dueAt as string) - before) / 86_400_000);
-    expect(firstDays).toBe(14); // base (count 0)
+    expect(firstDays).toBe(7); // base 14d, pulled sooner by unresolved B-priority text
     expect(service.countPostpones(sourceId)).toBe(1);
 
     const second = service.rescheduleForAction(sourceId, "postpone");
@@ -170,6 +172,23 @@ describe("SchedulerService.rescheduleForAction", () => {
     const service = new SchedulerService(handle.db);
     const { intervalDays } = service.rescheduleForAction(topic.id, "rewrite");
     expect(intervalDays).toBe(14); // the setting, not the 30d band
+  });
+
+  it("drifts mostly ignored no-output sources later and flags retirement", () => {
+    const sourceId = seedSource(handle, 0.375); // C source base = 30d
+    const blocks = new DocumentRepository(handle.db).listBlocks(sourceId);
+    const blockProcessing = new BlockProcessingService(handle.db);
+    for (const block of blocks) {
+      blockProcessing.markBlockIgnored({
+        sourceElementId: sourceId,
+        stableBlockId: block.stableBlockId as BlockId,
+      });
+    }
+
+    const service = new SchedulerService(handle.db);
+    const result = service.rescheduleForAction(sourceId, "rewrite", "2026-05-30T12:00:00.000Z");
+    expect(result.intervalDays).toBe(60);
+    expect(result.retirementSuggestion).toBe(true);
   });
 });
 

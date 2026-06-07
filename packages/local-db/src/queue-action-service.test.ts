@@ -20,6 +20,7 @@ import type { DbHandle } from "@interleave/db";
 import { operationLog, reviewStates } from "@interleave/db";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BlockProcessingService } from "./block-processing-service";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
 import { ExtractionService } from "./extraction-service";
@@ -134,6 +135,34 @@ describe("QueueActionService.act", () => {
     // Undo restores the prior status via update_element.
     if (res.undo) service.undo(id, res.undo);
     expect(elements.findById(id)?.status).toBe(prior);
+  });
+
+  it("source markDone requires all blocks resolved unless explicitly confirmed", () => {
+    const sourceId = seedSource(handle, 0.875);
+    const service = new QueueActionService(handle.db);
+
+    expect(() => service.act(sourceId, "markDone")).toThrow(/unresolved block/i);
+
+    const confirmed = service.act(sourceId, "markDone", "2026-05-30T12:00:00.000Z", {
+      confirmUnresolvedBlocks: true,
+    });
+    expect(confirmed.element.status).toBe("done");
+  });
+
+  it("source markDone succeeds without confirmation when every block is terminal", () => {
+    const sourceId = seedSource(handle, 0.875);
+    const blocks = new DocumentRepository(handle.db).listBlocks(sourceId);
+    const blockProcessing = new BlockProcessingService(handle.db);
+    for (const block of blocks) {
+      blockProcessing.markBlockProcessed({
+        sourceElementId: sourceId,
+        stableBlockId: block.stableBlockId as BlockId,
+      });
+    }
+
+    const service = new QueueActionService(handle.db);
+    const result = service.act(sourceId, "markDone");
+    expect(result.element.status).toBe("done");
   });
 
   it("dismiss sets status dismissed (update_element)", () => {

@@ -10,27 +10,35 @@ async function streamToBuffer(source: Readable): Promise<Buffer> {
 }
 
 function makeService() {
+  const tx = {};
+  const db = {
+    transaction: vi.fn((fn: (txArg: typeof tx) => unknown) => fn(tx)),
+  };
   const ocrPages = {
     upsertPage: vi.fn(),
     listForSource: vi.fn(),
     findPage: vi.fn(),
     setStatus: vi.fn(),
+    setStatusWithin: vi.fn(),
   };
   const documents = {
     findById: vi.fn(),
     listBlocks: vi.fn(),
     upsert: vi.fn(),
+    upsertWithin: vi.fn(),
   };
+  const blockProcessing = { reconcileSourceDocumentWithin: vi.fn() };
   const assetVault = { importAsset: vi.fn() };
   const runner = { enqueue: vi.fn() };
   const service = new OcrService({
-    db: {} as never,
+    db: db as never,
     repositories: { ocrPages, documents } as never,
     assetVault: assetVault as never,
+    blockProcessing: blockProcessing as never,
     getRunner: () => runner as never,
   });
 
-  return { service, ocrPages, documents, assetVault, runner };
+  return { service, db, tx, ocrPages, documents, blockProcessing, assetVault, runner };
 }
 
 const sourceElementId = "source-1" as ElementId;
@@ -127,7 +135,7 @@ describe("OcrService", () => {
   });
 
   it("accepts OCR text by merging paragraphs after the page heading and marking the row accepted", () => {
-    const { service, ocrPages, documents } = makeService();
+    const { service, db, tx, ocrPages, documents, blockProcessing } = makeService();
     ocrPages.findPage.mockReturnValue({
       id: "ocr-1",
       page: 1,
@@ -159,7 +167,8 @@ describe("OcrService", () => {
 
     expect(service.acceptPage(sourceElementId, 1)).toEqual({ accepted: true });
 
-    const upsertInput = documents.upsert.mock.calls[0]?.[0];
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+    const upsertInput = documents.upsertWithin.mock.calls[0]?.[1];
     expect(upsertInput).toEqual(
       expect.objectContaining({
         elementId: sourceElementId,
@@ -177,7 +186,13 @@ describe("OcrService", () => {
       { blockType: "paragraph", page: 1 },
       { blockType: "heading", page: 2 },
     ]);
-    expect(ocrPages.setStatus).toHaveBeenCalledWith("ocr-1", "accepted");
+    expect(documents.upsertWithin.mock.calls[0]?.[0]).toBe(tx);
+    expect(blockProcessing.reconcileSourceDocumentWithin).toHaveBeenCalledWith(
+      tx,
+      sourceElementId,
+      upsertInput.prosemirrorJson,
+    );
+    expect(ocrPages.setStatusWithin).toHaveBeenCalledWith(tx, "ocr-1", "accepted");
   });
 
   it("does not accept missing or already-accepted OCR pages", () => {
@@ -189,7 +204,7 @@ describe("OcrService", () => {
     ocrPages.findPage.mockReturnValueOnce({ id: "ocr-1", status: "accepted" });
     expect(service.acceptPage(sourceElementId, 1)).toEqual({ accepted: false });
 
-    expect(documents.upsert).not.toHaveBeenCalled();
+    expect(documents.upsertWithin).not.toHaveBeenCalled();
     expect(ocrPages.setStatus).not.toHaveBeenCalled();
   });
 

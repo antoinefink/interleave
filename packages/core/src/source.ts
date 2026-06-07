@@ -13,7 +13,7 @@
  * the row-level vocabulary the rest of the app imports.
  */
 
-import type { ElementId, IsoTimestamp } from "./ids";
+import type { BlockId, ElementId, IsoTimestamp } from "./ids";
 import type { ConfidenceLevel, ReliabilityTier, SourceType } from "./source-ref";
 
 /**
@@ -92,4 +92,110 @@ export interface Document {
   plainText: string;
   schemaVersion: DocumentSchemaVersion;
   updatedAt: IsoTimestamp;
+}
+
+/**
+ * Durable processing outcomes for source document blocks.
+ *
+ * These are keyed to `source_element_id + stable_block_id` in SQLite. A missing
+ * row is interpreted as `unread`, but `unread` is still a valid explicit row so
+ * the user can restore a block even when a past read-point would otherwise derive
+ * `read`.
+ */
+export const SOURCE_BLOCK_PROCESSING_STATES = [
+  "unread",
+  "read",
+  "extracted",
+  "ignored",
+  "processed_without_output",
+  "needs_later",
+  "stale_after_edit",
+] as const;
+export type SourceBlockProcessingState = (typeof SOURCE_BLOCK_PROCESSING_STATES)[number];
+
+/** States that count as terminal processing for source completion. */
+export const TERMINAL_SOURCE_BLOCK_PROCESSING_STATES = [
+  "extracted",
+  "ignored",
+  "processed_without_output",
+] as const satisfies readonly SourceBlockProcessingState[];
+
+export function isTerminalSourceBlockProcessingState(state: SourceBlockProcessingState): boolean {
+  return (TERMINAL_SOURCE_BLOCK_PROCESSING_STATES as readonly string[]).includes(state);
+}
+
+/** Reader/service actions recorded as metadata on the latest block-processing row. */
+export const SOURCE_BLOCK_PROCESSING_ACTIONS = [
+  "mark_unread",
+  "mark_read",
+  "mark_ignored",
+  "mark_processed_without_output",
+  "mark_needs_later",
+  "mark_extracted",
+  "mark_stale_after_edit",
+  "legacy_processed_span_backfill",
+  "reconcile_document_blocks",
+] as const;
+export type SourceBlockProcessingAction = (typeof SOURCE_BLOCK_PROCESSING_ACTIONS)[number];
+
+/** Output kinds that can be linked back to a processed source block. */
+export const SOURCE_BLOCK_OUTPUT_TYPES = ["extract", "card"] as const;
+export type SourceBlockOutputType = (typeof SOURCE_BLOCK_OUTPUT_TYPES)[number];
+
+export interface SourceBlockProcessing {
+  readonly id: string;
+  readonly sourceElementId: ElementId;
+  readonly stableBlockId: BlockId;
+  readonly state: SourceBlockProcessingState;
+  readonly blockContentHash: string | null;
+  readonly metadata: Readonly<Record<string, unknown>> | null;
+  readonly createdAt: IsoTimestamp;
+  readonly updatedAt: IsoTimestamp;
+  readonly lastAction: SourceBlockProcessingAction | null;
+  readonly lastActionAt: IsoTimestamp | null;
+}
+
+export interface SourceBlockProcessingOutput {
+  readonly id: string;
+  readonly sourceElementId: ElementId;
+  readonly stableBlockId: BlockId;
+  readonly outputElementId: ElementId;
+  readonly outputType: SourceBlockOutputType;
+  readonly sourceLocationId: string | null;
+  readonly createdAt: IsoTimestamp;
+}
+
+export type SourceBlockProcessingDerivation =
+  | "explicit"
+  | "read_point"
+  | "legacy_processed_span"
+  | "missing";
+
+export interface SourceBlockProcessingView {
+  readonly sourceElementId: ElementId;
+  readonly stableBlockId: BlockId;
+  readonly order: number;
+  readonly state: SourceBlockProcessingState;
+  readonly storedState: SourceBlockProcessingState | null;
+  readonly blockContentHash: string | null;
+  readonly outputElementIds: readonly ElementId[];
+  readonly derivedFrom: SourceBlockProcessingDerivation;
+}
+
+export interface SourceBlockProcessingSummary {
+  readonly sourceElementId: ElementId;
+  readonly totalBlocks: number;
+  readonly processedBlocks: number;
+  readonly terminalBlocks: number;
+  readonly unresolvedBlocks: number;
+  readonly highPriorityUnresolvedBlocks: number;
+  readonly extractedBlockCount: number;
+  readonly extractedOutputCount: number;
+  readonly ignoredBlocks: number;
+  readonly ignoredRatio: number;
+  readonly terminalRatio: number;
+  readonly staleAfterEditBlocks: number;
+  readonly legacyProjectedBlocks: number;
+  readonly canMarkDoneWithoutConfirmation: boolean;
+  readonly stateCounts: Readonly<Record<SourceBlockProcessingState, number>>;
 }

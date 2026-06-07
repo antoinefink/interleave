@@ -19,6 +19,7 @@ import type { ElementId, OcrPageStatus } from "@interleave/core";
 import { type InterleaveDatabase, ocrPages } from "@interleave/db";
 import { and, asc, eq } from "drizzle-orm";
 import { newRowId, nowIso } from "./ids";
+import type { DbClient } from "./types";
 
 /** One recognized word stored in `ocr_pages.words` (per-word confidence + bbox). */
 export interface OcrPageWord {
@@ -168,8 +169,13 @@ export class OcrPagesRepository {
 
   /** Transition an OCR record's review status (`accepted` / `dismissed`). */
   setStatus(id: string, status: OcrPageStatus): OcrPage | null {
-    this.db.update(ocrPages).set({ status, updatedAt: nowIso() }).where(eq(ocrPages.id, id)).run();
-    const row = this.db.select().from(ocrPages).where(eq(ocrPages.id, id)).get();
+    return this.setStatusWithin(this.db, id, status);
+  }
+
+  /** Transactional form of {@link setStatus}. */
+  setStatusWithin(tx: DbClient, id: string, status: OcrPageStatus): OcrPage | null {
+    tx.update(ocrPages).set({ status, updatedAt: nowIso() }).where(eq(ocrPages.id, id)).run();
+    const row = tx.select().from(ocrPages).where(eq(ocrPages.id, id)).get();
     return row ? rowToOcrPage(row) : null;
   }
 }

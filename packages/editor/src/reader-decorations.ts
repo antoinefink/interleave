@@ -63,10 +63,14 @@ export interface HighlightDecoration {
  * dimmed rather than a sub-range.
  */
 export interface ProcessedDecoration {
-  /** The `document_marks.id` of the persisted processed span. */
+  /** Synthetic or persisted id used by the reader to restore the block. */
   readonly markId: string;
   /** The STABLE block id the processed span dims. */
   readonly blockId: string;
+  /** Durable source-block outcome, when available. */
+  readonly state?: string;
+  /** Whether the outcome is explicit, read-point-derived, legacy, or missing. */
+  readonly derivedFrom?: string;
 }
 
 /** The inputs that drive the reader decorations (pushed by the host). */
@@ -141,10 +145,10 @@ export function createReaderDecorationsPlugin(): Plugin<ReaderDecorationState> {
       decorations(editorState) {
         const inputs = readerDecorationsKey.getState(editorState) ?? EMPTY_STATE;
         const extracted = new Set(inputs.extractedBlockIds);
-        // Map a processed block id → its `document_marks.id` (the restore button
-        // reads this off `data-processed-mark-id` to remove the dimming). T026.
-        const processedByBlock = new Map<string, string>();
-        for (const p of inputs.processed) processedByBlock.set(p.blockId, p.markId);
+        // Map a source block id → its processing projection. The restore handler
+        // reads `data-processed-mark-id`; filters read `data-block-processing-state`.
+        const processedByBlock = new Map<string, ProcessedDecoration>();
+        for (const p of inputs.processed) processedByBlock.set(p.blockId, p);
         // Group highlights by block id so a single doc walk can place them inline.
         const highlightsByBlock = new Map<string, HighlightDecoration[]>();
         for (const hl of inputs.highlights) {
@@ -169,23 +173,45 @@ export function createReaderDecorationsPlugin(): Plugin<ReaderDecorationState> {
           const classes: string[] = [];
           if (extracted.has(blockId)) classes.push("extracted");
           if (blockId === inputs.flashedBlockId) classes.push("jumped");
-          const processedMarkId = processedByBlock.get(blockId);
-          if (processedMarkId) classes.push("dimmed");
+          const processedBlock = processedByBlock.get(blockId);
+          const processedMarkId = processedBlock?.markId ?? null;
+          const processingState = processedBlock?.state ?? null;
+          const restorableMarkId =
+            processedBlock &&
+            (processingState == null || processingState === "processed_without_output")
+              ? processedMarkId
+              : null;
+          if (processingState) classes.push(`block-state--${processingState}`);
+          if (
+            processedBlock &&
+            (processingState == null ||
+              processingState === "ignored" ||
+              processingState === "processed_without_output")
+          ) {
+            classes.push("dimmed");
+          }
           const attrs: {
             class?: string;
             "data-readpoint-block"?: string;
             "data-jumped"?: string;
             "data-processed-mark-id"?: string;
+            "data-block-processing-state"?: string;
+            "data-block-processing-derived-from"?: string;
           } = {};
           if (classes.length > 0) attrs.class = classes.join(" ");
           if (blockId === inputs.readPointBlockId) attrs["data-readpoint-block"] = "true";
           if (blockId === inputs.flashedBlockId) attrs["data-jumped"] = "true";
-          if (processedMarkId) attrs["data-processed-mark-id"] = processedMarkId;
+          if (restorableMarkId) attrs["data-processed-mark-id"] = restorableMarkId;
+          if (processingState) attrs["data-block-processing-state"] = processingState;
+          if (processedBlock?.derivedFrom) {
+            attrs["data-block-processing-derived-from"] = processedBlock.derivedFrom;
+          }
           if (
             attrs.class ||
             attrs["data-readpoint-block"] ||
             attrs["data-jumped"] ||
-            attrs["data-processed-mark-id"]
+            attrs["data-processed-mark-id"] ||
+            attrs["data-block-processing-state"]
           ) {
             decorations.push(Decoration.node(pos, pos + node.nodeSize, attrs));
           }

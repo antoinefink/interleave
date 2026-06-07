@@ -194,6 +194,43 @@ describe("nextDueAt (heuristic + action override)", () => {
     }
   });
 
+  it("brings high-priority sources with unresolved block text back sooner", () => {
+    const decision = nextDueAt(
+      {
+        type: "source",
+        priority: B,
+        sourceProcessing: {
+          unresolvedRatio: 0.5,
+          terminalRatio: 0.5,
+          ignoredRatio: 0,
+          extractedOutputCount: 1,
+        },
+      },
+      NOW,
+    );
+
+    expect(decision.intervalDays).toBe(3);
+  });
+
+  it("pushes mostly ignored no-output sources later and suggests retirement", () => {
+    const decision = nextDueAt(
+      {
+        type: "source",
+        priority: C,
+        sourceProcessing: {
+          unresolvedRatio: 0,
+          terminalRatio: 1,
+          ignoredRatio: 0.75,
+          extractedOutputCount: 0,
+        },
+      },
+      NOW,
+    );
+
+    expect(decision.intervalDays).toBe(60);
+    expect(decision.retirementSuggestion).toBe(true);
+  });
+
   it("a topic falls back to the by-priority band when no setting is supplied", () => {
     expect(nextDueAt({ type: "topic", priority: C }, NOW).intervalDays).toBe(sourceIntervalDays(C));
   });

@@ -18,6 +18,7 @@ import type { DbHandle } from "@interleave/db";
 import { cards, reviewLogs, reviewStates } from "@interleave/db";
 import { CARD_MATURE_STABILITY_DAYS } from "@interleave/scheduler";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BlockProcessingService } from "./block-processing-service";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
 import { newReviewLogId } from "./ids";
@@ -194,6 +195,28 @@ describe("SourceYieldQuery.listSourceYield", () => {
     // reviews — just assert it is present and not before the latest review.
     expect(row?.lastActivityAt).not.toBeNull();
     expect(row?.lastActivityAt && row.lastActivityAt >= "2026-05-31T08:00:00.000Z").toBe(true);
+  });
+
+  it("includes durable block-processing ratios and unresolved counts", () => {
+    const src = seedSource(handle, "Block outcomes", 4);
+    const blocks = new DocumentRepository(handle.db).listBlocks(src);
+    const service = new BlockProcessingService(handle.db);
+    service.markBlockProcessed({
+      sourceElementId: src,
+      stableBlockId: blocks[0]?.stableBlockId as BlockId,
+    });
+    service.markBlockIgnored({
+      sourceElementId: src,
+      stableBlockId: blocks[1]?.stableBlockId as BlockId,
+    });
+
+    const row = new SourceYieldQuery(handle.db)
+      .listSourceYield(ASOF)
+      .rows.find((r) => r.source.id === src);
+    expect(row?.processedBlockRatio).toBeCloseTo(0.5);
+    expect(row?.ignoredBlockRatio).toBeCloseTo(0.25);
+    expect(row?.unresolvedBlocks).toBe(2);
+    expect(row?.extractedOutputCount).toBe(0);
   });
 
   it("does NOT count a card mature when stability is high but fsrsState is not review", () => {

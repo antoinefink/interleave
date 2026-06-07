@@ -36,6 +36,16 @@ The inbox action that accepts a source into active processing and immediately op
 
 The local reading surface for processing a source inside the app, distinct from opening the source's external canonical URL.
 
+### Source block processing
+
+The per-block progress model that records what happened to each stable block in a Source as the user reads, ignores, extracts from, or defers that block.
+
+Source block processing is source progress, not decoration: visual marks may display the outcome, but completion, scheduling, analytics, and later source edits must reason from the durable block outcome.
+
+### Block processing outcome
+
+The explicit result assigned to a source block, distinguishing unresolved reading work from blocks that produced output, were intentionally ignored, were processed without output, need later attention, or became stale after the source text changed.
+
 ### Due queue
 
 The currently actionable processing set: due active-recall cards plus due attention-scheduled sources, topics, extracts, and similar non-card work.

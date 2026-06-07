@@ -52,7 +52,7 @@ import { Kbd } from "../../shell/Kbd";
 import { useSelection } from "../../shell/selection";
 import { MediaReader } from "./MediaReader";
 import { PdfReader } from "./PdfReader";
-import { ProcessedSpanButtons } from "./ProcessedSpanButtons";
+import { ProcessedSpanButtons, type ProcessingFilter } from "./ProcessedSpanButtons";
 import { useDocument } from "./useDocument";
 import { useHighlights } from "./useHighlights";
 import { useProcessedSpans } from "./useProcessedSpans";
@@ -196,6 +196,8 @@ export function SourceReader() {
   const hl = useHighlights(id);
   // Processed spans (T026): dim read/extracted paragraphs without deleting them.
   const proc = useProcessedSpans(id);
+  const [processingFilter, setProcessingFilter] = useState<ProcessingFilter>("all");
+  const [hideIgnored, setHideIgnored] = useState(true);
 
   const [inspector, setInspector] = useState<InspectorData | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
@@ -305,12 +307,13 @@ export function SourceReader() {
         void rp.markReadThrough(editor, lastBlockId);
       }
       requestInspectorRefresh();
+      void proc.reload();
       toast("Extracted");
     } catch {
       toast("Could not extract");
     }
     selection.dismiss();
-  }, [id, selection, doc, rp, toast]);
+  }, [id, selection, doc, rp, toast, proc]);
 
   const onSelectionAction = useCallback(
     (action: SelectionToolbarAction) => {
@@ -511,6 +514,28 @@ export function SourceReader() {
     toast(resolved ? "Read-point set here" : "Place the caret in the text first");
   }, [rp, toast]);
 
+  const onMarkSourceDone = useCallback(async () => {
+    const summary = proc.summary;
+    if (!summary) return;
+    const confirmUnresolved = !summary.canMarkDoneWithoutConfirmation;
+    if (confirmUnresolved) {
+      const ok = window.confirm(
+        `This source still has ${summary.unresolvedBlocks} unresolved block(s). Mark it done anyway?`,
+      );
+      if (!ok) return;
+    }
+    try {
+      await appApi.actOnQueueItem({
+        id,
+        action: { kind: "markDone", confirmUnresolvedBlocks: confirmUnresolved },
+      });
+      requestInspectorRefresh();
+      toast("Source done");
+    } catch {
+      toast("Could not mark source done");
+    }
+  }, [id, proc.summary, toast]);
+
   // Keyboard: Space sets the read-point (ignored while typing in a field/modal).
   useEffect(() => {
     if (!desktop) return;
@@ -552,6 +577,19 @@ export function SourceReader() {
   // 1-based fraction (matches the "block N of N" label) so a read-point on the LAST
   // block reads a full 100% rather than maxing at (total-1)/total.
   const progressPct = rp.progressFraction(doc.currentDoc) * 100;
+  const blockSummary = proc.summary;
+  const blockProgressPct = blockSummary
+    ? Math.round(blockSummary.terminalRatio * 100)
+    : Math.round(progressPct);
+  const blockProgressText = blockSummary
+    ? `${blockSummary.processedBlocks}/${blockSummary.totalBlocks} processed · ${blockSummary.unresolvedBlocks} unresolved${
+        blockSummary.highPriorityUnresolvedBlocks > 0
+          ? ` · ${blockSummary.highPriorityUnresolvedBlocks} high-priority`
+          : ""
+      }`
+    : progress.total > 0
+      ? `block ${Math.min(progress.index + 1, progress.total)} of ${progress.total} · ${Math.round(progressPct)}%`
+      : "—";
 
   // Media reading mode (T073): a video/audio source reuses the SAME header +
   // inspector, but swaps the editor body for an HTML5 `<video>`/`<audio>` (local,
@@ -724,8 +762,6 @@ export function SourceReader() {
           >
             <Icon name="bookmark" size={14} /> Set read-point <Kbd keys="␣" />
           </button>
-          {/* Postpone / Mark done / Lower priority have no scheduling path until M5
-              (T027–T031) — render disabled rather than inventing one. */}
           <button
             type="button"
             className="reader-btn"
@@ -738,9 +774,14 @@ export function SourceReader() {
           <button
             type="button"
             className="reader-btn"
-            disabled
-            title="Scheduling lands in M5 (T027–T031)"
+            disabled={!blockSummary}
+            title={
+              blockSummary?.canMarkDoneWithoutConfirmation
+                ? "Mark source done"
+                : "Requires confirmation because unresolved blocks remain"
+            }
             data-testid="reader-mark-done"
+            onClick={() => void onMarkSourceDone()}
           >
             <Icon name="checkCircle" size={14} /> Mark done
           </button>
@@ -789,23 +830,60 @@ export function SourceReader() {
       </div>
 
       {/* reading column */}
-      <div className="reader-page">
+      <div
+        className="reader-page"
+        data-processing-filter={processingFilter}
+        data-hide-ignored={hideIgnored ? "true" : "false"}
+      >
         <div className="reader-rail">
           <div className="reader-railhead">
-            <span data-testid="reader-progress">
-              {progress.total > 0
-                ? `block ${Math.min(progress.index + 1, progress.total)} of ${progress.total} · ${Math.round(progressPct)}%`
-                : "—"}
+            <span data-testid="reader-progress">{blockProgressText}</span>
+            <span>
+              {blockSummary
+                ? `${blockSummary.extractedBlockCount} extracted · ${Math.round(
+                    blockSummary.ignoredRatio * 100,
+                  )}% ignored`
+                : "read · set a read-point with ␣"}
             </span>
-            <span>read · set a read-point with ␣</span>
           </div>
           <div className="pbar" style={{ marginBottom: 28 }}>
             <div
               className="pbar__fill"
               data-testid="reader-pbar-fill"
-              style={{ width: `${progressPct}%` }}
+              style={{ width: `${blockProgressPct}%` }}
             />
           </div>
+          <fieldset className="reader-block-filters">
+            <legend className="reader-block-filters__legend">Block processing filter</legend>
+            {(
+              [
+                ["all", "All"],
+                ["hide_processed", "Hide processed"],
+                ["unresolved", "Unresolved"],
+                ["extracted", "Extracted"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className="reader-filter-btn"
+                aria-pressed={processingFilter === value}
+                data-testid={`reader-filter-${value}`}
+                onClick={() => setProcessingFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="reader-filter-btn reader-filter-btn--toggle"
+              aria-pressed={hideIgnored}
+              data-testid="reader-filter-hide-ignored"
+              onClick={() => setHideIgnored((value) => !value)}
+            >
+              <Icon name="eye" size={13} /> {hideIgnored ? "Ignored hidden" : "Ignored visible"}
+            </button>
+          </fieldset>
 
           {doc.status === "loading" ? (
             <p className="dimmed" data-testid="reader-loading">
@@ -833,6 +911,8 @@ export function SourceReader() {
                 editor={editor}
                 editorReady={editorReady}
                 processed={proc}
+                processingFilter={processingFilter}
+                hideIgnored={hideIgnored}
                 revision={processedRevision}
                 onToggled={(result) => toast(result === "marked" ? "Marked processed" : "Restored")}
                 onToggleFailed={() => toast("Could not update processed mark")}

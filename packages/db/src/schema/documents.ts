@@ -13,8 +13,11 @@
  * this is only the structured, queryable document substrate for lineage.
  */
 
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { SOURCE_BLOCK_OUTPUT_TYPES, SOURCE_BLOCK_PROCESSING_STATES } from "@interleave/core";
+import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { inList } from "./_shared";
 import { elements } from "./elements";
+import { sourceLocations } from "./sources";
 
 export const documents = sqliteTable("documents", {
   /** Mirrors the owning element's id (one-to-one). */
@@ -92,9 +95,83 @@ export const documentMarks = sqliteTable(
   ],
 );
 
+export const sourceBlockProcessing = sqliteTable(
+  "source_block_processing",
+  {
+    id: text("id").primaryKey(),
+    sourceElementId: text("source_element_id")
+      .notNull()
+      .references(() => elements.id, { onDelete: "cascade" }),
+    stableBlockId: text("stable_block_id").notNull(),
+    state: text("state").notNull(),
+    /**
+     * Hash of normalized block text when the caller can provide it. Nullable so
+     * legacy `processed_span` backfill can be non-destructive even though marks do
+     * not carry block text.
+     */
+    blockContentHash: text("block_content_hash"),
+    metadata: text("metadata"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    lastAction: text("last_action"),
+    lastActionAt: text("last_action_at"),
+  },
+  (table) => [
+    check(
+      "source_block_processing_state_check",
+      inList(table.state, SOURCE_BLOCK_PROCESSING_STATES),
+    ),
+    uniqueIndex("source_block_processing_source_block_idx").on(
+      table.sourceElementId,
+      table.stableBlockId,
+    ),
+    index("source_block_processing_source_idx").on(table.sourceElementId),
+    index("source_block_processing_state_idx").on(table.state),
+  ],
+);
+
+export const sourceBlockProcessingOutputs = sqliteTable(
+  "source_block_processing_outputs",
+  {
+    id: text("id").primaryKey(),
+    sourceElementId: text("source_element_id")
+      .notNull()
+      .references(() => elements.id, { onDelete: "cascade" }),
+    stableBlockId: text("stable_block_id").notNull(),
+    outputElementId: text("output_element_id")
+      .notNull()
+      .references(() => elements.id, { onDelete: "cascade" }),
+    outputType: text("output_type").notNull(),
+    sourceLocationId: text("source_location_id").references(() => sourceLocations.id, {
+      onDelete: "set null",
+    }),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    check(
+      "source_block_processing_outputs_type_check",
+      inList(table.outputType, SOURCE_BLOCK_OUTPUT_TYPES),
+    ),
+    uniqueIndex("source_block_processing_outputs_unique_idx").on(
+      table.sourceElementId,
+      table.stableBlockId,
+      table.outputElementId,
+    ),
+    index("source_block_processing_outputs_source_block_idx").on(
+      table.sourceElementId,
+      table.stableBlockId,
+    ),
+    index("source_block_processing_outputs_output_idx").on(table.outputElementId),
+  ],
+);
+
 export type DocumentRow = typeof documents.$inferSelect;
 export type NewDocumentRow = typeof documents.$inferInsert;
 export type DocumentBlockRow = typeof documentBlocks.$inferSelect;
 export type NewDocumentBlockRow = typeof documentBlocks.$inferInsert;
 export type DocumentMarkRow = typeof documentMarks.$inferSelect;
 export type NewDocumentMarkRow = typeof documentMarks.$inferInsert;
+export type SourceBlockProcessingRow = typeof sourceBlockProcessing.$inferSelect;
+export type NewSourceBlockProcessingRow = typeof sourceBlockProcessing.$inferInsert;
+export type SourceBlockProcessingOutputRow = typeof sourceBlockProcessingOutputs.$inferSelect;
+export type NewSourceBlockProcessingOutputRow = typeof sourceBlockProcessingOutputs.$inferInsert;

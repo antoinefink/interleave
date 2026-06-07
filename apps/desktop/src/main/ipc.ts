@@ -24,6 +24,8 @@ import {
   BackupsResetLocalDataRequestSchema,
   BackupsRestoreRequestSchema,
   BalanceGetRequestSchema,
+  BlockProcessingMarkBlockRequestSchema,
+  BlockProcessingSourceRequestSchema,
   CaptureGetPairingRequestSchema,
   CaptureRegenerateTokenRequestSchema,
   CaptureSetEnabledRequestSchema,
@@ -909,6 +911,36 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.documentsMarksList, (_event, rawRequest: unknown) => {
     const request = DocumentMarksListRequestSchema.parse(rawRequest);
     return dbService.listDocumentMarks(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.blockProcessingList, (_event, rawRequest: unknown) => {
+    const request = BlockProcessingSourceRequestSchema.parse(rawRequest);
+    return dbService.listBlockProcessing(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.blockProcessingSummary, (_event, rawRequest: unknown) => {
+    const request = BlockProcessingSourceRequestSchema.parse(rawRequest);
+    return dbService.getBlockProcessingSummary(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.blockProcessingMarkIgnored, (_event, rawRequest: unknown) => {
+    const request = BlockProcessingMarkBlockRequestSchema.parse(rawRequest);
+    return dbService.markBlockIgnored(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.blockProcessingMarkProcessed, (_event, rawRequest: unknown) => {
+    const request = BlockProcessingMarkBlockRequestSchema.parse(rawRequest);
+    return dbService.markBlockProcessed(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.blockProcessingMarkNeedsLater, (_event, rawRequest: unknown) => {
+    const request = BlockProcessingMarkBlockRequestSchema.parse(rawRequest);
+    return dbService.markBlockNeedsLater(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.blockProcessingMarkUnread, (_event, rawRequest: unknown) => {
+    const request = BlockProcessingMarkBlockRequestSchema.parse(rawRequest);
+    return dbService.markBlockUnread(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.extractionsCreate, (_event, rawRequest: unknown) => {

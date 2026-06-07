@@ -963,6 +963,73 @@ describe("DbService", () => {
     return { extractId: extract.id, sourceId };
   }
 
+  function blockRowsFor(svc: DbService, sourceId: string): { id: string; order: number }[] {
+    return svc.raw.sqlite
+      .prepare(
+        'SELECT stable_block_id AS id, "order" FROM document_blocks WHERE document_id = ? ORDER BY "order"',
+      )
+      .all(sourceId) as { id: string; order: number }[];
+  }
+
+  it("block processing persists across reopen and turns stale after a source edit", () => {
+    const first = new DbService();
+    first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { id: sourceId } = first.importManualSource({
+      title: "Block processing source",
+      priority: "A",
+      body: "First paragraph.\n\nSecond paragraph.",
+    });
+    const blocks = blockRowsFor(first, sourceId);
+
+    expect(first.listBlockProcessing({ sourceElementId: sourceId }).summary).toMatchObject({
+      totalBlocks: 2,
+      processedBlocks: 0,
+      unresolvedBlocks: 2,
+    });
+    first.markBlockProcessed({ sourceElementId: sourceId, stableBlockId: blocks[0]?.id ?? "" });
+    expect(first.getBlockProcessingSummary({ sourceElementId: sourceId }).summary).toMatchObject({
+      processedBlocks: 1,
+      unresolvedBlocks: 1,
+    });
+    first.close();
+
+    const second = new DbService();
+    second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(second.getBlockProcessingSummary({ sourceElementId: sourceId }).summary).toMatchObject({
+      processedBlocks: 1,
+      unresolvedBlocks: 1,
+    });
+
+    second.saveDocument({
+      elementId: sourceId,
+      prosemirrorJson: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            attrs: { blockId: blocks[0]?.id },
+            content: [{ type: "text", text: "First paragraph, edited." }],
+          },
+          {
+            type: "paragraph",
+            attrs: { blockId: blocks[1]?.id },
+            content: [{ type: "text", text: "Second paragraph." }],
+          },
+        ],
+      },
+      plainText: "First paragraph, edited.\n\nSecond paragraph.",
+      blocks: blocks.map((block) => ({
+        blockType: "paragraph",
+        order: block.order,
+        stableBlockId: block.id,
+      })),
+    });
+    expect(second.listBlockProcessing({ sourceElementId: sourceId }).blocks[0]?.state).toBe(
+      "stale_after_edit",
+    );
+    second.close();
+  });
+
   it("createCard (qa) maps the A/B/C/D label → numeric priority and round-trips lineage (T032)", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });

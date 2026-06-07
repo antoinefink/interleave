@@ -121,6 +121,19 @@ const GRADES: readonly { rating: ReviewRating; label: string; key: string }[] = 
 /** The inline non-open actions a loop item exposes (the T030 set + skip). */
 type LoopActionKind = QueueActAction["kind"];
 
+async function actionWithSourceDoneGate(
+  item: QueueItemSummary,
+  kind: LoopActionKind,
+): Promise<QueueActAction | null> {
+  if (kind !== "markDone" || item.type !== "source") return { kind };
+  const { summary } = await appApi.getBlockProcessingSummary({ sourceElementId: item.id });
+  if (summary.canMarkDoneWithoutConfirmation) return { kind };
+  const ok = window.confirm(
+    `This source still has ${summary.unresolvedBlocks} unresolved blocks. Mark it done anyway?`,
+  );
+  return ok ? { kind, confirmUnresolvedBlocks: true } : null;
+}
+
 type ProcessUndoState = {
   readonly id: string;
   readonly index: number;
@@ -476,7 +489,9 @@ export function ProcessQueue() {
       clearUndo();
       setBusy(true);
       try {
-        const res = await appApi.actOnQueueItem({ id: current.id, action: { kind } });
+        const action = await actionWithSourceDoneGate(current, kind);
+        if (!action) return;
+        const res = await appApi.actOnQueueItem({ id: current.id, action });
         setProcessed((p) => p + 1);
         advance();
         requestInspectorRefresh();

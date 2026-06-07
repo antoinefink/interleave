@@ -55,7 +55,10 @@ import {
   type ReliabilityTier,
   type RendererSettings,
   type ReviewModeSelector,
+  SOURCE_BLOCK_PROCESSING_STATES,
   SOURCE_TYPES,
+  type SourceBlockProcessingDerivation,
+  type SourceBlockProcessingState,
   type SourceRef,
   type SourceType,
   TASK_TYPES,
@@ -731,7 +734,7 @@ export const QueueActRequestSchema = z.object({
     z.object({ kind: z.literal("postpone") }),
     z.object({ kind: z.literal("raise") }),
     z.object({ kind: z.literal("lower") }),
-    z.object({ kind: z.literal("markDone") }),
+    z.object({ kind: z.literal("markDone"), confirmUnresolvedBlocks: z.boolean().optional() }),
     z.object({ kind: z.literal("dismiss") }),
     z.object({ kind: z.literal("delete") }),
   ]),
@@ -2596,6 +2599,73 @@ export type DocumentMarksListRequest = z.infer<typeof DocumentMarksListRequestSc
 
 export interface DocumentMarksListResult {
   readonly marks: readonly DocumentMarkPayload[];
+}
+
+// ---------------------------------------------------------------------------
+// blockProcessing.*  (durable source-block processing outcomes)
+// ---------------------------------------------------------------------------
+
+/**
+ * The durable source-block processing surface. These rows are the source of truth
+ * for incremental-reading progress; `processed_span` document marks are only a
+ * legacy/visual projection. Every write validates that the block belongs to the
+ * source document and logs `update_document` in the same transaction.
+ */
+
+export const SourceBlockProcessingStateSchema = z.enum(SOURCE_BLOCK_PROCESSING_STATES);
+
+export interface SourceBlockProcessingViewPayload {
+  readonly sourceElementId: string;
+  readonly stableBlockId: string;
+  readonly order: number;
+  readonly state: SourceBlockProcessingState;
+  readonly storedState: SourceBlockProcessingState | null;
+  readonly blockContentHash: string | null;
+  readonly outputElementIds: readonly string[];
+  readonly derivedFrom: SourceBlockProcessingDerivation;
+}
+
+export interface SourceBlockProcessingSummaryPayload {
+  readonly sourceElementId: string;
+  readonly totalBlocks: number;
+  readonly processedBlocks: number;
+  readonly terminalBlocks: number;
+  readonly unresolvedBlocks: number;
+  readonly highPriorityUnresolvedBlocks: number;
+  readonly extractedBlockCount: number;
+  readonly extractedOutputCount: number;
+  readonly ignoredBlocks: number;
+  readonly ignoredRatio: number;
+  readonly terminalRatio: number;
+  readonly staleAfterEditBlocks: number;
+  readonly legacyProjectedBlocks: number;
+  readonly canMarkDoneWithoutConfirmation: boolean;
+  readonly stateCounts: Readonly<Record<SourceBlockProcessingState, number>>;
+}
+
+export const BlockProcessingSourceRequestSchema = z.object({
+  sourceElementId: ElementIdSchema,
+});
+export type BlockProcessingSourceRequest = z.infer<typeof BlockProcessingSourceRequestSchema>;
+
+export interface BlockProcessingListResult {
+  readonly blocks: readonly SourceBlockProcessingViewPayload[];
+  readonly summary: SourceBlockProcessingSummaryPayload;
+}
+
+export interface BlockProcessingSummaryResult {
+  readonly summary: SourceBlockProcessingSummaryPayload;
+}
+
+export const BlockProcessingMarkBlockRequestSchema = z.object({
+  sourceElementId: ElementIdSchema,
+  stableBlockId: z.string().min(1).max(128),
+});
+export type BlockProcessingMarkBlockRequest = z.infer<typeof BlockProcessingMarkBlockRequestSchema>;
+
+export interface BlockProcessingMarkBlockResult {
+  readonly block: SourceBlockProcessingViewPayload;
+  readonly summary: SourceBlockProcessingSummaryPayload;
 }
 
 // ---------------------------------------------------------------------------
@@ -5182,6 +5252,10 @@ export interface SourceYieldRow {
   /** Summed review response time on the source's cards (ms) — review time, not reading. */
   readonly timeSpentMs: number;
   readonly reviewCount: number;
+  readonly processedBlockRatio: number;
+  readonly ignoredBlockRatio: number;
+  readonly unresolvedBlocks: number;
+  readonly extractedOutputCount: number;
   readonly lastActivityAt: string | null;
   readonly yieldScore: number;
   readonly yieldBand: YieldBand;
@@ -5645,6 +5719,24 @@ export interface AppApi {
       /** List an element's marks (optionally filtered by kind) (T020). */
       list(request: DocumentMarksListRequest): Promise<DocumentMarksListResult>;
     };
+  };
+  readonly blockProcessing: {
+    /** List every source block with its durable/derived processing outcome. */
+    list(request: BlockProcessingSourceRequest): Promise<BlockProcessingListResult>;
+    /** Read source progress/yield counters derived from block outcomes. */
+    summary(request: BlockProcessingSourceRequest): Promise<BlockProcessingSummaryResult>;
+    /** Mark a source block ignored; terminal for source completion. */
+    markIgnored(request: BlockProcessingMarkBlockRequest): Promise<BlockProcessingMarkBlockResult>;
+    /** Mark a source block processed without creating an extract/card. */
+    markProcessed(
+      request: BlockProcessingMarkBlockRequest,
+    ): Promise<BlockProcessingMarkBlockResult>;
+    /** Keep a source block unresolved but explicitly scheduled for later attention. */
+    markNeedsLater(
+      request: BlockProcessingMarkBlockRequest,
+    ): Promise<BlockProcessingMarkBlockResult>;
+    /** Restore a block to explicit unread, overriding read-point-derived read state. */
+    markUnread(request: BlockProcessingMarkBlockRequest): Promise<BlockProcessingMarkBlockResult>;
   };
   readonly extractions: {
     /**

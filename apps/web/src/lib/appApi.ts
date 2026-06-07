@@ -641,7 +641,7 @@ export type QueueActAction =
   | { readonly kind: "postpone" }
   | { readonly kind: "raise" }
   | { readonly kind: "lower" }
-  | { readonly kind: "markDone" }
+  | { readonly kind: "markDone"; readonly confirmUnresolvedBlocks?: boolean }
   | { readonly kind: "dismiss" }
   | { readonly kind: "delete" };
 
@@ -1671,6 +1671,77 @@ export interface DocumentMarksListRequest {
 
 export interface DocumentMarksListResult {
   readonly marks: readonly DocumentMarkPayload[];
+}
+
+// ---------------------------------------------------------------------------
+// blockProcessing.*  (source block processing outcomes)
+// ---------------------------------------------------------------------------
+
+export type SourceBlockProcessingState =
+  | "unread"
+  | "read"
+  | "extracted"
+  | "ignored"
+  | "processed_without_output"
+  | "needs_later"
+  | "stale_after_edit";
+
+export type SourceBlockProcessingDerivation =
+  | "explicit"
+  | "read_point"
+  | "legacy_processed_span"
+  | "missing";
+
+export interface SourceBlockProcessingViewPayload {
+  readonly sourceElementId: string;
+  readonly stableBlockId: string;
+  readonly order: number;
+  readonly state: SourceBlockProcessingState;
+  readonly storedState: SourceBlockProcessingState | null;
+  readonly blockContentHash: string | null;
+  readonly outputElementIds: readonly string[];
+  readonly derivedFrom: SourceBlockProcessingDerivation;
+}
+
+export interface SourceBlockProcessingSummaryPayload {
+  readonly sourceElementId: string;
+  readonly totalBlocks: number;
+  readonly processedBlocks: number;
+  readonly terminalBlocks: number;
+  readonly unresolvedBlocks: number;
+  readonly highPriorityUnresolvedBlocks: number;
+  readonly extractedBlockCount: number;
+  readonly extractedOutputCount: number;
+  readonly ignoredBlocks: number;
+  readonly ignoredRatio: number;
+  readonly terminalRatio: number;
+  readonly staleAfterEditBlocks: number;
+  readonly legacyProjectedBlocks: number;
+  readonly canMarkDoneWithoutConfirmation: boolean;
+  readonly stateCounts: Readonly<Record<SourceBlockProcessingState, number>>;
+}
+
+export interface BlockProcessingSourceRequest {
+  readonly sourceElementId: string;
+}
+
+export interface BlockProcessingListResult {
+  readonly blocks: readonly SourceBlockProcessingViewPayload[];
+  readonly summary: SourceBlockProcessingSummaryPayload;
+}
+
+export interface BlockProcessingSummaryResult {
+  readonly summary: SourceBlockProcessingSummaryPayload;
+}
+
+export interface BlockProcessingMarkBlockRequest {
+  readonly sourceElementId: string;
+  readonly stableBlockId: string;
+}
+
+export interface BlockProcessingMarkBlockResult {
+  readonly block: SourceBlockProcessingViewPayload;
+  readonly summary: SourceBlockProcessingSummaryPayload;
 }
 
 // ---------------------------------------------------------------------------
@@ -3343,6 +3414,10 @@ export interface SourceYieldRow {
   /** Summed review response time on the source's cards (ms) — review time, not reading. */
   readonly timeSpentMs: number;
   readonly reviewCount: number;
+  readonly processedBlockRatio: number;
+  readonly ignoredBlockRatio: number;
+  readonly unresolvedBlocks: number;
+  readonly extractedOutputCount: number;
   readonly lastActivityAt: string | null;
   readonly yieldScore: number;
   readonly yieldBand: YieldBand;
@@ -3554,6 +3629,18 @@ export interface AppApi {
       remove(request: DocumentMarksRemoveRequest): Promise<DocumentMarksRemoveResult>;
       list(request: DocumentMarksListRequest): Promise<DocumentMarksListResult>;
     };
+  };
+  readonly blockProcessing: {
+    list(request: BlockProcessingSourceRequest): Promise<BlockProcessingListResult>;
+    summary(request: BlockProcessingSourceRequest): Promise<BlockProcessingSummaryResult>;
+    markIgnored(request: BlockProcessingMarkBlockRequest): Promise<BlockProcessingMarkBlockResult>;
+    markProcessed(
+      request: BlockProcessingMarkBlockRequest,
+    ): Promise<BlockProcessingMarkBlockResult>;
+    markNeedsLater(
+      request: BlockProcessingMarkBlockRequest,
+    ): Promise<BlockProcessingMarkBlockResult>;
+    markUnread(request: BlockProcessingMarkBlockRequest): Promise<BlockProcessingMarkBlockResult>;
   };
   readonly extractions: {
     create(request: ExtractionCreateRequest): Promise<ExtractionCreateResult>;
@@ -4102,6 +4189,40 @@ export const appApi = {
   /** List an element's document marks, optionally by kind (T020). */
   listDocumentMarks(request: DocumentMarksListRequest): Promise<DocumentMarksListResult> {
     return requireAppApi().documents.marks.list(request);
+  },
+  /** List source blocks with their durable/derived processing outcome. */
+  listBlockProcessing(request: BlockProcessingSourceRequest): Promise<BlockProcessingListResult> {
+    return requireAppApi().blockProcessing.list(request);
+  },
+  /** Read source progress/yield counters from block outcomes. */
+  getBlockProcessingSummary(
+    request: BlockProcessingSourceRequest,
+  ): Promise<BlockProcessingSummaryResult> {
+    return requireAppApi().blockProcessing.summary(request);
+  },
+  /** Mark a source block ignored. */
+  markBlockIgnored(
+    request: BlockProcessingMarkBlockRequest,
+  ): Promise<BlockProcessingMarkBlockResult> {
+    return requireAppApi().blockProcessing.markIgnored(request);
+  },
+  /** Mark a source block processed without output. */
+  markBlockProcessed(
+    request: BlockProcessingMarkBlockRequest,
+  ): Promise<BlockProcessingMarkBlockResult> {
+    return requireAppApi().blockProcessing.markProcessed(request);
+  },
+  /** Mark a source block as needing a later pass. */
+  markBlockNeedsLater(
+    request: BlockProcessingMarkBlockRequest,
+  ): Promise<BlockProcessingMarkBlockResult> {
+    return requireAppApi().blockProcessing.markNeedsLater(request);
+  },
+  /** Restore a source block to explicit unread. */
+  markBlockUnread(
+    request: BlockProcessingMarkBlockRequest,
+  ): Promise<BlockProcessingMarkBlockResult> {
+    return requireAppApi().blockProcessing.markUnread(request);
   },
   /** Lift selected text into a new independent, attention-scheduled extract (T021). */
   createExtraction(request: ExtractionCreateRequest): Promise<ExtractionCreateResult> {

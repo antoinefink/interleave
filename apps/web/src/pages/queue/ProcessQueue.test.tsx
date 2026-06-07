@@ -161,6 +161,12 @@ const h = vi.hoisted(() => {
     selectSpy: vi.fn(),
     listQueue: vi.fn().mockResolvedValue(result),
     actOnQueueItem: vi.fn().mockResolvedValue({ item: null, removed: true, undo: null }),
+    getBlockProcessingSummary: vi.fn().mockResolvedValue({
+      summary: {
+        canMarkDoneWithoutConfirmation: true,
+        unresolvedBlocks: 0,
+      },
+    }),
     scheduleQueueItem: vi.fn().mockResolvedValue({
       item: null,
       dueAt: "2026-06-01T12:00:00.000Z",
@@ -288,6 +294,7 @@ vi.mock("../../lib/appApi", async () => {
     appApi: {
       listQueue: h.listQueue,
       actOnQueueItem: h.actOnQueueItem,
+      getBlockProcessingSummary: h.getBlockProcessingSummary,
       scheduleQueueItem: h.scheduleQueueItem,
       undoQueueAction: h.undoQueueAction,
       undoLast: h.undoLast,
@@ -415,6 +422,12 @@ import { ProcessQueue } from "./ProcessQueue";
 beforeEach(() => {
   vi.clearAllMocks();
   h.actOnQueueItem.mockResolvedValue({ item: null, removed: true, undo: null });
+  h.getBlockProcessingSummary.mockResolvedValue({
+    summary: {
+      canMarkDoneWithoutConfirmation: true,
+      unresolvedBlocks: 0,
+    },
+  });
   h.scheduleQueueItem.mockResolvedValue({
     item: null,
     dueAt: "2026-06-01T12:00:00.000Z",
@@ -571,6 +584,64 @@ describe("ProcessQueue", () => {
       }),
     );
     await waitFor(() => expect(currentItemId()).toBe("card-1"));
+  });
+
+  it("marks complete source rows done without confirmation", async () => {
+    render(<ProcessQueue />);
+    await moveToSource();
+
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+
+    await waitFor(() =>
+      expect(h.getBlockProcessingSummary).toHaveBeenCalledWith({ sourceElementId: "source-1" }),
+    );
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({
+        id: "source-1",
+        action: { kind: "markDone" },
+      }),
+    );
+    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+  });
+
+  it("confirms unresolved source rows before marking them done", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(true);
+    h.getBlockProcessingSummary.mockResolvedValueOnce({
+      summary: {
+        canMarkDoneWithoutConfirmation: false,
+        unresolvedBlocks: 3,
+      },
+    });
+    render(<ProcessQueue />);
+    await moveToSource();
+
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+
+    await waitFor(() => expect(confirm).toHaveBeenCalledWith(expect.stringContaining("3")));
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({
+        id: "source-1",
+        action: { kind: "markDone", confirmUnresolvedBlocks: true },
+      }),
+    );
+  });
+
+  it("does not advance when unresolved source mark-done is cancelled", async () => {
+    vi.spyOn(window, "confirm").mockReturnValueOnce(false);
+    h.getBlockProcessingSummary.mockResolvedValueOnce({
+      summary: {
+        canMarkDoneWithoutConfirmation: false,
+        unresolvedBlocks: 3,
+      },
+    });
+    render(<ProcessQueue />);
+    await moveToSource();
+
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+
+    await waitFor(() => expect(h.getBlockProcessingSummary).toHaveBeenCalledTimes(1));
+    expect(h.actOnQueueItem).not.toHaveBeenCalled();
+    expect(currentItemId()).toBe("source-1");
   });
 
   it("keeps command-log undo after postponing through the merged menu", async () => {
