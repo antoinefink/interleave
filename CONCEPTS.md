@@ -112,9 +112,23 @@ Manual backups may satisfy an automatic due check because they prove the data wa
 
 The filesystem-owned store for large user data such as source files, media, and exports, with the local database retaining metadata and references.
 
+### Local data replacement
+
+A high-risk durability operation that swaps or rebuilds the canonical local database and Asset vault as one unit.
+
+Local data replacement is an app-lifecycle boundary, not a normal domain mutation. Backup restore and fresh start reset both use it, and normal work resumes only after the app restarts into the replacement store.
+
 ### Restore-ready backup
 
 A backup artifact whose structure and manifest are sufficient for a restore flow to verify and rebuild the local store.
+
+### Backup restore
+
+The data-recovery flow that verifies a restore-ready backup and replaces the current local database and Asset vault with that backup's contents.
+
+### Fresh start reset
+
+The destructive local durability action that discards the current knowledge store and rebuilds an empty local store while preserving recovery and export artifacts.
 
 ### Automatic retention
 

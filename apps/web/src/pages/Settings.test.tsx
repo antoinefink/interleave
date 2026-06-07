@@ -7,6 +7,9 @@ const h = vi.hoisted(() => ({
   updateAppSettings: vi.fn(),
   createBackup: vi.fn(),
   openBackupsFolder: vi.fn(),
+  listBackups: vi.fn(),
+  restoreBackup: vi.fn(),
+  resetLocalData: vi.fn(),
   getCapturePairing: vi.fn(),
   setCaptureEnabled: vi.fn(),
   regenerateCaptureToken: vi.fn(),
@@ -38,6 +41,9 @@ vi.mock("../lib/appApi", async () => {
       updateAppSettings: h.updateAppSettings,
       createBackup: h.createBackup,
       openBackupsFolder: h.openBackupsFolder,
+      listBackups: h.listBackups,
+      restoreBackup: h.restoreBackup,
+      resetLocalData: h.resetLocalData,
       getCapturePairing: h.getCapturePairing,
       setCaptureEnabled: h.setCaptureEnabled,
       regenerateCaptureToken: h.regenerateCaptureToken,
@@ -53,7 +59,21 @@ vi.mock("../lib/appApi", async () => {
   };
 });
 
+import {
+  RESET_LOCAL_DATA_CONFIRMATION_PHRASE,
+  RESTORE_BACKUP_CONFIRMATION_PHRASE,
+} from "../lib/appApi";
 import { Settings } from "./Settings";
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 const settings = {
   dailyReviewBudget: 60,
@@ -95,12 +115,36 @@ beforeEach(() => {
     settings: { ...settings, ...patch },
   }));
   h.createBackup.mockResolvedValue({
-    path: "/tmp/interleave.zip",
+    timestamp: "2026-06-07T10-30-00-000Z",
+    archiveName: "2026-06-07T10-30-00-000Z.zip",
     sizeBytes: 2048,
     fileCount: 3,
     schemaVersion: "v1",
   });
   h.openBackupsFolder.mockResolvedValue({ ok: true });
+  h.listBackups.mockResolvedValue({
+    backups: [
+      {
+        timestamp: "2026-06-07T10-20-30-000Z",
+        createdAt: "2026-06-07T10:20:30.000Z",
+        sizeBytes: 4096,
+        fileCount: 4,
+        schemaVersion: "v1",
+        automatic: false,
+      },
+    ],
+  });
+  h.restoreBackup.mockResolvedValue({
+    status: "restored",
+    timestamp: "2026-06-07T10-20-30-000Z",
+    restoredAt: "2026-06-07T10:35:00.000Z",
+    reloadRequired: true,
+  });
+  h.resetLocalData.mockResolvedValue({
+    status: "reset",
+    resetAt: "2026-06-07T10:35:00.000Z",
+    reloadRequired: true,
+  });
   h.getCapturePairing.mockResolvedValue({
     enabled: false,
     running: false,
@@ -250,6 +294,214 @@ describe("Settings", () => {
     expect(note).not.toHaveClass("mb-2");
     expect(note).toHaveTextContent("A backup is a full, recoverable copy");
     expect(note).toHaveTextContent("Backup vs Export");
+  });
+
+  it("loads and renders app-managed backup artifacts", async () => {
+    h.listBackups.mockResolvedValueOnce({
+      backups: [
+        {
+          timestamp: "2026-06-07T10-20-30-000Z",
+          createdAt: "2026-06-07T10:20:30.000Z",
+          sizeBytes: 4096,
+          fileCount: 4,
+          schemaVersion: "v1",
+          automatic: false,
+        },
+        {
+          timestamp: "2026-06-06T09-00-00-000Z",
+          createdAt: "2026-06-06T09:00:00.000Z",
+          sizeBytes: 2048,
+          fileCount: 3,
+          schemaVersion: "v1",
+          automatic: true,
+        },
+      ],
+    });
+    const { findByTestId, getByTestId } = render(<Settings />);
+
+    expect(
+      await findByTestId("settings-backup-artifact-2026-06-07T10-20-30-000Z"),
+    ).toHaveTextContent("2026-06-07T10-20-30-000Z");
+    expect(getByTestId("settings-backup-artifact-2026-06-07T10-20-30-000Z")).toHaveTextContent(
+      "4 files",
+    );
+    expect(getByTestId("settings-backup-artifact-2026-06-06T09-00-00-000Z")).toHaveTextContent(
+      "2.0 KB",
+    );
+    expect(getByTestId("settings-backup-artifact-2026-06-06T09-00-00-000Z")).toHaveTextContent(
+      "Automatic",
+    );
+    expect(h.listBackups).toHaveBeenCalled();
+  });
+
+  it("requires the exact restore phrase before restoring a selected backup", async () => {
+    const { findByTestId, getByTestId, getByRole } = render(<Settings />);
+
+    await findByTestId("settings-backup-artifact-2026-06-07T10-20-30-000Z");
+    const restoreButton = getByTestId("settings-restore-backup");
+    expect(restoreButton).toBeDisabled();
+    expect(getByRole("textbox", { name: /restore selected backup/i })).toHaveAccessibleDescription(
+      new RegExp(RESTORE_BACKUP_CONFIRMATION_PHRASE),
+    );
+
+    fireEvent.change(getByTestId("settings-restore-confirm"), {
+      target: { value: "restore backup" },
+    });
+    expect(restoreButton).toBeDisabled();
+    expect(h.restoreBackup).not.toHaveBeenCalled();
+
+    fireEvent.change(getByTestId("settings-restore-confirm"), {
+      target: { value: RESTORE_BACKUP_CONFIRMATION_PHRASE },
+    });
+    fireEvent.click(restoreButton);
+
+    await waitFor(() =>
+      expect(h.restoreBackup).toHaveBeenCalledWith({
+        timestamp: "2026-06-07T10-20-30-000Z",
+        confirm: true,
+        phrase: RESTORE_BACKUP_CONFIRMATION_PHRASE,
+      }),
+    );
+    expect(await findByTestId("settings-restore-success")).toHaveTextContent("Restart Interleave");
+    expect(getByTestId("settings-data-restart-required")).toHaveTextContent("Restart Interleave");
+    expect(getByTestId("settings-backup-now")).toBeDisabled();
+    expect(getByTestId("settings-backup-refresh")).toBeDisabled();
+  });
+
+  it("clears a typed restore phrase when the selected backup changes", async () => {
+    h.listBackups.mockResolvedValueOnce({
+      backups: [
+        {
+          timestamp: "2026-06-07T10-20-30-000Z",
+          createdAt: "2026-06-07T10:20:30.000Z",
+          sizeBytes: 4096,
+          fileCount: 4,
+          schemaVersion: "v1",
+          automatic: false,
+        },
+        {
+          timestamp: "2026-06-06T09-00-00-000Z",
+          createdAt: "2026-06-06T09:00:00.000Z",
+          sizeBytes: 2048,
+          fileCount: 3,
+          schemaVersion: "v1",
+          automatic: true,
+        },
+      ],
+    });
+    const { findByTestId, getByTestId } = render(<Settings />);
+
+    await findByTestId("settings-backup-artifact-2026-06-07T10-20-30-000Z");
+    fireEvent.change(getByTestId("settings-restore-confirm"), {
+      target: { value: RESTORE_BACKUP_CONFIRMATION_PHRASE },
+    });
+    expect(getByTestId("settings-restore-backup")).not.toBeDisabled();
+
+    fireEvent.click(getByTestId("settings-backup-artifact-2026-06-06T09-00-00-000Z"));
+
+    expect(getByTestId("settings-restore-confirm")).toHaveValue("");
+    expect(getByTestId("settings-restore-backup")).toBeDisabled();
+    expect(h.restoreBackup).not.toHaveBeenCalled();
+  });
+
+  it("blocks overlapping destructive backup operations", async () => {
+    const restore = deferred<{
+      status: "restored";
+      timestamp: string;
+      restoredAt: string;
+      reloadRequired: true;
+    }>();
+    h.restoreBackup.mockReturnValueOnce(restore.promise);
+    const { findByTestId, getByTestId } = render(<Settings />);
+
+    await findByTestId("settings-backup-artifact-2026-06-07T10-20-30-000Z");
+    fireEvent.change(getByTestId("settings-restore-confirm"), {
+      target: { value: RESTORE_BACKUP_CONFIRMATION_PHRASE },
+    });
+    fireEvent.click(getByTestId("settings-restore-backup"));
+    fireEvent.click(getByTestId("settings-restore-backup"));
+
+    await waitFor(() => expect(h.restoreBackup).toHaveBeenCalledTimes(1));
+    expect(getByTestId("settings-reset-local-data")).toBeDisabled();
+    expect(getByTestId("settings-backup-now")).toBeDisabled();
+    fireEvent.change(getByTestId("settings-reset-confirm"), {
+      target: { value: RESET_LOCAL_DATA_CONFIRMATION_PHRASE },
+    });
+    fireEvent.click(getByTestId("settings-reset-local-data"));
+    expect(h.resetLocalData).not.toHaveBeenCalled();
+
+    restore.resolve({
+      status: "restored",
+      timestamp: "2026-06-07T10-20-30-000Z",
+      restoredAt: "2026-06-07T10:35:00.000Z",
+      reloadRequired: true,
+    });
+    expect(await findByTestId("settings-restore-success")).toHaveTextContent("Restart Interleave");
+  });
+
+  it("shows restore errors without hiding the selected backup", async () => {
+    h.restoreBackup.mockRejectedValueOnce(new Error("hash mismatch"));
+    const { findByTestId, getByTestId } = render(<Settings />);
+
+    await findByTestId("settings-backup-artifact-2026-06-07T10-20-30-000Z");
+    fireEvent.change(getByTestId("settings-restore-confirm"), {
+      target: { value: RESTORE_BACKUP_CONFIRMATION_PHRASE },
+    });
+    fireEvent.click(getByTestId("settings-restore-backup"));
+
+    expect(await findByTestId("settings-restore-error")).toHaveTextContent("hash mismatch");
+    expect(getByTestId("settings-backup-artifact-2026-06-07T10-20-30-000Z")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  it("requires the exact fresh-start phrase before resetting local data", async () => {
+    const { findByTestId, getByTestId, getByRole } = render(<Settings />);
+
+    await findByTestId("settings-reset-local-data");
+    const resetButton = getByTestId("settings-reset-local-data");
+    expect(resetButton).toBeDisabled();
+    expect(getByRole("textbox", { name: /fresh start/i })).toHaveAccessibleDescription(
+      new RegExp(RESET_LOCAL_DATA_CONFIRMATION_PHRASE),
+    );
+
+    fireEvent.change(getByTestId("settings-reset-confirm"), {
+      target: { value: "START" },
+    });
+    expect(resetButton).toBeDisabled();
+    expect(h.resetLocalData).not.toHaveBeenCalled();
+
+    fireEvent.change(getByTestId("settings-reset-confirm"), {
+      target: { value: RESET_LOCAL_DATA_CONFIRMATION_PHRASE },
+    });
+    fireEvent.click(resetButton);
+
+    await waitFor(() =>
+      expect(h.resetLocalData).toHaveBeenCalledWith({
+        confirm: true,
+        phrase: RESET_LOCAL_DATA_CONFIRMATION_PHRASE,
+      }),
+    );
+    expect(await findByTestId("settings-reset-success")).toHaveTextContent("Restart Interleave");
+    expect(getByTestId("settings-data-restart-required")).toHaveTextContent("Restart Interleave");
+  });
+
+  it("shows backup list and fresh-start errors", async () => {
+    h.listBackups.mockRejectedValueOnce(new Error("manifest unreadable"));
+    h.resetLocalData.mockRejectedValueOnce(new Error("reset refused"));
+    const { findByTestId, getByTestId } = render(<Settings />);
+
+    expect(await findByTestId("settings-backup-list-error")).toHaveTextContent(
+      "manifest unreadable",
+    );
+
+    fireEvent.change(getByTestId("settings-reset-confirm"), {
+      target: { value: RESET_LOCAL_DATA_CONFIRMATION_PHRASE },
+    });
+    fireEvent.click(getByTestId("settings-reset-local-data"));
+
+    expect(await findByTestId("settings-reset-error")).toHaveTextContent("reset refused");
   });
 
   it("enables capture server and reveals running status", async () => {

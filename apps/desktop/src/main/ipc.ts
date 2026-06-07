@@ -18,7 +18,10 @@ import {
   AiRunRequestSchema,
   AnalyticsGetRequestSchema,
   BackupsCreateRequestSchema,
+  BackupsListRequestSchema,
   BackupsOpenFolderRequestSchema,
+  BackupsResetLocalDataRequestSchema,
+  BackupsRestoreRequestSchema,
   BalanceGetRequestSchema,
   CaptureGetPairingRequestSchema,
   CaptureRegenerateTokenRequestSchema,
@@ -164,6 +167,7 @@ import {
 } from "../shared/contract";
 import { AnkiExportError } from "./anki-export-service";
 import { AnkiImportError } from "./anki-import-service";
+import { BackupRestoreService } from "./backup-restore-service";
 import { BackupService } from "./backup-service";
 import type { CaptureController } from "./capture-controller";
 import type { DbService } from "./db-service";
@@ -183,6 +187,8 @@ export interface IpcHandlerContext {
   readonly paths: AppPaths;
   /** The Drizzle migrations folder (its journal maps idx → schema-version tag). */
   readonly migrationsDir: string;
+  /** Packaged Electron native binding for secondary SQLite opens. */
+  readonly nativeBinding?: string | undefined;
   /**
    * The live capture-server controller (T062) — the `capture.*` pairing commands
    * route here so the IPC layer never touches the raw HTTP server or the
@@ -1286,15 +1292,16 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
     return dbService.listStagnantExtracts(request);
   });
 
-  ipcMain.handle(IPC_CHANNELS.backupsCreate, async () => {
-    // No payload to validate (void); keep the schema call for symmetry.
-    BackupsCreateRequestSchema.parse(undefined);
+  ipcMain.handle(IPC_CHANNELS.backupsCreate, async (_event, rawRequest: unknown) => {
+    // No payload is allowed; validate the actual renderer argument so unexpected
+    // paths/options are rejected before any filesystem work starts.
+    BackupsCreateRequestSchema.parse(rawRequest);
     if (!context) {
       throw new Error("backups.create: handler registered without filesystem context");
     }
     // The backup runs entirely main-side: it snapshots `app.sqlite`, copies the
-    // asset vault, writes the hashed manifest, and zips — the renderer only gets
-    // the final path string back (no raw filesystem access crosses IPC).
+    // asset vault, writes the hashed manifest, and zips. The renderer gets only
+    // artifact metadata, never the absolute filesystem path.
     const backupService = new BackupService({
       dbService,
       paths: context.paths,
@@ -1303,8 +1310,8 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
     });
     const result = await backupService.createBackup();
     return {
-      path: result.path,
       timestamp: result.timestamp,
+      archiveName: `${result.timestamp}.zip`,
       sizeBytes: result.sizeBytes,
       fileCount: result.fileCount,
       schemaVersion: result.schemaVersion,
@@ -1321,6 +1328,67 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
       throw new Error("backups.openFolder: failed to open backups folder");
     }
     return { ok: true };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.backupsList, (_event, rawRequest: unknown) => {
+    BackupsListRequestSchema.parse(rawRequest);
+    if (!context) {
+      throw new Error("backups.list: handler registered without filesystem context");
+    }
+    const restoreService = new BackupRestoreService({
+      dbService,
+      paths: context.paths,
+      migrationsDir: context.migrationsDir,
+      nativeBinding: context.nativeBinding,
+    });
+    return { backups: restoreService.listBackups() };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.backupsRestore, async (_event, rawRequest: unknown) => {
+    const request = BackupsRestoreRequestSchema.parse(rawRequest);
+    if (!context) {
+      throw new Error("backups.restore: handler registered without filesystem context");
+    }
+    const restoreService = new BackupRestoreService({
+      dbService,
+      paths: context.paths,
+      migrationsDir: context.migrationsDir,
+      nativeBinding: context.nativeBinding,
+      beforeReplaceLocalData: async () => {
+        await context.runner?.stopAndDrain();
+        await context.captureController?.stop();
+      },
+    });
+    const result = await restoreService.restoreBackup(request.timestamp);
+    return {
+      status: "restored" as const,
+      timestamp: result.timestamp,
+      restoredAt: new Date().toISOString(),
+      reloadRequired: true as const,
+    };
+  });
+
+  ipcMain.handle(IPC_CHANNELS.backupsResetLocalData, async (_event, rawRequest: unknown) => {
+    BackupsResetLocalDataRequestSchema.parse(rawRequest);
+    if (!context) {
+      throw new Error("backups.resetLocalData: handler registered without filesystem context");
+    }
+    const restoreService = new BackupRestoreService({
+      dbService,
+      paths: context.paths,
+      migrationsDir: context.migrationsDir,
+      nativeBinding: context.nativeBinding,
+      beforeReplaceLocalData: async () => {
+        await context.runner?.stopAndDrain();
+        await context.captureController?.stop();
+      },
+    });
+    await restoreService.resetLocalData();
+    return {
+      status: "reset" as const,
+      resetAt: new Date().toISOString(),
+      reloadRequired: true as const,
+    };
   });
 
   // Asset-vault maintenance (T059) — all behind the typed surface. The renderer

@@ -100,6 +100,13 @@ interface JournalEntry {
   readonly tag: string;
 }
 
+function readJournalEntries(migrationsDir: string): JournalEntry[] {
+  const journalPath = path.join(migrationsDir, "meta", "_journal.json");
+  const raw = fs.readFileSync(journalPath, "utf8");
+  const journal = JSON.parse(raw) as { entries?: JournalEntry[] };
+  return [...(journal.entries ?? [])].sort((a, b) => a.idx - b.idx);
+}
+
 /**
  * Resolve the latest applied migration TAG from the runtime count of applied
  * migrations + the staged journal (`drizzle/meta/_journal.json`).
@@ -113,9 +120,7 @@ interface JournalEntry {
  */
 export function resolveSchemaVersion(migrationsDir: string, appliedCount: number): string {
   const journalPath = path.join(migrationsDir, "meta", "_journal.json");
-  const raw = fs.readFileSync(journalPath, "utf8");
-  const journal = JSON.parse(raw) as { entries?: JournalEntry[] };
-  const entries = [...(journal.entries ?? [])].sort((a, b) => a.idx - b.idx);
+  const entries = readJournalEntries(migrationsDir);
   if (entries.length === 0) {
     throw new Error(`resolveSchemaVersion: no migration entries in ${journalPath}`);
   }
@@ -130,4 +135,35 @@ export function resolveSchemaVersion(migrationsDir: string, appliedCount: number
     throw new Error(`resolveSchemaVersion: no journal entry at index ${appliedCount - 1}`);
   }
   return entry.tag;
+}
+
+/** Resolve the newest migration tag this installed app knows how to migrate to. */
+export function latestSchemaVersion(migrationsDir: string): string {
+  const journalPath = path.join(migrationsDir, "meta", "_journal.json");
+  const entries = readJournalEntries(migrationsDir);
+  const entry = entries.at(-1);
+  if (!entry) {
+    throw new Error(`latestSchemaVersion: no migration entries in ${journalPath}`);
+  }
+  return entry.tag;
+}
+
+/**
+ * Compare two Drizzle migration tags by their order in the installed journal.
+ * Returns a negative number when `left` is older than `right`, zero when equal,
+ * and a positive number when `left` is newer. Unknown tags are corrupt/unsupported
+ * restore signals and throw.
+ */
+export function compareSchemaVersions(migrationsDir: string, left: string, right: string): number {
+  const entries = readJournalEntries(migrationsDir);
+  const order = new Map(entries.map((entry, index) => [entry.tag, index]));
+  const leftIndex = order.get(left);
+  if (leftIndex === undefined) {
+    throw new Error(`compareSchemaVersions: unknown schema version ${left}`);
+  }
+  const rightIndex = order.get(right);
+  if (rightIndex === undefined) {
+    throw new Error(`compareSchemaVersions: unknown schema version ${right}`);
+  }
+  return leftIndex - rightIndex;
 }

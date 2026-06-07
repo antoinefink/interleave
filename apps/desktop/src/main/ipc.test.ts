@@ -27,7 +27,11 @@ vi.mock("electron", () => ({
   shell: { openPath: electron.openPath },
 }));
 
-import { IPC_CHANNELS } from "../shared/contract";
+import {
+  IPC_CHANNELS,
+  RESET_LOCAL_DATA_CONFIRMATION_PHRASE,
+  RESTORE_BACKUP_CONFIRMATION_PHRASE,
+} from "../shared/contract";
 import { type IpcHandlerContext, registerIpcHandlers } from "./ipc";
 
 function fakeDbService() {
@@ -425,6 +429,57 @@ describe("registerIpcHandlers", () => {
       "backups.openFolder: failed to open backups folder",
     );
     expect(electron.openPath).toHaveBeenCalledWith("/tmp/interleave/backups");
+  });
+
+  it("rejects unexpected backup-create payloads before requiring filesystem context", async () => {
+    registerIpcHandlers(fakeDbService() as never);
+
+    await expect(
+      electron.handlers.get(IPC_CHANNELS.backupsCreate)?.({}, { path: "/tmp" }) as Promise<unknown>,
+    ).rejects.toThrow();
+  });
+
+  it("validates destructive backup lifecycle confirmations before requiring filesystem context", async () => {
+    registerIpcHandlers(fakeDbService() as never);
+
+    const restore = electron.handlers.get(IPC_CHANNELS.backupsRestore);
+    const reset = electron.handlers.get(IPC_CHANNELS.backupsResetLocalData);
+    const list = electron.handlers.get(IPC_CHANNELS.backupsList);
+
+    expect(() => list?.({}, {})).toThrow();
+    expect(() => list?.({}, undefined)).toThrow(
+      "backups.list: handler registered without filesystem context",
+    );
+    await expect(
+      restore?.(
+        {},
+        {
+          timestamp: "2026-06-07T10-00-00-000Z",
+          confirm: true,
+          phrase: "restore backup",
+        },
+      ) as Promise<unknown>,
+    ).rejects.toThrow();
+    await expect(
+      reset?.({}, { confirm: true, phrase: "start from scratch" }) as Promise<unknown>,
+    ).rejects.toThrow();
+
+    await expect(
+      restore?.(
+        {},
+        {
+          timestamp: "2026-06-07T10-00-00-000Z",
+          confirm: true,
+          phrase: RESTORE_BACKUP_CONFIRMATION_PHRASE,
+        },
+      ) as Promise<unknown>,
+    ).rejects.toThrow("backups.restore: handler registered without filesystem context");
+    await expect(
+      reset?.(
+        {},
+        { confirm: true, phrase: RESET_LOCAL_DATA_CONFIRMATION_PHRASE },
+      ) as Promise<unknown>,
+    ).rejects.toThrow("backups.resetLocalData: handler registered without filesystem context");
   });
 
   it("broadcasts runner job updates to live renderer windows and unsubscribes on dispose", () => {

@@ -22,6 +22,8 @@ import type {
   AiRunRequest,
   AnalyticsGetRequest,
   AppApi,
+  BackupsResetLocalDataRequest,
+  BackupsRestoreRequest,
   BalanceGetRequest,
   CaptureSetEnabledRequest,
   CardsAddContextRequest,
@@ -443,6 +445,11 @@ const appApi: AppApi = {
   backups: {
     create: () => ipcRenderer.invoke(IPC_CHANNELS.backupsCreate),
     openFolder: () => ipcRenderer.invoke(IPC_CHANNELS.backupsOpenFolder),
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.backupsList),
+    restore: (request: BackupsRestoreRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.backupsRestore, request),
+    resetLocalData: (request: BackupsResetLocalDataRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.backupsResetLocalData, request),
   },
   jobs: {
     // Observe the background-runner queue (T058) — invoke only. NO `enqueue`: per

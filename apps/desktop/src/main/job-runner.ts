@@ -240,6 +240,8 @@ export class JobRunner {
   private running = false;
   /** Job ids currently posted to the worker and awaiting a terminal message. */
   private readonly inFlight = new Set<string>();
+  /** Main-side apply handlers already running after a worker result arrived. */
+  private readonly activeApplies = new Set<Promise<void>>();
   /** A pending tick scheduled via `setImmediate`, so we coalesce kicks. */
   private tickScheduled = false;
   /**
@@ -351,6 +353,13 @@ export class JobRunner {
     this.inFlight.clear();
     this.pendingRestart = false;
     this.emitter.removeAllListeners();
+  }
+
+  /** Stop worker activity and wait for main-side apply handlers already running. */
+  async stopAndDrain(): Promise<void> {
+    this.stop();
+    if (this.activeApplies.size === 0) return;
+    await Promise.allSettled([...this.activeApplies]);
   }
 
   /**
@@ -491,7 +500,11 @@ export class JobRunner {
         return;
       }
       case "result": {
-        void this.applyResult(jobId, message.data);
+        const apply = this.applyResult(jobId, message.data);
+        this.activeApplies.add(apply);
+        void apply.finally(() => {
+          this.activeApplies.delete(apply);
+        });
         return;
       }
       case "error": {

@@ -75,8 +75,8 @@ function latestMigrationTag(): string {
 
 /** The shape `backups.create()` returns. */
 interface BackupResult {
-  path: string;
   timestamp: string;
+  archiveName: string;
   sizeBytes: number;
   fileCount: number;
   schemaVersion: string;
@@ -89,15 +89,21 @@ test("the backups surface exists through window.appApi (no generic db.query)", a
 
   const surface = await page.evaluate(() => {
     const api = window.appApi as unknown as {
-      backups?: { create?: unknown };
+      backups?: { create?: unknown; list?: unknown; restore?: unknown; resetLocalData?: unknown };
       db?: { query?: unknown };
     };
     return {
       hasCreate: typeof api?.backups?.create === "function",
+      hasList: typeof api?.backups?.list === "function",
+      hasRestore: typeof api?.backups?.restore === "function",
+      hasReset: typeof api?.backups?.resetLocalData === "function",
       hasQuery: typeof api?.db?.query === "function",
     };
   });
   expect(surface.hasCreate).toBe(true);
+  expect(surface.hasList).toBe(true);
+  expect(surface.hasRestore).toBe(true);
+  expect(surface.hasReset).toBe(true);
   expect(surface.hasQuery).toBe(false);
 
   await app.close();
@@ -162,8 +168,8 @@ test('/settings → "Back up now" produces a valid, hashed zip on disk', async (
     return api.backups.create();
   })) as BackupResult;
 
-  expect(result.path.endsWith(".zip")).toBe(true);
-  expect(path.basename(result.path).startsWith("auto-")).toBe(false);
+  expect(result.archiveName.endsWith(".zip")).toBe(true);
+  expect(result.archiveName.startsWith("auto-")).toBe(false);
   expect(result.sizeBytes).toBeGreaterThan(0);
   expect(result.fileCount).toBeGreaterThanOrEqual(2); // app.sqlite + ≥1 asset
   // The captured schema version is the live latest Drizzle migration tag. Assert it
@@ -175,13 +181,13 @@ test('/settings → "Back up now" produces a valid, hashed zip on disk', async (
   expect(result.schemaVersion).toBe(latestMigrationTag());
 
   // The zip lives under the test data dir's backups/ — outside the DB.
-  expect(result.path.startsWith(path.join(dataDir, "backups"))).toBe(true);
-  expect(fs.existsSync(result.path)).toBe(true);
+  const resultPath = path.join(dataDir, "backups", result.archiveName);
+  expect(fs.existsSync(resultPath)).toBe(true);
 
   // Unzip with the SYSTEM unzip (proves a standard, tool-readable archive) and
   // verify the canonical layout + every manifest hash.
   const unzipDir = fs.mkdtempSync(path.join(dataDir, "unzip-"));
-  execFileSync("unzip", ["-q", result.path, "-d", unzipDir]);
+  execFileSync("unzip", ["-q", resultPath, "-d", unzipDir]);
   expect(fs.existsSync(path.join(unzipDir, "app.sqlite"))).toBe(true);
   expect(fs.existsSync(path.join(unzipDir, "manifest.json"))).toBe(true);
   expect(fs.existsSync(path.join(unzipDir, "assets", "sources", "e2e-seed", "snapshot.json"))).toBe(
@@ -228,8 +234,8 @@ test("the backup persists across an app restart and a second backup is distinct"
     const api = window.appApi as unknown as { backups: { create(): Promise<BackupResult> } };
     return api.backups.create();
   })) as BackupResult;
-  expect(fs.existsSync(second.path)).toBe(true);
-  expect(before).not.toContain(path.basename(second.path));
+  expect(fs.existsSync(path.join(backupsDir, second.archiveName))).toBe(true);
+  expect(before).not.toContain(second.archiveName);
 
   await app.close();
 });

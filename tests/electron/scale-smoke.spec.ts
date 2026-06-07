@@ -57,7 +57,7 @@ interface IntegrityResult {
   readonly vault: { readonly missing: readonly string[] };
 }
 interface BackupResult {
-  readonly path: string;
+  readonly archiveName: string;
   readonly fileCount: number;
   readonly sizeBytes: number;
 }
@@ -199,15 +199,16 @@ test("backup at scale → valid zip whose manifest hashes verify + the backed-up
     return api.backups.create();
   })) as BackupResult;
 
-  expect(result.path.endsWith(".zip")).toBe(true);
+  expect(result.archiveName.endsWith(".zip")).toBe(true);
   expect(result.sizeBytes).toBeGreaterThan(0);
-  expect(fs.existsSync(result.path)).toBe(true);
+  const resultPath = path.join(dataDir, "backups", result.archiveName);
+  expect(fs.existsSync(resultPath)).toBe(true);
 
   // Unzip with the system unzip (proves a standard, tool-readable archive), verify
   // the layout + every manifest hash, and re-open the backed-up app.sqlite to confirm
   // the WAL checkpoint produced a consistent snapshot with the SAME live source count.
   const unzipDir = fs.mkdtempSync(path.join(dataDir, "scale-unzip-"));
-  execFileSync("unzip", ["-q", result.path, "-d", unzipDir]);
+  execFileSync("unzip", ["-q", resultPath, "-d", unzipDir]);
   const backedUpDb = path.join(unzipDir, "app.sqlite");
   expect(fs.existsSync(backedUpDb)).toBe(true);
 

@@ -15,7 +15,7 @@
  * Electron (browser/Vite-only) it shows a clear "desktop only" state.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { OptimizationPanel } from "../components/OptimizationPanel";
 import { WorkloadSimulator } from "../components/WorkloadSimulator";
@@ -23,9 +23,12 @@ import { InlineHint } from "../help/Contextual";
 import {
   type AppSettings,
   appApi,
+  type BackupArtifact,
   type BackupsCreateResult,
   type CapturePairingResult,
   isDesktop,
+  RESET_LOCAL_DATA_CONFIRMATION_PHRASE,
+  RESTORE_BACKUP_CONFIRMATION_PHRASE,
   type RendererSettings,
   type ThemePreference,
 } from "../lib/appApi";
@@ -43,6 +46,14 @@ function formatBytes(bytes: number): string {
     unit += 1;
   }
   return `${value.toFixed(1)} ${units[unit]}`;
+}
+
+function formatBackupArtifactLabel(artifact: BackupArtifact): string {
+  return [
+    artifact.schemaVersion,
+    `${artifact.fileCount} files`,
+    formatBytes(artifact.sizeBytes),
+  ].join(" · ");
 }
 
 /**
@@ -644,29 +655,142 @@ export function Settings() {
   const [backup, setBackup] = useState<BackupsCreateResult | null>(null);
   const [backupError, setBackupError] = useState<string | null>(null);
   const [backupFolderError, setBackupFolderError] = useState<string | null>(null);
+  const [backupArtifacts, setBackupArtifacts] = useState<readonly BackupArtifact[]>([]);
+  const [backupListLoading, setBackupListLoading] = useState(false);
+  const [backupListError, setBackupListError] = useState<string | null>(null);
+  const [selectedBackupTimestamp, setSelectedBackupTimestamp] = useState("");
+  const [restorePhrase, setRestorePhrase] = useState("");
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoreSuccess, setRestoreSuccess] = useState<string | null>(null);
+  const [resetPhrase, setResetPhrase] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetSuccess, setResetSuccess] = useState<string | null>(null);
+  const [dataRestartRequired, setDataRestartRequired] = useState(false);
+  const backupListRequestId = useRef(0);
+  const mounted = useRef(true);
+  const replacementInFlight = useRef(false);
   // Browser-capture pairing (T062) — the loopback server's token + running state.
   const [pairing, setPairing] = useState<CapturePairingResult | null>(null);
   const [pairingError, setPairingError] = useState<string | null>(null);
   const [tokenCopied, setTokenCopied] = useState(false);
   const [tokenRevealed, setTokenRevealed] = useState(false);
 
+  const loadBackupArtifacts = useCallback(async () => {
+    const requestId = backupListRequestId.current + 1;
+    backupListRequestId.current = requestId;
+    setBackupListLoading(true);
+    setBackupListError(null);
+    try {
+      const result = await appApi.listBackups();
+      if (!mounted.current || requestId !== backupListRequestId.current) return;
+      const artifacts = result.backups;
+      setBackupArtifacts(artifacts);
+      setSelectedBackupTimestamp((current) =>
+        artifacts.some((artifact) => artifact.timestamp === current)
+          ? current
+          : (artifacts[0]?.timestamp ?? ""),
+      );
+    } catch (e) {
+      if (!mounted.current || requestId !== backupListRequestId.current) return;
+      setBackupArtifacts([]);
+      setSelectedBackupTimestamp("");
+      setBackupListError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (mounted.current && requestId === backupListRequestId.current) {
+        setBackupListLoading(false);
+      }
+    }
+  }, []);
+
   /**
    * Trigger a full backup through the typed bridge (the main process does ALL the
    * work — snapshot `app.sqlite`, copy the vault, write the hashed manifest, zip).
-   * The renderer only awaits the result + shows the path/size; it never touches
-   * the filesystem.
+   * The renderer only awaits display-safe metadata; it never touches the filesystem.
    */
   const runBackup = useCallback(async () => {
+    if (dataRestartRequired) return;
     setBackingUp(true);
     setBackupError(null);
     try {
       const result = await appApi.createBackup();
       setBackup(result);
+      await loadBackupArtifacts();
     } catch (e) {
       setBackupError(e instanceof Error ? e.message : String(e));
     } finally {
       setBackingUp(false);
     }
+  }, [dataRestartRequired, loadBackupArtifacts]);
+
+  const restoreSelectedBackup = useCallback(async () => {
+    if (
+      replacementInFlight.current ||
+      dataRestartRequired ||
+      !selectedBackupTimestamp ||
+      restorePhrase !== RESTORE_BACKUP_CONFIRMATION_PHRASE
+    ) {
+      return;
+    }
+    replacementInFlight.current = true;
+    setRestoreBusy(true);
+    setRestoreError(null);
+    setRestoreSuccess(null);
+    try {
+      await appApi.restoreBackup({
+        timestamp: selectedBackupTimestamp,
+        confirm: true,
+        phrase: RESTORE_BACKUP_CONFIRMATION_PHRASE,
+      });
+      setRestorePhrase("");
+      setResetPhrase("");
+      setDataRestartRequired(true);
+      setRestoreSuccess(
+        `Restored backup ${selectedBackupTimestamp}. Restart Interleave before continuing.`,
+      );
+    } catch (e) {
+      setRestoreError(e instanceof Error ? e.message : String(e));
+    } finally {
+      replacementInFlight.current = false;
+      setRestoreBusy(false);
+    }
+  }, [dataRestartRequired, restorePhrase, selectedBackupTimestamp]);
+
+  const resetLocalData = useCallback(async () => {
+    if (
+      replacementInFlight.current ||
+      dataRestartRequired ||
+      resetPhrase !== RESET_LOCAL_DATA_CONFIRMATION_PHRASE
+    ) {
+      return;
+    }
+    replacementInFlight.current = true;
+    setResetBusy(true);
+    setResetError(null);
+    setResetSuccess(null);
+    try {
+      await appApi.resetLocalData({
+        confirm: true,
+        phrase: RESET_LOCAL_DATA_CONFIRMATION_PHRASE,
+      });
+      setRestorePhrase("");
+      setResetPhrase("");
+      setDataRestartRequired(true);
+      setResetSuccess("Local data reset. Restart Interleave before continuing.");
+    } catch (e) {
+      setResetError(e instanceof Error ? e.message : String(e));
+    } finally {
+      replacementInFlight.current = false;
+      setResetBusy(false);
+    }
+  }, [dataRestartRequired, resetPhrase]);
+
+  useEffect(() => {
+    return () => {
+      mounted.current = false;
+      backupListRequestId.current += 1;
+    };
   }, []);
 
   const openBackupsFolder = useCallback(async () => {
@@ -699,6 +823,11 @@ export function Settings() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isDesktop()) return;
+    void loadBackupArtifacts();
+  }, [loadBackupArtifacts]);
 
   // Load the browser-capture pairing state (token + enabled/running/port) (T062).
   useEffect(() => {
@@ -877,6 +1006,16 @@ export function Settings() {
 
   const s = settings ?? FALLBACK_SETTINGS;
   const retentionPct = Math.round(s.defaultDesiredRetention * 100);
+  const selectedBackup = backupArtifacts.find(
+    (artifact) => artifact.timestamp === selectedBackupTimestamp,
+  );
+  const dataReplacementBusy = restoreBusy || resetBusy;
+  const backupControlsLocked = dataRestartRequired || dataReplacementBusy;
+  const canRestore =
+    selectedBackupTimestamp.length > 0 &&
+    restorePhrase === RESTORE_BACKUP_CONFIRMATION_PHRASE &&
+    !backupControlsLocked;
+  const canReset = resetPhrase === RESET_LOCAL_DATA_CONFIRMATION_PHRASE && !backupControlsLocked;
 
   return (
     <div
@@ -1088,14 +1227,14 @@ export function Settings() {
           label="Back up now"
           hint="Export the database + asset vault to a portable, hashed ZIP under backups/."
         >
-          <div className="flex items-center gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <button
               type="button"
               data-testid="settings-backup-now"
-              disabled={backingUp}
+              disabled={backingUp || backupControlsLocked}
               onClick={() => void runBackup()}
               className={
-                backingUp
+                backingUp || backupControlsLocked
                   ? "inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 font-medium text-sm text-text-3"
                   : "inline-flex items-center gap-2 rounded-md border border-accent-soft-bd bg-accent-soft px-3 py-1.5 font-medium text-accent-text text-sm hover:bg-accent-soft/80"
               }
@@ -1106,10 +1245,10 @@ export function Settings() {
             <button
               type="button"
               data-testid="settings-open-backups-folder"
-              disabled={openingBackupsFolder}
+              disabled={openingBackupsFolder || dataReplacementBusy}
               onClick={() => void openBackupsFolder()}
               className={
-                openingBackupsFolder
+                openingBackupsFolder || dataReplacementBusy
                   ? "inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 font-medium text-sm text-text-3"
                   : "inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 font-medium text-sm text-text-2 hover:border-border-strong hover:text-text"
               }
@@ -1120,13 +1259,20 @@ export function Settings() {
           </div>
         </SettingRow>
         {backup ? (
-          <SettingRow label="Last backup" hint={backup.path}>
+          <SettingRow label="Last backup" hint={backup.archiveName}>
             <span
               data-testid="settings-backup-result"
               className="inline-flex items-center gap-1.5 rounded-md bg-ok-soft px-2.5 py-1 text-ok text-xs"
             >
               <Icon name="check" size={13} />
               {formatBytes(backup.sizeBytes)} · {backup.fileCount} files · {backup.schemaVersion}
+            </span>
+          </SettingRow>
+        ) : null}
+        {dataRestartRequired ? (
+          <SettingRow label="Restart required" hint="The local data store was replaced.">
+            <span data-testid="settings-data-restart-required" className="text-danger text-sm">
+              Restart Interleave before changing settings, importing, or reviewing.
             </span>
           </SettingRow>
         ) : null}
@@ -1141,6 +1287,189 @@ export function Settings() {
           <SettingRow label="Open folder failed" hint="The backup command is still available.">
             <span data-testid="settings-backup-folder-error" className="text-danger text-sm">
               {backupFolderError}
+            </span>
+          </SettingRow>
+        ) : null}
+        <SettingRow
+          label="Available backups"
+          hint={
+            backupListLoading
+              ? "Loading app-managed backups."
+              : backupArtifacts.length > 0
+                ? `${backupArtifacts.length} app-managed backup${
+                    backupArtifacts.length === 1 ? "" : "s"
+                  } available.`
+                : "No restorable app-managed backups found."
+          }
+        >
+          <button
+            type="button"
+            data-testid="settings-backup-refresh"
+            disabled={backupListLoading || backupControlsLocked}
+            onClick={() => void loadBackupArtifacts()}
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 font-medium text-sm text-text hover:bg-surface-2 disabled:opacity-40"
+          >
+            <Icon name="review" size={14} />
+            {backupListLoading ? "Refreshing…" : "Refresh"}
+          </button>
+        </SettingRow>
+        {backupListError ? (
+          <SettingRow label="Backup list failed" hint="See the error below.">
+            <span data-testid="settings-backup-list-error" className="text-danger text-sm">
+              {backupListError}
+            </span>
+          </SettingRow>
+        ) : null}
+        {backupArtifacts.length > 0 ? (
+          <div
+            data-testid="settings-backup-list"
+            className="space-y-1.5 border-border-faint border-b py-3.5"
+          >
+            {backupArtifacts.map((artifact) => {
+              const selected = artifact.timestamp === selectedBackupTimestamp;
+              return (
+                <button
+                  key={artifact.timestamp}
+                  type="button"
+                  data-testid={`settings-backup-artifact-${artifact.timestamp}`}
+                  aria-pressed={selected}
+                  disabled={backupControlsLocked}
+                  onClick={() => {
+                    setSelectedBackupTimestamp(artifact.timestamp);
+                    setRestorePhrase("");
+                    setRestoreError(null);
+                    setRestoreSuccess(null);
+                  }}
+                  className={
+                    selected
+                      ? "flex w-full flex-col gap-2 rounded-md border border-accent-soft-bd bg-accent-soft px-3 py-2 text-left disabled:opacity-60 sm:flex-row sm:items-center sm:justify-between"
+                      : "flex w-full flex-col gap-2 rounded-md border border-border bg-surface px-3 py-2 text-left hover:bg-surface-2 disabled:opacity-60 sm:flex-row sm:items-center sm:justify-between"
+                  }
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-mono text-sm text-text">
+                      {artifact.timestamp}
+                    </span>
+                    <span className="mt-0.5 block truncate text-sm text-text-3">
+                      {artifact.automatic ? "Automatic" : "Manual"} · {artifact.createdAt}
+                    </span>
+                  </span>
+                  <span
+                    className={
+                      selected
+                        ? "min-w-0 truncate font-medium text-accent-text text-xs"
+                        : "min-w-0 truncate text-text-3 text-xs"
+                    }
+                  >
+                    {formatBackupArtifactLabel(artifact)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        <SettingRow
+          label="Restore selected backup"
+          hint={
+            selectedBackup
+              ? `Type ${RESTORE_BACKUP_CONFIRMATION_PHRASE} to replace this vault with the selected backup.`
+              : "Select a backup before restore."
+          }
+        >
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <span id="settings-restore-confirm-help" className="sr-only">
+              Type {RESTORE_BACKUP_CONFIRMATION_PHRASE} to restore the selected backup.
+            </span>
+            <input
+              type="text"
+              data-testid="settings-restore-confirm"
+              aria-label="Restore selected backup"
+              aria-describedby="settings-restore-confirm-help"
+              value={restorePhrase}
+              disabled={!selectedBackup || backupControlsLocked}
+              placeholder={RESTORE_BACKUP_CONFIRMATION_PHRASE}
+              onChange={(e) => setRestorePhrase(e.target.value)}
+              className="w-full rounded-md border border-border bg-surface px-2.5 py-1 text-sm text-text placeholder:text-text-3 focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-40 sm:w-44"
+            />
+            <button
+              type="button"
+              data-testid="settings-restore-backup"
+              disabled={!canRestore}
+              onClick={() => void restoreSelectedBackup()}
+              className={
+                canRestore
+                  ? "inline-flex items-center gap-2 rounded-md border border-accent-soft-bd bg-accent-soft px-3 py-1.5 font-medium text-accent-text text-sm hover:bg-accent-soft/80"
+                  : "inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 font-medium text-sm text-text-3"
+              }
+            >
+              <Icon name="restore" size={14} />
+              {restoreBusy ? "Restoring…" : "Restore"}
+            </button>
+          </div>
+        </SettingRow>
+        {restoreSuccess ? (
+          <SettingRow label="Restore complete" hint="The app data changed underneath this UI.">
+            <span data-testid="settings-restore-success" className="text-ok text-sm">
+              {restoreSuccess}
+            </span>
+          </SettingRow>
+        ) : null}
+        {restoreError ? (
+          <SettingRow label="Restore failed" hint="Backups were preserved. Review the error below.">
+            <span data-testid="settings-restore-error" className="text-danger text-sm">
+              {restoreError}
+            </span>
+          </SettingRow>
+        ) : null}
+        <SettingRow
+          label="Fresh start"
+          hint={`Danger: removes the current database and asset vault, but preserves backups. Type ${RESET_LOCAL_DATA_CONFIRMATION_PHRASE}.`}
+        >
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <span id="settings-reset-confirm-help" className="sr-only">
+              Type {RESET_LOCAL_DATA_CONFIRMATION_PHRASE} to start from scratch.
+            </span>
+            <input
+              type="text"
+              data-testid="settings-reset-confirm"
+              aria-label="Fresh start"
+              aria-describedby="settings-reset-confirm-help"
+              value={resetPhrase}
+              disabled={backupControlsLocked}
+              placeholder={RESET_LOCAL_DATA_CONFIRMATION_PHRASE}
+              onChange={(e) => setResetPhrase(e.target.value)}
+              className="w-full rounded-md border border-border bg-surface px-2.5 py-1 text-sm text-text placeholder:text-text-3 focus:outline-none focus:ring-2 focus:ring-danger disabled:opacity-40 sm:w-48"
+            />
+            <button
+              type="button"
+              data-testid="settings-reset-local-data"
+              disabled={!canReset}
+              onClick={() => void resetLocalData()}
+              className={
+                canReset
+                  ? "inline-flex items-center gap-2 rounded-md border border-danger/40 bg-danger/10 px-3 py-1.5 font-medium text-danger text-sm hover:bg-danger/15"
+                  : "inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 font-medium text-sm text-text-3"
+              }
+            >
+              <Icon name="trash" size={14} />
+              {resetBusy ? "Resetting…" : "Start over"}
+            </button>
+          </div>
+        </SettingRow>
+        {resetSuccess ? (
+          <SettingRow label="Fresh start complete" hint="Backups were preserved.">
+            <span data-testid="settings-reset-success" className="text-ok text-sm">
+              {resetSuccess}
+            </span>
+          </SettingRow>
+        ) : null}
+        {resetError ? (
+          <SettingRow
+            label="Fresh start failed"
+            hint="Backups were preserved. Review the error below."
+          >
+            <span data-testid="settings-reset-error" className="text-danger text-sm">
+              {resetError}
             </span>
           </SettingRow>
         ) : null}

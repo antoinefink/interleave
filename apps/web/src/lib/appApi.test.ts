@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { type AppApi, appApi, isDesktop, requireAppApi, type SearchQueryResult } from "./appApi";
+import {
+  type AppApi,
+  appApi,
+  isDesktop,
+  RESET_LOCAL_DATA_CONFIRMATION_PHRASE,
+  RESTORE_BACKUP_CONFIRMATION_PHRASE,
+  requireAppApi,
+  type SearchQueryResult,
+} from "./appApi";
 
 function installAppApi(overrides: Partial<AppApi> = {}): AppApi {
   const fake = {
@@ -63,13 +71,36 @@ function installAppApi(overrides: Partial<AppApi> = {}): AppApi {
     },
     backups: {
       create: vi.fn(async () => ({
-        path: "/tmp/interleave/backups/manual.zip",
-        timestamp: "2026-06-07T10-00-00Z",
-        sizeBytes: 1024,
+        timestamp: "2026-06-07T12-30-00-000Z",
+        archiveName: "2026-06-07T12-30-00-000Z.zip",
+        sizeBytes: 42,
         fileCount: 2,
-        schemaVersion: "v1",
+        schemaVersion: "0001_initial",
       })),
       openFolder: vi.fn(async () => ({ ok: true })),
+      list: vi.fn(async () => ({
+        backups: [
+          {
+            timestamp: "2026-06-07T12-30-00-000Z",
+            createdAt: "2026-06-07T12:30:00.000Z",
+            sizeBytes: 42,
+            fileCount: 2,
+            schemaVersion: "0001_initial",
+            automatic: false,
+          },
+        ],
+      })),
+      restore: vi.fn(async (request: { timestamp: string }) => ({
+        status: "restored",
+        timestamp: request.timestamp,
+        restoredAt: "2026-06-07T12:45:00.000Z",
+        reloadRequired: true,
+      })),
+      resetLocalData: vi.fn(async () => ({
+        status: "reset",
+        resetAt: "2026-06-07T12:45:00.000Z",
+        reloadRequired: true,
+      })),
     },
     ...overrides,
   } as unknown as AppApi;
@@ -121,6 +152,40 @@ describe("renderer appApi wrapper", () => {
 
     expect(bridge.backups.openFolder).toHaveBeenCalledTimes(1);
     expect(bridge.backups.openFolder).toHaveBeenCalledWith();
+  });
+
+  it("forwards backup lifecycle methods to the narrow bridge surface", async () => {
+    const bridge = installAppApi();
+
+    await appApi.createBackup();
+    expect(bridge.backups.create).toHaveBeenCalledTimes(1);
+
+    await appApi.listBackups();
+    expect(bridge.backups.list).toHaveBeenCalledTimes(1);
+
+    await appApi.restoreBackup({
+      timestamp: "2026-06-07T12-30-00-000Z",
+      confirm: true,
+      phrase: RESTORE_BACKUP_CONFIRMATION_PHRASE,
+    });
+    expect(bridge.backups.restore).toHaveBeenCalledWith({
+      timestamp: "2026-06-07T12-30-00-000Z",
+      confirm: true,
+      phrase: RESTORE_BACKUP_CONFIRMATION_PHRASE,
+    });
+
+    await appApi.resetLocalData({
+      confirm: true,
+      phrase: RESET_LOCAL_DATA_CONFIRMATION_PHRASE,
+    });
+    expect(bridge.backups.resetLocalData).toHaveBeenCalledWith({
+      confirm: true,
+      phrase: RESET_LOCAL_DATA_CONFIRMATION_PHRASE,
+    });
+  });
+
+  it("throws for backup listing when the desktop bridge is absent", async () => {
+    expect(() => appApi.listBackups()).toThrow("window.appApi is unavailable");
   });
 
   it("forwards searchQuery and preserves the full SearchCounts shape", async () => {

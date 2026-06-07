@@ -120,6 +120,23 @@ describe("DbService", () => {
     expect(() => svc.getStatus()).toThrow(/not open/);
   });
 
+  it("blocks ordinary DB access while local data replacement requires restart", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    svc.beginLocalDataReplacement();
+    expect(() => svc.getStatus()).toThrow(/restart Interleave/);
+    expect(() => svc.repos).toThrow(/restart Interleave/);
+
+    svc.abortLocalDataReplacement();
+    expect(svc.getStatus().open).toBe(true);
+
+    svc.completeLocalDataReplacement();
+    expect(svc.localDataRestartRequired).toBe(true);
+    expect(() => svc.getStatus()).toThrow(/restart Interleave/);
+    svc.close();
+  });
+
   it("stores and reads complex JSON-serializable values", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });

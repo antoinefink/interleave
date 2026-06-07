@@ -5217,7 +5217,7 @@ export interface ExtractStagnationListResult {
 }
 
 // ---------------------------------------------------------------------------
-// backups.create()  (T047 — Electron-managed backup of the canonical store)
+// backups.*  (T047/T055 — Electron-managed backup lifecycle)
 // ---------------------------------------------------------------------------
 
 /**
@@ -5229,20 +5229,20 @@ export interface ExtractStagnationListResult {
  * `<timestamp>.zip`. The backup is a COPY of the canonical store, never a JSON
  * re-serialization. The `manifest.json` is the restore contract (format version,
  * schema-migration tag, app version, ISO timestamp, per-file SHA-256 integrity
- * hashes, element/asset counts), so a future restore (deferred to T055) can verify
- * the archive and reject one that is too new or corrupt. The renderer never sees
- * an absolute filesystem path or touches the vault — `backups.create` returns only
- * the final `.zip` path string for display, and there is no generic `db.query`.
+ * hashes, element/asset counts), so restore can verify the archive and reject one
+ * that is too new or corrupt. The renderer never sees an absolute filesystem path
+ * or touches the vault — `backups.create` returns only renderer-safe artifact
+ * metadata, and there is no generic `db.query`.
  */
 
 /** `backups.create()` takes no arguments. */
 export const BackupsCreateRequestSchema = z.void();
 
 export interface BackupsCreateResult {
-  /** Absolute path to the produced `.zip` archive (for display only). */
-  readonly path: string;
   /** The filesystem-safe timestamp used for the backup directory/archive name. */
   readonly timestamp: string;
+  /** Display-only archive filename, never an absolute filesystem path. */
+  readonly archiveName: string;
   /** Total size of the `.zip` archive in bytes. */
   readonly sizeBytes: number;
   /** Number of files captured in the archive (`app.sqlite` + every asset). */
@@ -5257,6 +5257,75 @@ export const BackupsOpenFolderRequestSchema = z.void();
 export interface BackupsOpenFolderResult {
   /** Confirms Electron accepted the fixed open-backups-folder request. */
   readonly ok: true;
+}
+
+/**
+ * Backup identifiers are app-managed directory/archive names, never renderer-
+ * supplied paths. Accept manual timestamps, automatic `auto-` timestamps, and
+ * BackupService's numeric collision suffix.
+ */
+export const BackupTimestampSchema = z
+  .string()
+  .regex(
+    /^(?:auto-)?\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z(?:-\d+)?$/,
+    "Expected an app-managed backup timestamp",
+  );
+
+/** `backups.list()` takes no arguments. */
+export const BackupsListRequestSchema = z.void();
+
+/** One renderer-safe app-managed backup artifact. No raw paths are exposed. */
+export interface BackupArtifact {
+  readonly timestamp: string;
+  /** ISO-8601 creation time from the manifest/timestamp. */
+  readonly createdAt: string;
+  /** Size of the zip + retained backup directory bytes. */
+  readonly sizeBytes: number;
+  /** Number of captured files (`app.sqlite` + assets), from the manifest. */
+  readonly fileCount: number;
+  /** The captured schema version (latest applied Drizzle migration tag). */
+  readonly schemaVersion: string;
+  /** Whether the artifact was created by the automatic rolling-backup scheduler. */
+  readonly automatic: boolean;
+}
+
+export interface BackupsListResult {
+  readonly backups: readonly BackupArtifact[];
+}
+
+export const RESTORE_BACKUP_CONFIRMATION_PHRASE = "RESTORE BACKUP" as const;
+export const RESET_LOCAL_DATA_CONFIRMATION_PHRASE = "START FROM SCRATCH" as const;
+
+export const BackupsRestoreRequestSchema = z
+  .object({
+    timestamp: BackupTimestampSchema,
+    confirm: z.literal(true),
+    phrase: z.literal(RESTORE_BACKUP_CONFIRMATION_PHRASE),
+  })
+  .strict();
+export type BackupsRestoreRequest = z.infer<typeof BackupsRestoreRequestSchema>;
+
+export interface BackupsRestoreResult {
+  readonly status: "restored";
+  readonly timestamp: string;
+  readonly restoredAt: string;
+  /** The renderer should reload/restart after high-risk data replacement. */
+  readonly reloadRequired: true;
+}
+
+export const BackupsResetLocalDataRequestSchema = z
+  .object({
+    confirm: z.literal(true),
+    phrase: z.literal(RESET_LOCAL_DATA_CONFIRMATION_PHRASE),
+  })
+  .strict();
+export type BackupsResetLocalDataRequest = z.infer<typeof BackupsResetLocalDataRequestSchema>;
+
+export interface BackupsResetLocalDataResult {
+  readonly status: "reset";
+  readonly resetAt: string;
+  /** The renderer should reload/restart after high-risk data replacement. */
+  readonly reloadRequired: true;
 }
 
 // ---------------------------------------------------------------------------
@@ -5947,8 +6016,8 @@ export interface AppApi {
      * Export the entire local knowledge base (T047) — the consistently
      * checkpointed `app.sqlite` + the filesystem asset vault + a versioned, hashed
      * `manifest.json` — into a deterministic `backups/<timestamp>/` directory and a
-     * portable `.zip`. Runs entirely in the Electron main process; returns only the
-     * final `.zip` path for display (no raw filesystem access reaches the renderer).
+     * portable `.zip`. Runs entirely in the Electron main process; returns only
+     * display-safe artifact metadata (no raw filesystem path reaches the renderer).
      */
     create(): Promise<BackupsCreateResult>;
     /**
@@ -5957,6 +6026,21 @@ export interface AppApi {
      * no path.
      */
     openFolder(): Promise<BackupsOpenFolderResult>;
+    /**
+     * List app-managed local backups by timestamp. Returns display-safe artifact
+     * metadata only — no absolute paths and no arbitrary filesystem access.
+     */
+    list(): Promise<BackupsListResult>;
+    /**
+     * Restore one app-managed backup by timestamp. Guarded by `confirm: true` and
+     * the exact phrase `RESTORE BACKUP`; never accepts a renderer-supplied path.
+     */
+    restore(request: BackupsRestoreRequest): Promise<BackupsRestoreResult>;
+    /**
+     * Remove the local knowledge store and recreate an empty migrated vault while
+     * preserving sibling backups/exports/models. Guarded by `START FROM SCRATCH`.
+     */
+    resetLocalData(request: BackupsResetLocalDataRequest): Promise<BackupsResetLocalDataResult>;
   };
   readonly jobs: {
     /**

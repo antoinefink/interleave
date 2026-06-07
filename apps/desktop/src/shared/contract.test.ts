@@ -11,8 +11,16 @@ import { MAX_REVIEW_MODE_DECK } from "@interleave/core";
 import { describe, expect, it } from "vitest";
 import {
   AnalyticsGetRequestSchema,
+  type BackupArtifact,
   BackupsCreateRequestSchema,
+  BackupsListRequestSchema,
+  type BackupsListResult,
   BackupsOpenFolderRequestSchema,
+  BackupsResetLocalDataRequestSchema,
+  type BackupsResetLocalDataResult,
+  BackupsRestoreRequestSchema,
+  type BackupsRestoreResult,
+  BackupTimestampSchema,
   BalanceGetRequestSchema,
   CaptureGetPairingRequestSchema,
   CaptureRegenerateTokenRequestSchema,
@@ -286,6 +294,9 @@ describe("IPC channels", () => {
         "balance:get",
         "backups:create",
         "backups:openFolder",
+        "backups:list",
+        "backups:restore",
+        "backups:resetLocalData",
         "jobs:list",
         "jobs:updated",
         "vault:verify",
@@ -2463,6 +2474,138 @@ describe("BackupsOpenFolderRequestSchema", () => {
   it("takes no arguments (void request)", () => {
     expect(BackupsOpenFolderRequestSchema.parse(undefined)).toBeUndefined();
     expect(() => BackupsOpenFolderRequestSchema.parse({ path: "/tmp" })).toThrow();
+  });
+});
+
+describe("Backup restore/reset schemas (T055)", () => {
+  it("BackupsListRequestSchema takes no arguments", () => {
+    expect(BackupsListRequestSchema.parse(undefined)).toBeUndefined();
+    expect(() => BackupsListRequestSchema.parse({})).toThrow();
+  });
+
+  it("BackupTimestampSchema accepts only app-managed backup names", () => {
+    expect(BackupTimestampSchema.parse("2026-06-07T12-30-00-000Z")).toBe(
+      "2026-06-07T12-30-00-000Z",
+    );
+    expect(BackupTimestampSchema.parse("2026-06-07T12-30-00-000Z-1")).toBe(
+      "2026-06-07T12-30-00-000Z-1",
+    );
+    expect(BackupTimestampSchema.parse("auto-2026-06-07T12-30-00-000Z")).toBe(
+      "auto-2026-06-07T12-30-00-000Z",
+    );
+    expect(BackupTimestampSchema.safeParse("../app.sqlite").success).toBe(false);
+    expect(BackupTimestampSchema.safeParse("/tmp/2026-06-07T12-30-00-000Z").success).toBe(false);
+    expect(BackupTimestampSchema.safeParse("2026-06-07T12:30:00.000Z").success).toBe(false);
+  });
+
+  it("BackupsRestoreRequestSchema requires confirm:true and the exact restore phrase", () => {
+    expect(
+      BackupsRestoreRequestSchema.parse({
+        timestamp: "2026-06-07T12-30-00-000Z",
+        confirm: true,
+        phrase: "RESTORE BACKUP",
+      }),
+    ).toEqual({
+      timestamp: "2026-06-07T12-30-00-000Z",
+      confirm: true,
+      phrase: "RESTORE BACKUP",
+    });
+    expect(
+      BackupsRestoreRequestSchema.parse({
+        timestamp: "auto-2026-06-07T12-30-00-000Z",
+        confirm: true,
+        phrase: "RESTORE BACKUP",
+      }).timestamp,
+    ).toBe("auto-2026-06-07T12-30-00-000Z");
+    expect(
+      BackupsRestoreRequestSchema.safeParse({
+        timestamp: "2026-06-07T12-30-00-000Z",
+        phrase: "RESTORE BACKUP",
+      }).success,
+    ).toBe(false);
+    expect(
+      BackupsRestoreRequestSchema.safeParse({
+        timestamp: "2026-06-07T12-30-00-000Z",
+        confirm: false,
+        phrase: "RESTORE BACKUP",
+      }).success,
+    ).toBe(false);
+    expect(
+      BackupsRestoreRequestSchema.safeParse({
+        timestamp: "2026-06-07T12-30-00-000Z",
+        confirm: true,
+        phrase: "restore backup",
+      }).success,
+    ).toBe(false);
+    expect(
+      BackupsRestoreRequestSchema.safeParse({
+        timestamp: "../2026-06-07T12-30-00-000Z",
+        confirm: true,
+        phrase: "RESTORE BACKUP",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("BackupsResetLocalDataRequestSchema requires confirm:true and the exact reset phrase", () => {
+    expect(
+      BackupsResetLocalDataRequestSchema.parse({
+        confirm: true,
+        phrase: "START FROM SCRATCH",
+      }),
+    ).toEqual({
+      confirm: true,
+      phrase: "START FROM SCRATCH",
+    });
+    expect(
+      BackupsResetLocalDataRequestSchema.safeParse({ phrase: "START FROM SCRATCH" }).success,
+    ).toBe(false);
+    expect(
+      BackupsResetLocalDataRequestSchema.safeParse({
+        confirm: false,
+        phrase: "START FROM SCRATCH",
+      }).success,
+    ).toBe(false);
+    expect(
+      BackupsResetLocalDataRequestSchema.safeParse({
+        confirm: true,
+        phrase: "start from scratch",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("backup list/restore/reset result types round-trip as plain JSON without paths", () => {
+    const artifact: BackupArtifact = {
+      timestamp: "auto-2026-06-07T12-30-00-000Z",
+      createdAt: "2026-06-07T12:30:00.000Z",
+      sizeBytes: 1234,
+      fileCount: 3,
+      schemaVersion: "0001_initial",
+      automatic: true,
+    };
+    const list: BackupsListResult = { backups: [artifact] };
+    const restore: BackupsRestoreResult = {
+      status: "restored",
+      timestamp: artifact.timestamp,
+      restoredAt: "2026-06-07T12:45:00.000Z",
+      reloadRequired: true,
+    };
+    const reset: BackupsResetLocalDataResult = {
+      status: "reset",
+      resetAt: "2026-06-07T12:45:00.000Z",
+      reloadRequired: true,
+    };
+
+    expect(JSON.parse(JSON.stringify(list))).toEqual(list);
+    expect(JSON.parse(JSON.stringify(restore))).toEqual(restore);
+    expect(JSON.parse(JSON.stringify(reset))).toEqual(reset);
+    expect(Object.keys(artifact).sort()).toEqual([
+      "automatic",
+      "createdAt",
+      "fileCount",
+      "schemaVersion",
+      "sizeBytes",
+      "timestamp",
+    ]);
   });
 });
 

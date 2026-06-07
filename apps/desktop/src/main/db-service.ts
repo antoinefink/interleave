@@ -411,8 +411,31 @@ const CAPTURE_SETTING_KEYS: ReadonlySet<string> = new Set([
   CAPTURE_ALLOWED_ORIGIN_KEY,
 ]);
 
+export interface DbServiceOpenOptions {
+  readonly migrationsDir?: string | undefined;
+  readonly nativeBinding?: string | undefined;
+  /** The asset-vault root (`<dataDir>/assets`) — required for URL import (T060). */
+  readonly assetsDir?: string | undefined;
+  /** The exports root (`<dataDir>/exports`) — required for Markdown export (T068). */
+  readonly exportsDir?: string | undefined;
+  /** DEV/E2E-only: permit loopback/private hosts in URL import (the SSRF guard escape). */
+  readonly allowLoopbackImport?: boolean | undefined;
+  /**
+   * Absolute path to the packaged `sqlite-vec` `vec0` binary (T087). When set,
+   * it is loaded explicitly; when omitted, dev/Vitest use the installed package.
+   */
+  readonly vecBinaryPath?: string | undefined;
+  /**
+   * The HTTP-fetch implementation the media-import service (T073) uses for the
+   * YouTube oEmbed/caption requests. Defaults to Node global `fetch`.
+   */
+  readonly mediaFetchImpl?: typeof fetch | undefined;
+}
+
 export class DbService {
   private handle: DbHandle | null = null;
+  private dbPath: string | null = null;
+  private openOptions: DbServiceOpenOptions | null = null;
   private repositories: Repositories | null = null;
   private inspector: InspectorQuery | null = null;
   private lineage: LineageQuery | null = null;
@@ -628,6 +651,7 @@ export class DbService {
   /** TEST-only: the media-import YouTube fetch override (defaults to Node `fetch`). */
   private mediaFetchImpl: typeof fetch | undefined = undefined;
   private migrated = false;
+  private localDataReplacementMessage: string | null = null;
 
   /** Whether the database handle is currently open. */
   get isOpen(): boolean {
@@ -639,6 +663,35 @@ export class DbService {
     return this.migrated;
   }
 
+  /** Whether restore/reset has made the current process unsafe for further DB work. */
+  get localDataRestartRequired(): boolean {
+    return this.localDataReplacementMessage !== null;
+  }
+
+  /**
+   * Block all ordinary DB access while the main process is replacing the local
+   * store. The lock is acquired before any awaited cleanup so concurrent IPC
+   * writes cannot commit to data that is about to be replaced.
+   */
+  beginLocalDataReplacement(): void {
+    if (this.localDataReplacementMessage) {
+      throw new Error(this.localDataReplacementMessage);
+    }
+    this.localDataReplacementMessage =
+      "Local data replacement is in progress; restart Interleave before continuing.";
+  }
+
+  /** Keep ordinary DB access blocked after a successful restore/reset. */
+  completeLocalDataReplacement(): void {
+    this.localDataReplacementMessage =
+      "Local data was replaced; restart Interleave before continuing.";
+  }
+
+  /** Release the replacement lock after a failed restore/reset that rolled back. */
+  abortLocalDataReplacement(): void {
+    this.localDataReplacementMessage = null;
+  }
+
   /**
    * Open the database at `dbPath` and run all pending migrations. Idempotent:
    * calling again while open is a no-op. `migrationsDir` is resolved by the
@@ -646,35 +699,10 @@ export class DbService {
    * `nativeBinding`, when set, points `better-sqlite3` at the Electron-ABI addon
    * (see `native-binding.ts`).
    */
-  open(
-    dbPath: string,
-    options: {
-      migrationsDir?: string | undefined;
-      nativeBinding?: string | undefined;
-      /** The asset-vault root (`<dataDir>/assets`) — required for URL import (T060). */
-      assetsDir?: string | undefined;
-      /** The exports root (`<dataDir>/exports`) — required for Markdown export (T068). */
-      exportsDir?: string | undefined;
-      /** DEV/E2E-only: permit loopback/private hosts in URL import (the SSRF guard escape). */
-      allowLoopbackImport?: boolean | undefined;
-      /**
-       * The HTTP-fetch implementation the media-import service (T073) uses for the
-       * YouTube oEmbed/caption requests. Defaults to the Node global `fetch`;
-       * injectable so a test can supply a recorded fake — no live network. Production
-       * never sets it. (The media service owns the only network call; the DB service
-       * itself stays network-free — see the import-path guard test.)
-       */
-      mediaFetchImpl?: typeof fetch | undefined;
-      /**
-       * Absolute path to the packaged `sqlite-vec` `vec0` binary (T087). When set,
-       * it is loaded explicitly (the `app.asar.unpacked` path the desktop main
-       * resolves); when omitted, the installed npm package resolves the host binary
-       * (dev/Vitest). Load failure / a non-functional `vec0` degrades to FTS-only.
-       */
-      vecBinaryPath?: string | undefined;
-    } = {},
-  ): void {
+  open(dbPath: string, options: DbServiceOpenOptions = {}): void {
     if (this.handle) return;
+    this.dbPath = dbPath;
+    this.openOptions = { ...options };
     this.handle = options.nativeBinding
       ? openDatabase(dbPath, { nativeBinding: options.nativeBinding })
       : openDatabase(dbPath);
@@ -817,11 +845,33 @@ export class DbService {
     this.migrated = false;
   }
 
+  /**
+   * Reopen the same database path with the same startup options. Restore/reset use
+   * this after replacing the on-disk store so the restored DB runs through the
+   * normal migration + repository construction path.
+   */
+  reopen(): void {
+    const dbPath = this.dbPath;
+    const options = this.openOptions;
+    if (!dbPath) {
+      throw new Error("DbService: cannot reopen before open()");
+    }
+    this.close();
+    this.open(dbPath, options ?? {});
+  }
+
   private require(): DbHandle {
+    this.assertLocalDataAvailable();
     if (!this.handle) {
       throw new Error("DbService: database is not open");
     }
     return this.handle;
+  }
+
+  private assertLocalDataAvailable(): void {
+    if (this.localDataReplacementMessage) {
+      throw new Error(this.localDataReplacementMessage);
+    }
   }
 
   /**
@@ -830,6 +880,7 @@ export class DbService {
    * raw SQL.
    */
   get repos(): Repositories {
+    this.assertLocalDataAvailable();
     if (!this.repositories) {
       throw new Error("DbService: database is not open");
     }

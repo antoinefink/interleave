@@ -15,6 +15,8 @@ import {
   BACKUP_FORMAT_VERSION,
   type BackupCounts,
   buildBackupManifest,
+  compareSchemaVersions,
+  latestSchemaVersion,
   type ManifestFileEntry,
   resolveSchemaVersion,
   sha256,
@@ -139,5 +141,36 @@ describe("resolveSchemaVersion (T047)", () => {
   it("throws when the count is out of range (corrupt-state signal)", () => {
     expect(() => resolveSchemaVersion(MIGRATIONS_DIR, 0)).toThrow(/out of range/);
     expect(() => resolveSchemaVersion(MIGRATIONS_DIR, 99)).toThrow(/out of range/);
+  });
+});
+
+describe("schema-version ordering (restore)", () => {
+  it("resolves the latest installed schema version from the journal", () => {
+    const journal = JSON.parse(
+      fs.readFileSync(path.join(MIGRATIONS_DIR, "meta", "_journal.json"), "utf8"),
+    ) as { entries: { tag: string }[] };
+    expect(latestSchemaVersion(MIGRATIONS_DIR)).toBe(journal.entries.at(-1)?.tag);
+  });
+
+  it("compares known tags by migration order", () => {
+    expect(
+      compareSchemaVersions(MIGRATIONS_DIR, "0000_unique_squadron_supreme", "0001_clever_rictor"),
+    ).toBeLessThan(0);
+    expect(compareSchemaVersions(MIGRATIONS_DIR, "0001_clever_rictor", "0001_clever_rictor")).toBe(
+      0,
+    );
+    expect(
+      compareSchemaVersions(MIGRATIONS_DIR, "0002_search_fts5", "0001_clever_rictor"),
+    ).toBeGreaterThan(0);
+  });
+
+  it("throws for an unknown tag instead of accepting an unsupported backup", () => {
+    expect(() =>
+      compareSchemaVersions(
+        MIGRATIONS_DIR,
+        "9999_future_schema",
+        latestSchemaVersion(MIGRATIONS_DIR),
+      ),
+    ).toThrow(/unknown schema version/);
   });
 });

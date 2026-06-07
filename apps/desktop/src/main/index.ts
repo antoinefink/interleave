@@ -119,9 +119,10 @@ function bootstrap(): void {
   //    Electron-ABI native binding is loaded explicitly so the shared Node-ABI
   //    package binary keeps serving tests/scripts.
   const migrationsDir = resolveMigrationsDir(distDir);
+  const nativeBinding = resolveNativeBinding(distDir);
   dbService.open(paths.dbPath, {
     migrationsDir,
-    nativeBinding: resolveNativeBinding(distDir),
+    nativeBinding,
     // The vault asset-root the URL-import service (T060) writes snapshots into;
     // injected once at open() so the IPC handler never threads a path per-call.
     assetsDir: paths.assetsDir,
@@ -279,6 +280,7 @@ function bootstrap(): void {
   disposeIpc = registerIpcHandlers(dbService, {
     paths,
     migrationsDir,
+    nativeBinding,
     captureController,
     runner: jobRunner,
   });

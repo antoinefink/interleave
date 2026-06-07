@@ -591,7 +591,7 @@ test("9. backup: a valid, hashed backup zip is written to the vault", async () =
     const api = window.appApi as unknown as {
       backups: {
         create(): Promise<{
-          path: string;
+          archiveName: string;
           sizeBytes: number;
           fileCount: number;
           schemaVersion: string;
@@ -599,19 +599,18 @@ test("9. backup: a valid, hashed backup zip is written to the vault", async () =
       };
     };
     return api.backups.create();
-  })) as { path: string; sizeBytes: number; fileCount: number; schemaVersion: string };
+  })) as { archiveName: string; sizeBytes: number; fileCount: number; schemaVersion: string };
 
-  expect(result.path.endsWith(".zip")).toBe(true);
+  expect(result.archiveName.endsWith(".zip")).toBe(true);
   expect(result.sizeBytes).toBeGreaterThan(0);
   expect(result.fileCount).toBeGreaterThanOrEqual(1); // at least app.sqlite
   // The backup lives under the test data dir's backups/ — outside the DB.
-  expect(result.path.startsWith(path.join(dataDir, "backups"))).toBe(true);
-  expect(fs.existsSync(result.path)).toBe(true);
-  backupZipPath = result.path;
+  backupZipPath = path.join(dataDir, "backups", result.archiveName);
+  expect(fs.existsSync(backupZipPath)).toBe(true);
 
   // Unzip with the system tool + verify the canonical layout + every manifest hash.
   const unzipDir = fs.mkdtempSync(path.join(dataDir, "unzip-"));
-  execFileSync("unzip", ["-q", result.path, "-d", unzipDir]);
+  execFileSync("unzip", ["-q", backupZipPath, "-d", unzipDir]);
   expect(fs.existsSync(path.join(unzipDir, "app.sqlite"))).toBe(true);
   expect(fs.existsSync(path.join(unzipDir, "manifest.json"))).toBe(true);
 

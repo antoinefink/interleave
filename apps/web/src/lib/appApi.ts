@@ -3371,15 +3371,15 @@ export interface ExtractStagnationListResult {
 }
 
 // ---------------------------------------------------------------------------
-// backups.*  (T047 — Electron-managed backup/export of the canonical store)
+// backups.*  (T047/T055 — Electron-managed backup lifecycle)
 // ---------------------------------------------------------------------------
 
 /** What `backups.create()` returns — only display-safe metadata, no raw fs access. */
 export interface BackupsCreateResult {
-  /** Absolute path to the produced `.zip` archive (for display only). */
-  readonly path: string;
   /** The filesystem-safe timestamp the backup is named with. */
   readonly timestamp: string;
+  /** Display-only archive filename, never an absolute filesystem path. */
+  readonly archiveName: string;
   /** Total size of the `.zip` archive in bytes. */
   readonly sizeBytes: number;
   /** Number of files captured (`app.sqlite` + every asset file). */
@@ -3391,6 +3391,47 @@ export interface BackupsCreateResult {
 export interface BackupsOpenFolderResult {
   /** Confirms Electron accepted the fixed open-backups-folder request. */
   readonly ok: true;
+}
+
+/** One renderer-safe app-managed backup artifact. No raw paths are exposed. */
+export interface BackupArtifact {
+  readonly timestamp: string;
+  readonly createdAt: string;
+  readonly sizeBytes: number;
+  readonly fileCount: number;
+  readonly schemaVersion: string;
+  readonly automatic: boolean;
+}
+
+export interface BackupsListResult {
+  readonly backups: readonly BackupArtifact[];
+}
+
+export const RESTORE_BACKUP_CONFIRMATION_PHRASE = "RESTORE BACKUP" as const;
+export const RESET_LOCAL_DATA_CONFIRMATION_PHRASE = "START FROM SCRATCH" as const;
+
+export interface BackupsRestoreRequest {
+  readonly timestamp: string;
+  readonly confirm: true;
+  readonly phrase: typeof RESTORE_BACKUP_CONFIRMATION_PHRASE;
+}
+
+export interface BackupsRestoreResult {
+  readonly status: "restored";
+  readonly timestamp: string;
+  readonly restoredAt: string;
+  readonly reloadRequired: true;
+}
+
+export interface BackupsResetLocalDataRequest {
+  readonly confirm: true;
+  readonly phrase: typeof RESET_LOCAL_DATA_CONFIRMATION_PHRASE;
+}
+
+export interface BackupsResetLocalDataResult {
+  readonly status: "reset";
+  readonly resetAt: string;
+  readonly reloadRequired: true;
 }
 
 /** The exact shape the preload exposes as `window.appApi`. */
@@ -3611,6 +3652,9 @@ export interface AppApi {
   readonly backups: {
     create(): Promise<BackupsCreateResult>;
     openFolder(): Promise<BackupsOpenFolderResult>;
+    list(): Promise<BackupsListResult>;
+    restore(request: BackupsRestoreRequest): Promise<BackupsRestoreResult>;
+    resetLocalData(request: BackupsResetLocalDataRequest): Promise<BackupsResetLocalDataResult>;
   };
   readonly jobs: {
     /** Observe the on-device background-runner queue (T058) — read-only. */
@@ -4569,8 +4613,8 @@ export const appApi = {
    * Export the entire local knowledge base (T047) — the consistently checkpointed
    * `app.sqlite` + the asset vault + a versioned, hashed `manifest.json` — into a
    * deterministic `backups/<timestamp>/` directory + a portable `.zip`. Runs
-   * entirely in the Electron main process; returns only the final `.zip` path +
-   * size + timestamp for display (the renderer never touches the filesystem).
+   * entirely in the Electron main process; returns only display-safe artifact
+   * metadata (the renderer never touches the filesystem).
    */
   createBackup(): Promise<BackupsCreateResult> {
     return requireAppApi().backups.create();
@@ -4582,6 +4626,27 @@ export const appApi = {
    */
   openBackupsFolder(): Promise<BackupsOpenFolderResult> {
     return requireAppApi().backups.openFolder();
+  },
+  /**
+   * List app-managed local backups (T055) by renderer-safe metadata only: no
+   * absolute paths and no raw filesystem access.
+   */
+  listBackups(): Promise<BackupsListResult> {
+    return requireAppApi().backups.list();
+  },
+  /**
+   * Restore one app-managed local backup (T055). The request carries an exact
+   * typed confirmation phrase and only the backup timestamp, never a file path.
+   */
+  restoreBackup(request: BackupsRestoreRequest): Promise<BackupsRestoreResult> {
+    return requireAppApi().backups.restore(request);
+  },
+  /**
+   * Start from scratch by resetting the local knowledge store (T055). The request
+   * is phrase-guarded; the main process preserves backup/export/model siblings.
+   */
+  resetLocalData(request: BackupsResetLocalDataRequest): Promise<BackupsResetLocalDataResult> {
+    return requireAppApi().backups.resetLocalData(request);
   },
   /**
    * Observe the on-device background-runner queue (T058) — read-only. Returns an

@@ -64,6 +64,29 @@ describe("preload bridge", () => {
     expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.cardsDelete, {
       cardId: "card-1",
     });
+
+    await api().backups.list();
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.backupsList);
+
+    await api().backups.restore({
+      timestamp: "2026-06-07T12-30-00-000Z",
+      confirm: true,
+      phrase: "RESTORE BACKUP",
+    });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.backupsRestore, {
+      timestamp: "2026-06-07T12-30-00-000Z",
+      confirm: true,
+      phrase: "RESTORE BACKUP",
+    });
+
+    await api().backups.resetLocalData({
+      confirm: true,
+      phrase: "START FROM SCRATCH",
+    });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.backupsResetLocalData, {
+      confirm: true,
+      phrase: "START FROM SCRATCH",
+    });
   });
 
   it("normalizes optional request payloads to empty objects where the contract expects one", async () => {

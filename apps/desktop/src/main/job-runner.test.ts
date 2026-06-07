@@ -79,6 +79,16 @@ async function until(predicate: () => boolean, timeoutMs = 1000): Promise<void> 
   }
 }
 
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe("JobRunner", () => {
   it("enqueue → post → progress → result → apply → succeeded; observer sees progress + completion", async () => {
     const fake = new FakeWorker();
@@ -122,6 +132,47 @@ describe("JobRunner", () => {
 
     runner.stop();
     expect(fake.killed).toBe(true);
+  });
+
+  it("stopAndDrain waits for an active main-side apply handler", async () => {
+    const fake = new FakeWorker();
+    const applyStarted = deferred();
+    const releaseApply = deferred();
+    const runner = new JobRunner({
+      jobsRepo,
+      applyHandlers: {
+        url_import: async () => {
+          applyStarted.resolve(undefined);
+          await releaseApply.promise;
+          return { status: "imported", id: "src-1" };
+        },
+      },
+      workerPath: "(unused)",
+      fork: () => fake,
+    });
+    runner.start();
+
+    const job = runner.enqueue("url_import", { url: "https://x.test" });
+    await until(() => fake.last !== undefined);
+    fake.reply({
+      kind: "result",
+      jobId: job.id,
+      data: { html: "<h1/>", finalUrl: "https://x.test" },
+    });
+    await applyStarted.promise;
+
+    let drained = false;
+    const drain = runner.stopAndDrain().then(() => {
+      drained = true;
+    });
+    await flush();
+    expect(drained).toBe(false);
+    expect(fake.killed).toBe(true);
+
+    releaseApply.resolve(undefined);
+    await drain;
+    expect(drained).toBe(true);
+    expect(jobsRepo.findById(job.id)?.status).toBe("succeeded");
   });
 
   it("a worker error RETRIES up to maxAttempts (with backoff) then marks failed", async () => {
