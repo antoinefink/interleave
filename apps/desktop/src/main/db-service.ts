@@ -128,6 +128,8 @@ import type {
   AiStatusResult,
   AnalyticsGetRequest,
   AnalyticsGetResult,
+  AnalyticsReviewActivityRequest,
+  AnalyticsReviewActivityResult,
   AutoPostponeApplyResult,
   AutoPostponePreview,
   BalanceGetRequest,
@@ -4952,6 +4954,29 @@ export class DbService {
       leeches: summary.leeches,
       retired: summary.retired,
       dayStreak: summary.dayStreak,
+    };
+  }
+
+  /**
+   * Calendar-year review activity for the Analytics heatmap. The aggregation
+   * belongs in `packages/local-db` so local-day bucketing and sparse year
+   * navigation stay on the trusted side; the renderer receives only zero-filled
+   * day counts and year targets.
+   */
+  getReviewActivity(request?: AnalyticsReviewActivityRequest): AnalyticsReviewActivityResult {
+    const asOf = (request?.asOf ?? nowIso()) as IsoTimestamp;
+    const activity = this.repos.analytics.computeReviewActivity(asOf, {
+      ...(request?.year !== undefined ? { year: request.year } : {}),
+    });
+    return {
+      asOf: activity.asOf,
+      year: activity.year,
+      minYear: activity.minYear,
+      maxYear: activity.maxYear,
+      previousYear: activity.previousYear,
+      nextYear: activity.nextYear,
+      days: activity.days,
+      totalReviews: activity.reviewsTotal,
     };
   }
 

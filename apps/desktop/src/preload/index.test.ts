@@ -68,6 +68,12 @@ describe("preload bridge", () => {
     await api().backups.list();
     expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.backupsList);
 
+    await api().analytics.reviewActivity({ asOf: "2026-06-07T12:00:00.000Z", year: 2026 });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.analyticsReviewActivity, {
+      asOf: "2026-06-07T12:00:00.000Z",
+      year: 2026,
+    });
+
     await api().backups.restore({
       timestamp: "2026-06-07T12-30-00-000Z",
       confirm: true,

@@ -118,6 +118,12 @@ The durable record of one graded card review, including the grade, review timing
 
 Review logs are the source of truth for historical review stats. Aggregate reports derive from them later rather than being captured in a separate analytics history.
 
+### Review activity
+
+Review-log volume bucketed by the user's local calendar day or year so the user can understand consistency, streaks, and review load over time.
+
+Review activity is analytics over completed reviews, not the set of currently due cards and not the Review session flow itself.
+
 ### Reveal
 
 The review action that intentionally exposes a card's answer and source context after the user has attempted recall.

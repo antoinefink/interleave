@@ -7,9 +7,10 @@
  * spec launches the built desktop app against a fresh data dir seeded with the
  * shared demo collection and asserts:
  *
- *   1. the `analytics.*` bridge surface exists (no raw SQL);
- *   2. `/analytics` renders the metric tiles + the reviews-per-day spark from the
- *      computed snapshot (non-placeholder numbers);
+ *   1. the `analytics.*` bridge surface exists, including the review-activity
+ *      heatmap read (no raw SQL);
+ *   2. `/analytics` renders the metric tiles, review-activity heatmap, and
+ *      reviews-per-day spark from computed snapshots (non-placeholder numbers);
  *   3. grading a seeded card `Again` increments the review total and the snapshot
  *      reflects the failed grade (retention drops vs. an all-correct run);
  *   4. the numbers SURVIVE AN APP RESTART — they are recomputed from the durable
@@ -60,6 +61,33 @@ async function snapshot(page: Page): Promise<{
   }, ASOF);
 }
 
+/** The calendar-year review activity snapshot at `ASOF` (via the typed bridge). */
+async function reviewActivity(page: Page): Promise<{
+  year: number;
+  totalReviews: number;
+  days: number;
+  dayCount: number;
+}> {
+  return page.evaluate(async (asOf) => {
+    const api = window.appApi as unknown as {
+      analytics: {
+        reviewActivity(req: { asOf: string; year: number }): Promise<{
+          year: number;
+          totalReviews: number;
+          days: Array<{ date: string; count: number }>;
+        }>;
+      };
+    };
+    const s = await api.analytics.reviewActivity({ asOf, year: 2031 });
+    return {
+      year: s.year,
+      totalReviews: s.totalReviews,
+      days: s.days.length,
+      dayCount: s.days.find((day) => day.date === "2031-01-01")?.count ?? 0,
+    };
+  }, ASOF);
+}
+
 /** Grade the next due card at `ASOF` with `rating` (the SAME path the UI uses). */
 async function gradeNext(page: Page, rating: "again" | "good"): Promise<string> {
   return page.evaluate(
@@ -99,15 +127,17 @@ test("the analytics bridge surface exists (no raw SQL)", async () => {
 
   const surface = await page.evaluate(() => {
     const api = window.appApi as unknown as {
-      analytics?: { get?: unknown };
+      analytics?: { get?: unknown; reviewActivity?: unknown };
       db?: { query?: unknown };
     };
     return {
       hasAnalyticsGet: typeof api?.analytics?.get === "function",
+      hasReviewActivity: typeof api?.analytics?.reviewActivity === "function",
       hasQuery: typeof api?.db?.query === "function",
     };
   });
   expect(surface.hasAnalyticsGet).toBe(true);
+  expect(surface.hasReviewActivity).toBe(true);
   expect(surface.hasQuery).toBe(false);
 
   await app.close();
@@ -127,7 +157,10 @@ test("/analytics renders the metrics + the reviews-per-day spark", async () => {
   await expect(page.getByTestId("metric-retention")).toBeVisible();
   await expect(page.getByTestId("metric-reviews")).toBeVisible();
   await expect(page.getByTestId("metric-due")).toBeVisible();
+  await expect(page.getByTestId("review-activity-panel")).toBeVisible();
+  await expect(page.getByTestId("review-activity-grid")).toBeVisible();
   await expect(page.getByTestId("analytics-spark")).toBeVisible();
+  expect(await page.getByTestId("review-activity-cell").count()).toBeGreaterThanOrEqual(365);
   // The seed has at least one leech → the leech banner links to maintenance.
   await expect(page.getByTestId("banner-leeches")).toBeVisible();
 
@@ -140,15 +173,21 @@ test("grading Again increments the review total and is reflected in retention", 
   await page.waitForLoadState("domcontentloaded");
 
   const before = await snapshot(page);
+  const beforeActivity = await reviewActivity(page);
   expect(before.reviewsByDay).toBe(30);
   expect(before.dueCards).toBeGreaterThanOrEqual(1);
+  expect(beforeActivity.year).toBe(2031);
+  expect(beforeActivity.days).toBe(365);
 
   // Grade one due card `Again` (a failure) — the SAME path the review UI uses.
   await gradeNext(page, "again");
 
   const after = await snapshot(page);
+  const afterActivity = await reviewActivity(page);
   // The review total grew by the one grade we just recorded.
   expect(after.reviewsTotal).toBe(before.reviewsTotal + 1);
+  expect(afterActivity.totalReviews).toBe(beforeActivity.totalReviews + 1);
+  expect(afterActivity.dayCount).toBe(beforeActivity.dayCount + 1);
   // Retention is now defined and reflects the failed grade (strictly below 100%).
   expect(after.retention30d).not.toBeNull();
   if (after.retention30d !== null) expect(after.retention30d).toBeLessThan(1);
@@ -162,7 +201,9 @@ test("the analytics numbers survive an app restart (recomputed from durable revi
   const page1 = await app1.firstWindow();
   await page1.waitForLoadState("domcontentloaded");
   const total1 = (await snapshot(page1)).reviewsTotal;
+  const activityTotal1 = (await reviewActivity(page1)).totalReviews;
   expect(total1).toBeGreaterThanOrEqual(1);
+  expect(activityTotal1).toBeGreaterThanOrEqual(1);
   await app1.close();
 
   // Relaunch against the SAME data dir — the snapshot is recomputed from the
@@ -171,6 +212,8 @@ test("the analytics numbers survive an app restart (recomputed from durable revi
   const page2 = await app2.firstWindow();
   await page2.waitForLoadState("domcontentloaded");
   const total2 = (await snapshot(page2)).reviewsTotal;
+  const activityTotal2 = (await reviewActivity(page2)).totalReviews;
   expect(total2).toBe(total1);
+  expect(activityTotal2).toBe(activityTotal1);
   await app2.close();
 });

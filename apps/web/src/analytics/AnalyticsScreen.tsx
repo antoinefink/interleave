@@ -18,12 +18,13 @@
  */
 
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BalanceBanner } from "../components/BalanceBanner";
 import { Icon } from "../components/Icon";
 import { type AnalyticsGetResult, appApi, isDesktop } from "../lib/appApi";
 import { UNDO_EVENT } from "../shell/nav";
 import "./analytics.css";
+import { ReviewActivityHeatmap, type ReviewActivityResult } from "./ReviewActivityHeatmap";
 
 /** Format a `[0,1]` retention fraction as a percentage string, or "—" when null. */
 function formatRetention(value: number | null): string {
@@ -48,6 +49,10 @@ export function AnalyticsScreen() {
   const [stagnantCount, setStagnantCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activity, setActivity] = useState<ReviewActivityResult | null>(null);
+  const [activityLoading, setActivityLoading] = useState(true);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const activityRequestId = useRef(0);
 
   const load = useCallback(async () => {
     if (!isDesktop()) {
@@ -75,13 +80,45 @@ export function AnalyticsScreen() {
     void load();
   }, [load]);
 
+  const loadActivity = useCallback(async (year?: number) => {
+    if (!isDesktop()) {
+      setActivityLoading(false);
+      return;
+    }
+
+    const requestId = activityRequestId.current + 1;
+    activityRequestId.current = requestId;
+    setActivityLoading(true);
+    try {
+      const res = await appApi.getReviewActivity(year === undefined ? undefined : { year });
+      if (activityRequestId.current !== requestId) return;
+      setActivity(res);
+      setActivityError(null);
+    } catch (e) {
+      if (activityRequestId.current !== requestId) return;
+      setActivity(null);
+      setActivityError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (activityRequestId.current === requestId) {
+        setActivityLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadActivity();
+  }, [loadActivity]);
+
   // Re-read after a global undo (⌘Z) reverts a mutation elsewhere so the numbers
   // stay live without a manual refresh.
   useEffect(() => {
-    const handler = () => void load();
+    const handler = () => {
+      void load();
+      void loadActivity(activity?.year);
+    };
     window.addEventListener(UNDO_EVENT, handler);
     return () => window.removeEventListener(UNDO_EVENT, handler);
-  }, [load]);
+  }, [activity?.year, load, loadActivity]);
 
   if (!desktop) {
     return (
@@ -182,6 +219,13 @@ export function AnalyticsScreen() {
               <span className="an-metric__label">Retired</span>
             </div>
           </div>
+
+          <ReviewActivityHeatmap
+            activity={activity}
+            loading={activityLoading}
+            error={activityError}
+            onYearSelect={(year) => void loadActivity(year)}
+          />
 
           {/* Reviews per day spark */}
           <div className="an-panel">

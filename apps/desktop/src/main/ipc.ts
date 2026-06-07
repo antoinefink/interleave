@@ -17,6 +17,7 @@ import {
   AiListRequestSchema,
   AiRunRequestSchema,
   AnalyticsGetRequestSchema,
+  AnalyticsReviewActivityRequestSchema,
   BackupsCreateRequestSchema,
   BackupsListRequestSchema,
   BackupsOpenFolderRequestSchema,
@@ -1275,6 +1276,11 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.analyticsGet, (_event, rawRequest: unknown) => {
     const request = AnalyticsGetRequestSchema.parse(rawRequest);
     return dbService.getAnalytics(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.analyticsReviewActivity, (_event, rawRequest: unknown) => {
+    const request = AnalyticsReviewActivityRequestSchema.parse(rawRequest);
+    return dbService.getReviewActivity(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.balanceGet, (_event, rawRequest: unknown) => {

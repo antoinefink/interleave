@@ -11,6 +11,7 @@ import { MAX_REVIEW_MODE_DECK } from "@interleave/core";
 import { describe, expect, it } from "vitest";
 import {
   AnalyticsGetRequestSchema,
+  AnalyticsReviewActivityRequestSchema,
   type BackupArtifact,
   BackupsCreateRequestSchema,
   BackupsListRequestSchema,
@@ -291,6 +292,7 @@ describe("IPC channels", () => {
         "trash:empty",
         "undo:last",
         "analytics:get",
+        "analytics:reviewActivity",
         "balance:get",
         "backups:create",
         "backups:openFolder",
@@ -2456,6 +2458,28 @@ describe("AnalyticsGetRequestSchema (T045)", () => {
     expect(() => AnalyticsGetRequestSchema.parse({ windowDays: 400 })).toThrow();
     expect(() => AnalyticsGetRequestSchema.parse({ windowDays: 1.5 })).toThrow();
     expect(() => AnalyticsGetRequestSchema.parse({ asOf: "" })).toThrow();
+  });
+});
+
+describe("AnalyticsReviewActivityRequestSchema", () => {
+  it("accepts an empty/absent request (defaults applied main-side)", () => {
+    expect(AnalyticsReviewActivityRequestSchema.parse(undefined)).toBeUndefined();
+    expect(AnalyticsReviewActivityRequestSchema.parse({})).toEqual({});
+  });
+
+  it("accepts an explicit asOf + year and rejects invalid years", () => {
+    expect(
+      AnalyticsReviewActivityRequestSchema.parse({
+        asOf: "2026-05-30T00:00:00.000Z",
+        year: 2026,
+      }),
+    ).toEqual({ asOf: "2026-05-30T00:00:00.000Z", year: 2026 });
+    expect(() => AnalyticsReviewActivityRequestSchema.parse({ year: 0 })).toThrow();
+    expect(() => AnalyticsReviewActivityRequestSchema.parse({ year: 999 })).toThrow();
+    expect(() => AnalyticsReviewActivityRequestSchema.parse({ year: 9999 })).toThrow();
+    expect(() => AnalyticsReviewActivityRequestSchema.parse({ year: 2026.5 })).toThrow();
+    expect(() => AnalyticsReviewActivityRequestSchema.parse({ asOf: "" })).toThrow();
+    expect(() => AnalyticsReviewActivityRequestSchema.parse({ asOf: "not-a-date" })).toThrow();
   });
 });
 

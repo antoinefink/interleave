@@ -55,7 +55,7 @@ import {
   judgeBalance,
 } from "@interleave/core";
 import { elements, type InterleaveDatabase, reviewLogs } from "@interleave/db";
-import { and, eq, gte, isNotNull, lte, count as sqlCount } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, lt, lte, count as sqlCount } from "drizzle-orm";
 import { QueueRepository } from "./queue-repository";
 import { ReviewRepository } from "./review-repository";
 
@@ -65,11 +65,53 @@ export const DEFAULT_ANALYTICS_WINDOW_DAYS = 30;
 /** Default import/process balance window — "this week". */
 export const DEFAULT_BALANCE_WINDOW_DAYS = 7;
 
+/** Heatmap years are serialized as four-digit `YYYY-MM-DD` date keys. */
+const MIN_REVIEW_ACTIVITY_YEAR = 1000;
+const MAX_REVIEW_ACTIVITY_YEAR = 9998;
+
 /** One calendar day's review count (the `Spark` series). `date` is `YYYY-MM-DD` (local). */
 export interface ReviewsByDay {
   /** Local calendar day, `YYYY-MM-DD`. */
   readonly date: string;
   readonly count: number;
+}
+
+/** One local calendar day's review count in the year activity heatmap. */
+export interface ReviewActivityDay {
+  /** Local calendar day, `YYYY-MM-DD`. */
+  readonly date: string;
+  readonly count: number;
+}
+
+/** Options for {@link AnalyticsService.computeReviewActivity}. */
+export interface ReviewActivityOptions {
+  /**
+   * Four-digit local calendar year to read. Defaults to the local year containing
+   * `asOf`. The selected interval is `[Jan 1 00:00, next Jan 1 00:00)`.
+   */
+  readonly year?: number;
+}
+
+/** A zero-filled calendar-year review activity snapshot. */
+export interface ReviewActivitySummary {
+  /** The `asOf` instant the snapshot was computed for (ISO-8601). */
+  readonly asOf: IsoTimestamp;
+  /** The selected local calendar year. */
+  readonly year: number;
+  /** Earliest local calendar year that has any review history, or `null` when empty. */
+  readonly minYear: number | null;
+  /** Latest local calendar year that has any review history, or `null` when empty. */
+  readonly maxYear: number | null;
+  /** Nearest earlier local year with reviews, skipping empty years. */
+  readonly previousYear: number | null;
+  /** Nearest later local year with reviews, skipping empty years. */
+  readonly nextYear: number | null;
+  /** One bucket per local calendar day in `year`, oldest first. */
+  readonly days: readonly ReviewActivityDay[];
+  /** Total reviews graded in the selected year. */
+  readonly reviewsTotal: number;
+  /** Largest single-day review count in the selected year. */
+  readonly maxDailyReviews: number;
 }
 
 /** The complete system-wide analytics snapshot the screen reads (one payload). */
@@ -165,15 +207,45 @@ export interface BalanceSummary {
 function localDayKey(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso.slice(0, 10);
+  return localDateKey(d);
+}
+
+/** The local-date key (`YYYY-MM-DD`) for a Date. */
+function localDateKey(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
 
+/** The local calendar year for an ISO timestamp. */
+function localYear(iso: string): number {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return Number(iso.slice(0, 4));
+  return d.getFullYear();
+}
+
 /** The start-of-local-day instant (00:00:00.000 local) for a date, as a Date. */
 function startOfLocalDay(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+
+/** The start of a local calendar year (Jan 1 00:00:00.000 local). */
+function startOfLocalYear(year: number): Date {
+  return new Date(year, 0, 1, 0, 0, 0, 0);
+}
+
+function assertReviewActivityYear(year: number): number {
+  if (
+    !Number.isInteger(year) ||
+    year < MIN_REVIEW_ACTIVITY_YEAR ||
+    year > MAX_REVIEW_ACTIVITY_YEAR
+  ) {
+    throw new RangeError(
+      `Review activity year must be an integer from ${MIN_REVIEW_ACTIVITY_YEAR} to ${MAX_REVIEW_ACTIVITY_YEAR}`,
+    );
+  }
+  return year;
 }
 
 export class AnalyticsService {
@@ -291,6 +363,57 @@ export class AnalyticsService {
   }
 
   /**
+   * Compute a GitHub-style review activity calendar for one local calendar year.
+   * The selected year is read as `[Jan 1 00:00, next Jan 1 00:00)` with an
+   * exclusive upper bound. Each local day is counted with an indexed SQL
+   * `COUNT(*)` range so UTC SQLite date functions never decide the user's
+   * perceived calendar day and the year view never materializes every review log
+   * into JS. Read-only.
+   */
+  computeReviewActivity(
+    asOf: IsoTimestamp,
+    options: ReviewActivityOptions = {},
+  ): ReviewActivitySummary {
+    const year = assertReviewActivityYear(options.year ?? localYear(asOf));
+    const yearStart = startOfLocalYear(year);
+    const nextYearStart = startOfLocalYear(year + 1);
+    const yearStartIso = yearStart.toISOString();
+    const nextYearStartIso = nextYearStart.toISOString();
+
+    const buckets = new Map<string, number>();
+    const orderedDays: string[] = [];
+    for (const d = new Date(yearStart); d < nextYearStart; d.setDate(d.getDate() + 1)) {
+      const key = localDateKey(d);
+      const nextDay = new Date(d);
+      nextDay.setDate(nextDay.getDate() + 1);
+      const dayCount = this.countReviewsInRange(d.toISOString(), nextDay.toISOString());
+      buckets.set(key, dayCount);
+      orderedDays.push(key);
+    }
+
+    let reviewsTotal = 0;
+    let maxDailyReviews = 0;
+    for (const count of buckets.values()) {
+      reviewsTotal += count;
+      if (count > maxDailyReviews) maxDailyReviews = count;
+    }
+
+    const history = this.reviewActivityHistoryYears(yearStartIso, nextYearStartIso);
+
+    return {
+      asOf,
+      year,
+      minYear: history.minYear,
+      maxYear: history.maxYear,
+      previousYear: history.previousYear,
+      nextYear: history.nextYear,
+      days: orderedDays.map((date) => ({ date, count: buckets.get(date) ?? 0 })),
+      reviewsTotal,
+      maxDailyReviews,
+    };
+  }
+
+  /**
    * Compute the import/process {@link BalanceSummary} for `asOf` over `windowDays`
    * (default 7). REUSES the T045 windowed aggregation — the same
    * `createdAt`-in-window counting — so the inbox banner and the analytics view
@@ -364,5 +487,54 @@ export class AnalyticsService {
         )
         .get()?.n ?? 0
     );
+  }
+
+  private countReviewsInRange(start: string, end: string): number {
+    return (
+      this.db
+        .select({ n: sqlCount() })
+        .from(reviewLogs)
+        .where(and(gte(reviewLogs.reviewedAt, start), lt(reviewLogs.reviewedAt, end)))
+        .get()?.n ?? 0
+    );
+  }
+
+  private reviewActivityHistoryYears(
+    yearStartIso: string,
+    nextYearStartIso: string,
+  ): Pick<ReviewActivitySummary, "minYear" | "maxYear" | "previousYear" | "nextYear"> {
+    const first = this.db
+      .select({ reviewedAt: reviewLogs.reviewedAt })
+      .from(reviewLogs)
+      .orderBy(asc(reviewLogs.reviewedAt))
+      .limit(1)
+      .get();
+    const last = this.db
+      .select({ reviewedAt: reviewLogs.reviewedAt })
+      .from(reviewLogs)
+      .orderBy(desc(reviewLogs.reviewedAt))
+      .limit(1)
+      .get();
+    const previous = this.db
+      .select({ reviewedAt: reviewLogs.reviewedAt })
+      .from(reviewLogs)
+      .where(lt(reviewLogs.reviewedAt, yearStartIso))
+      .orderBy(desc(reviewLogs.reviewedAt))
+      .limit(1)
+      .get();
+    const next = this.db
+      .select({ reviewedAt: reviewLogs.reviewedAt })
+      .from(reviewLogs)
+      .where(gte(reviewLogs.reviewedAt, nextYearStartIso))
+      .orderBy(asc(reviewLogs.reviewedAt))
+      .limit(1)
+      .get();
+
+    return {
+      minYear: first ? localYear(first.reviewedAt) : null,
+      maxYear: last ? localYear(last.reviewedAt) : null,
+      previousYear: previous ? localYear(previous.reviewedAt) : null,
+      nextYear: next ? localYear(next.reviewedAt) : null,
+    };
   }
 }

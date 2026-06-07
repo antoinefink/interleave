@@ -35,6 +35,17 @@ function localNoon(asOf: Date, daysAgo: number): IsoTimestamp {
   return d.toISOString() as IsoTimestamp;
 }
 
+/** A local-calendar instant for exact boundary tests. */
+function localInstant(
+  year: number,
+  month: number,
+  day: number,
+  hour = 12,
+  minute = 0,
+): IsoTimestamp {
+  return new Date(year, month, day, hour, minute, 0, 0).toISOString() as IsoTimestamp;
+}
+
 /** Insert a `card` element + side rows, with an explicit `createdAt`. */
 function seedCard(
   handle: DbHandle,
@@ -243,5 +254,95 @@ describe("AnalyticsService.computeAnalytics", () => {
     expect(summary.deletions).toBe(0);
     expect(summary.leeches).toBe(0);
     expect(summary.dayStreak).toBe(0);
+  });
+});
+
+describe("AnalyticsService.computeReviewActivity", () => {
+  it("zero-fills a selected non-leap year and uses exclusive local-year bounds", () => {
+    const asOf = localInstant(2026, 5, 15, 18);
+    const card = seedCard(handle, localInstant(2026, 0, 1));
+
+    seedReview(handle, card, "good", localInstant(2025, 11, 31, 23, 59));
+    seedReview(handle, card, "good", localInstant(2026, 0, 1, 0));
+    seedReview(handle, card, "hard", localInstant(2026, 5, 15, 12));
+    seedReview(handle, card, "easy", localInstant(2026, 5, 15, 13));
+    seedReview(handle, card, "good", localInstant(2026, 11, 31, 23, 59));
+    seedReview(handle, card, "again", localInstant(2027, 0, 1, 0));
+
+    const activity = new AnalyticsService(handle.db).computeReviewActivity(asOf, { year: 2026 });
+    const counts = new Map(activity.days.map((day) => [day.date, day.count]));
+
+    expect(activity.year).toBe(2026);
+    expect(activity.days).toHaveLength(365);
+    expect(activity.days[0]?.date).toBe("2026-01-01");
+    expect(activity.days.at(-1)?.date).toBe("2026-12-31");
+    expect(activity.reviewsTotal).toBe(4);
+    expect(activity.maxDailyReviews).toBe(2);
+    expect(counts.get("2026-01-01")).toBe(1);
+    expect(counts.get("2026-06-15")).toBe(2);
+    expect(counts.get("2026-12-31")).toBe(1);
+    expect(activity.minYear).toBe(2025);
+    expect(activity.maxYear).toBe(2027);
+    expect(activity.previousYear).toBe(2025);
+    expect(activity.nextYear).toBe(2027);
+  });
+
+  it("returns 366 buckets for leap years", () => {
+    const asOf = localInstant(2026, 5, 15, 18);
+    const card = seedCard(handle, localInstant(2024, 1, 29));
+    seedReview(handle, card, "good", localInstant(2024, 1, 29));
+
+    const activity = new AnalyticsService(handle.db).computeReviewActivity(asOf, { year: 2024 });
+    const counts = new Map(activity.days.map((day) => [day.date, day.count]));
+
+    expect(activity.year).toBe(2024);
+    expect(activity.days).toHaveLength(366);
+    expect(counts.get("2024-02-29")).toBe(1);
+    expect(activity.reviewsTotal).toBe(1);
+    expect(activity.minYear).toBe(2024);
+    expect(activity.maxYear).toBe(2024);
+    expect(activity.previousYear).toBeNull();
+    expect(activity.nextYear).toBeNull();
+  });
+
+  it("defaults to asOf's local year and returns empty navigation for empty history", () => {
+    const activity = new AnalyticsService(handle.db).computeReviewActivity(
+      localInstant(2026, 11, 31, 23),
+    );
+
+    expect(activity.year).toBe(2026);
+    expect(activity.days).toHaveLength(365);
+    expect(activity.days.every((day) => day.count === 0)).toBe(true);
+    expect(activity.reviewsTotal).toBe(0);
+    expect(activity.maxDailyReviews).toBe(0);
+    expect(activity.minYear).toBeNull();
+    expect(activity.maxYear).toBeNull();
+    expect(activity.previousYear).toBeNull();
+    expect(activity.nextYear).toBeNull();
+  });
+
+  it("rejects years outside the four-digit heatmap date-key range", () => {
+    const service = new AnalyticsService(handle.db);
+    const asOf = localInstant(2026, 5, 15, 18);
+
+    expect(() => service.computeReviewActivity(asOf, { year: 999 })).toThrow(RangeError);
+    expect(() => service.computeReviewActivity(asOf, { year: 9999 })).toThrow(RangeError);
+  });
+
+  it("derives min, max, previous, and next years from sparse local-year history", () => {
+    const asOf = localInstant(2026, 5, 15, 18);
+    const card = seedCard(handle, localInstant(2020, 0, 1));
+    seedReview(handle, card, "good", localInstant(2020, 0, 2));
+    seedReview(handle, card, "hard", localInstant(2023, 6, 4));
+    seedReview(handle, card, "easy", localInstant(2028, 9, 5));
+
+    const activity = new AnalyticsService(handle.db).computeReviewActivity(asOf, { year: 2026 });
+
+    expect(activity.days).toHaveLength(365);
+    expect(activity.reviewsTotal).toBe(0);
+    expect(activity.minYear).toBe(2020);
+    expect(activity.maxYear).toBe(2028);
+    expect(activity.previousYear).toBe(2023);
+    expect(activity.nextYear).toBe(2028);
   });
 });

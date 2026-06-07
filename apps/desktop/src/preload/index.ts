@@ -21,6 +21,7 @@ import type {
   AiListRequest,
   AiRunRequest,
   AnalyticsGetRequest,
+  AnalyticsReviewActivityRequest,
   AppApi,
   BackupsResetLocalDataRequest,
   BackupsRestoreRequest,
@@ -431,6 +432,8 @@ const appApi: AppApi = {
   },
   analytics: {
     get: (request?: AnalyticsGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.analyticsGet, request),
+    reviewActivity: (request?: AnalyticsReviewActivityRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.analyticsReviewActivity, request),
   },
   balance: {
     get: (request?: BalanceGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.balanceGet, request),

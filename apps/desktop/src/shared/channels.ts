@@ -179,6 +179,7 @@ export const IPC_CHANNELS = {
   trashEmpty: "trash:empty",
   undoLast: "undo:last",
   analyticsGet: "analytics:get",
+  analyticsReviewActivity: "analytics:reviewActivity",
   balanceGet: "balance:get",
   // Per-source yield analytics (T083) — a READ-ONLY ranked rollup (read %,
   // extracts/cards/mature-cards, leeches, review time) so low-yield sources are

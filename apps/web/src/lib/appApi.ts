@@ -3236,6 +3236,30 @@ export interface AnalyticsReviewsByDay {
   readonly count: number;
 }
 
+/** `analytics.reviewActivity()` request — both fields optional (defaults applied main-side). */
+export interface AnalyticsReviewActivityRequest {
+  readonly asOf?: string;
+  readonly year?: number;
+}
+
+/** One local calendar day in the review-activity heatmap. */
+export interface AnalyticsReviewActivityDay {
+  readonly date: string;
+  readonly count: number;
+}
+
+/** Calendar-year review activity for the Analytics heatmap. */
+export interface AnalyticsReviewActivityResult {
+  readonly asOf: string;
+  readonly year: number;
+  readonly minYear: number | null;
+  readonly maxYear: number | null;
+  readonly previousYear: number | null;
+  readonly nextYear: number | null;
+  readonly days: readonly AnalyticsReviewActivityDay[];
+  readonly totalReviews: number;
+}
+
 /** The flat analytics snapshot the Analytics screen renders. */
 export interface AnalyticsGetResult {
   readonly asOf: string;
@@ -3644,6 +3668,9 @@ export interface AppApi {
   };
   readonly analytics: {
     get(request?: AnalyticsGetRequest): Promise<AnalyticsGetResult>;
+    reviewActivity(
+      request?: AnalyticsReviewActivityRequest,
+    ): Promise<AnalyticsReviewActivityResult>;
   };
   readonly balance: {
     get(request?: BalanceGetRequest): Promise<BalanceGetResult>;
@@ -4585,6 +4612,15 @@ export const appApi = {
    */
   getAnalytics(request?: AnalyticsGetRequest): Promise<AnalyticsGetResult> {
     return requireAppApi().analytics.get(request);
+  },
+  /**
+   * Calendar-year review activity for the Analytics heatmap — zero-filled local
+   * day buckets plus sparse previous/next year targets. Read-only.
+   */
+  getReviewActivity(
+    request?: AnalyticsReviewActivityRequest,
+  ): Promise<AnalyticsReviewActivityResult> {
+    return requireAppApi().analytics.reviewActivity(request);
   },
   /**
    * The import/process balance snapshot (T046) — the week's sources imported /

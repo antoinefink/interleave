@@ -4997,6 +4997,46 @@ export interface AnalyticsReviewsByDay {
   readonly count: number;
 }
 
+/**
+ * `analytics.reviewActivity({ asOf?, year? })`. `asOf` defaults to "now" on
+ * the main side; `year` defaults to the local calendar year of `asOf`.
+ */
+export const AnalyticsReviewActivityRequestSchema = z
+  .object({
+    /** The instant to anchor default year selection and local-day bucketing. */
+    asOf: IsoTimestampInputSchema.optional(),
+    /** Selected four-digit calendar year; defaults main-side from `asOf`. */
+    year: z.number().int().min(1000).max(9998).optional(),
+  })
+  .optional();
+export type AnalyticsReviewActivityRequest = z.infer<typeof AnalyticsReviewActivityRequestSchema>;
+
+/** One local calendar day in the review-activity heatmap. */
+export interface AnalyticsReviewActivityDay {
+  readonly date: string;
+  readonly count: number;
+}
+
+/** Calendar-year review activity for the Analytics heatmap. */
+export interface AnalyticsReviewActivityResult {
+  /** The instant the activity read was computed for (ISO-8601). */
+  readonly asOf: string;
+  /** The selected calendar year. */
+  readonly year: number;
+  /** Earliest calendar year with review history, or `null` when empty. */
+  readonly minYear: number | null;
+  /** Latest calendar year with review history, or `null` when empty. */
+  readonly maxYear: number | null;
+  /** Previous year with review history, skipping empty years; `null` when absent. */
+  readonly previousYear: number | null;
+  /** Next year with review history, skipping empty years; `null` when absent. */
+  readonly nextYear: number | null;
+  /** Zero-filled local calendar days for `year`, oldest first. */
+  readonly days: readonly AnalyticsReviewActivityDay[];
+  /** Total reviews in the selected calendar year. */
+  readonly totalReviews: number;
+}
+
 /** The flat, JSON-serializable analytics snapshot the renderer reads. */
 export interface AnalyticsGetResult {
   /** The instant the snapshot was computed for (ISO-8601). */
@@ -5994,6 +6034,13 @@ export interface AppApi {
      * the durable tables. Read-only (no mutation, no `operation_log`).
      */
     get(request?: AnalyticsGetRequest): Promise<AnalyticsGetResult>;
+    /**
+     * The calendar-year review activity heatmap read — one zero-filled local-day
+     * bucket per day plus sparse previous/next year targets. Read-only.
+     */
+    reviewActivity(
+      request?: AnalyticsReviewActivityRequest,
+    ): Promise<AnalyticsReviewActivityResult>;
   };
   readonly balance: {
     /**

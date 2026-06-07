@@ -69,6 +69,51 @@ function installAppApi(overrides: Partial<AppApi> = {}): AppApi {
       scheduleReturn: vi.fn(async (request: unknown) => request),
       get: vi.fn(async (request: unknown) => request),
     },
+    analytics: {
+      get: vi.fn(async (request?: unknown) => ({
+        asOf: "2026-06-07T12:00:00.000Z",
+        windowDays: 30,
+        reviewsByDay: [],
+        reviewsTotal: 0,
+        reviewsPerDayAvg: 0,
+        retention30d: null,
+        dueCards: 0,
+        dueTopics: 0,
+        newCards: 0,
+        newExtracts: 0,
+        deletions: 0,
+        leeches: 0,
+        retired: 0,
+        dayStreak: 0,
+        request,
+      })),
+      reviewActivity: vi.fn(async (request?: unknown) => ({
+        asOf: "2026-06-07T12:00:00.000Z",
+        year: 2026,
+        minYear: 2025,
+        maxYear: 2026,
+        previousYear: 2025,
+        nextYear: null,
+        days: [{ date: "2026-01-01", count: 2 }],
+        totalReviews: 2,
+        request,
+      })),
+    },
+    balance: {
+      get: vi.fn(async (request?: unknown) => ({
+        asOf: "2026-06-07T12:00:00.000Z",
+        windowDays: 7,
+        sourcesImported: 0,
+        extractsCreated: 0,
+        cardsCreated: 0,
+        reviewsDueThisWeek: 0,
+        inboxSources: 0,
+        dueQueueItems: 0,
+        imbalanced: false,
+        severity: "ok",
+        request,
+      })),
+    },
     backups: {
       create: vi.fn(async () => ({
         timestamp: "2026-06-07T12-30-00-000Z",
@@ -143,6 +188,24 @@ describe("renderer appApi wrapper", () => {
 
     await appApi.createSynthesisNote({ title: "New note" });
     expect(bridge.synthesis.create).toHaveBeenCalledWith({ title: "New note" });
+  });
+
+  it("forwards review activity requests to the analytics bridge surface", async () => {
+    const bridge = installAppApi();
+
+    await expect(
+      appApi.getReviewActivity({ asOf: "2026-06-07T12:00:00.000Z", year: 2026 }),
+    ).resolves.toMatchObject({
+      year: 2026,
+      previousYear: 2025,
+      nextYear: null,
+      days: [{ date: "2026-01-01", count: 2 }],
+      totalReviews: 2,
+    });
+    expect(bridge.analytics.reviewActivity).toHaveBeenCalledWith({
+      asOf: "2026-06-07T12:00:00.000Z",
+      year: 2026,
+    });
   });
 
   it("forwards the fixed backups folder command without a payload", async () => {

@@ -14,7 +14,7 @@ import os from "node:os";
 import path from "node:path";
 import { MIGRATIONS_DIR, openDatabase } from "@interleave/db";
 import { seedDemoCollection } from "@interleave/testing";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type SearchQueryRequest, SourcesUpdateReliabilityRequestSchema } from "../shared/contract";
 import { DbService } from "./db-service";
 
@@ -3013,6 +3013,67 @@ describe("DbService — analytics (T045)", () => {
     const persisted = second.getAnalytics({ asOf: ASOF });
     expect(persisted.reviewsTotal).toBe(after.reviewsTotal);
     second.close();
+  });
+
+  it("a fresh grade appears in review activity and survives reopen", () => {
+    const first = new DbService();
+    first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(first.seedIfEmpty()).toBe(true);
+    const cardId = seededDueQaCardId(first);
+
+    const before = first.getReviewActivity({ asOf: ASOF, year: 2027 });
+    const beforeDay = before.days.find((day) => day.date === "2027-06-01")?.count ?? 0;
+    first.reviewGrade({ cardId, rating: "good", promptMs: 0, responseMs: 900, asOf: ASOF });
+    const after = first.getReviewActivity({ asOf: ASOF, year: 2027 });
+    const afterDay = after.days.find((day) => day.date === "2027-06-01")?.count ?? 0;
+    expect(after.totalReviews).toBe(before.totalReviews + 1);
+    expect(afterDay).toBe(beforeDay + 1);
+    first.close();
+
+    const second = new DbService();
+    second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const persisted = second.getReviewActivity({ asOf: ASOF, year: 2027 });
+    const persistedDay = persisted.days.find((day) => day.date === "2027-06-01")?.count ?? 0;
+    expect(persisted.totalReviews).toBe(after.totalReviews);
+    expect(persistedDay).toBe(afterDay);
+    second.close();
+  });
+
+  it("getReviewActivity returns the calendar-year activity shape from the analytics service", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const domainActivity = {
+      asOf: ASOF,
+      year: 2026,
+      minYear: 2025,
+      maxYear: 2027,
+      previousYear: 2025,
+      nextYear: 2027,
+      days: [
+        { date: "2026-01-01", count: 0 },
+        { date: "2026-01-02", count: 3 },
+      ],
+      reviewsTotal: 3,
+    };
+    const computeReviewActivity = vi.fn(() => domainActivity);
+    Object.defineProperty(svc.repos.analytics, "computeReviewActivity", {
+      configurable: true,
+      value: computeReviewActivity,
+    });
+
+    expect(svc.getReviewActivity({ asOf: ASOF, year: 2026 })).toEqual({
+      asOf: domainActivity.asOf,
+      year: domainActivity.year,
+      minYear: domainActivity.minYear,
+      maxYear: domainActivity.maxYear,
+      previousYear: domainActivity.previousYear,
+      nextYear: domainActivity.nextYear,
+      days: domainActivity.days,
+      totalReviews: domainActivity.reviewsTotal,
+    });
+    expect(computeReviewActivity).toHaveBeenCalledWith(ASOF, { year: 2026 });
+    svc.close();
   });
 });
 
