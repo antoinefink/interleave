@@ -1,6 +1,6 @@
 {
   "name": "interleave",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Interleave — a desktop-first, local-first incremental reading application.",
   "packageManager": "pnpm@9.12.1",
