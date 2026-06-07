@@ -288,6 +288,12 @@
   width: 100%;
   text-align: left;
 }
+.lib-sec > .result + .result {
+  margin-top: var(--s-3);
+}
+.lib-sec__vlist [data-virtual-row] .result {
+  margin-bottom: var(--s-3);
+}
 .result:hover {
   background: var(--surface-2);
 }
