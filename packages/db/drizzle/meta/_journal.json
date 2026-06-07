@@ -19,7 +19,7 @@
     {
       "idx": 2,
       "version": "6",
-      "when": 1780217202483,
+      "when": 1780140000000,
       "tag": "0002_search_fts5",
       "breakpoints": true
     },
@@ -208,7 +208,7 @@
     {
       "idx": 29,
       "version": "6",
-      "when": 1780828800000,
+      "when": 1780861440000,
       "tag": "0029_source_block_processing",
       "breakpoints": true
     }
