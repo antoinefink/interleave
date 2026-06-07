@@ -216,7 +216,7 @@ mark.extracted {
   cursor: pointer;
 }
 .reader .dimmed {
-  color: color-mix(in oklch, var(--text) 45%, var(--text-3));
+  color: color-mix(in oklch, var(--text) 40%, var(--text-3));
 }
 .reader p.dimmed {
   position: relative;

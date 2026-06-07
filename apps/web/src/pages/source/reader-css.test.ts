@@ -32,7 +32,7 @@ describe("source reader CSS", () => {
     const dimmed = cssBlock(".reader .dimmed");
     const marker = cssBlock(".reader p.dimmed::before");
 
-    expect(dimmed).toContain("color: color-mix(in oklch, var(--text) 45%, var(--text-3));");
+    expect(dimmed).toContain("color: color-mix(in oklch, var(--text) 40%, var(--text-3));");
     expect(dimmed).not.toMatch(/\bopacity\s*:/);
     expect(marker).toContain("background: var(--border);");
   });
