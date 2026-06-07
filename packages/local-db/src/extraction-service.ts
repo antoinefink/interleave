@@ -51,7 +51,7 @@ import type {
   Priority,
   RegionRect,
 } from "@interleave/core";
-import { plainTextToProseMirrorDoc } from "@interleave/core";
+import { plainTextToProseMirrorDoc, richSelectionToProseMirrorDoc } from "@interleave/core";
 import type { InterleaveDatabase } from "@interleave/db";
 import { addDays, rawExtractIntervalDays } from "@interleave/scheduler";
 import { DocumentRepository } from "./document-repository";
@@ -194,8 +194,21 @@ export class ExtractionService {
     // Thread the extract's page (PDF, T064) into the label so a PDF extract reads
     // "Page N · ¶M"; null/absent for a text source keeps the existing "¶M".
     const label = input.label ?? this.deriveLabel(locationSource, input.blockIds[0], input.page);
-    // The body seed is computed BEFORE the transaction (pure CPU work, no DB).
-    const conversion = plainTextToProseMirrorDoc(input.selectedText);
+    // The body seed is computed BEFORE the transaction (pure CPU work, no writes).
+    // Prefer the stored parent/source document so multi-block selections keep
+    // paragraph boundaries and constrained block atoms such as article images.
+    // Fall back to the historical plain-text body if the parent doc cannot be
+    // reconstructed, so extraction stays available for malformed/legacy bodies.
+    const conversion =
+      input.startOffset != null && input.endOffset != null
+        ? (richSelectionToProseMirrorDoc({
+            parentDoc: this.documents.findById(locationSource)?.prosemirrorJson ?? null,
+            blockIds: input.blockIds,
+            startOffset: input.startOffset,
+            endOffset: input.endOffset,
+            selectedText: input.selectedText,
+          }) ?? plainTextToProseMirrorDoc(input.selectedText))
+        : plainTextToProseMirrorDoc(input.selectedText);
     // Read the source's inherited tags up front (a read; the writes happen in tx).
     const inheritedTags = this.elements.listTags(input.sourceElementId);
 

@@ -20,10 +20,11 @@
  *    element / location / relation / mark / body / log rows).
  */
 
-import type { BlockId, ElementId, Priority } from "@interleave/core";
+import type { BlockId, ElementId, PlainTextConversion, Priority } from "@interleave/core";
 import { priorityToLabel } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
 import {
+  documentBlocks,
   documentMarks,
   documents,
   elementRelations,
@@ -61,6 +62,74 @@ function blockIdsOf(handle: DbHandle, sourceId: ElementId): BlockId[] {
   return new DocumentRepository(handle.db)
     .listBlocks(sourceId)
     .map((b) => b.stableBlockId as BlockId);
+}
+
+function seedRichSource(handle: DbHandle): { sourceId: ElementId; blocks: BlockId[] } {
+  const conversion: PlainTextConversion = {
+    doc: {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          attrs: { blockId: "src-rich-a" as BlockId },
+          content: [{ type: "text", text: "First paragraph here." }],
+        },
+        {
+          type: "image",
+          attrs: {
+            blockId: "src-rich-img" as BlockId,
+            src: "article-image://source_1/asset_1",
+            alt: "Architecture diagram",
+            title: "Figure title",
+            width: 640,
+            height: 480,
+          },
+        },
+        {
+          type: "paragraph",
+          attrs: { blockId: "src-rich-b" as BlockId },
+          content: [{ type: "text", text: "Second paragraph after image." }],
+        },
+      ],
+    },
+    plainText: "First paragraph here.\n\nArchitecture diagram\n\nSecond paragraph after image.",
+    blocks: [
+      { blockType: "paragraph", order: 0, stableBlockId: "src-rich-a" as BlockId },
+      { blockType: "image", order: 1, stableBlockId: "src-rich-img" as BlockId },
+      { blockType: "paragraph", order: 2, stableBlockId: "src-rich-b" as BlockId },
+    ],
+  };
+  const { element } = new SourceRepository(handle.db).createWithDocument({
+    title: "Rich source",
+    priority: 0.625,
+    status: "active",
+    stage: "raw_source",
+    conversion,
+  });
+  return { sourceId: element.id, blocks: conversion.blocks.map((b) => b.stableBlockId) };
+}
+
+function docContentTypes(handle: DbHandle, elementId: ElementId): string[] {
+  const doc = new DocumentRepository(handle.db).findById(elementId)?.prosemirrorJson as
+    | { content?: readonly { type?: string }[] }
+    | undefined;
+  return doc?.content?.map((node) => node.type ?? "") ?? [];
+}
+
+function paragraphTexts(handle: DbHandle, elementId: ElementId): string[] {
+  const doc = new DocumentRepository(handle.db).findById(elementId)?.prosemirrorJson as
+    | {
+        content?: readonly {
+          type?: string;
+          content?: readonly { type?: string; text?: string }[];
+        }[];
+      }
+    | undefined;
+  return (
+    doc?.content
+      ?.filter((node) => node.type === "paragraph")
+      .map((node) => node.content?.map((child) => child.text ?? "").join("") ?? "") ?? []
+  );
 }
 
 beforeEach(() => {
@@ -143,6 +212,112 @@ describe("ExtractionService.createExtraction", () => {
     expect(doc).toBeTruthy();
     expect(doc?.plainText).toContain("The definition paragraph two.");
     expect(new DocumentRepository(handle.db).listBlocks(element.id).length).toBeGreaterThan(0);
+  });
+
+  it("preserves paragraph structure when the selection spans multiple source blocks", () => {
+    const sourceId = seedSource(handle);
+    const blocks = blockIdsOf(handle, sourceId);
+    const service = new ExtractionService(handle.db);
+
+    const { element, location } = service.createExtraction({
+      sourceElementId: sourceId,
+      selectedText: "paragraph one.\nThe definition",
+      blockIds: [blocks[0] as BlockId, blocks[1] as BlockId],
+      startOffset: 6,
+      endOffset: 14,
+      priority: 0.625,
+    });
+
+    expect(docContentTypes(handle, element.id)).toEqual(["paragraph", "paragraph"]);
+    expect(paragraphTexts(handle, element.id)).toEqual(["paragraph one.", "The definition"]);
+    const doc = new DocumentRepository(handle.db).findById(element.id);
+    expect(doc?.plainText).toBe("paragraph one.\n\nThe definition");
+    const childBlocks = blockIdsOf(handle, element.id);
+    expect(childBlocks).toHaveLength(2);
+    expect(childBlocks).not.toEqual([blocks[0], blocks[1]]);
+    expect(location.blockIds).toEqual([blocks[0], blocks[1]]);
+  });
+
+  it("preserves selected article images in the extract body", () => {
+    const { sourceId, blocks } = seedRichSource(handle);
+    const service = new ExtractionService(handle.db);
+
+    const { element, location } = service.createExtraction({
+      sourceElementId: sourceId,
+      selectedText: "First paragraph here.\nArchitecture diagram\nSecond",
+      blockIds: blocks,
+      startOffset: 0,
+      endOffset: 6,
+      priority: 0.625,
+    });
+
+    expect(docContentTypes(handle, element.id)).toEqual(["paragraph", "image", "paragraph"]);
+    const doc = new DocumentRepository(handle.db).findById(element.id)?.prosemirrorJson as {
+      content?: readonly { type?: string; attrs?: Record<string, unknown> }[];
+    };
+    expect(doc.content?.[1]).toMatchObject({
+      type: "image",
+      attrs: {
+        src: "article-image://source_1/asset_1",
+        alt: "Architecture diagram",
+        title: "Figure title",
+        width: 640,
+        height: 480,
+      },
+    });
+    expect(doc.content?.[1]?.attrs?.blockId).not.toBe("src-rich-img");
+    expect(new DocumentRepository(handle.db).findById(element.id)?.plainText).toBe(
+      "First paragraph here.\n\nArchitecture diagram\n\nSecond",
+    );
+    expect(
+      handle.db
+        .select()
+        .from(documentBlocks)
+        .where(eq(documentBlocks.documentId, element.id))
+        .all()
+        .map((block) => block.blockType),
+    ).toEqual(["paragraph", "image", "paragraph"]);
+    expect(location.blockIds).toEqual(blocks);
+  });
+
+  it("preserves a standalone selected article image atom", () => {
+    const { sourceId, blocks } = seedRichSource(handle);
+    const service = new ExtractionService(handle.db);
+
+    const { element, location } = service.createExtraction({
+      sourceElementId: sourceId,
+      selectedText: "Architecture diagram",
+      blockIds: [blocks[1] as BlockId],
+      startOffset: 0,
+      endOffset: 0,
+      priority: 0.625,
+    });
+
+    expect(docContentTypes(handle, element.id)).toEqual(["image"]);
+    expect(new DocumentRepository(handle.db).findById(element.id)?.plainText).toBe(
+      "Architecture diagram",
+    );
+    expect(blockIdsOf(handle, element.id)).toHaveLength(1);
+    expect(location.blockIds).toEqual([blocks[1]]);
+  });
+
+  it("falls back to the selected text instead of widening offsetless partial selections", () => {
+    const sourceId = seedSource(handle);
+    const blocks = blockIdsOf(handle, sourceId);
+    const service = new ExtractionService(handle.db);
+    const findById = vi.spyOn(DocumentRepository.prototype, "findById");
+
+    const { element } = service.createExtraction({
+      sourceElementId: sourceId,
+      selectedText: "definition",
+      blockIds: [blocks[1] as BlockId],
+      priority: 0.625,
+    });
+
+    expect(findById).not.toHaveBeenCalled();
+    const doc = new DocumentRepository(handle.db).findById(element.id);
+    expect(doc?.plainText).toBe("definition");
+    expect(paragraphTexts(handle, element.id)).toEqual(["definition"]);
   });
 
   it("adds a derived_from relation extract → source", () => {
@@ -424,6 +599,50 @@ describe("ExtractionService.createExtraction — sub-extracts (T025)", () => {
     expect(
       handle.db.select().from(reviewStates).where(eq(reviewStates.elementId, sub.id)).get(),
     ).toBeUndefined();
+  });
+
+  it("reconstructs rich sub-extract bodies from the parent extract document", () => {
+    const { sourceId, blocks: sourceBlocks } = seedRichSource(handle);
+    const service = new ExtractionService(handle.db);
+    const { element: parent } = service.createExtraction({
+      sourceElementId: sourceId,
+      selectedText: "First paragraph here.\nArchitecture diagram\nSecond",
+      blockIds: sourceBlocks,
+      startOffset: 0,
+      endOffset: 6,
+      priority: 0.625,
+    });
+    const parentBlocks = blockIdsOf(handle, parent.id);
+
+    const { element: sub, location } = service.createExtraction({
+      sourceElementId: sourceId,
+      parentId: parent.id,
+      selectedText: "First paragraph here.\nArchitecture diagram\nSecond",
+      blockIds: parentBlocks,
+      startOffset: 0,
+      endOffset: 6,
+      priority: 0.625,
+    });
+
+    expect(sub.parentId).toBe(parent.id);
+    expect(sub.sourceId).toBe(sourceId);
+    expect(location.sourceElementId).toBe(parent.id);
+    expect(location.blockIds).toEqual(parentBlocks);
+    expect(docContentTypes(handle, sub.id)).toEqual(["paragraph", "image", "paragraph"]);
+    const subBlocks = blockIdsOf(handle, sub.id);
+    expect(subBlocks).toHaveLength(3);
+    expect(subBlocks).not.toEqual(parentBlocks);
+    const doc = new DocumentRepository(handle.db).findById(sub.id)?.prosemirrorJson as {
+      content?: readonly { type?: string; attrs?: Record<string, unknown> }[];
+    };
+    expect(doc.content?.[1]).toMatchObject({
+      type: "image",
+      attrs: {
+        src: "article-image://source_1/asset_1",
+        alt: "Architecture diagram",
+      },
+    });
+    expect(doc.content?.[1]?.attrs?.blockId).not.toBe(parentBlocks[1]);
   });
 
   it("inherits the original source's priority and tags onto the sub-extract", () => {

@@ -234,8 +234,14 @@ export type {
   ProseMirrorOrderedListNode,
   ProseMirrorParagraphNode,
   ProseMirrorTextNode,
+  RichSelectionConversionInput,
 } from "./prosemirror";
-export { plainTextToProseMirrorDoc } from "./prosemirror";
+export {
+  PROSEMIRROR_ROW_BLOCK_TYPES,
+  plainTextToProseMirrorDoc,
+  richSelectionToProseMirrorDoc,
+  shouldCarryProseMirrorRowBlockId,
+} from "./prosemirror";
 // FSRS card review state + durable logs — cards only (./review).
 export type { ReviewLog, ReviewState } from "./review";
 // Review-mode vocabulary (T096) — the closed targeted-review kinds + the typed selector.

@@ -27,7 +27,8 @@
  * block id" risk).
  */
 
-import type { EditorState } from "@tiptap/pm/state";
+import type { Node as PmNode } from "@tiptap/pm/model";
+import { type EditorState, NodeSelection } from "@tiptap/pm/state";
 import { posToBlockOffset, shouldCarryBlockId } from "./block-id";
 
 /**
@@ -85,6 +86,31 @@ function blockAt(
   return null;
 }
 
+function atomSelectionText(node: PmNode): string {
+  if (node.type.name !== "image") return "";
+  const alt = typeof node.attrs.alt === "string" ? node.attrs.alt.trim() : "";
+  if (alt.length > 0) return alt;
+  const title = typeof node.attrs.title === "string" ? node.attrs.title.trim() : "";
+  return title;
+}
+
+function resolveNodeSelectionLocation(state: EditorState): SelectionLocation | null {
+  if (!(state.selection instanceof NodeSelection)) return null;
+  const node = state.selection.node;
+  const parentType = state.selection.$from.parent.type.name;
+  if (!shouldCarryBlockId(node.type.name, parentType)) return null;
+  const blockId = node.attrs.blockId as string | null | undefined;
+  if (typeof blockId !== "string" || blockId.length === 0) return null;
+
+  return {
+    blockIds: [blockId],
+    startOffset: 0,
+    endOffset: 0,
+    selectedText: atomSelectionText(node),
+    crossBlock: false,
+  };
+}
+
 /**
  * Resolve the {@link SelectionLocation} for a raw ProseMirror {@link EditorState}.
  *
@@ -100,6 +126,9 @@ function blockAt(
  * `endOffset` in the last. Pure + DOM-free, so it is unit-testable headlessly.
  */
 export function resolveSelectionLocation(state: EditorState): SelectionLocation | null {
+  const nodeSelection = resolveNodeSelectionLocation(state);
+  if (nodeSelection) return nodeSelection;
+
   const { from, to, empty } = state.selection;
   if (empty || from === to) return null;
 

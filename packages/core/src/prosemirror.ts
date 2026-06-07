@@ -197,6 +197,35 @@ export type ProseMirrorBlockType =
   | "image"
   | "horizontalRule";
 
+/** The row-bearing block types that can carry a stable `blockId`. */
+export const PROSEMIRROR_ROW_BLOCK_TYPES = [
+  "paragraph",
+  "heading",
+  "blockquote",
+  "listItem",
+  "codeBlock",
+  "image",
+  "horizontalRule",
+] as const satisfies readonly ProseMirrorBlockType[];
+
+const PROSEMIRROR_ROW_BLOCK_TYPE_SET = new Set<string>(PROSEMIRROR_ROW_BLOCK_TYPES);
+
+/**
+ * Whether a block-level node should carry a stable row id, given its parent.
+ *
+ * Enforces the one-id-per-row invariant shared by the editor, persistence helpers,
+ * and rich extraction: id-bearing rows carry ids only on their outermost
+ * row-bearing block.
+ */
+export function shouldCarryProseMirrorRowBlockId(
+  type: string,
+  parentType?: string,
+): type is ProseMirrorBlockType {
+  if (!PROSEMIRROR_ROW_BLOCK_TYPE_SET.has(type)) return false;
+  if (parentType && PROSEMIRROR_ROW_BLOCK_TYPE_SET.has(parentType)) return false;
+  return true;
+}
+
 /** One stable block descriptor mirroring a row-bearing node in the produced doc. */
 export interface ProseMirrorBlock {
   readonly blockType: ProseMirrorBlockType;
@@ -237,6 +266,474 @@ export type BlockIdMinter = () => BlockId;
 
 /** Default block-id minter: a platform UUID (works in Node 19+ and the renderer). */
 const defaultBlockIdMinter: BlockIdMinter = () => globalThis.crypto.randomUUID() as BlockId;
+
+const BLOCK_NODE_TYPES = new Set<string>([
+  ...PROSEMIRROR_ROW_BLOCK_TYPES,
+  "bulletList",
+  "orderedList",
+]);
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return value != null && typeof value === "object";
+}
+
+function isBlockNode(value: unknown): value is ProseMirrorBlockNode {
+  return (
+    isObjectRecord(value) && typeof value.type === "string" && BLOCK_NODE_TYPES.has(value.type)
+  );
+}
+
+function asDoc(value: unknown): ProseMirrorDoc | null {
+  if (!isObjectRecord(value) || value.type !== "doc" || !Array.isArray(value.content)) {
+    return null;
+  }
+  return value as unknown as ProseMirrorDoc;
+}
+
+function cloneAttrs(attrs: unknown): Record<string, unknown> {
+  return isObjectRecord(attrs) ? { ...attrs } : {};
+}
+
+function inlineNodeTextLength(node: ProseMirrorInlineNode): number {
+  return node.type === "text" ? node.text.length : 0;
+}
+
+function inlinePlainText(node: ProseMirrorInlineNode): string {
+  if (node.type === "text") return node.text;
+  if (node.type === "hardBreak") return "\n";
+  const latex = node.attrs.latex;
+  if (!latex) return "";
+  return node.attrs.display ? `$$${latex}$$` : `$${latex}$`;
+}
+
+function blockTextLength(node: ProseMirrorBlockNode): number {
+  if ("content" in node && Array.isArray(node.content)) {
+    return node.content.reduce((sum, child) => {
+      if (!isBlockNode(child)) return sum + inlineNodeTextLength(child as ProseMirrorInlineNode);
+      return sum + blockTextLength(child);
+    }, 0);
+  }
+  return 0;
+}
+
+function imagePlainText(node: ProseMirrorImageNode): string {
+  const alt = typeof node.attrs.alt === "string" ? node.attrs.alt.trim() : "";
+  if (alt.length > 0) return alt;
+  const title = typeof node.attrs.title === "string" ? node.attrs.title.trim() : "";
+  return title;
+}
+
+function blockPlainText(node: ProseMirrorBlockNode): string {
+  if (node.type === "image") return imagePlainText(node);
+  if (node.type === "horizontalRule") return "";
+  if ("content" in node && Array.isArray(node.content)) {
+    const childrenAreBlocks = node.content.some(isBlockNode);
+    if (childrenAreBlocks) {
+      return node.content.filter(isBlockNode).map(blockPlainText).filter(Boolean).join("\n");
+    }
+    return node.content.map((child) => inlinePlainText(child as ProseMirrorInlineNode)).join("");
+  }
+  return "";
+}
+
+function conversionPlainText(content: readonly ProseMirrorBlockNode[]): string {
+  return content
+    .map(blockPlainText)
+    .filter((text) => text.trim().length > 0)
+    .join("\n\n");
+}
+
+function trimInlineContent(
+  content: readonly ProseMirrorInlineNode[] | undefined,
+  start: number,
+  end: number,
+  includeNonTextAtoms: boolean,
+): ProseMirrorInlineNode[] {
+  if (!content || end <= start) return [];
+  const out: ProseMirrorInlineNode[] = [];
+  let offset = 0;
+
+  for (const child of content) {
+    if (child.type !== "text") {
+      if (includeNonTextAtoms) out.push(child);
+      continue;
+    }
+
+    const textStart = offset;
+    const textEnd = offset + child.text.length;
+    const keepStart = Math.max(start, textStart);
+    const keepEnd = Math.min(end, textEnd);
+    if (keepEnd > keepStart) {
+      const text = child.text.slice(keepStart - textStart, keepEnd - textStart);
+      out.push(child.marks ? { ...child, text, marks: [...child.marks] } : { ...child, text });
+    }
+    offset = textEnd;
+  }
+
+  return out;
+}
+
+function trimNestedBlockContent(
+  content: readonly ProseMirrorBlockNode[] | undefined,
+  start: number,
+  end: number,
+): ProseMirrorBlockNode[] {
+  if (!content || end <= start) return [];
+  const out: ProseMirrorBlockNode[] = [];
+  let offset = 0;
+
+  for (const child of content) {
+    const len = blockTextLength(child);
+    const childStart = offset;
+    const childEnd = offset + len;
+    const keepStart = Math.max(start, childStart);
+    const keepEnd = Math.min(end, childEnd);
+    if (len === 0) {
+      if (offset >= start && offset <= end) out.push(child);
+    } else if (keepEnd > keepStart) {
+      const trimmed = trimBlockNode(child, keepStart - childStart, keepEnd - childStart);
+      if (trimmed) out.push(trimmed);
+    }
+    offset = childEnd;
+  }
+
+  return out;
+}
+
+function trimBlockNode(
+  node: ProseMirrorBlockNode,
+  start: number,
+  end: number,
+): ProseMirrorBlockNode | null {
+  const len = blockTextLength(node);
+  if (len === 0) return node;
+  const clampedStart = Math.max(0, Math.min(start, len));
+  const clampedEnd = Math.max(clampedStart, Math.min(end, len));
+  if (clampedEnd <= clampedStart) return null;
+
+  if ("content" in node && Array.isArray(node.content) && node.content.some(isBlockNode)) {
+    const content = trimNestedBlockContent(
+      node.content.filter(isBlockNode),
+      clampedStart,
+      clampedEnd,
+    );
+    if (content.length === 0) return null;
+    return replaceBlockContent(node, content);
+  }
+
+  if ("content" in node && Array.isArray(node.content)) {
+    const content = trimInlineContent(
+      node.content as readonly ProseMirrorInlineNode[],
+      clampedStart,
+      clampedEnd,
+      clampedStart === 0 && clampedEnd === len,
+    );
+    if (content.length === 0) return null;
+    return replaceBlockContent(node, content);
+  }
+
+  return node;
+}
+
+function replaceBlockContent(
+  node: ProseMirrorBlockNode,
+  content: readonly (ProseMirrorBlockNode | ProseMirrorInlineNode)[] | undefined,
+): ProseMirrorBlockNode {
+  const next = { ...node } as Record<string, unknown>;
+  if (content && content.length > 0) next.content = content;
+  else delete next.content;
+  return next as unknown as ProseMirrorBlockNode;
+}
+
+function remintBlockIds(
+  node: ProseMirrorBlockNode,
+  mintBlockId: BlockIdMinter,
+  blocks: ProseMirrorBlock[],
+  parentType?: string,
+): ProseMirrorBlockNode {
+  const attrs = cloneAttrs(
+    "attrs" in node ? (node as { readonly attrs?: unknown }).attrs : undefined,
+  );
+  const type = node.type;
+
+  if (shouldCarryProseMirrorRowBlockId(type, parentType)) {
+    const stableBlockId = mintBlockId();
+    attrs.blockId = stableBlockId;
+    blocks.push({ blockType: type, order: blocks.length, stableBlockId });
+  } else {
+    delete attrs.blockId;
+  }
+
+  const content =
+    "content" in node && Array.isArray(node.content)
+      ? node.content.map((child) =>
+          isBlockNode(child)
+            ? remintBlockIds(child, mintBlockId, blocks, type)
+            : cloneInlineNode(child as ProseMirrorInlineNode),
+        )
+      : undefined;
+
+  const next = { ...node } as Record<string, unknown>;
+  if (Object.keys(attrs).length > 0) next.attrs = attrs;
+  else delete next.attrs;
+  if (content && content.length > 0) next.content = content;
+  else delete next.content;
+  return next as unknown as ProseMirrorBlockNode;
+}
+
+function cloneInlineNode(node: ProseMirrorInlineNode): ProseMirrorInlineNode {
+  if (node.type === "text") {
+    return node.marks ? { ...node, marks: node.marks.map((mark) => ({ ...mark })) } : { ...node };
+  }
+  if (node.type === "math") return { ...node, attrs: { ...node.attrs } };
+  return { ...node };
+}
+
+interface RowBlockRef {
+  readonly blockId: BlockId;
+  readonly node: ProseMirrorBlockNode;
+  readonly ancestors: readonly ProseMirrorBlockNode[];
+}
+
+function selectedRowBlocksById(
+  doc: ProseMirrorDoc,
+  blockIds: readonly BlockId[],
+): Map<BlockId, RowBlockRef> {
+  const out = new Map<BlockId, RowBlockRef>();
+  const remaining = new Set(blockIds);
+  if (remaining.size === 0) return out;
+
+  const visit = (
+    node: ProseMirrorBlockNode,
+    parentType?: string,
+    ancestors: ProseMirrorBlockNode[] = [],
+  ): boolean => {
+    if (shouldCarryProseMirrorRowBlockId(node.type, parentType)) {
+      const attrs = "attrs" in node ? (node as { readonly attrs?: unknown }).attrs : undefined;
+      const id = isObjectRecord(attrs) ? attrs.blockId : undefined;
+      if (typeof id === "string" && remaining.has(id as BlockId)) {
+        out.set(id as BlockId, { blockId: id as BlockId, node, ancestors: [...ancestors] });
+        remaining.delete(id as BlockId);
+        if (remaining.size === 0) return false;
+      }
+    }
+    if ("content" in node && Array.isArray(node.content)) {
+      for (const child of node.content) {
+        if (!isBlockNode(child)) continue;
+        ancestors.push(node);
+        const keepGoing = visit(child, node.type, ancestors);
+        ancestors.pop();
+        if (!keepGoing) return false;
+      }
+    }
+    return true;
+  };
+
+  for (const node of doc.content) {
+    if (!isBlockNode(node)) continue;
+    const keepGoing = visit(node);
+    if (!keepGoing) break;
+  }
+  return out;
+}
+
+function hasSelectedAncestor(ref: RowBlockRef, selected: readonly RowBlockRef[]): boolean {
+  return selected.some((other) => other !== ref && ref.ancestors.includes(other.node));
+}
+
+function textOffsetOfDescendant(
+  root: ProseMirrorBlockNode,
+  target: ProseMirrorBlockNode,
+): number | null {
+  const walk = (
+    node: ProseMirrorBlockNode,
+    offset: number,
+  ):
+    | { readonly found: true; readonly offset: number }
+    | { readonly found: false; readonly next: number } => {
+    if (node === target) return { found: true, offset };
+    let cursor = offset;
+    if ("content" in node && Array.isArray(node.content)) {
+      for (const child of node.content) {
+        if (isBlockNode(child)) {
+          const result = walk(child, cursor);
+          if (result.found) return result;
+          cursor = result.next;
+        } else {
+          cursor += inlineNodeTextLength(child as ProseMirrorInlineNode);
+        }
+      }
+    }
+    return { found: false, next: cursor };
+  };
+
+  const result = walk(root, 0);
+  return result.found ? result.offset : null;
+}
+
+function boundaryOffsetWithin(
+  root: RowBlockRef,
+  boundary: RowBlockRef,
+  offset: number,
+): number | null {
+  if (root === boundary) return offset;
+  if (!boundary.ancestors.includes(root.node)) return null;
+  const base = textOffsetOfDescendant(root.node, boundary.node);
+  if (base === null) return null;
+  return base + offset;
+}
+
+function nearestListAncestor(ref: RowBlockRef): ProseMirrorBlockNode | null {
+  for (let i = ref.ancestors.length - 1; i >= 0; i--) {
+    const ancestor = ref.ancestors[i];
+    if (ancestor?.type === "bulletList" || ancestor?.type === "orderedList") return ancestor;
+  }
+  return null;
+}
+
+function cloneListContainer(
+  ancestor: ProseMirrorBlockNode,
+  content: readonly ProseMirrorBlockNode[],
+): ProseMirrorBlockNode {
+  const next = { ...ancestor } as Record<string, unknown>;
+  const attrs = cloneAttrs(
+    "attrs" in ancestor ? (ancestor as { readonly attrs?: unknown }).attrs : undefined,
+  );
+  delete attrs.blockId;
+  if (Object.keys(attrs).length > 0) next.attrs = attrs;
+  else delete next.attrs;
+  next.content = content;
+  return next as unknown as ProseMirrorBlockNode;
+}
+
+function restoreStructuralListContainers(
+  roots: readonly RowBlockRef[],
+  content: readonly ProseMirrorBlockNode[],
+): ProseMirrorBlockNode[] {
+  const out: ProseMirrorBlockNode[] = [];
+  let groupAncestor: ProseMirrorBlockNode | null = null;
+  let groupContent: ProseMirrorBlockNode[] = [];
+
+  const flush = (): void => {
+    if (!groupAncestor) return;
+    out.push(cloneListContainer(groupAncestor, groupContent));
+    groupAncestor = null;
+    groupContent = [];
+  };
+
+  for (let i = 0; i < content.length; i++) {
+    const node = content[i];
+    const root = roots[i];
+    if (!node || !root || root.node.type !== "listItem") {
+      flush();
+      if (node) out.push(node);
+      continue;
+    }
+
+    const listAncestor = nearestListAncestor(root);
+    if (!listAncestor) {
+      flush();
+      out.push(node);
+      continue;
+    }
+
+    if (groupAncestor && groupAncestor !== listAncestor) flush();
+    groupAncestor = listAncestor;
+    groupContent.push(node);
+  }
+
+  flush();
+  return out;
+}
+
+export interface RichSelectionConversionInput {
+  /** The source or parent extract ProseMirror document JSON the user selected from. */
+  readonly parentDoc: unknown;
+  /** Ordered stable block ids spanned by the source-location anchor. */
+  readonly blockIds: readonly BlockId[];
+  /** Character offset within the first selected block's flattened text. */
+  readonly startOffset?: number | null;
+  /** Character offset within the last selected block's flattened text. */
+  readonly endOffset?: number | null;
+  /** Fallback plain-text snapshot when the stored document cannot be reconstructed. */
+  readonly selectedText: string;
+  /** Optional stable id minter for deterministic tests. */
+  readonly mintBlockId?: BlockIdMinter;
+}
+
+/**
+ * Build an extract body from an existing constrained ProseMirror document.
+ *
+ * The returned document preserves selected rich blocks, including article image
+ * atoms, while minting fresh block ids for the child extract body. The original
+ * `blockIds` remain the source-location anchor and are never reused in the child
+ * document. Returns `null` when the parent doc or selected block ids cannot be
+ * matched, so callers can fall back to `plainTextToProseMirrorDoc(selectedText)`.
+ */
+export function richSelectionToProseMirrorDoc(
+  input: RichSelectionConversionInput,
+): PlainTextConversion | null {
+  try {
+    return richSelectionToProseMirrorDocInner(input);
+  } catch {
+    return null;
+  }
+}
+
+function richSelectionToProseMirrorDocInner(
+  input: RichSelectionConversionInput,
+): PlainTextConversion | null {
+  if (input.blockIds.length === 0) return null;
+  if (input.startOffset == null || input.endOffset == null) return null;
+  const doc = asDoc(input.parentDoc);
+  if (!doc) return null;
+
+  const byId = selectedRowBlocksById(doc, input.blockIds);
+  const selected: RowBlockRef[] = [];
+  for (const id of input.blockIds) {
+    const ref = byId.get(id);
+    if (!ref) return null;
+    selected.push(ref);
+  }
+  const firstSelected = selected[0];
+  const lastSelected = selected[selected.length - 1];
+  if (!firstSelected || !lastSelected) return null;
+  const roots = selected.filter((ref) => !hasSelectedAncestor(ref, selected));
+
+  const trimmed: { readonly ref: RowBlockRef; readonly node: ProseMirrorBlockNode }[] = [];
+  for (const root of roots) {
+    const len = blockTextLength(root.node);
+    const start =
+      root === firstSelected
+        ? input.startOffset
+        : (boundaryOffsetWithin(root, firstSelected, input.startOffset) ?? 0);
+    const end =
+      root === lastSelected
+        ? input.endOffset
+        : (boundaryOffsetWithin(root, lastSelected, input.endOffset) ?? len);
+    const next = start > 0 || end < len ? trimBlockNode(root.node, start, end) : root.node;
+    if (next) trimmed.push({ ref: root, node: next });
+  }
+
+  if (trimmed.length === 0) return null;
+
+  const blocks: ProseMirrorBlock[] = [];
+  const mint = input.mintBlockId ?? defaultBlockIdMinter;
+  const restored = restoreStructuralListContainers(
+    trimmed.map((item) => item.ref),
+    trimmed.map((item) => item.node),
+  );
+  const content = restored.map((node) => remintBlockIds(node, mint, blocks));
+  if (blocks.length === 0) return null;
+
+  const plainText = conversionPlainText(content);
+  if (plainText.length === 0 && input.selectedText.trim().length > 0) return null;
+  return {
+    doc: { type: "doc", content },
+    plainText: plainText.length > 0 ? plainText : input.selectedText.trim(),
+    blocks,
+  };
+}
 
 /**
  * Split pasted text into paragraphs on blank lines.

@@ -42,6 +42,7 @@
  * renderer-safe (Web Crypto, never `node:crypto`).
  */
 
+import { PROSEMIRROR_ROW_BLOCK_TYPES, shouldCarryProseMirrorRowBlockId } from "@interleave/core";
 import { Extension } from "@tiptap/core";
 import type { Node as PmNode } from "@tiptap/pm/model";
 import type { Transaction } from "@tiptap/pm/state";
@@ -56,17 +57,7 @@ import { type BlockIdMinter, newBlockId } from "./block-ids";
  * so the inner paragraph of a `listItem` / `blockquote` — though a `paragraph`
  * here — does not. Exported so tests + the preservation transform agree on the set.
  */
-export const BLOCK_ID_NODE_TYPES = [
-  "paragraph",
-  "heading",
-  "blockquote",
-  "codeBlock",
-  "image",
-  "horizontalRule",
-  "listItem",
-] as const;
-
-const BLOCK_ID_NODE_SET = new Set<string>(BLOCK_ID_NODE_TYPES);
+export const BLOCK_ID_NODE_TYPES = PROSEMIRROR_ROW_BLOCK_TYPES;
 
 /**
  * Whether a block-level node should CARRY a stable id, given its parent.
@@ -84,11 +75,7 @@ const BLOCK_ID_NODE_SET = new Set<string>(BLOCK_ID_NODE_TYPES);
  * disagree about which node owns a row's id.
  */
 export function shouldCarryBlockId(nodeTypeName: string, parentTypeName?: string): boolean {
-  if (!BLOCK_ID_NODE_SET.has(nodeTypeName)) return false;
-  // A block nested directly inside another id-bearing block (listItem/blockquote)
-  // is NOT the outermost block of its row — the parent owns the row's id.
-  if (parentTypeName !== undefined && BLOCK_ID_NODE_SET.has(parentTypeName)) return false;
-  return true;
+  return shouldCarryProseMirrorRowBlockId(nodeTypeName, parentTypeName);
 }
 
 /** The DOM attribute the id renders to, so the reader/marks can target a block. */

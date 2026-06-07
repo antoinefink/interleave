@@ -11,7 +11,7 @@
  */
 
 import { Node as PmNode } from "@tiptap/pm/model";
-import { EditorState, TextSelection } from "@tiptap/pm/state";
+import { EditorState, NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { describe, expect, it } from "vitest";
 import { fillMissingBlockIds } from "./block-id";
 import type { newBlockId } from "./block-ids";
@@ -76,6 +76,22 @@ const DOC = {
     HEADING("Title", "blk_h"),
     PARA("First paragraph here.", "blk_a"),
     PARA("Second paragraph.", "blk_b"),
+  ],
+};
+
+const IMAGE_DOC = {
+  type: "doc",
+  content: [
+    PARA("Before image.", "blk_before"),
+    {
+      type: "image",
+      attrs: {
+        blockId: "blk_image",
+        src: "article-image://source_1/asset_1",
+        alt: "Architecture diagram",
+      },
+    },
+    PARA("After image.", "blk_after"),
   ],
 };
 
@@ -150,6 +166,21 @@ function textStartOf(json: unknown, blockId: string): number {
   return start;
 }
 
+function nodePosOf(json: unknown, blockId: string): number {
+  const doc = PmNode.fromJSON(schema, json);
+  let found = -1;
+  doc.descendants((node, pos) => {
+    if (found >= 0) return false;
+    if ((node.attrs.blockId as string | null | undefined) === blockId) {
+      found = pos;
+      return false;
+    }
+    return true;
+  });
+  if (found < 0) throw new Error(`no block ${blockId} in fixture`);
+  return found;
+}
+
 /**
  * Absolute ProseMirror [from, to] positions of the FIRST occurrence of `needle`
  * within the text of the block identified by `blockId`. Found by scanning the
@@ -197,7 +228,24 @@ function stateWithSelection(json: unknown, from: number, to: number): EditorStat
   return state.apply(state.tr.setSelection(TextSelection.create(doc, from, to)));
 }
 
+function stateWithNodeSelection(json: unknown, blockId: string): EditorState {
+  const doc = PmNode.fromJSON(schema, json);
+  const state = EditorState.create({ schema, doc });
+  return state.apply(state.tr.setSelection(NodeSelection.create(doc, nodePosOf(json, blockId))));
+}
+
 describe("resolveSelectionLocation — single-block selection", () => {
+  it("resolves an image atom NodeSelection to its image block anchor", () => {
+    const loc = resolveSelectionLocation(stateWithNodeSelection(IMAGE_DOC, "blk_image"));
+    expect(loc).toEqual({
+      blockIds: ["blk_image"],
+      startOffset: 0,
+      endOffset: 0,
+      selectedText: "Architecture diagram",
+      crossBlock: false,
+    });
+  });
+
   it("resolves one block id with start/end offsets and the exact snapshot", () => {
     const start = textStartOf(DOC, "blk_a");
     // Select "First" (chars 0..5) inside "First paragraph here."
@@ -474,6 +522,20 @@ describe("resolveSelectionLocation — nested blocks (list item / blockquote)", 
 });
 
 describe("resolveSelectionLocation — cross-block selection", () => {
+  it("includes selected image atom blocks between paragraph endpoints", () => {
+    const beforeStart = textStartOf(IMAGE_DOC, "blk_before");
+    const afterStart = textStartOf(IMAGE_DOC, "blk_after");
+
+    const loc = resolveSelectionLocation(
+      stateWithSelection(IMAGE_DOC, beforeStart + "Before ".length, afterStart + "After".length),
+    );
+
+    expect(loc?.blockIds).toEqual(["blk_before", "blk_image", "blk_after"]);
+    expect(loc?.startOffset).toBe("Before ".length);
+    expect(loc?.endOffset).toBe("After".length);
+    expect(loc?.crossBlock).toBe(true);
+  });
+
   it("returns ALL spanned block ids in document order with first/last offsets", () => {
     const aStart = textStartOf(DOC, "blk_a");
     const bStart = textStartOf(DOC, "blk_b");
