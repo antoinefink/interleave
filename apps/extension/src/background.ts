@@ -281,7 +281,7 @@ function notify(message: string): void {
   chrome.notifications.create({
     type: "basic",
     iconUrl: "icons/icon-48.png",
-    title: "Interleave Capture",
+    title: "Interleave",
     message,
   });
 }

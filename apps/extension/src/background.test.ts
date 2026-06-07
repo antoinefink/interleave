@@ -163,7 +163,7 @@ describe("extension background worker", () => {
     expect(chromeMock.action.setBadgeText).toHaveBeenCalledWith({ text: "✓" });
     expect(chromeMock.action.setBadgeBackgroundColor).toHaveBeenCalledWith({ color: "#2e7d32" });
     expect(chromeMock.notifications.create).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Interleave Capture", message: "Saved: Saved title" }),
+      expect.objectContaining({ title: "Interleave", message: "Saved: Saved title" }),
     );
 
     vi.advanceTimersByTime(4000);
