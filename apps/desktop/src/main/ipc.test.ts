@@ -74,6 +74,7 @@ function fakeIpcContext(): IpcHandlerContext {
       dbPath: "/tmp/interleave/app.sqlite",
       assetsDir: "/tmp/interleave/assets",
       exportsDir: "/tmp/interleave/exports",
+      downloadsDir: "/tmp/interleave/Downloads",
       backupsDir: "/tmp/interleave/backups",
       modelsDir: "/tmp/interleave/models",
     },

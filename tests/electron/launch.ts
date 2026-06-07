@@ -207,6 +207,7 @@ export async function launchApp(
   dataDir: string,
   options: LaunchOptions = {},
 ): Promise<ElectronApplication> {
+  const downloadsDir = path.join(dataDir, "downloads");
   return electron.launch({
     // Isolate Electron's own `userData` (caches + the single-instance
     // SingletonLock) per data dir, so back-to-back launches across spec files
@@ -216,6 +217,7 @@ export async function launchApp(
     env: {
       ...process.env,
       INTERLEAVE_DATA_DIR: dataDir,
+      INTERLEAVE_DOWNLOADS_DIR: downloadsDir,
       ...(options.seedOnEmpty ? { INTERLEAVE_SEED_ON_EMPTY: "1" } : {}),
       ...(options.seedMaintenance ? { INTERLEAVE_SEED_MAINTENANCE: "1" } : {}),
       ...(options.seedScale ? { INTERLEAVE_SEED_SCALE: "1" } : {}),

@@ -589,9 +589,9 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
     }
   });
 
-  // Export selected cards to an Anki `.apkg`/CSV in `exports/` (T070) — read-only on the
-  // DB, carrying source refs OUT to Anki. A thrown `AnkiExportError` (empty selection)
-  // is re-thrown as a friendly `code: message` line.
+  // Export selected cards to an Anki `.apkg`/CSV in Downloads (T070) — read-only on
+  // the DB, carrying source refs OUT to Anki. A thrown `AnkiExportError` (empty
+  // selection) is re-thrown as a friendly `code: message` line.
   ipcMain.handle(IPC_CHANNELS.cardsExportAnki, async (_event, rawRequest: unknown) => {
     const request = CardsExportAnkiRequestSchema.parse(rawRequest);
     try {
@@ -881,8 +881,8 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
     return dbService.saveDocument(request);
   });
 
-  // Export an element's document body to a `.md` in the `exports/` vault (T068) —
-  // async file I/O, read-only on the DB. A `DocumentImportError` is re-thrown as a
+  // Export an element's document body to a `.md` in Downloads (T068) — async file
+  // I/O, read-only on the DB. A `DocumentImportError` is re-thrown as a
   // friendly `code: message` line.
   ipcMain.handle(IPC_CHANNELS.documentsExportMarkdown, async (_event, rawRequest: unknown) => {
     const request = DocumentsExportMarkdownRequestSchema.parse(rawRequest);

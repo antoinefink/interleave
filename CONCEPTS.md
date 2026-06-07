@@ -150,7 +150,15 @@ Manual backups may satisfy an automatic due check because they prove the data wa
 
 ### Asset vault
 
-The filesystem-owned store for large user data such as source files, media, and exports, with the local database retaining metadata and references.
+The filesystem-owned store for large internal data such as source files, media, snapshots, and app-managed artifacts, with the local database retaining metadata and references.
+
+The Asset vault is distinct from a user export artifact: vault files support the app's own durable state, while user export artifacts are files the user is expected to find and use outside the app.
+
+### User export artifact
+
+A file produced by Interleave for use outside the app, such as a Markdown export, CSV export, or Anki package.
+
+User export artifacts are written by trusted desktop code to a standard user-visible destination and are reported back to the renderer with display-safe metadata, not raw filesystem paths.
 
 ### Local data replacement
 

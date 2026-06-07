@@ -10,7 +10,7 @@
  *      ZIP + reads the embedded collection + authors the notes as `card` elements under
  *      a per-deck `source` (the deck, NOT N rows, lands in the inbox);
  *   2. the imported cards appear in the review deck (one is reviewable);
- *   3. exporting a selection back to `.apkg` writes a file into `exports/`;
+ *   3. exporting a selection back to `.apkg` or CSV writes a file into Downloads;
  *   4. after an APP RESTART against the same data dir, the deck + cards survive.
  *
  * The renderer reaches all of this only through `window.appApi` — no fs/SQL.
@@ -21,7 +21,7 @@ import os from "node:os";
 import path from "node:path";
 import { type ElectronApplication, expect, type Page, test } from "@playwright/test";
 import Database from "better-sqlite3";
-import { strToU8, zipSync } from "fflate";
+import { strToU8, unzipSync, zipSync } from "fflate";
 import { ensureBuilt, launchApp, makeDataDir } from "./launch";
 
 test.describe.configure({ mode: "serial" });
@@ -226,21 +226,55 @@ test("importing an .apkg lands a deck source with cards, then exports back to .a
     .some((f) => f.includes("pic.png"));
   expect(mediaHit).toBe(true);
 
-  // Export ALL cards back to an .apkg via the bridge; the file lands in exports/.
+  const downloadsDir = path.join(dataDir, "downloads");
+
+  // Export ALL cards back to an .apkg via the bridge; the file lands in Downloads.
   const exported = await page.evaluate(async () => {
     const api = window.appApi as unknown as {
       cards: {
-        exportAnki(req: {
-          format: string;
-          all: boolean;
-        }): Promise<{ relativePath: string; cardCount: number }>;
+        exportAnki(req: { format: string; all: boolean }): Promise<{
+          relativePath: string;
+          directoryLabel: "Downloads";
+          cardCount: number;
+          absPath?: string;
+        }>;
       };
     };
     return api.cards.exportAnki({ format: "apkg", all: true });
   });
   expect(exported.cardCount).toBe(2);
+  expect(exported).not.toHaveProperty("absPath");
+  expect(exported.directoryLabel).toBe("Downloads");
   expect(exported.relativePath.endsWith(".apkg")).toBe(true);
-  expect(fs.existsSync(path.join(dataDir, "exports", exported.relativePath))).toBe(true);
+  const exportedApkgPath = path.join(downloadsDir, exported.relativePath);
+  expect(fs.existsSync(exportedApkgPath)).toBe(true);
+  const exportedApkg = unzipSync(new Uint8Array(fs.readFileSync(exportedApkgPath)));
+  expect(exportedApkg["collection.anki2"]?.byteLength ?? 0).toBeGreaterThan(0);
+
+  const exportedCsv = await page.evaluate(async () => {
+    const api = window.appApi as unknown as {
+      cards: {
+        exportAnki(req: { format: string; all: boolean }): Promise<{
+          relativePath: string;
+          directoryLabel: "Downloads";
+          cardCount: number;
+          absPath?: string;
+        }>;
+      };
+    };
+    return api.cards.exportAnki({ format: "csv", all: true });
+  });
+  expect(exportedCsv.cardCount).toBe(2);
+  expect(exportedCsv).not.toHaveProperty("absPath");
+  expect(exportedCsv.directoryLabel).toBe("Downloads");
+  expect(exportedCsv.relativePath.endsWith(".csv")).toBe(true);
+  const exportedCsvPath = path.join(downloadsDir, exportedCsv.relativePath);
+  expect(fs.existsSync(exportedCsvPath)).toBe(true);
+  const csv = fs.readFileSync(exportedCsvPath, "utf8");
+  expect(csv.split("\n")[0]).toBe("Front,Back,Cloze,Tags,Source");
+  expect(csv).toContain("Capital of France?");
+  expect(csv).toContain("Paris");
+  expect(csv).toContain("The capital is {{c1::Paris}}.");
 
   await app.close();
 });

@@ -143,6 +143,7 @@ import type {
   CardsCreateResult,
   CardsDeleteRequest,
   CardsDeleteResult,
+  CardsExportAnkiResult,
   CardsFlagRequest,
   CardsFlagResult,
   CardsGenerateOcclusionRequest,
@@ -183,6 +184,7 @@ import type {
   DocumentMarksListResult,
   DocumentMarksRemoveRequest,
   DocumentMarksRemoveResult,
+  DocumentsExportMarkdownResult,
   DocumentsGetRequest,
   DocumentsGetResult,
   DocumentsSaveRequest,
@@ -418,8 +420,8 @@ export interface DbServiceOpenOptions {
   readonly nativeBinding?: string | undefined;
   /** The asset-vault root (`<dataDir>/assets`) — required for URL import (T060). */
   readonly assetsDir?: string | undefined;
-  /** The exports root (`<dataDir>/exports`) — required for Markdown export (T068). */
-  readonly exportsDir?: string | undefined;
+  /** User-facing export destination — Downloads in the Electron app. */
+  readonly exportDestinationDir?: string | undefined;
   /** DEV/E2E-only: permit loopback/private hosts in URL import (the SSRF guard escape). */
   readonly allowLoopbackImport?: boolean | undefined;
   /**
@@ -564,9 +566,9 @@ export class DbService {
   /**
    * The Markdown/HTML document-import + Markdown-export orchestrator (T068) — parse a
    * local `.md`/`.html` (or pasted Markdown) into an `inbox` source, and serialize a
-   * stored document back to a `.md` in the `exports/` vault. Built lazily on first
-   * read (Markdown import needs no vault; HTML import + export need `assetsDir`/
-   * `exportsDir`, injected at open()).
+   * stored document back to a `.md` in the configured user export destination. Built
+   * lazily on first read (Markdown import needs no vault; HTML import needs
+   * `assetsDir`; export needs `exportDestinationDir`, injected at open()).
    */
   private documentImport: DocumentImportService | null = null;
   /**
@@ -584,8 +586,8 @@ export class DbService {
   private ankiImport: AnkiImportService | null = null;
   /**
    * The Anki `.apkg`/CSV export orchestrator (T070) — build an Anki-importable file in
-   * `exports/`, carrying source refs OUT. Built lazily (it needs `exportsDir` + the
-   * `nativeBinding` to write the embedded collection).
+   * the configured user export destination, carrying source refs OUT. Built lazily (it
+   * needs `exportDestinationDir` + the `nativeBinding` to write the embedded collection).
    */
   private ankiExport: AnkiExportService | null = null;
   /**
@@ -640,8 +642,8 @@ export class DbService {
   private runner: JobRunner | null = null;
   /** The vault asset-root, injected at open() time; required for URL import. */
   private assetsDir: string | null = null;
-  /** The exports-root (`<dataDir>/exports`), injected at open(); for Markdown export (T068). */
-  private exportsDir: string | null = null;
+  /** User-facing export destination, injected at open(); Downloads in the Electron app. */
+  private exportDestinationDir: string | null = null;
   /**
    * The Electron-ABI `better-sqlite3` binding path, injected at open() (T070). The Anki
    * import/export services need it to open the EMBEDDED `collection.anki2` with the same
@@ -724,7 +726,7 @@ export class DbService {
       vecAvailable: this.vecAvailable,
     });
     this.assetsDir = options.assetsDir ?? null;
-    this.exportsDir = options.exportsDir ?? null;
+    this.exportDestinationDir = options.exportDestinationDir ?? null;
     this.nativeBinding = options.nativeBinding;
     this.allowLoopbackImport = options.allowLoopbackImport ?? false;
     this.mediaFetchImpl = options.mediaFetchImpl;
@@ -840,7 +842,7 @@ export class DbService {
     this.ai = null;
     this.runner = null;
     this.assetsDir = null;
-    this.exportsDir = null;
+    this.exportDestinationDir = null;
     this.nativeBinding = undefined;
     this.allowLoopbackImport = false;
     this.mediaFetchImpl = undefined;
@@ -1762,22 +1764,22 @@ export class DbService {
 
   /**
    * The Markdown/HTML import + Markdown-export orchestrator (T068), lazily built on
-   * first read against the open DB + repos + the vault `assetsDir` + the `exportsDir`.
+   * first read against the open DB + repos + the vault `assetsDir` + the export destination.
    * Throws a clear error if either dir was not provided — mirrors
    * {@link epubImportService}.
    */
   get documentImportService(): DocumentImportService {
     if (this.documentImport) return this.documentImport;
-    if (!this.assetsDir || !this.exportsDir) {
+    if (!this.assetsDir || !this.exportDestinationDir) {
       throw new Error(
-        "DbService: document import/export requires assets + exports directories — call open() with { assetsDir, exportsDir }",
+        "DbService: document import/export requires assets + export destination directories — call open() with { assetsDir, exportDestinationDir }",
       );
     }
     this.documentImport = new DocumentImportService({
       db: this.require().db,
       repositories: this.repos,
       assetsDir: this.assetsDir,
-      exportsDir: this.exportsDir,
+      exportDestinationDir: this.exportDestinationDir,
     });
     return this.documentImport;
   }
@@ -1813,11 +1815,12 @@ export class DbService {
   }
 
   /**
-   * Export an element's document body to a `.md` in the `exports/` vault (T068).
-   * Read-only on the DB (no mutation, no op-log entry). Returns the written path.
+   * Export an element's document body to a `.md` in the configured user export
+   * destination (Downloads in the Electron app). Read-only on the DB (no mutation,
+   * no op-log entry). Absolute paths stay inside the main process.
    */
-  async exportMarkdown(input: { elementId: ElementId }): Promise<MarkdownExportResult> {
-    return await this.documentImportService.exportToMarkdown(input);
+  async exportMarkdown(input: { elementId: ElementId }): Promise<DocumentsExportMarkdownResult> {
+    return publicMarkdownExportResult(await this.documentImportService.exportToMarkdown(input));
   }
 
   /**
@@ -1889,42 +1892,46 @@ export class DbService {
 
   /**
    * The Anki `.apkg`/CSV-export orchestrator (T070), lazily built on first read against
-   * the open DB + repos + the `exportsDir` (where the file lands) + the `nativeBinding`
-   * (to write the embedded collection). Throws if `exportsDir` was not provided.
+   * the open DB + repos + the configured export destination (Downloads in the Electron
+   * app) + the `nativeBinding` (to write the embedded collection). Throws if the export
+   * destination was not provided.
    */
   get ankiExportService(): AnkiExportService {
     if (this.ankiExport) return this.ankiExport;
-    if (!this.exportsDir) {
+    if (!this.exportDestinationDir) {
       throw new Error(
-        "DbService: Anki export requires an exports directory — call open() with { exportsDir }",
+        "DbService: Anki export requires an export directory — call open() with { exportDestinationDir }",
       );
     }
     this.ankiExport = new AnkiExportService({
       repositories: this.repos,
-      exportsDir: this.exportsDir,
+      exportDestinationDir: this.exportDestinationDir,
       nativeBinding: this.nativeBinding,
     });
     return this.ankiExport;
   }
 
   /**
-   * Export selected cards to an Anki `.apkg`/CSV in `exports/` (T070) — read-only on the
-   * DB. Delegates to {@link AnkiExportService}; a thrown `AnkiExportError` propagates.
+   * Export selected cards to an Anki `.apkg`/CSV in the configured user export
+   * destination (T070) — read-only on the DB. Delegates to {@link AnkiExportService};
+   * a thrown `AnkiExportError` propagates. Absolute paths stay inside the main process.
    */
   async exportAnki(input: {
     format: "apkg" | "csv";
     cardIds?: readonly string[] | undefined;
     conceptId?: string | undefined;
     all?: boolean | undefined;
-  }): Promise<AnkiExportFileResult> {
+  }): Promise<CardsExportAnkiResult> {
     const selection: AnkiExportSelection = {
       ...(input.cardIds ? { cardIds: input.cardIds as readonly ElementId[] } : {}),
       ...(input.conceptId ? { conceptId: input.conceptId as ElementId } : {}),
       ...(input.all != null ? { all: input.all } : {}),
     };
-    return input.format === "csv"
-      ? await this.ankiExportService.exportCsv(selection)
-      : await this.ankiExportService.exportApkg(selection);
+    const result =
+      input.format === "csv"
+        ? await this.ankiExportService.exportCsv(selection)
+        : await this.ankiExportService.exportApkg(selection);
+    return publicAnkiExportResult(result);
   }
 
   /**
@@ -5183,6 +5190,20 @@ export class DbService {
   get raw(): DbHandle {
     return this.require();
   }
+}
+
+/** Strip main-only absolute paths before an export result crosses IPC. */
+function publicMarkdownExportResult(result: MarkdownExportResult): DocumentsExportMarkdownResult {
+  return { relativePath: result.relativePath, directoryLabel: "Downloads" };
+}
+
+/** Strip main-only absolute paths before an export result crosses IPC. */
+function publicAnkiExportResult(result: AnkiExportFileResult): CardsExportAnkiResult {
+  return {
+    relativePath: result.relativePath,
+    directoryLabel: "Downloads",
+    cardCount: result.cardCount,
+  };
 }
 
 /** Map a repository {@link DocumentMark} onto the flat, JSON-serializable IPC payload. */

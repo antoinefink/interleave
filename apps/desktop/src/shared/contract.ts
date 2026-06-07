@@ -1461,18 +1461,18 @@ export type SourcesImportDocumentResult = {
 
 /**
  * Export a document (source/extract/topic) to Markdown (T068). MAIN loads the stored
- * ProseMirror doc, serializes it, and writes the `.md` into the managed `exports/`
- * vault dir, returning the path. Read-only on the DB (no mutation, no op-log entry).
+ * ProseMirror doc, serializes it, and writes the `.md` into the OS Downloads directory.
+ * Read-only on the DB (no mutation, no op-log entry).
  */
 export const DocumentsExportMarkdownRequestSchema = z.object({
   elementId: z.string().min(1),
 });
 export type DocumentsExportMarkdownRequest = z.infer<typeof DocumentsExportMarkdownRequestSchema>;
 
-/** The export result — the relative + absolute path of the written `.md`. */
+/** The export result — display-safe metadata for the written `.md`. */
 export type DocumentsExportMarkdownResult = {
   readonly relativePath: string;
-  readonly absPath: string;
+  readonly directoryLabel: "Downloads";
 };
 
 // ---------------------------------------------------------------------------
@@ -1546,8 +1546,8 @@ export type CardsImportAnkiResult = {
 /**
  * Export selected cards to an Anki-compatible `.apkg` or CSV (T070). The selection is
  * explicit card ids, a concept's cards, or all live cards; the format is `apkg` or
- * `csv`. MAIN builds the file in the managed `exports/` vault (read-only on the DB,
- * carrying source refs OUT to Anki) and returns the written path + card count.
+ * `csv`. MAIN builds the file in the OS Downloads directory (read-only on the DB,
+ * carrying source refs OUT to Anki) and returns display-safe metadata + card count.
  */
 export const CardsExportAnkiRequestSchema = z
   .object({
@@ -1561,10 +1561,10 @@ export const CardsExportAnkiRequestSchema = z
   });
 export type CardsExportAnkiRequest = z.infer<typeof CardsExportAnkiRequestSchema>;
 
-/** The Anki-export result — the written file path (relative + absolute) + card count. */
+/** The Anki-export result — display-safe file metadata + card count. */
 export type CardsExportAnkiResult = {
   readonly relativePath: string;
-  readonly absPath: string;
+  readonly directoryLabel: "Downloads";
   readonly cardCount: number;
 };
 
@@ -5632,8 +5632,8 @@ export interface AppApi {
     /** Upsert an element's document body; logs `update_document` (T015). */
     save(request: DocumentsSaveRequest): Promise<DocumentsSaveResult>;
     /**
-     * Export an element's document body to a `.md` in the managed `exports/` vault
-     * (T068). Read-only on the DB (no mutation, no op-log entry); returns the path.
+     * Export an element's document body to a `.md` in Downloads (T068). Read-only on
+     * the DB (no mutation, no op-log entry); returns display-safe file metadata.
      */
     exportMarkdown(request: DocumentsExportMarkdownRequest): Promise<DocumentsExportMarkdownResult>;
     /** Document-mark annotations (highlight / extracted-span / processed-span) (T020). */
@@ -5751,8 +5751,9 @@ export interface AppApi {
      */
     importAnki(request: CardsImportAnkiRequest): Promise<CardsImportAnkiResult>;
     /**
-     * Export selected cards to an Anki-compatible `.apkg`/CSV in `exports/` (T070),
-     * carrying source refs OUT to Anki. Read-only on the DB; returns the file path.
+     * Export selected cards to an Anki-compatible `.apkg`/CSV in Downloads (T070),
+     * carrying source refs OUT to Anki. Read-only on the DB; returns display-safe
+     * file metadata.
      */
     exportAnki(request: CardsExportAnkiRequest): Promise<CardsExportAnkiResult>;
   };

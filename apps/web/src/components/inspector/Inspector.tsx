@@ -585,7 +585,7 @@ function isAttentionScheduler(
 
 /**
  * "Export to Markdown" action (T068) — serializes the element's stored document
- * body to a `.md` in the managed `exports/` vault (MAIN owns the path) and surfaces
+ * body to a `.md` in Downloads (MAIN owns the path) and surfaces
  * the written location. Read-only on the DB (no mutation). Desktop-only; renders
  * nothing in a bare renderer.
  */
@@ -602,7 +602,7 @@ function ExportMarkdownSection({ elementId }: { elementId: string }) {
     setDone(null);
     try {
       const result = await appApi.exportDocumentMarkdown({ elementId });
-      setDone(result.relativePath);
+      setDone(`${result.directoryLabel}/${result.relativePath}`);
     } catch (e) {
       setError(e instanceof Error ? friendlyExportError(e.message) : "Could not export.");
     } finally {
@@ -625,7 +625,7 @@ function ExportMarkdownSection({ elementId }: { elementId: string }) {
       </button>
       {done ? (
         <p className="insp-empty" data-testid="export-done">
-          Exported to exports/{done}
+          Exported to {done}
         </p>
       ) : null}
       {error ? (
@@ -650,7 +650,7 @@ type AnkiExportScope = { kind: "card" } | { kind: "concept"; id: string } | { ki
 
 /**
  * "Export to Anki" action (T070) — exports cards to an Anki-compatible `.apkg` (or CSV)
- * in the managed `exports/` vault, carrying the source reference OUT to Anki. The scope
+ * in Downloads, carrying the source reference OUT to Anki. The scope
  * selector mirrors the spec: this card, a concept the card belongs to, or all cards. The
  * `conceptId`/`all` scopes are resolved MAIN-side by the export service. Read-only on the
  * DB. Desktop-only.
@@ -682,7 +682,9 @@ function ExportAnkiSection({
             : { format, cardIds: [cardId] };
       const result = await appApi.exportAnki(request);
       setDone(
-        `${result.relativePath} · ${result.cardCount} card${result.cardCount === 1 ? "" : "s"}`,
+        `${result.directoryLabel}/${result.relativePath} · ${result.cardCount} card${
+          result.cardCount === 1 ? "" : "s"
+        }`,
       );
     } catch (e) {
       setError(
@@ -760,7 +762,7 @@ function ExportAnkiSection({
       </div>
       {done ? (
         <p className="insp-empty" data-testid="export-anki-done">
-          Exported to exports/{done}
+          Exported to {done}
         </p>
       ) : null}
       {error ? (

@@ -11,7 +11,7 @@
  *     assets/
  *       sources/
  *       media/
- *     exports/
+ *     exports/                  (managed vault skeleton; user exports go to Downloads)
  *     backups/
  *
  * On macOS `<appData>` is `~/Library/Application Support`. The directory is
@@ -36,6 +36,8 @@ export interface AppPaths {
   readonly assetsDir: string;
   /** Exports directory (`exports/`). */
   readonly exportsDir: string;
+  /** User-facing export destination (OS-standard Downloads directory). */
+  readonly downloadsDir: string;
   /** Backups directory (`backups/`). */
   readonly backupsDir: string;
   /** Local embedding-model directory (`models/`, T087) — the worker resolves the model here. */
@@ -59,13 +61,26 @@ export function resolveDataDir(): string {
   return path.join(app.getPath("appData"), APP_DIR_NAME);
 }
 
+/** Resolve the OS-standard user Downloads directory for export artifacts. */
+export function resolveDownloadsDir(): string {
+  const override = process.env.INTERLEAVE_DOWNLOADS_DIR;
+  if (!app.isPackaged && override && override.length > 0) {
+    return path.resolve(override);
+  }
+  return app.getPath("downloads");
+}
+
 /** Compute every managed path from a data directory. */
-export function computeAppPaths(dataDir: string): AppPaths {
+export function computeAppPaths(
+  dataDir: string,
+  downloadsDir = path.join(dataDir, "downloads"),
+): AppPaths {
   return {
     dataDir,
     dbPath: path.join(dataDir, "app.sqlite"),
     assetsDir: path.join(dataDir, "assets"),
     exportsDir: path.join(dataDir, "exports"),
+    downloadsDir,
     backupsDir: path.join(dataDir, "backups"),
     modelsDir: path.join(dataDir, "models"),
   };
@@ -93,5 +108,5 @@ export function ensureVaultSkeleton(paths: AppPaths): AppPaths {
 
 /** Resolve + create the full app data layout in one call. */
 export function initAppPaths(): AppPaths {
-  return ensureVaultSkeleton(computeAppPaths(resolveDataDir()));
+  return ensureVaultSkeleton(computeAppPaths(resolveDataDir(), resolveDownloadsDir()));
 }

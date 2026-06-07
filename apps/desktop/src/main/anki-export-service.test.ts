@@ -1,7 +1,7 @@
 /**
  * AnkiExportService integration tests (T070) — against a real temp-file SQLite DB +
- * temp `assetsDir`/`exportsDir`. Authors cards via the normal pipeline, exports them
- * to an `.apkg`/CSV in `exports/`, and — the load-bearing contract — ROUND-TRIPS the
+ * temp `assetsDir`/download export dir. Authors cards via the normal pipeline, exports them
+ * to an `.apkg`/CSV in the injected export dir, and — the load-bearing contract — ROUND-TRIPS the
  * `.apkg` back through `AnkiImportService` asserting the prompts/answers/cloze text +
  * the SOURCE REF survive (the source ref lands in the re-imported card's `sourceUri`).
  */
@@ -17,15 +17,15 @@ import { DbService } from "./db-service";
 let dir: string;
 let dbPath: string;
 let assetsDir: string;
-let exportsDir: string;
+let exportDestinationDir: string;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "interleave-ankiexp-"));
   dbPath = path.join(dir, "app.sqlite");
   assetsDir = path.join(dir, "assets");
-  exportsDir = path.join(dir, "exports");
+  exportDestinationDir = path.join(dir, "downloads");
   fs.mkdirSync(assetsDir, { recursive: true });
-  fs.mkdirSync(exportsDir, { recursive: true });
+  fs.mkdirSync(exportDestinationDir, { recursive: true });
 });
 
 afterEach(() => {
@@ -34,7 +34,7 @@ afterEach(() => {
 
 function openSvc(): DbService {
   const svc = new DbService();
-  svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR, assetsDir, exportsDir });
+  svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR, assetsDir, exportDestinationDir });
   return svc;
 }
 
@@ -73,22 +73,23 @@ function seedCards(svc: DbService): { qaId: ElementId; clozeId: ElementId } {
 }
 
 describe("AnkiExportService (T070)", () => {
-  it("exports selected cards to an .apkg in exports/", async () => {
+  it("exports selected cards to an .apkg in the injected export directory", async () => {
     const svc = openSvc();
     const { qaId, clozeId } = seedCards(svc);
-    const result = await svc.exportAnki({ format: "apkg", cardIds: [qaId, clozeId] });
+    const result = await svc.ankiExportService.exportApkg({ cardIds: [qaId, clozeId] });
     expect(result.cardCount).toBe(2);
     expect(result.relativePath.endsWith(".apkg")).toBe(true);
     expect(fs.existsSync(result.absPath)).toBe(true);
-    // The file lives under the managed exports/ dir (never a renderer-chosen path).
-    expect(result.absPath.startsWith(exportsDir)).toBe(true);
+    // The file lives under the main-process injected export dir (never a renderer-chosen path).
+    expect(result.absPath.startsWith(exportDestinationDir)).toBe(true);
     svc.close();
   });
 
   it("exports CSV with the expected rows (fields + tags + source column)", async () => {
     const svc = openSvc();
     const { qaId } = seedCards(svc);
-    const result = await svc.exportAnki({ format: "csv", cardIds: [qaId] });
+    const result = await svc.ankiExportService.exportCsv({ cardIds: [qaId] });
+    expect(result.absPath.startsWith(exportDestinationDir)).toBe(true);
     const csv = fs.readFileSync(result.absPath, "utf8");
     const lines = csv.trim().split("\n");
     expect(lines[0]).toBe("Front,Back,Cloze,Tags,Source");
@@ -103,7 +104,7 @@ describe("AnkiExportService (T070)", () => {
   it("round-trips: export to .apkg then import it back, source ref intact", async () => {
     const svc = openSvc();
     const { qaId, clozeId } = seedCards(svc);
-    const exported = await svc.exportAnki({ format: "apkg", cardIds: [qaId, clozeId] });
+    const exported = await svc.ankiExportService.exportApkg({ cardIds: [qaId, clozeId] });
 
     // Import the exported .apkg back into the SAME app (a fresh deck source).
     const imported = await svc.ankiImportService.importFromFile({ absPath: exported.absPath });
@@ -139,6 +140,12 @@ describe("AnkiExportService (T070)", () => {
     seedCards(svc);
     const result = await svc.exportAnki({ format: "apkg", all: true });
     expect(result.cardCount).toBe(2);
+    expect(result.directoryLabel).toBe("Downloads");
+    expect(result).not.toHaveProperty("absPath");
+    const csv = await svc.exportAnki({ format: "csv", all: true });
+    expect(csv.cardCount).toBe(2);
+    expect(csv.directoryLabel).toBe("Downloads");
+    expect(csv).not.toHaveProperty("absPath");
     svc.close();
   });
 

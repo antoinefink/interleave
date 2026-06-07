@@ -8,7 +8,7 @@
  * and creates an `inbox` `source` through the existing transactional pipeline (one
  * transaction, logged) with the body mapped to the constrained ProseMirror schema +
  * stable block ids. The reverse — `exportToMarkdown` — serializes a stored document
- * back to a `.md` written into the managed `exports/` vault dir.
+ * back to a `.md` written into the user export destination.
  *
  * ## Format paths
  *
@@ -23,9 +23,9 @@
  * ## Export is a FILE ARTIFACT, not a mutation
  *
  * `exportToMarkdown` is read-only on the DB: it loads the stored ProseMirror doc, runs
- * `proseMirrorDocToMarkdown`, and writes `exports/<element_id>-<slug>.md`. It appends
- * NO `operation_log` entry (it changes no domain data). The renderer never picks the
- * path; main owns the `exports/` dir.
+ * `proseMirrorDocToMarkdown`, and writes `<element_id>-<slug>.md` into the injected
+ * export destination. It appends NO `operation_log` entry (it changes no domain data).
+ * The renderer never picks the path; main owns the destination.
  *
  * ## Fidelity ceiling (documented)
  *
@@ -89,8 +89,8 @@ export interface DocumentImportServiceDeps {
   readonly repositories: Repositories;
   /** The asset-vault root (`<dataDir>/assets`) — for storing `original.html`. */
   readonly assetsDir: string;
-  /** The exports root (`<dataDir>/exports`) — where exported `.md` files land. */
-  readonly exportsDir: string;
+  /** The user export destination — Downloads in the Electron app. */
+  readonly exportDestinationDir: string;
 }
 
 /** Arguments to {@link DocumentImportService.importFromFile}. */
@@ -129,7 +129,7 @@ export class DocumentImportService {
   private readonly documents: DocumentRepository;
   private readonly inbox: InboxQuery;
   private readonly assetsDir: string;
-  private readonly exportsDir: string;
+  private readonly exportDestinationDir: string;
 
   constructor(deps: DocumentImportServiceDeps) {
     this.db = deps.db;
@@ -138,7 +138,7 @@ export class DocumentImportService {
     this.documents = deps.repositories.documents;
     this.inbox = new InboxQuery(deps.repositories);
     this.assetsDir = deps.assetsDir;
-    this.exportsDir = deps.exportsDir;
+    this.exportDestinationDir = deps.exportDestinationDir;
   }
 
   /**
@@ -284,7 +284,7 @@ export class DocumentImportService {
   }
 
   /**
-   * Export an element's stored document body to a `.md` in the `exports/` vault.
+   * Export an element's stored document body to a `.md` in the user export destination.
    * Read-only on the DB (no mutation, no op-log entry — it produces a file artifact).
    * Throws if the element has no stored document.
    */
@@ -296,8 +296,8 @@ export class DocumentImportService {
     const markdown = proseMirrorDocToMarkdown(doc.prosemirrorJson as ProseMirrorDoc);
     const title = this.sources.findById(input.elementId)?.element.title ?? null;
     const relativePath = `${input.elementId}-${slug(title)}.md`;
-    const absPath = path.join(this.exportsDir, relativePath);
-    mkdirSync(this.exportsDir, { recursive: true });
+    const absPath = path.join(this.exportDestinationDir, relativePath);
+    mkdirSync(this.exportDestinationDir, { recursive: true });
     await writeFile(absPath, markdown, "utf8");
     return { relativePath, absPath };
   }

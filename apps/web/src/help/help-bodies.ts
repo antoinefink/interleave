@@ -3632,14 +3632,14 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: "On macOS, all Interleave data lives under <code>~/Library/Application Support/Interleave/</code>. The folder contains four items:",
+      text: "On macOS, Interleave data lives under <code>~/Library/Application Support/Interleave/</code>. The folder contains these app-owned items:",
     },
     {
       type: "ul",
       items: [
         "<code>app.sqlite</code> — the database: every source, extract, card, review log, concept, schedule, and setting.",
         "<code>assets/</code> — the asset vault: original PDFs, HTML snapshots, images, and media files.",
-        "<code>exports/</code> — files written by <b>Export to Markdown</b> and <b>Export to Anki</b>.",
+        "<code>exports/</code> — an app-managed internal/legacy export folder. User-facing Markdown, CSV, and Anki exports now land in Downloads.",
         "<code>backups/</code> — local backup ZIPs, including quiet automatic rolling backups and manual backups from <b>Back up now</b> / <kbd>⌘B</kbd>.",
       ],
     },
@@ -3762,8 +3762,8 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     {
       type: "ul",
       items: [
-        "<b>Export to Markdown</b> — available for sources, topics, extracts, and synthesis notes. Writes a <code>.md</code> file to <code>exports/</code> and shows the relative path in the Inspector.",
-        "<b>Export to Anki</b> — available for cards. Choose scope (this card / a concept / all cards), then pick <code>.apkg</code> or CSV. The source reference is carried out as a <em>Source</em> field and tag. Files go to <code>exports/</code> and the result shows the path and card count.",
+        "<b>Export to Markdown</b> — available for sources, topics, extracts, and synthesis notes. Writes a <code>.md</code> file to Downloads and shows the filename in the Inspector.",
+        "<b>Export to Anki</b> — available for cards. Choose scope (this card / a concept / all cards), then pick <code>.apkg</code> or CSV. The source reference is carried out as a <em>Source</em> field and tag. Files go to Downloads and the result shows the filename and card count.",
       ],
     },
     {
@@ -3779,8 +3779,8 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
       type: "ul",
       items: [
         "Protect your entire collection → automatic rolling backups plus <b>Back up now</b> (<kbd>⌘B</kbd>) before risky work. Files go to <code>backups/</code>.",
-        "Move cards to Anki → <b>Export to Anki</b> in the Inspector. Files go to <code>exports/</code>.",
-        "Move notes to Obsidian or another Markdown tool → <b>Export to Markdown</b> in the Inspector. Files go to <code>exports/</code>.",
+        "Move cards to Anki → <b>Export to Anki</b> in the Inspector. Files go to Downloads.",
+        "Move notes to Obsidian or another Markdown tool → <b>Export to Markdown</b> in the Inspector. Files go to Downloads.",
       ],
     },
   ],
@@ -3795,7 +3795,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: "Supported element types: sources, topics, extracts, and synthesis notes. Select the element, then click <b>Export to Markdown</b> in the Inspector. The app writes a <code>.md</code> file to <code>exports/</code> inside your app data folder and shows the relative path in the Inspector. The file is immediately usable in any Markdown editor.",
+      text: "Supported element types: sources, topics, extracts, and synthesis notes. Select the element, then click <b>Export to Markdown</b> in the Inspector. The app writes a <code>.md</code> file to Downloads and shows the filename in the Inspector. The file is immediately usable in any Markdown editor.",
     },
     {
       type: "callout",
@@ -3820,7 +3820,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: "Choose <code>.apkg</code> for direct import into Anki, or <code>CSV</code> for spreadsheet processing. Both formats carry the source reference as a <em>Source</em> field and tag, so the card's origin is visible in Anki. The result shows the file path and card count.",
+      text: "Choose <code>.apkg</code> for direct import into Anki, or <code>CSV</code> for spreadsheet processing. Both formats carry the source reference as a <em>Source</em> field and tag, so the card's origin is visible in Anki. The result shows the filename and card count.",
     },
     {
       type: "callout",
@@ -3833,7 +3833,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: "All exports land in <code>exports/</code> inside your app data folder (<code>~/Library/Application Support/Interleave/exports/</code> on macOS). There is no <em>Reveal in Finder</em> button — navigate there manually. Exports are not backups; back up your vault separately if the exported files also matter.",
+      text: "All exports land in Downloads. There is no <em>Reveal in Finder</em> button — open Downloads manually. Exports are not backups; back up your vault separately if the exported files also matter.",
     },
   ],
   "review-scheduling-settings": [

@@ -1,13 +1,13 @@
 /**
  * DocumentImportService integration tests (T068) — against a real temp-file SQLite DB
- * + temp `assetsDir`/`exportsDir`, pointing at the committed Markdown/HTML fixtures
+ * + temp `assetsDir`/download export dir, pointing at the committed Markdown/HTML fixtures
  * (`@interleave/importers/src/__fixtures__`). No Electron — the service is built
  * through `DbService` (the same accessor the IPC layer uses).
  *
  * Proves: a `.md` file import creates an `inbox` source whose body parses to the
  * expected constrained nodes + the right ops; a `.html` file import reuses the
  * sanitize/HTML→PM path AND writes `original.html` to the vault; pasted Markdown
- * imports without a file; `exportToMarkdown` writes a `.md` to `exports/` whose
+ * imports without a file; `exportToMarkdown` writes a `.md` to the injected export dir whose
  * content re-imports to an equivalent doc (the round-trip end-to-end through the DB);
  * and the imported source survives re-opening the DB (restart-persistence).
  */
@@ -38,15 +38,15 @@ const HTML_FIXTURE = path.join(FIXTURES, "html", "sample.html");
 let dir: string;
 let dbPath: string;
 let assetsDir: string;
-let exportsDir: string;
+let exportDestinationDir: string;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "interleave-docimp-"));
   dbPath = path.join(dir, "app.sqlite");
   assetsDir = path.join(dir, "assets");
-  exportsDir = path.join(dir, "exports");
+  exportDestinationDir = path.join(dir, "downloads");
   fs.mkdirSync(assetsDir, { recursive: true });
-  fs.mkdirSync(exportsDir, { recursive: true });
+  fs.mkdirSync(exportDestinationDir, { recursive: true });
 });
 
 afterEach(() => {
@@ -55,7 +55,7 @@ afterEach(() => {
 
 function openSvc(): DbService {
   const svc = new DbService();
-  svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR, assetsDir, exportsDir });
+  svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR, assetsDir, exportDestinationDir });
   return svc;
 }
 
@@ -157,7 +157,7 @@ describe("DocumentImportService.importFromText (paste path)", () => {
 });
 
 describe("DocumentImportService.exportToMarkdown (round-trip through the DB)", () => {
-  it("exports a .md to exports/ whose content re-imports to an equivalent doc", async () => {
+  it("exports a .md to the injected export directory whose content re-imports to an equivalent doc", async () => {
     const svc = openSvc();
     const imported = await svc.documentImportService.importFromFile({
       absPath: MD_FIXTURE,
@@ -166,10 +166,10 @@ describe("DocumentImportService.exportToMarkdown (round-trip through the DB)", (
     const exportResult = await svc.documentImportService.exportToMarkdown({
       elementId: imported.id as never,
     });
-    // The file landed in exports/.
+    // The file landed in the main-process injected export directory.
     expect(fs.existsSync(exportResult.absPath)).toBe(true);
     expect(exportResult.relativePath.endsWith(".md")).toBe(true);
-    expect(exportResult.absPath.startsWith(exportsDir)).toBe(true);
+    expect(exportResult.absPath.startsWith(exportDestinationDir)).toBe(true);
 
     // Exporting is read-only — no op-log entry was appended for the export.
     const opsAfterImport = svc.repos.operationLog
@@ -184,6 +184,19 @@ describe("DocumentImportService.exportToMarkdown (round-trip through the DB)", (
     const exportedMd = readFileSync(exportResult.absPath, "utf8");
     const reimported = markdownToProseMirrorDoc(exportedMd).doc;
     expect([...nodeTypes(reimported)].sort()).toEqual([...nodeTypes(storedDoc)].sort());
+    svc.close();
+  });
+
+  it("DbService exportMarkdown returns display-safe metadata only", async () => {
+    const svc = openSvc();
+    const imported = await svc.documentImportService.importFromFile({
+      absPath: MD_FIXTURE,
+      format: "markdown",
+    });
+    const result = await svc.exportMarkdown({ elementId: imported.id as never });
+    expect(result.relativePath.endsWith(".md")).toBe(true);
+    expect(result.directoryLabel).toBe("Downloads");
+    expect(result).not.toHaveProperty("absPath");
     svc.close();
   });
 });

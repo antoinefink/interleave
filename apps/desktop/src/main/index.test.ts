@@ -142,10 +142,12 @@ async function loadIndex(options: {
   }));
   vi.doMock("./paths", () => ({
     initAppPaths: vi.fn(() => ({
+      dataDir: "/data",
       dbPath: "/data/app.sqlite",
       assetsDir: "/data/assets",
       backupsDir: "/data/backups",
       exportsDir: "/data/exports",
+      downloadsDir: "/users/me/Downloads",
       modelsDir: "/data/models",
     })),
   }));
@@ -244,7 +246,7 @@ describe("main entrypoint", () => {
       migrationsDir: "/migrations",
       nativeBinding: "/native/better.node",
       assetsDir: "/data/assets",
-      exportsDir: "/data/exports",
+      exportDestinationDir: "/users/me/Downloads",
       vecBinaryPath: "/native/vec0.dylib",
       allowLoopbackImport: true,
     });
@@ -257,7 +259,12 @@ describe("main entrypoint", () => {
     expect(harness.registerIpcHandlers).toHaveBeenCalledWith(
       harness.dbService,
       expect.objectContaining({
-        paths: expect.objectContaining({ dbPath: "/data/app.sqlite", assetsDir: "/data/assets" }),
+        paths: expect.objectContaining({
+          dbPath: "/data/app.sqlite",
+          assetsDir: "/data/assets",
+          exportsDir: "/data/exports",
+          downloadsDir: "/users/me/Downloads",
+        }),
         migrationsDir: "/migrations",
         captureController: harness.captureController,
         runner: harness.jobRunner,

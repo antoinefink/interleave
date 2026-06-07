@@ -712,13 +712,14 @@ describe("Anki import/export schemas (T070)", () => {
     expect(() => CardsExportAnkiRequestSchema.parse({ format: "pdf", all: true })).toThrow();
   });
 
-  it("CardsExportAnkiResult round-trips the file-path shape", () => {
+  it("CardsExportAnkiResult round-trips display-safe file metadata", () => {
     const result: CardsExportAnkiResult = {
       relativePath: "anki-export-123.apkg",
-      absPath: "/data/exports/anki-export-123.apkg",
+      directoryLabel: "Downloads",
       cardCount: 5,
     };
     expect(result.cardCount).toBe(5);
+    expect(result.directoryLabel).toBe("Downloads");
     expect(result.relativePath.endsWith(".apkg")).toBe(true);
   });
 });
@@ -784,9 +785,10 @@ describe("Markdown/HTML import-export schemas (T068)", () => {
     expect(imp.id).toBe("el_md");
     const exp: DocumentsExportMarkdownResult = {
       relativePath: "el_md-a-note.md",
-      absPath: "/data/exports/el_md-a-note.md",
+      directoryLabel: "Downloads",
     };
     expect(exp.relativePath.endsWith(".md")).toBe(true);
+    expect(exp.directoryLabel).toBe("Downloads");
   });
 });
 

@@ -30,7 +30,7 @@ function openSeeded() {
   svc.open(paths.dbPath, {
     migrationsDir: MIGRATIONS_DIR,
     assetsDir: paths.assetsDir,
-    exportsDir: paths.exportsDir,
+    exportDestinationDir: paths.downloadsDir,
   });
   seedDemoCollection(svc.repos, svc.raw.db);
 

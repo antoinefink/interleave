@@ -2,7 +2,7 @@
  * AnkiExportService (T070) — the local-first Anki `.apkg`/CSV export orchestrator (main).
  *
  * Exports a selection of Interleave cards to an Anki-compatible `.apkg` (and/or a
- * CSV) in the managed `exports/` vault, CARRYING SOURCE REFERENCES into Anki (the
+ * CSV) in the user export destination, CARRYING SOURCE REFERENCES into Anki (the
  * originating source title/URL/location → an Anki `Source` field AND an
  * `interleave::source::<slug>` tag) so the lineage is not lost on the way out. It is
  * READ-ONLY on the Interleave DB (no mutation, no op-log) — it produces a file.
@@ -68,8 +68,8 @@ export class AnkiExportError extends Error {
 /** Constructor dependencies (injected once; mirroring the other services). */
 export interface AnkiExportServiceDeps {
   readonly repositories: Repositories;
-  /** The exports root (`<dataDir>/exports`) — where the `.apkg`/CSV lands. */
-  readonly exportsDir: string;
+  /** The user export destination — Downloads in the Electron app. */
+  readonly exportDestinationDir: string;
   /** The Electron-ABI `better-sqlite3` binding for writing the export collection. */
   readonly nativeBinding?: string | undefined;
 }
@@ -79,7 +79,7 @@ export class AnkiExportService {
   private readonly review: ReviewRepository;
   private readonly sources: SourceRepository;
   private readonly concepts: ConceptRepository;
-  private readonly exportsDir: string;
+  private readonly exportDestinationDir: string;
   private readonly nativeBinding: string | undefined;
 
   constructor(deps: AnkiExportServiceDeps) {
@@ -87,12 +87,12 @@ export class AnkiExportService {
     this.review = deps.repositories.review;
     this.sources = deps.repositories.sources;
     this.concepts = deps.repositories.concepts;
-    this.exportsDir = deps.exportsDir;
+    this.exportDestinationDir = deps.exportDestinationDir;
     this.nativeBinding = deps.nativeBinding;
   }
 
   /**
-   * Export selected cards to an Anki `.apkg` in `exports/`. Read-only on the DB.
+   * Export selected cards to an Anki `.apkg` in the user export destination. Read-only on the DB.
    * Throws {@link AnkiExportError} when the selection resolves to no cards.
    */
   async exportApkg(input: AnkiExportSelection): Promise<AnkiExportFileResult> {
@@ -149,8 +149,8 @@ export class AnkiExportService {
       const apkg = buildApkgZip({ collectionBytes, media: {}, mediaFiles: {} });
 
       const relativePath = `anki-export-${now}.apkg`;
-      const absPath = path.join(this.exportsDir, relativePath);
-      mkdirSync(this.exportsDir, { recursive: true });
+      const absPath = path.join(this.exportDestinationDir, relativePath);
+      mkdirSync(this.exportDestinationDir, { recursive: true });
       await writeFile(absPath, Buffer.from(apkg));
       return { relativePath, absPath, cardCount: notes.length };
     } finally {
@@ -163,9 +163,9 @@ export class AnkiExportService {
   }
 
   /**
-   * Export selected cards to a CSV in `exports/` — one row per note (the fields + a
-   * `Tags` column + a `Source` column). Anki's "import CSV" reads this directly.
-   * Read-only on the DB.
+   * Export selected cards to a CSV in the user export destination — one row per note
+   * (the fields + a `Tags` column + a `Source` column). Anki's "import CSV" reads
+   * this directly. Read-only on the DB.
    */
   async exportCsv(input: AnkiExportSelection): Promise<AnkiExportFileResult> {
     const notes = this.resolveExportNotes(input);
@@ -188,8 +188,8 @@ export class AnkiExportService {
 
     const now = Date.now();
     const relativePath = `anki-export-${now}.csv`;
-    const absPath = path.join(this.exportsDir, relativePath);
-    mkdirSync(this.exportsDir, { recursive: true });
+    const absPath = path.join(this.exportDestinationDir, relativePath);
+    mkdirSync(this.exportDestinationDir, { recursive: true });
     await writeFile(absPath, csv, "utf8");
     return { relativePath, absPath, cardCount: notes.length };
   }

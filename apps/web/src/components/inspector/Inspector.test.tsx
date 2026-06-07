@@ -19,6 +19,8 @@ const h = vi.hoisted(() => ({
   createTask: vi.fn(),
   completeTask: vi.fn(),
   postponeTask: vi.fn(),
+  exportDocumentMarkdown: vi.fn(),
+  exportAnki: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -58,7 +60,8 @@ vi.mock("../../lib/appApi", async () => {
       createTask: h.createTask,
       completeTask: h.completeTask,
       postponeTask: h.postponeTask,
-      exportDocumentMarkdown: vi.fn(),
+      exportDocumentMarkdown: h.exportDocumentMarkdown,
+      exportAnki: h.exportAnki,
       addTag: vi.fn(),
       removeTag: vi.fn(),
       assignConcept: vi.fn(),
@@ -332,6 +335,17 @@ beforeEach(() => {
   h.completeTask.mockResolvedValue({});
   h.postponeTask.mockReset();
   h.postponeTask.mockResolvedValue({});
+  h.exportDocumentMarkdown.mockReset();
+  h.exportDocumentMarkdown.mockResolvedValue({
+    relativePath: "Wigner-paper.md",
+    directoryLabel: "Downloads",
+  });
+  h.exportAnki.mockReset();
+  h.exportAnki.mockResolvedValue({
+    relativePath: "Interleave.apkg",
+    directoryLabel: "Downloads",
+    cardCount: 1,
+  });
 });
 
 describe("Inspector", () => {
@@ -419,6 +433,38 @@ describe("Inspector", () => {
     );
     expect(screen.queryByTestId("provenance-canonical-url")).not.toBeInTheDocument();
     expect(screen.queryByText("Canonical URL")).not.toBeInTheDocument();
+  });
+
+  it("shows Markdown exports as written to Downloads", async () => {
+    h.selectedId = "src-1";
+    h.getInspectorData.mockResolvedValue({ data: sourceData() });
+
+    render(<Inspector />);
+
+    fireEvent.click(await screen.findByTestId("export-markdown"));
+
+    await waitFor(() =>
+      expect(h.exportDocumentMarkdown).toHaveBeenCalledWith({ elementId: "src-1" }),
+    );
+    expect(await screen.findByTestId("export-done")).toHaveTextContent(
+      "Exported to Downloads/Wigner-paper.md",
+    );
+  });
+
+  it("shows Anki exports as written to Downloads", async () => {
+    h.selectedId = "card-1";
+    h.getInspectorData.mockResolvedValue({ data: cardDataWithSourceContext() });
+
+    render(<Inspector />);
+
+    fireEvent.click(await screen.findByTestId("export-anki-apkg"));
+
+    await waitFor(() =>
+      expect(h.exportAnki).toHaveBeenCalledWith({ format: "apkg", cardIds: ["card-1"] }),
+    );
+    expect(await screen.findByTestId("export-anki-done")).toHaveTextContent(
+      "Exported to Downloads/Interleave.apkg · 1 card",
+    );
   });
 
   it("renders extract identity, properties, attention, and source lineage without duplicated facts", async () => {

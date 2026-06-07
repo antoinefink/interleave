@@ -26,15 +26,15 @@ import { DbService } from "./db-service";
 let dir: string;
 let dbPath: string;
 let assetsDir: string;
-let exportsDir: string;
+let exportDestinationDir: string;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "interleave-ankiimp-"));
   dbPath = path.join(dir, "app.sqlite");
   assetsDir = path.join(dir, "assets");
-  exportsDir = path.join(dir, "exports");
+  exportDestinationDir = path.join(dir, "downloads");
   fs.mkdirSync(assetsDir, { recursive: true });
-  fs.mkdirSync(exportsDir, { recursive: true });
+  fs.mkdirSync(exportDestinationDir, { recursive: true });
 });
 
 afterEach(() => {
@@ -43,7 +43,7 @@ afterEach(() => {
 
 function openSvc(): DbService {
   const svc = new DbService();
-  svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR, assetsDir, exportsDir });
+  svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR, assetsDir, exportDestinationDir });
   return svc;
 }
 

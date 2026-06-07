@@ -944,15 +944,15 @@ export type SourcesImportHighlightsResult = {
   readonly items: readonly InboxItemSummary[];
 };
 
-/** Export a document to Markdown (T068) — MAIN writes the `.md` to the `exports/` vault. */
+/** Export a document to Markdown (T068) — MAIN writes the `.md` to Downloads. */
 export interface DocumentsExportMarkdownRequest {
   readonly elementId: string;
 }
 
-/** The Markdown-export result (T068) — the written `.md` path. */
+/** The Markdown-export result (T068) — display-safe file metadata. */
 export type DocumentsExportMarkdownResult = {
   readonly relativePath: string;
-  readonly absPath: string;
+  readonly directoryLabel: "Downloads";
 };
 
 /** Serve a PDF source's original bytes to the renderer for rendering (T064). */
@@ -2064,7 +2064,7 @@ export interface CardsExportAnkiRequest {
 
 export type CardsExportAnkiResult = {
   readonly relativePath: string;
-  readonly absPath: string;
+  readonly directoryLabel: "Downloads";
   readonly cardCount: number;
 };
 
@@ -3969,9 +3969,9 @@ export const appApi = {
     return requireAppApi().sources.importHighlights(request);
   },
   /**
-   * Export a document (source/extract/topic) to a `.md` in the managed `exports/` vault
-   * (T068). Read-only on the DB; returns the written path. MAIN owns the path — the
-   * renderer never picks it.
+   * Export a document (source/extract/topic) to a `.md` in Downloads (T068).
+   * Read-only on the DB; returns display-safe file metadata. MAIN owns the path —
+   * the renderer never picks it.
    */
   exportDocumentMarkdown(
     request: DocumentsExportMarkdownRequest,
@@ -4223,8 +4223,8 @@ export const appApi = {
     return requireAppApi().cards.importAnki(request);
   },
   /**
-   * Export selected cards to an Anki `.apkg`/CSV in the managed `exports/` vault (T070),
-   * carrying source refs OUT to Anki. Read-only on the DB; returns the written path.
+   * Export selected cards to an Anki `.apkg`/CSV in Downloads (T070), carrying source
+   * refs OUT to Anki. Read-only on the DB; returns display-safe file metadata.
    */
   exportAnki(request: CardsExportAnkiRequest): Promise<CardsExportAnkiResult> {
     return requireAppApi().cards.exportAnki(request);

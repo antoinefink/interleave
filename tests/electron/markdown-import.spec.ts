@@ -8,7 +8,7 @@
  *      reads + parses + creates an `inbox` source (the source lands in the inbox);
  *   2. opening it in the reader shows headings/code/links (a normal document body);
  *   3. extracting from it works (it is a normal document-bearing element);
- *   4. exporting it to Markdown writes a `.md` to the `exports/` vault;
+ *   4. exporting it to Markdown writes a `.md` to Downloads;
  *   5. after an APP RESTART against the same data dir, the source + its extract survive.
  *
  * The renderer reaches all of this only through `window.appApi` — no fs/SQL.
@@ -35,6 +35,8 @@ const FIXTURE = path.resolve(
 
 let dataDir: string;
 let baseUrl: string;
+let downloadsDir: string;
+let exportedMarkdownName: string;
 
 test.beforeAll(() => {
   ensureBuilt();
@@ -117,7 +119,7 @@ test("importing a .md lands an inbox source; the reader shows its body", async (
   await expect(page.getByTestId("reader-title")).toBeVisible();
   await expect(page.locator(".reader .ProseMirror")).toBeVisible();
   await expect(page.locator(".reader .ProseMirror h1, .reader .ProseMirror h2")).toHaveCount(2);
-  await expect(page.locator(".reader .ProseMirror pre")).toBeVisible();
+  await expect(page.locator(".reader .ProseMirror pre.code-node__pre")).toBeVisible();
 
   await app.close();
 });
@@ -127,6 +129,7 @@ test("extracting from the imported source + exporting it to Markdown both work",
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
   await captureBaseUrl(page);
+  downloadsDir = path.join(dataDir, "downloads");
 
   const id = await firstInboxId(page);
   await page.goto(`${baseUrl}/source/${id}`);
@@ -149,22 +152,25 @@ test("extracting from the imported source + exporting it to Markdown both work",
   await page.keyboard.press("e");
   await expect(page.getByText("Extracted")).toBeVisible();
 
-  // Export the source to Markdown via the inspector action → a .md lands in exports/.
-  const exportRel = await page.evaluate(async (elementId) => {
+  // Export the source to Markdown via the bridge → a .md lands in Downloads.
+  const exportedResult = await page.evaluate(async (elementId) => {
     const api = window.appApi as unknown as {
       documents: {
         exportMarkdown(req: {
           elementId: string;
-        }): Promise<{ relativePath: string; absPath: string }>;
+        }): Promise<{ relativePath: string; directoryLabel: "Downloads"; absPath?: string }>;
       };
     };
-    const { relativePath } = await api.documents.exportMarkdown({ elementId });
-    return relativePath;
+    return api.documents.exportMarkdown({ elementId });
   }, id);
+  expect(exportedResult).not.toHaveProperty("absPath");
+  expect(exportedResult.directoryLabel).toBe("Downloads");
+  const exportRel = exportedResult.relativePath;
   expect(exportRel.endsWith(".md")).toBe(true);
-  expect(fs.existsSync(path.join(dataDir, "exports", exportRel))).toBe(true);
+  exportedMarkdownName = exportRel;
+  expect(fs.existsSync(path.join(downloadsDir, exportRel))).toBe(true);
   // The exported Markdown re-imports to a non-empty document (round-trip sanity).
-  const exported = fs.readFileSync(path.join(dataDir, "exports", exportRel), "utf8");
+  const exported = fs.readFileSync(path.join(downloadsDir, exportRel), "utf8");
   expect(exported).toContain("# The Spacing Effect");
 
   await app.close();
@@ -206,11 +212,8 @@ test("the source + its extract + the export survive an app restart", async () =>
   await page.waitForLoadState("domcontentloaded");
   await expect(page.locator(".reader .ProseMirror")).toBeVisible();
 
-  // An export file from the previous run still exists in the vault.
-  const exports = fs.existsSync(path.join(dataDir, "exports"))
-    ? fs.readdirSync(path.join(dataDir, "exports")).filter((f) => f.endsWith(".md"))
-    : [];
-  expect(exports.length).toBeGreaterThan(0);
+  // An export file from the previous run still exists in Downloads.
+  expect(fs.existsSync(path.join(downloadsDir, exportedMarkdownName))).toBe(true);
 
   await app.close();
 });
