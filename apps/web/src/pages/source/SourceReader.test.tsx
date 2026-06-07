@@ -308,6 +308,14 @@ describe("SourceReader", () => {
     expect(getByTestId("mock-source-editor")).toBeInTheDocument();
   });
 
+  it("navigates to Library from the breadcrumb", async () => {
+    const { findByRole } = render(<SourceReader />);
+
+    fireEvent.click(await findByRole("button", { name: "Library" }));
+
+    expect(h.navigate).toHaveBeenCalledWith({ to: "/library" });
+  });
+
   it("sets read-points and soft-deletes through the bridge", async () => {
     const { getByTestId, findByTestId } = render(<SourceReader />);
     await findByTestId("mock-source-editor");

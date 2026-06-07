@@ -135,6 +135,23 @@ test("the reader shows title, body, progress, action bar, and extracted-span mar
   await app.close();
 });
 
+test("the Library breadcrumb opens the Library route", async () => {
+  const app = await launchApp(dataDir, { seedOnEmpty: true });
+  const page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+  await openReader(page, sourceId);
+
+  await page
+    .getByRole("navigation", { name: "Breadcrumb" })
+    .getByRole("button", { name: "Library" })
+    .click();
+
+  await expect(page).toHaveURL(/\/library$/);
+  await expect(page.getByTestId("route-library")).toBeVisible();
+
+  await app.close();
+});
+
 test("(b) reopening resumes at the read-point: the divider renders before the first unread block", async () => {
   const app = await launchApp(dataDir, { seedOnEmpty: true });
   const page = await app.firstWindow();

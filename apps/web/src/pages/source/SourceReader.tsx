@@ -77,14 +77,19 @@ function Dot() {
 
 /** The source-metadata header row (title + provenance + chips). */
 function SourceHeader({ data }: { data: InspectorData | null }) {
+  const navigate = useNavigate();
   const title = data?.element.title ?? "Source";
   const provenance = data?.provenance ?? null;
   return (
     <header className="reader-header" data-testid="reader-header">
       <nav className="reader-crumbs" aria-label="Breadcrumb">
-        <span className="reader-crumb">
+        <button
+          type="button"
+          className="reader-crumb"
+          onClick={() => void navigate({ to: "/library" })}
+        >
           <Icon name="library" size={14} /> Library
-        </span>
+        </button>
         <span className="reader-crumb-sep">
           <Icon name="chevronRight" size={13} />
         </span>
