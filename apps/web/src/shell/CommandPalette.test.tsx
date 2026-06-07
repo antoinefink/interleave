@@ -252,7 +252,7 @@ describe("CommandPalette — action entries (T048)", () => {
     expect(request.limit).toBeLessThanOrEqual(20);
   });
 
-  it("keeps matching command rows above the live Sources section", async () => {
+  it("shows the live Sources section before matching app links while typing", async () => {
     bridge.searchQuery.mockResolvedValue(
       searchResponse([
         sourceHit({
@@ -271,9 +271,26 @@ describe("CommandPalette — action entries (T048)", () => {
     const commandRow = screen.getByRole("button", { name: /Review session/i });
     const sourceRow = sourceTitle.closest("button");
     expect(sourceRow).not.toBeNull();
-    expect(commandRow.compareDocumentPosition(sourceRow as HTMLButtonElement)).toBe(
+    expect((sourceRow as HTMLButtonElement).compareDocumentPosition(commandRow)).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     );
+  });
+
+  it("shows source-search status before app links before results arrive", async () => {
+    const pending = deferred<SearchQueryResult>();
+    bridge.searchQuery.mockReturnValue(pending.promise);
+    setup(false);
+    const input = screen.getByLabelText("Command palette search");
+
+    fireEvent.change(input, { target: { value: "review" } });
+
+    const sourceStatus = await screen.findByText("Searching sources...");
+    const commandRow = screen.getByRole("button", { name: /Review session/i });
+    expect(sourceStatus.compareDocumentPosition(commandRow)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    await act(async () => {
+      pending.resolve(searchResponse([]));
+    });
   });
 
   it("navigates to the selected source route and closes the palette", async () => {
