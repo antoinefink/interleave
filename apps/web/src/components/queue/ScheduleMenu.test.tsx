@@ -45,6 +45,41 @@ describe("ScheduleMenu", () => {
     expect(screen.queryByTestId("schedule-menu-pop")).toBeNull();
   });
 
+  it("supports a labeled custom trigger and opens from an external signal", () => {
+    const { rerender } = render(
+      <ScheduleMenu
+        onSchedule={vi.fn()}
+        openSignal={0}
+        triggerClassName="pq-btn"
+        triggerIcon="postpone"
+        triggerLabel="Postpone"
+        triggerTestId="process-action-postpone"
+        tooltipLabel="Postpone"
+        ariaLabel="Postpone until later"
+      />,
+    );
+
+    const trigger = screen.getByTestId("process-action-postpone");
+    expect(trigger).toHaveClass("pq-btn");
+    expect(trigger).toHaveTextContent("Postpone");
+    expect(trigger).toHaveAttribute("aria-label", "Postpone until later");
+    expect(screen.queryByTestId("schedule-menu-pop")).toBeNull();
+
+    rerender(
+      <ScheduleMenu
+        onSchedule={vi.fn()}
+        openSignal={1}
+        triggerClassName="pq-btn"
+        triggerIcon="postpone"
+        triggerLabel="Postpone"
+        triggerTestId="process-action-postpone"
+        tooltipLabel="Postpone"
+        ariaLabel="Postpone until later"
+      />,
+    );
+    expect(screen.getByTestId("schedule-menu-pop")).toBeInTheDocument();
+  });
+
   it("closes the popover on Escape", () => {
     render(<ScheduleMenu onSchedule={vi.fn()} />);
     fireEvent.click(screen.getByTestId("schedule-menu-trigger"));

@@ -6,7 +6,7 @@
  * a compact read/process panel for attention items (source / topic / extract /
  * task) and the FULL inline FSRS card surface for cards (reveal → grade
  * Again/Hard/Good/Easy with next-interval previews, exactly as the review session)
- * — with the T030 actions (open-in-full / postpone / raise / lower / done /
+ * — with the T030 actions (open-in-full / postpone menu / raise / lower / done /
  * dismiss / delete / skip) available inline. After EVERY action it advances the
  * cursor to the next due item automatically, so a user can process ten mixed
  * sources/extracts/cards end to end WITHOUT ever returning to the list — including
@@ -26,7 +26,7 @@
  * SQLite/Node/fs and never does FSRS math — it only carries opaque ids + measures
  * the reveal→grade response time. Cards stay on FSRS, attention items on the
  * attention scheduler — the chip + scheduling never cross (a card never sees the
- * `ScheduleMenu`). The card grade advances the FROZEN-order cursor (consistent with
+ * attention `Postpone` menu). The card grade advances the FROZEN-order cursor (consistent with
  * the other loop actions), it does NOT re-read the review deck.
  *
  * Pure UI orchestration — no SQL, no scheduling math, no priority math.
@@ -225,6 +225,7 @@ export function ProcessQueue() {
     tab: CardKind;
     clozeText?: string;
   } | null>(null);
+  const [postponeMenuOpenSignal, setPostponeMenuOpenSignal] = useState(0);
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -456,11 +457,11 @@ export function ProcessQueue() {
 
   /**
    * Apply one in-place action through the SAME typed mutation path as the list
-   * (T030), then ADVANCE to the next item. postpone/raise/lower/done/dismiss/delete
-   * all route through `queue.act`; the loop never returns to the list — it just
-   * moves the cursor. Recoverable mutations keep a local undo recipe so ⌘Z can
-   * restore the item and cursor in place, but they do not raise a snackbar on every
-   * item transition.
+   * (T030), then ADVANCE to the next item. raise/lower/done/dismiss/delete and
+   * card-only postpone route through `queue.act`; attention-item postpone uses the
+   * explicit schedule menu below. The loop never returns to the list — it just moves
+   * the cursor. Recoverable mutations keep a local undo recipe so ⌘Z can restore the
+   * item and cursor in place, but they do not raise a snackbar on every item transition.
    */
   const act = useCallback(
     async (kind: LoopActionKind) => {
@@ -1054,7 +1055,11 @@ export function ProcessQueue() {
     {
       canProcess: !done,
       next: skip,
-      postpone: () => void act("postpone"),
+      postpone: () => {
+        if (busy) return;
+        if (current?.type === "card") void act("postpone");
+        else if (current) setPostponeMenuOpenSignal((n) => n + 1);
+      },
       markDone: () => void act("markDone"),
       dismiss: () => void act("dismiss"),
       delete: () => void act("delete"),
@@ -1183,6 +1188,7 @@ export function ProcessQueue() {
             inspector={inspector}
             extractDraft={extractDraft}
             extractBuilder={extractBuilder}
+            postponeMenuOpenSignal={postponeMenuOpenSignal}
             cardView={cardView}
             revealed={revealed}
             previews={previews}
@@ -1615,6 +1621,7 @@ function ProcessCard({
   inspector,
   extractDraft,
   extractBuilder,
+  postponeMenuOpenSignal,
   cardView,
   revealed,
   previews,
@@ -1648,6 +1655,7 @@ function ProcessCard({
   inspector: InspectorData | null;
   extractDraft: SourceEditorChange | null;
   extractBuilder: { tab: CardKind; clozeText?: string } | null;
+  postponeMenuOpenSignal: number;
   /** The full reveal-ready view for a CARD item (fetched by id), or null. */
   cardView: ReviewCardView | null;
   revealed: boolean;
@@ -1868,19 +1876,33 @@ function ProcessCard({
           <Icon name="arrowDown" size={14} />
           Lower
         </button>
-        <button
-          type="button"
-          className="pq-btn"
-          disabled={busy}
-          data-testid="process-action-postpone"
-          onClick={() => onAction("postpone")}
-        >
-          <Icon name="postpone" size={14} />
-          Postpone
-        </button>
-        {/* Explicit reschedule (tomorrow/next-week/next-month/manual) — non-card
-            attention items only (cards schedule on FSRS, never the attention seam). */}
-        {!isCard ? <ScheduleMenu disabled={busy} onSchedule={onSchedule} /> : null}
+        {/* Non-card attention items use Postpone as the explicit reschedule menu
+            (tomorrow/next-week/next-month/manual). Cards stay on FSRS, so their
+            Postpone button remains the immediate queue action. */}
+        {isCard ? (
+          <button
+            type="button"
+            className="pq-btn"
+            disabled={busy}
+            data-testid="process-action-postpone"
+            onClick={() => onAction("postpone")}
+          >
+            <Icon name="postpone" size={14} />
+            Postpone
+          </button>
+        ) : (
+          <ScheduleMenu
+            disabled={busy}
+            onSchedule={onSchedule}
+            triggerClassName="pq-btn"
+            triggerIcon="postpone"
+            triggerLabel="Postpone"
+            triggerTestId="process-action-postpone"
+            openSignal={postponeMenuOpenSignal}
+            tooltipLabel="Postpone"
+            ariaLabel="Postpone until tomorrow, next week, next month, or a manual date"
+          />
+        )}
         <button
           type="button"
           className="pq-btn"

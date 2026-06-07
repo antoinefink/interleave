@@ -572,29 +572,16 @@ describe("ProcessQueue", () => {
     await waitFor(() => expect(currentItemId()).toBe("card-1"));
   });
 
-  it("keeps command-log undo after postponing and restores the process cursor", async () => {
+  it("keeps command-log undo after postponing through the merged menu", async () => {
     render(<ProcessQueue />);
     await moveToSource();
 
+    expect(screen.queryByTestId("schedule-menu-trigger")).toBeNull();
+    expect(screen.getByTestId("process-action-postpone")).toHaveTextContent("Postpone");
     fireEvent.click(screen.getByTestId("process-action-postpone"));
-
-    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
-    expect(screen.queryByTestId("queue-snackbar")).toBeNull();
-
-    fireEvent.keyDown(window, { key: "z", metaKey: true });
-
-    await waitFor(() => expect(h.undoLast).toHaveBeenCalledTimes(1));
-    expect(h.undoQueueAction).not.toHaveBeenCalled();
-    await waitFor(() => expect(currentItemId()).toBe("source-1"));
-    expect(screen.getByTestId("process-progress")).toHaveTextContent("2 / 3");
-  });
-
-  it("keeps command-log undo after explicit scheduling and restores the process cursor", async () => {
-    render(<ProcessQueue />);
-    await moveToSource();
-
-    fireEvent.click(screen.getByTestId("schedule-menu-trigger"));
-    fireEvent.click(await screen.findByTestId("schedule-tomorrow"));
+    expect(await screen.findByTestId("schedule-menu-pop")).toBeInTheDocument();
+    expect(h.actOnQueueItem).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTestId("schedule-tomorrow"));
 
     await waitFor(() =>
       expect(h.scheduleQueueItem).toHaveBeenCalledWith({
@@ -608,17 +595,60 @@ describe("ProcessQueue", () => {
     fireEvent.keyDown(window, { key: "z", metaKey: true });
 
     await waitFor(() => expect(h.undoLast).toHaveBeenCalledTimes(1));
+    expect(h.undoQueueAction).not.toHaveBeenCalled();
+    await waitFor(() => expect(currentItemId()).toBe("source-1"));
+    expect(screen.getByTestId("process-progress")).toHaveTextContent("2 / 3");
+  });
+
+  it("opens the merged Postpone menu from the p shortcut on attention items", async () => {
+    render(<ProcessQueue />);
+    await moveToSource();
+
+    fireEvent.keyDown(window, { key: "p" });
+    expect(await screen.findByTestId("schedule-menu-pop")).toBeInTheDocument();
+    expect(h.actOnQueueItem).not.toHaveBeenCalled();
+    expect(h.scheduleQueueItem).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("schedule-nextWeek"));
+
+    await waitFor(() =>
+      expect(h.scheduleQueueItem).toHaveBeenCalledWith({
+        id: "source-1",
+        choice: { kind: "nextWeek" },
+      }),
+    );
+    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+    expect(screen.queryByTestId("queue-snackbar")).toBeNull();
+
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
+
+    await waitFor(() => expect(h.undoLast).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(currentItemId()).toBe("source-1"));
   });
 
+  it("keeps card Postpone as the immediate queue action", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    expect(currentItemId()).toBe("card-1");
+    expect(screen.queryByTestId("schedule-menu")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("process-action-postpone"));
+
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({
+        id: "card-1",
+        action: { kind: "postpone" },
+      }),
+    );
+    expect(h.scheduleQueueItem).not.toHaveBeenCalled();
+  });
+
   it("replaces a pending silent undo with the next process mutation", async () => {
-    h.actOnQueueItem
-      .mockResolvedValueOnce({
-        item: null,
-        removed: true,
-        undo: { kind: "status", previousStatus: "scheduled" },
-      })
-      .mockResolvedValueOnce({ item: null, removed: false, undo: null });
+    h.actOnQueueItem.mockResolvedValueOnce({
+      item: null,
+      removed: true,
+      undo: { kind: "status", previousStatus: "scheduled" },
+    });
     render(<ProcessQueue />);
     await screen.findByTestId("process-item");
 
@@ -627,7 +657,9 @@ describe("ProcessQueue", () => {
     expect(screen.queryByTestId("queue-snackbar")).toBeNull();
 
     fireEvent.click(screen.getByTestId("process-action-postpone"));
+    fireEvent.click(await screen.findByTestId("schedule-tomorrow"));
     await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+    await waitFor(() => expect(h.scheduleQueueItem).toHaveBeenCalledTimes(1));
     expect(screen.queryByTestId("queue-snackbar")).toBeNull();
 
     fireEvent.keyDown(window, { key: "z", metaKey: true });

@@ -7,7 +7,7 @@
  * the shell's `useShellShortcuts`); this only owns the keys that drive THIS loop.
  *
  *   n / → / Space  → next / skip (advance the cursor without mutating)
- *   p              → postpone the current item
+ *   p              → postpone the current item (opens attention schedule menu; cards postpone)
  *   d              → mark done
  *   x              → dismiss
  *   ⌫ / Delete     → delete (soft, undoable)

@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { QueueScheduleChoice } from "../../lib/appApi";
-import { Icon } from "../Icon";
+import { Icon, type IconName } from "../Icon";
 import { Tooltip } from "../Tooltip";
 import "./schedule-menu.css";
 
@@ -35,14 +35,38 @@ function todayIsoDate(): string {
 export function ScheduleMenu({
   disabled,
   onSchedule,
+  openSignal,
+  triggerClassName = "schedmenu__trigger",
+  triggerIcon = "calendar",
+  triggerLabel,
+  triggerTestId = "schedule-menu-trigger",
+  tooltipLabel = "Schedule for later",
+  ariaLabel = "Schedule for tomorrow, next week, next month, or a manual date",
 }: {
   disabled?: boolean;
   /** Apply one explicit schedule choice (the parent routes it through the bridge). */
   onSchedule: (choice: QueueScheduleChoice) => void;
+  /** Increment/change this value to open the menu from an external shortcut. */
+  openSignal?: number;
+  /** Button class for the trigger; callers can opt into row icon or process-button styling. */
+  triggerClassName?: string;
+  triggerIcon?: IconName;
+  /** Optional visible label. Omit for the compact row icon button. */
+  triggerLabel?: string;
+  triggerTestId?: string;
+  tooltipLabel?: string;
+  ariaLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [manualDate, setManualDate] = useState("");
   const rootRef = useRef<HTMLSpanElement>(null);
+  const openSignalRef = useRef(openSignal);
+
+  useEffect(() => {
+    if (openSignal === undefined || openSignalRef.current === openSignal) return;
+    openSignalRef.current = openSignal;
+    setOpen(true);
+  }, [openSignal]);
 
   // Close the popover on an outside click or Escape (keyboard-first hygiene).
   useEffect(() => {
@@ -81,18 +105,19 @@ export function ScheduleMenu({
     <span className="schedmenu" ref={rootRef} data-testid="schedule-menu">
       {/* Styled tooltip on the trigger; suppressed while the menu is open so the
           bubble doesn't sit over the popover it just spawned. */}
-      <Tooltip label="Schedule for later" disabled={open}>
+      <Tooltip label={tooltipLabel} disabled={open}>
         <button
           type="button"
-          className="schedmenu__trigger"
+          className={triggerClassName}
           disabled={disabled}
-          aria-label="Schedule for tomorrow, next week, next month, or a manual date"
+          aria-label={ariaLabel}
           aria-haspopup="menu"
           aria-expanded={open}
-          data-testid="schedule-menu-trigger"
+          data-testid={triggerTestId}
           onClick={() => setOpen((o) => !o)}
         >
-          <Icon name="calendar" size={14} />
+          <Icon name={triggerIcon} size={14} />
+          {triggerLabel ? <span>{triggerLabel}</span> : null}
         </button>
       </Tooltip>
       {open ? (
