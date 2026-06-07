@@ -485,8 +485,7 @@ mark.extracted {
 }
 /* Reveal on hover over the rail, and keep a processed paragraph's restore button
    visible so the user can always undo (matches the kit's persistent restore icon). */
-.reader-rail:hover .readpara__mark,
-.readpara__mark[data-processed="true"] {
+.reader-rail:hover .readpara__mark {
   opacity: 1;
 }
 .readpara__mark:hover {
@@ -495,9 +494,16 @@ mark.extracted {
   background: var(--accent-soft);
 }
 .readpara__mark[data-processed="true"] {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  border-color: var(--accent-soft-bd);
+  opacity: 0.74;
+  background: var(--surface-2);
+  color: var(--text-3);
+  border-color: var(--border);
+}
+.readpara__mark[data-processed="true"]:hover {
+  opacity: 1;
+  background: var(--surface);
+  color: var(--text-2);
+  border-color: var(--border-strong);
 }
 .reader-railhead {
   display: flex;

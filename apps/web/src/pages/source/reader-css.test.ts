@@ -45,4 +45,18 @@ describe("source reader CSS", () => {
     expect(button).toContain("height: 24px;");
     expect(button).not.toMatch(/\bbox-shadow\s*:/);
   });
+
+  it("keeps persistent processed toggles neutral instead of accent blue", () => {
+    const processedButton = cssBlock('.readpara__mark[data-processed="true"]');
+    const processedHover = cssBlock('.readpara__mark[data-processed="true"]:hover');
+
+    expect(processedButton).toContain("opacity: 0.74;");
+    expect(processedButton).toContain("background: var(--surface-2);");
+    expect(processedButton).toContain("color: var(--text-3);");
+    expect(processedButton).toContain("border-color: var(--border);");
+    expect(processedButton).not.toContain("var(--accent-soft)");
+    expect(processedButton).not.toContain("var(--accent-text)");
+    expect(processedHover).toContain("background: var(--surface);");
+    expect(processedHover).toContain("border-color: var(--border-strong);");
+  });
 });
