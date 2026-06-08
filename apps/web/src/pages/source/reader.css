@@ -12,7 +12,7 @@
 /* The serif reading column. The Tiptap surface (`SourceEditor`) renders with the
    `.reader` class, so its paragraphs/headings inherit the read faces below. */
 .reader {
-  max-width: 680px;
+  max-width: var(--reader-text-measure);
   margin: 0 auto;
 }
 .reader p {
@@ -476,7 +476,7 @@ mark.extracted {
 .reader-rail {
   --reader-bottom-breathing-room: calc(var(--s-8) * 5);
 
-  max-width: 680px;
+  max-width: var(--reader-text-measure);
   margin: 0 auto;
   padding: var(--s-7) 0 var(--reader-bottom-breathing-room);
   /* Positioning context for the per-paragraph "mark processed" overlay (T026). */
@@ -490,7 +490,7 @@ mark.extracted {
 /* Ported from design/kit/styles/app.css (`.readpara__mark`) against the canonical
    tokens. The buttons live in an absolutely-positioned overlay over the live editor
    (we never mutate the ProseMirror DOM); each is anchored to its block's measured
-   top. The right column (-34px past the 680px column) keeps them in the margin. */
+   top. The right column sits past the shared text measure to keep controls in the margin. */
 .readpara-overlay {
   position: absolute;
   inset: 0;

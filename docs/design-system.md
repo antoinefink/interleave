@@ -27,8 +27,9 @@ the **visual source of truth** — UI-bearing tasks must match it.
   - Reading marks: `--mark-hl` (highlight), `--mark-extract` / `--mark-extract-bd`
     (extracted span).
 - **Spacing** 4px base (`--s-1…--s-12`), **radii** `--r-xs…--r-full`, **layout dims**
-  `--sidebar-w: 212px`, `--inspector-w: 296px`, `--topbar-h: 52px`, **motion** `--ease`,
-  `--fast 110ms`, `--med 200ms`, shadows, and `--focus-ring`.
+  `--sidebar-w: 212px`, `--inspector-w: 296px`, `--topbar-h: 52px`,
+  `--reader-text-measure: 720px` (shared long-form source text measure), **motion**
+  `--ease`, `--fast 110ms`, `--med 200ms`, shadows, and `--focus-ring`.
 
 ### Wiring into the app (Tailwind v4)
 Import `tokens.css` once globally. Derive the Tailwind v4 theme **from** these variables

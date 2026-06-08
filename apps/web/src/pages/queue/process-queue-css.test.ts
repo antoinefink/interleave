@@ -48,6 +48,11 @@ describe("process queue styles", () => {
     expect(editor).toContain("background: transparent;");
     expect(editor).toContain("flex: 1 1 auto;");
     expect(editor).toContain("min-height: 0;");
+    expect(reader).toContain("flex: 1 1 auto;");
+    expect(reader).toContain("width: 100%;");
+    expect(reader).toContain("max-width: var(--reader-text-measure);");
+    expect(reader).toContain("margin: 0 auto;");
+    expect(reader).not.toContain("max-width: none;");
     expect(reader).toContain("max-height: none;");
     expect(reader).toContain("overflow-y: auto;");
   });

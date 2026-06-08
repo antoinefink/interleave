@@ -10,6 +10,12 @@ const readerCssPath =
     path.join(process.cwd(), "src/pages/source/reader.css"),
   ].find((candidate) => existsSync(candidate)) ?? "";
 const readerCss = readFileSync(readerCssPath, "utf8");
+const tokenCssPath =
+  [
+    path.join(process.cwd(), "design/tokens.css"),
+    path.join(process.cwd(), "../../design/tokens.css"),
+  ].find((candidate) => existsSync(candidate)) ?? "";
+const tokenCss = readFileSync(tokenCssPath, "utf8");
 
 function cssBlock(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -20,6 +26,16 @@ function cssBlock(selector: string): string {
 }
 
 describe("source reader CSS", () => {
+  it("defines the shared reader text measure in design tokens", () => {
+    expect(tokenCss).toContain("--reader-text-measure: 720px;");
+  });
+
+  it("declares and uses the shared reader text measure", () => {
+    const reader = cssBlock(".reader");
+
+    expect(reader).toContain("max-width: var(--reader-text-measure);");
+  });
+
   it("keeps the read-point hint clear of the dashed divider", () => {
     const hint = cssBlock(".readpoint__hint");
 
@@ -87,6 +103,7 @@ describe("source reader CSS", () => {
     expect(page).toContain("overflow-y: auto;");
     expect(page).toContain("min-height: 0;");
     expect(rail).toContain("--reader-bottom-breathing-room: calc(var(--s-8) * 5);");
+    expect(rail).toContain("max-width: var(--reader-text-measure);");
     expect(rail).toContain("padding: var(--s-7) 0 var(--reader-bottom-breathing-room);");
   });
 

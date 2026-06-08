@@ -59,6 +59,7 @@
   --sidebar-w: 212px;
   --inspector-w: 296px;
   --topbar-h: 52px;
+  --reader-text-measure: 720px;
 
   /* ---- Motion ---- */
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
