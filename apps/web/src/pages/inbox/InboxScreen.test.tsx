@@ -439,7 +439,9 @@ describe("InboxScreen", () => {
     fireEvent.click(secondRow);
     resolveFirstDetail({ detail: detail("src-1") });
 
-    await waitFor(() => expect(getByTestId("inbox-preview-title")).toHaveTextContent("Second source"));
+    await waitFor(() =>
+      expect(getByTestId("inbox-preview-title")).toHaveTextContent("Second source"),
+    );
     expect(getByTestId("inbox-read-now")).not.toHaveFocus();
     expect(getByTestId("inbox-triage-actions")).not.toHaveAttribute("data-highlighted", "true");
     expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();

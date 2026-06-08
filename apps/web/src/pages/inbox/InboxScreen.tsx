@@ -570,6 +570,7 @@ export function InboxScreen() {
     }
   }, [detail, revealInboxTriageActions]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset pending triage focus when the selected row changes.
   useEffect(() => {
     pendingTriageFocusRef.current = null;
   }, [selId]);

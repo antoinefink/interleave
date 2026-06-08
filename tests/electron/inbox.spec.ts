@@ -325,7 +325,9 @@ test.describe("Read now source return path", () => {
         };
         inspector: {
           get(req: { id: string }): Promise<{
-            data: { element: { id: string; type: string; status: string; dueAt: string | null } } | null;
+            data: {
+              element: { id: string; type: string; status: string; dueAt: string | null };
+            } | null;
           }>;
         };
         readPoints: {

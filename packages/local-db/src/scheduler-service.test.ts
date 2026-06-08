@@ -96,9 +96,9 @@ describe("SchedulerService.rescheduleForAction", () => {
     expect(element.status).toBe("active");
     expect(element.dueAt).toBeTruthy();
     expect(intervalDays).toBe(3);
-    expect(
-      Math.round((Date.parse(element.dueAt as string) - Date.parse(now)) / 86_400_000),
-    ).toBe(3);
+    expect(Math.round((Date.parse(element.dueAt as string) - Date.parse(now)) / 86_400_000)).toBe(
+      3,
+    );
 
     const persisted = new ElementRepository(handle.db).findById(sourceId);
     expect(persisted?.status).toBe("active");
