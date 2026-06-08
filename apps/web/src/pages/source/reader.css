@@ -322,6 +322,9 @@ mark.extracted {
   border-bottom: 1px solid var(--border);
   flex: none;
 }
+.source-reader-screen .reader-header {
+  padding: var(--s-3) var(--s-6) var(--s-3);
+}
 .reader-crumbs {
   display: flex;
   align-items: center;
@@ -403,6 +406,9 @@ mark.extracted {
   margin-top: 14px;
   flex-wrap: wrap;
 }
+.source-reader-screen .reader-actions {
+  margin-top: var(--s-2);
+}
 .reader-btn {
   font-family: var(--font-ui);
   font-size: var(--t-sm);
@@ -475,6 +481,9 @@ mark.extracted {
   padding: var(--s-7) 0 var(--reader-bottom-breathing-room);
   /* Positioning context for the per-paragraph "mark processed" overlay (T026). */
   position: relative;
+}
+.source-reader-screen .reader-rail {
+  padding-top: var(--s-4);
 }
 
 /* ---------- Per-paragraph "mark processed" affordance (T026) ---------- */

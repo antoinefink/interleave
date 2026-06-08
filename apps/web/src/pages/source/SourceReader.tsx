@@ -40,7 +40,7 @@ import {
   setReaderDecorations,
 } from "@interleave/editor";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { ExternalUrlLink } from "../../components/ExternalUrlLink";
 import { Icon } from "../../components/Icon";
 import { requestInspectorRefresh } from "../../components/inspector/Inspector";
@@ -78,7 +78,7 @@ function Dot() {
 }
 
 /** The source-metadata header row (title + provenance + chips). */
-function SourceHeader({ data }: { data: InspectorData | null }) {
+function SourceHeader({ actions, data }: { data: InspectorData | null; actions?: ReactNode }) {
   const navigate = useNavigate();
   const title = data?.element.title ?? "Source";
   const provenance = data?.provenance ?? null;
@@ -139,6 +139,7 @@ function SourceHeader({ data }: { data: InspectorData | null }) {
           </>
         ) : null}
       </div>
+      {actions ? <div className="reader-actions">{actions}</div> : null}
     </header>
   );
 }
@@ -704,6 +705,27 @@ export function SourceReader() {
       <Icon name="trash" size={14} />
     </button>
   );
+  const sourceOpenOriginalAction = openOriginalUrl ? (
+    <a
+      className="reader-btn"
+      href={openOriginalUrl}
+      target="_blank"
+      rel="noreferrer"
+      data-testid="reader-open-original"
+    >
+      <Icon name="external" size={14} /> Open original
+    </a>
+  ) : (
+    <button
+      type="button"
+      className="reader-btn"
+      disabled
+      title="No original URL on this source"
+      data-testid="reader-open-original"
+    >
+      <Icon name="external" size={14} /> Open original
+    </button>
+  );
 
   // Media reading mode (T073): a video/audio source reuses the SAME header +
   // inspector, but swaps the editor body for an HTML5 `<video>`/`<audio>` (local,
@@ -712,24 +734,16 @@ export function SourceReader() {
   if (doc.sourceFormat === "video") {
     return (
       <div className="reader-screen source-reader-screen" data-testid="route-source">
-        <SourceHeader data={inspector} />
-        <div className="reader-header" style={{ borderBottom: "1px solid var(--border)" }}>
-          <div className="reader-actions">
-            {openOriginalUrl ? (
-              <a
-                className="reader-btn"
-                href={openOriginalUrl}
-                target="_blank"
-                rel="noreferrer"
-                data-testid="reader-open-original"
-              >
-                <Icon name="external" size={14} /> Open original
-              </a>
-            ) : null}
-            {sourceWorkflowActions}
-            {sourceDeleteAction}
-          </div>
-        </div>
+        <SourceHeader
+          data={inspector}
+          actions={
+            <>
+              {openOriginalUrl ? sourceOpenOriginalAction : null}
+              {sourceWorkflowActions}
+              {sourceDeleteAction}
+            </>
+          }
+        />
         <MediaReader
           elementId={id}
           prosemirrorJson={doc.currentDoc}
@@ -775,27 +789,19 @@ export function SourceReader() {
     const pdfPct = pdfPage.total > 0 ? (pdfPage.page / pdfPage.total) * 100 : 0;
     return (
       <div className="reader-screen source-reader-screen" data-testid="route-source">
-        <SourceHeader data={inspector} />
-        <div className="reader-header" style={{ borderBottom: "1px solid var(--border)" }}>
-          <div className="reader-actions">
-            <span className="reader-meta reader-meta--mono" data-testid="reader-pdf-progress">
-              {pdfPage.total > 0 ? `page ${pdfPage.page} of ${pdfPage.total}` : "PDF"}
-            </span>
-            {openOriginalUrl ? (
-              <a
-                className="reader-btn"
-                href={openOriginalUrl}
-                target="_blank"
-                rel="noreferrer"
-                data-testid="reader-open-original"
-              >
-                <Icon name="external" size={14} /> Open original
-              </a>
-            ) : null}
-            {sourceWorkflowActions}
-            {sourceDeleteAction}
-          </div>
-        </div>
+        <SourceHeader
+          data={inspector}
+          actions={
+            <>
+              <span className="reader-meta reader-meta--mono" data-testid="reader-pdf-progress">
+                {pdfPage.total > 0 ? `page ${pdfPage.page} of ${pdfPage.total}` : "PDF"}
+              </span>
+              {openOriginalUrl ? sourceOpenOriginalAction : null}
+              {sourceWorkflowActions}
+              {sourceDeleteAction}
+            </>
+          }
+        />
         <div className="pbar" style={{ margin: 0 }}>
           <div
             className="pbar__fill"
@@ -847,44 +853,24 @@ export function SourceReader() {
 
   return (
     <div className="reader-screen source-reader-screen" data-testid="route-source">
-      <SourceHeader data={inspector} />
-
-      {/* action bar */}
-      <div className="reader-header" style={{ borderBottom: "1px solid var(--border)" }}>
-        <div className="reader-actions">
-          <button
-            type="button"
-            className="reader-btn reader-btn--primary"
-            data-testid="reader-set-readpoint"
-            onClick={() => void onSetReadPoint()}
-          >
-            <Icon name="bookmark" size={14} /> Set read-point <Kbd keys="␣" />
-          </button>
-          {sourceWorkflowActions}
-          {openOriginalUrl ? (
-            <a
-              className="reader-btn"
-              href={openOriginalUrl}
-              target="_blank"
-              rel="noreferrer"
-              data-testid="reader-open-original"
-            >
-              <Icon name="external" size={14} /> Open original
-            </a>
-          ) : (
+      <SourceHeader
+        data={inspector}
+        actions={
+          <>
             <button
               type="button"
-              className="reader-btn"
-              disabled
-              title="No original URL on this source"
-              data-testid="reader-open-original"
+              className="reader-btn reader-btn--primary"
+              data-testid="reader-set-readpoint"
+              onClick={() => void onSetReadPoint()}
             >
-              <Icon name="external" size={14} /> Open original
+              <Icon name="bookmark" size={14} /> Set read-point <Kbd keys="␣" />
             </button>
-          )}
-          {sourceDeleteAction}
-        </div>
-      </div>
+            {sourceWorkflowActions}
+            {sourceOpenOriginalAction}
+            {sourceDeleteAction}
+          </>
+        }
+      />
 
       {/* reading column */}
       <div

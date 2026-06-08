@@ -393,12 +393,15 @@ describe("SourceReader", () => {
   });
 
   it("loads source metadata, selects the route element, and renders article controls", async () => {
-    const { getByTestId, findByTestId } = render(<SourceReader />);
+    const { getAllByTestId, getByTestId, findByTestId } = render(<SourceReader />);
 
     expect(await findByTestId("reader-title")).toHaveTextContent("Reader source");
     expect(h.select).toHaveBeenCalledWith("src-1");
     expect(h.getInspectorData).toHaveBeenCalledWith({ id: "src-1" });
+    expect(getAllByTestId("reader-header")).toHaveLength(1);
     expect(getByTestId("reader-url")).toHaveAttribute("href", "https://example.com/source");
+    expect(getByTestId("reader-set-readpoint")).toBeInTheDocument();
+    expect(getByTestId("reader-open-original")).toBeInTheDocument();
     expect(getByTestId("reader-progress")).toHaveTextContent("1/2 processed");
     expect(getByTestId("reader-pbar-fill")).toHaveStyle({ width: "50%" });
     expect(getByTestId("mock-source-editor")).toBeInTheDocument();
@@ -653,13 +656,18 @@ describe("SourceReader", () => {
 
   it("switches to the PDF reader and mirrors child page progress", async () => {
     h.documentState.sourceFormat = "pdf";
-    const { getByTestId, findByTestId } = render(<SourceReader />);
+    const { getAllByTestId, getByTestId, findByTestId } = render(<SourceReader />);
 
     expect(await findByTestId("mock-pdf-reader")).toHaveTextContent("PDF src-1");
+    expect(getAllByTestId("reader-header")).toHaveLength(1);
     expect(getByTestId("reader-pdf-progress")).toHaveTextContent("PDF");
     expect(getByTestId("reader-postpone")).toBeInTheDocument();
     expect(getByTestId("reader-mark-done")).toBeInTheDocument();
     expect(getByTestId("reader-lower-priority")).toBeInTheDocument();
+    expect(getByTestId("reader-open-original")).toHaveAttribute(
+      "href",
+      "https://example.com/source",
+    );
 
     fireEvent.click(getByTestId("mock-pdf-page-change"));
     expect(getByTestId("reader-pdf-progress")).toHaveTextContent("page 2 of 4");
@@ -671,9 +679,10 @@ describe("SourceReader", () => {
 
   it("switches to the media reader for video sources", async () => {
     h.documentState.sourceFormat = "video";
-    const { findByTestId, getByTestId } = render(<SourceReader />);
+    const { findByTestId, getAllByTestId, getByTestId } = render(<SourceReader />);
 
     expect(await findByTestId("mock-media-reader")).toHaveTextContent("Media src-1");
+    expect(getAllByTestId("reader-header")).toHaveLength(1);
     expect(getByTestId("reader-postpone")).toBeInTheDocument();
     expect(getByTestId("reader-mark-done")).toBeInTheDocument();
     expect(getByTestId("reader-lower-priority")).toBeInTheDocument();

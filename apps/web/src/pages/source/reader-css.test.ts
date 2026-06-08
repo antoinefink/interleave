@@ -89,4 +89,18 @@ describe("source reader CSS", () => {
     expect(rail).toContain("--reader-bottom-breathing-room: calc(var(--s-8) * 5);");
     expect(rail).toContain("padding: var(--s-7) 0 var(--reader-bottom-breathing-room);");
   });
+
+  it("uses source-scoped compact chrome so the reader body starts higher", () => {
+    const genericHeader = cssBlock(".reader-header");
+    const sourceHeader = cssBlock(".source-reader-screen .reader-header");
+    const genericActions = cssBlock(".reader-actions");
+    const sourceActions = cssBlock(".source-reader-screen .reader-actions");
+    const sourceRail = cssBlock(".source-reader-screen .reader-rail");
+
+    expect(genericHeader).toContain("padding: 18px 28px 14px;");
+    expect(sourceHeader).toContain("padding: var(--s-3) var(--s-6) var(--s-3);");
+    expect(genericActions).toContain("margin-top: 14px;");
+    expect(sourceActions).toContain("margin-top: var(--s-2);");
+    expect(sourceRail).toContain("padding-top: var(--s-4);");
+  });
 });
