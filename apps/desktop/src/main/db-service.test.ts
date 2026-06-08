@@ -12,10 +12,16 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { ElementId } from "@interleave/core";
 import { MIGRATIONS_DIR, openDatabase } from "@interleave/db";
 import { seedDemoCollection } from "@interleave/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type SearchQueryRequest, SourcesUpdateReliabilityRequestSchema } from "../shared/contract";
+import {
+  type BlockProcessingListResult,
+  type BlockProcessingSummaryResult,
+  type SearchQueryRequest,
+  SourcesUpdateReliabilityRequestSchema,
+} from "../shared/contract";
 import { DbService } from "./db-service";
 
 let dir: string;
@@ -971,6 +977,37 @@ describe("DbService", () => {
       .all(sourceId) as { id: string; order: number }[];
   }
 
+  function expectZeroBlockProcessingSummary(
+    result: BlockProcessingListResult | BlockProcessingSummaryResult,
+    sourceElementId: string,
+  ) {
+    expect(result.summary).toMatchObject({
+      sourceElementId,
+      totalBlocks: 0,
+      processedBlocks: 0,
+      terminalBlocks: 0,
+      unresolvedBlocks: 0,
+      highPriorityUnresolvedBlocks: 0,
+      extractedBlockCount: 0,
+      extractedOutputCount: 0,
+      ignoredBlocks: 0,
+      ignoredRatio: 0,
+      terminalRatio: 1,
+      staleAfterEditBlocks: 0,
+      legacyProjectedBlocks: 0,
+      canMarkDoneWithoutConfirmation: true,
+      stateCounts: {
+        unread: 0,
+        read: 0,
+        extracted: 0,
+        ignored: 0,
+        processed_without_output: 0,
+        needs_later: 0,
+        stale_after_edit: 0,
+      },
+    });
+  }
+
   it("block processing persists across reopen and turns stale after a source edit", () => {
     const first = new DbService();
     first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
@@ -1028,6 +1065,126 @@ describe("DbService", () => {
       "stale_after_edit",
     );
     second.close();
+  });
+
+  it("read-only block processing requests return empty results for missing, deleted, and non-source ids", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const missingId = "el_missing_block_processing_source";
+
+    const { id: deletedSourceId } = svc.importManualSource({
+      title: "Deleted block processing source",
+      priority: "A",
+      body: "Already processed paragraph.\n\nUnprocessed paragraph.",
+    });
+    const deletedBlocks = blockRowsFor(svc, deletedSourceId);
+    svc.markBlockProcessed({
+      sourceElementId: deletedSourceId,
+      stableBlockId: deletedBlocks[0]?.id ?? "",
+    });
+    svc.repos.elements.softDelete(deletedSourceId as ElementId);
+
+    const nonSource = svc.repos.elements.create({
+      type: "topic",
+      status: "active",
+      stage: "rough_topic",
+      priority: 0.625,
+      title: "Not a source",
+    });
+
+    for (const sourceElementId of [missingId, deletedSourceId, nonSource.id]) {
+      const listResult = svc.listBlockProcessing({ sourceElementId });
+      expect(listResult.blocks).toEqual([]);
+      expectZeroBlockProcessingSummary(listResult, sourceElementId);
+      expectZeroBlockProcessingSummary(
+        svc.getBlockProcessingSummary({ sourceElementId }),
+        sourceElementId,
+      );
+    }
+
+    svc.close();
+  });
+
+  it("block processing mutations still reject missing, deleted, non-source, and wrong-source blocks", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const { id: liveSourceId } = svc.importManualSource({
+      title: "Live block processing source",
+      priority: "B",
+      body: "Live source paragraph.",
+    });
+    const { id: otherSourceId } = svc.importManualSource({
+      title: "Other block processing source",
+      priority: "B",
+      body: "Other source paragraph.",
+    });
+    const { id: deletedSourceId } = svc.importManualSource({
+      title: "Deleted strict block processing source",
+      priority: "B",
+      body: "Deleted source paragraph.",
+    });
+    const liveBlockId = blockRowsFor(svc, liveSourceId)[0]?.id ?? "";
+    const otherBlockId = blockRowsFor(svc, otherSourceId)[0]?.id ?? "";
+    const deletedBlockId = blockRowsFor(svc, deletedSourceId)[0]?.id ?? "";
+    svc.repos.elements.softDelete(deletedSourceId as ElementId);
+    const nonSource = svc.repos.elements.create({
+      type: "topic",
+      status: "active",
+      stage: "rough_topic",
+      priority: 0.625,
+      title: "Not a source",
+    });
+
+    const processingRowsBefore = (
+      svc.raw.sqlite.prepare("SELECT COUNT(*) AS count FROM source_block_processing").get() as {
+        count: number;
+      }
+    ).count;
+    const operationRowsBefore = (
+      svc.raw.sqlite.prepare("SELECT COUNT(*) AS count FROM operation_log").get() as {
+        count: number;
+      }
+    ).count;
+    const markMethods = [
+      svc.markBlockIgnored.bind(svc),
+      svc.markBlockProcessed.bind(svc),
+      svc.markBlockNeedsLater.bind(svc),
+      svc.markBlockUnread.bind(svc),
+    ];
+
+    for (const mark of markMethods) {
+      expect(() =>
+        mark({ sourceElementId: "el_missing_block_processing_source", stableBlockId: liveBlockId }),
+      ).toThrow(/source .* not found/);
+      expect(() =>
+        mark({ sourceElementId: deletedSourceId, stableBlockId: deletedBlockId }),
+      ).toThrow(/source .* not found/);
+      expect(() => mark({ sourceElementId: nonSource.id, stableBlockId: liveBlockId })).toThrow(
+        /source .* not found/,
+      );
+      expect(() => mark({ sourceElementId: liveSourceId, stableBlockId: otherBlockId })).toThrow(
+        /does not belong to source/,
+      );
+    }
+
+    expect(
+      (
+        svc.raw.sqlite.prepare("SELECT COUNT(*) AS count FROM source_block_processing").get() as {
+          count: number;
+        }
+      ).count,
+    ).toBe(processingRowsBefore);
+    expect(
+      (
+        svc.raw.sqlite.prepare("SELECT COUNT(*) AS count FROM operation_log").get() as {
+          count: number;
+        }
+      ).count,
+    ).toBe(operationRowsBefore);
+
+    svc.close();
   });
 
   it("createCard (qa) maps the A/B/C/D label → numeric priority and round-trips lineage (T032)", () => {

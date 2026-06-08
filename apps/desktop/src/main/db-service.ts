@@ -2901,6 +2901,9 @@ export class DbService {
 
   listBlockProcessing(request: BlockProcessingSourceRequest): BlockProcessingListResult {
     const sourceElementId = request.sourceElementId as ElementId;
+    if (!this.isLiveSource(sourceElementId)) {
+      return { blocks: [], summary: emptyBlockProcessingSummary(sourceElementId) };
+    }
     return {
       blocks: this.blockProcessingService.listBlockViews(sourceElementId),
       summary: this.blockProcessingService.getSourceProcessingSummary(sourceElementId),
@@ -2908,11 +2911,18 @@ export class DbService {
   }
 
   getBlockProcessingSummary(request: BlockProcessingSourceRequest): BlockProcessingSummaryResult {
+    const sourceElementId = request.sourceElementId as ElementId;
+    if (!this.isLiveSource(sourceElementId)) {
+      return { summary: emptyBlockProcessingSummary(sourceElementId) };
+    }
     return {
-      summary: this.blockProcessingService.getSourceProcessingSummary(
-        request.sourceElementId as ElementId,
-      ),
+      summary: this.blockProcessingService.getSourceProcessingSummary(sourceElementId),
     };
+  }
+
+  private isLiveSource(sourceElementId: ElementId): boolean {
+    const element = this.repos.elements.findById(sourceElementId);
+    return element?.type === "source" && element.deletedAt == null;
   }
 
   markBlockIgnored(request: BlockProcessingMarkBlockRequest): BlockProcessingMarkBlockResult {
@@ -5319,6 +5329,36 @@ function markToPayload(mark: DocumentMark): DocumentMarkPayload {
     markType: mark.markType,
     range: [mark.range[0], mark.range[1]],
     attrs: mark.attrs,
+  };
+}
+
+function emptyBlockProcessingSummary(
+  sourceElementId: string,
+): BlockProcessingSummaryResult["summary"] {
+  return {
+    sourceElementId,
+    totalBlocks: 0,
+    processedBlocks: 0,
+    terminalBlocks: 0,
+    unresolvedBlocks: 0,
+    highPriorityUnresolvedBlocks: 0,
+    extractedBlockCount: 0,
+    extractedOutputCount: 0,
+    ignoredBlocks: 0,
+    ignoredRatio: 0,
+    terminalRatio: 1,
+    staleAfterEditBlocks: 0,
+    legacyProjectedBlocks: 0,
+    canMarkDoneWithoutConfirmation: true,
+    stateCounts: {
+      unread: 0,
+      read: 0,
+      extracted: 0,
+      ignored: 0,
+      processed_without_output: 0,
+      needs_later: 0,
+      stale_after_edit: 0,
+    },
   };
 }
 
