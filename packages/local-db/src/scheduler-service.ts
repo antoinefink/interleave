@@ -20,7 +20,7 @@
  */
 
 import type { Element, ElementId, IsoTimestamp } from "@interleave/core";
-import type { InterleaveDatabase } from "@interleave/db";
+import { elements as elementsTable, type InterleaveDatabase } from "@interleave/db";
 import {
   nextDueAt,
   type Schedulable,
@@ -28,11 +28,14 @@ import {
   type SchedulerAction,
   scheduleForChoice,
 } from "@interleave/scheduler";
+import { eq } from "drizzle-orm";
 import { BlockProcessingService } from "./block-processing-service";
 import { ElementRepository } from "./element-repository";
 import { nowIso } from "./ids";
+import { rowToElement } from "./mappers";
 import { OperationLogRepository } from "./operation-log-repository";
 import { SettingsRepository } from "./settings-repository";
+import type { TransactionClient } from "./types";
 
 /** The result of applying a schedule: the rescheduled element + the chosen interval. */
 export interface ScheduleResult {
@@ -63,6 +66,20 @@ export class SchedulerService {
    */
   private requireAttentionElement(id: ElementId): Element {
     const element = this.elements.findById(id);
+    if (!element || element.deletedAt) {
+      throw new Error(`SchedulerService: element ${id} not found`);
+    }
+    if (element.type === "card") {
+      throw new Error(
+        `SchedulerService: element ${id} is a card — cards schedule on FSRS, not the attention scheduler`,
+      );
+    }
+    return element;
+  }
+
+  private requireAttentionElementWithin(tx: TransactionClient, id: ElementId): Element {
+    const row = tx.select().from(elementsTable).where(eq(elementsTable.id, id)).get();
+    const element = row ? rowToElement(row) : null;
     if (!element || element.deletedAt) {
       throw new Error(`SchedulerService: element ${id} not found`);
     }
@@ -175,6 +192,55 @@ export class SchedulerService {
           : {}),
       };
     });
+  }
+
+  /**
+   * Start a source in active reading while giving it a default return date.
+   *
+   * This is the inbox `Read now` seam: the source is no longer an untriaged inbox
+   * capture, but it remains lifecycle `active` because the user just pulled it into
+   * active reading. The attention scheduler still owns the separate `due_at`
+   * return path. Read points remain independent and are written by the reader.
+   */
+  activateSourceWithReturn(id: ElementId, now: IsoTimestamp = nowIso()): ScheduleResult {
+    const element = this.requireAttentionElement(id);
+    return this.db.transaction((tx) => this.activateSourceWithReturnElement(tx, element, now));
+  }
+
+  /**
+   * Transaction-composable form for inbox triage. The caller has already loaded and
+   * validated the live source row inside its own mutation transaction.
+   */
+  activateSourceWithReturnWithin(
+    tx: TransactionClient,
+    id: ElementId,
+    now: IsoTimestamp = nowIso(),
+  ): ScheduleResult {
+    const element = this.requireAttentionElementWithin(tx, id);
+    return this.activateSourceWithReturnElement(tx, element, now);
+  }
+
+  private activateSourceWithReturnElement(
+    tx: TransactionClient | InterleaveDatabase,
+    element: Element,
+    now: IsoTimestamp,
+  ): ScheduleResult {
+    if (element.type !== "source") {
+      throw new Error(
+        `SchedulerService: element ${element.id} is a ${element.type} — only sources can be activated from inbox`,
+      );
+    }
+    const decision = nextDueAt(this.toSchedulable(element, "activate"), now);
+    const rescheduled = this.elements.rescheduleWithin(tx, element.id, decision.dueAt, "active", {
+      action: "activate",
+    });
+    return {
+      element: rescheduled,
+      intervalDays: decision.intervalDays,
+      ...(decision.retirementSuggestion
+        ? { retirementSuggestion: decision.retirementSuggestion }
+        : {}),
+    };
   }
 
   /**

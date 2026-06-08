@@ -1077,9 +1077,10 @@ export interface LineageGetResult {
 /**
  * The first MUTATION surface on the bridge (T012). The renderer can create a
  * source in the `inbox`, list/preview inbox-status sources, change their
- * priority (A/B/C/D), accept them into active learning, keep them for later, or
- * delete them — every action validated main-side, run in ONE transaction, and
- * logged to `operation_log`. There is still no generic `db.query`.
+ * priority (A/B/C/D), accept them into active learning with an attention return
+ * date, keep them for later, or delete them — every action validated main-side,
+ * run in ONE transaction, and logged to `operation_log`. There is still no
+ * generic `db.query`.
  */
 
 /**
@@ -2317,7 +2318,7 @@ export interface InboxGetResult {
 /**
  * One triage action applied to an inbox source. A discriminated union so the
  * main side rejects an unknown action at the boundary:
- *  - `accept`      → status `active` (into active learning, leaves the inbox)
+ *  - `accept`      → status `active` + attention `due_at` (leaves the inbox)
  *  - `keepForLater`→ status `dismissed` (set aside, leaves the inbox)
  *  - `setPriority` → numeric priority from the A/B/C/D label (status unchanged)
  *  - `delete`      → soft-delete (`deletedAt` + status `deleted`)

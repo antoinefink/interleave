@@ -2642,7 +2642,7 @@ export class DbService {
    * Apply one triage action to an inbox source (T012). Each branch runs through
    * {@link ElementRepository}, which mutates + appends the matching op in ONE
    * transaction:
-   *  - `accept`       → `update_element` (status `active`)
+   *  - `accept`       → `reschedule_element` (status `active`, attention `due_at`)
    *  - `keepForLater` → `update_element` (status `dismissed`)
    *  - `setPriority`  → `update_element` (numeric priority from the label)
    *  - `delete`       → `soft_delete_element` (`deletedAt` + status `deleted`)
@@ -2663,7 +2663,7 @@ export class DbService {
       }
       switch (action.kind) {
         case "accept": {
-          this.repos.elements.updateWithin(tx, id, { status: "active" });
+          this.attentionScheduleService.activateSourceWithReturnWithin(tx, id);
           break;
         }
         case "keepForLater": {

@@ -791,7 +791,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     {
       type: "ul",
       items: [
-        "<b>Activate</b> <kbd>1</kbd> — moves the item out of the inbox and into the active pipeline. It will appear in the daily queue and the source reader becomes its home. Use this when you intend to start reading soon.",
+        "<b>Read now</b> <kbd>1</kbd> — moves the item out of the inbox and into active reading with a default return date. It will come back in the daily queue, and the source reader keeps the read point so you can continue where you stopped.",
         "<b>Save for later</b> <kbd>3</kbd> — marks the item as dismissed <strong>with no schedule and no due-queue entry</strong>. It will not appear in the queue or the process loop. You can find it again in <code>/library</code> by filtering on the dismissed status. Use this for material you want to keep but are not ready to read.",
         "<b>Delete</b> <kbd>6</kbd> — sends the item to Trash. This is a soft delete: the item is recoverable from <code>/trash</code> and <kbd>⌘Z</kbd> undoes it immediately. Use this when you know the item is not worth keeping.",
       ],

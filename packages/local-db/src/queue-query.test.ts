@@ -152,10 +152,37 @@ describe("QueueQuery", () => {
 
     const card = items.find((i) => i.id === qaCardId);
     const extract = items.find((i) => i.id === extractId);
+    const source = items.find((i) => i.id === sourceId);
     expect(card?.scheduler).toBe("fsrs");
     expect(card?.schedulerSignals.kind).toBe("fsrs");
     expect(extract?.scheduler).toBe("attention");
     expect(extract?.schedulerSignals.kind).toBe("attention");
+    expect(source?.type).toBe("source");
+    expect(source?.status).toBe("active");
+    expect(source?.scheduler).toBe("attention");
+    expect(source?.schedulerSignals.kind).toBe("attention");
+  });
+
+  it("excludes dismissed and done sources even when they still have due_at", () => {
+    const { sourceId } = buildDueSet();
+    const dismissed = repos.sources.create({
+      title: "Dismissed source",
+      priority: PRIORITY_LABEL_VALUE.A,
+      status: "dismissed",
+    }).element.id;
+    repos.elements.reschedule(dismissed, iso("2026-05-29T08:00:00.000Z"));
+    const done = repos.sources.create({
+      title: "Done source",
+      priority: PRIORITY_LABEL_VALUE.A,
+      status: "done",
+    }).element.id;
+    repos.elements.reschedule(done, iso("2026-05-29T08:00:00.000Z"));
+
+    const ids = queue.list({ asOf: NOW }).items.map((item) => item.id);
+
+    expect(ids).toContain(sourceId);
+    expect(ids).not.toContain(dismissed);
+    expect(ids).not.toContain(done);
   });
 
   it("carries linkedElementId + linkedElementType on a due verification task row (the queue jump)", () => {

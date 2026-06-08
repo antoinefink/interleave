@@ -354,7 +354,9 @@ describe("DbService", () => {
         action: { kind: "accept" },
       }),
     ).toThrow("Inbox item is no longer available.");
-    expect(svc.repos.elements.findById(acceptedId as never)?.status).toBe("active");
+    const accepted = svc.repos.elements.findById(acceptedId as never);
+    expect(accepted?.status).toBe("active");
+    expect(accepted?.dueAt).not.toBeNull();
 
     const { id: deletedId } = svc.importManualSource({ title: "Deleted stale item" });
     svc.triageInboxItem({ id: deletedId, action: { kind: "delete" } });
@@ -370,6 +372,40 @@ describe("DbService", () => {
     const deletedAfter = svc.repos.elements.findById(deletedId as never);
     expect(deletedAfter?.status).toBe("deleted");
     expect(deletedAfter?.deletedAt).toBe(deletedBefore?.deletedAt);
+
+    svc.close();
+  });
+
+  it("read-now accept activates an inbox source with an attention return date", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const { id } = svc.importManualSource({
+      title: "Started source",
+      body: "First paragraph.\n\nSecond paragraph.",
+    });
+    const result = svc.triageInboxItem({
+      id,
+      action: { kind: "accept" },
+    });
+
+    expect(result.deleted).toBe(false);
+    expect(result.item?.status).toBe("active");
+    expect(svc.listInbox().items.map((item) => item.id)).not.toContain(id);
+
+    const element = svc.repos.elements.findById(id as never);
+    expect(element?.status).toBe("active");
+    expect(element?.dueAt).not.toBeNull();
+    expect(Date.parse(element?.dueAt ?? "")).toBeGreaterThan(Date.now());
+
+    const ops = svc.repos.operationLog.listForElement(id as never);
+    expect(ops[0]?.opType).toBe("reschedule_element");
+    expect(ops[0]?.payload).toMatchObject({
+      action: "activate",
+      status: "active",
+      prevStatus: "inbox",
+      prevDueAt: null,
+    });
 
     svc.close();
   });

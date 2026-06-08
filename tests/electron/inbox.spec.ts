@@ -107,7 +107,10 @@ test("create → list → prioritize → accept → delete works through the UI 
   // Accept the "to accept" one (status → active; leaves the inbox).
   await page.getByTestId("inbox-row").filter({ hasText: "Article to accept" }).click();
   await expect(page.getByTestId("inbox-preview-title")).toHaveText("Article to accept");
-  await page.getByTestId("inbox-accept").click();
+  await page.getByTestId("inbox-read-now").click();
+  await expect(page).toHaveURL(/\/source\//);
+  await page.getByTestId("nav-inbox").click();
+  await expect(page.getByTestId("route-inbox")).toBeVisible();
   await expect(page.getByTestId("inbox-row")).toHaveCount(1);
 
   // Delete the remaining "to delete" one (soft-delete; leaves the inbox).
@@ -253,6 +256,167 @@ test.describe("manual text import (T013)", () => {
     expect(bodyPreview).toContain("Spaced repetition exploits the spacing effect.");
 
     await app.close();
+  });
+});
+
+test.describe("Read now source return path", () => {
+  let returnPathDataDir: string;
+  const ARTICLE_TITLE = "Return path article";
+  const ARTICLE_BODY =
+    "First paragraph for the return path.\n\nSecond paragraph is where reading continues.\n\nThird paragraph confirms persistence.";
+
+  test.beforeAll(() => {
+    ensureBuilt();
+    returnPathDataDir = makeDataDir();
+  });
+
+  test("Read now schedules a return and restart resumes from the saved read point", async () => {
+    const app = await launchApp(returnPathDataDir);
+    const page = await app.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+    const url = new URL(page.url());
+    const rendererBaseUrl = `${url.protocol}//${url.host}`;
+
+    await page.getByTestId("nav-inbox").click();
+    await expect(page.getByTestId("route-inbox")).toBeVisible();
+    await page.getByTestId("inbox-empty-new").click();
+    await expect(page.getByTestId("new-source-modal")).toBeVisible();
+    await page.getByTestId("new-source-title").fill(ARTICLE_TITLE);
+    await page.getByTestId("new-source-body").fill(ARTICLE_BODY);
+    await page.getByTestId("new-source-submit").click();
+    await expect(page.getByTestId("new-source-modal")).toBeHidden();
+
+    const sourceId = await page.evaluate(async (title) => {
+      const api = window.appApi as unknown as {
+        inbox: {
+          list(): Promise<{ items: { id: string; title: string }[] }>;
+        };
+      };
+      const { items } = await api.inbox.list();
+      const item = items.find((candidate) => candidate.title === title);
+      if (!item) throw new Error("imported source not found in inbox");
+      return item.id;
+    }, ARTICLE_TITLE);
+
+    await page.getByTestId("inbox-read-now").click();
+    await expect(page).toHaveURL(new RegExp(`/source/${sourceId}$`));
+    await expect(page.getByTestId("reader-title")).toHaveText(ARTICLE_TITLE);
+    await expect(page.locator(".reader .ProseMirror")).toContainText(
+      "Second paragraph is where reading continues.",
+    );
+
+    const firstBlockId = await page
+      .locator(".reader .ProseMirror [data-block-id]")
+      .first()
+      .getAttribute("data-block-id");
+    const secondBlockId = await page
+      .locator(".reader .ProseMirror [data-block-id]")
+      .nth(1)
+      .getAttribute("data-block-id");
+    expect(firstBlockId).toBeTruthy();
+    expect(secondBlockId).toBeTruthy();
+    await page.locator(`.reader .ProseMirror [data-block-id="${firstBlockId}"]`).click();
+    await page.getByTestId("reader-set-readpoint").click();
+
+    const scheduled = await page.evaluate(async (id) => {
+      const api = window.appApi as unknown as {
+        inbox: {
+          list(): Promise<{ items: { id: string }[] }>;
+        };
+        inspector: {
+          get(req: { id: string }): Promise<{
+            data: { element: { id: string; type: string; status: string; dueAt: string | null } } | null;
+          }>;
+        };
+        readPoints: {
+          get(req: {
+            elementId: string;
+          }): Promise<{ readPoint: { blockId: string; offset: number } | null }>;
+        };
+        queue: {
+          list(req: {
+            asOf: string;
+          }): Promise<{ items: { id: string; type: string; scheduler: string }[] }>;
+        };
+      };
+      const inbox = await api.inbox.list();
+      const inspected = await api.inspector.get({ id });
+      const readPoint = await api.readPoints.get({ elementId: id });
+      const dueAt = inspected.data?.element.dueAt;
+      if (!dueAt) throw new Error("source did not receive a return due_at");
+      const dueQueue = await api.queue.list({ asOf: dueAt });
+      return {
+        inboxIds: inbox.items.map((item) => item.id),
+        element: inspected.data?.element ?? null,
+        readPoint: readPoint.readPoint,
+        dueQueueItems: dueQueue.items,
+      };
+    }, sourceId);
+
+    expect(scheduled.inboxIds).not.toContain(sourceId);
+    expect(scheduled.element).toMatchObject({
+      id: sourceId,
+      type: "source",
+      status: "active",
+    });
+    expect(scheduled.element?.dueAt).not.toBeNull();
+    expect(scheduled.readPoint?.blockId).toBe(firstBlockId);
+    expect(scheduled.dueQueueItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: sourceId, type: "source", scheduler: "attention" }),
+      ]),
+    );
+    const dueAt = scheduled.element?.dueAt;
+    if (!dueAt) throw new Error("scheduled source missing due_at after assertion");
+
+    await page.goto(`${rendererBaseUrl}/queue?asOf=${encodeURIComponent(dueAt)}`);
+    await expect(page.getByTestId("route-queue")).toBeVisible();
+    const queueRow = page.getByTestId("queue-item").filter({ hasText: ARTICLE_TITLE });
+    await expect(queueRow).toHaveAttribute("data-element-id", sourceId);
+    await expect(queueRow.getByTestId("queue-open")).toContainText(
+      "Continue reading from read point",
+    );
+
+    await page.goto(`${rendererBaseUrl}/?asOf=${encodeURIComponent(dueAt)}`);
+    await expect(page.getByTestId("route-home")).toBeVisible();
+    const homeRow = page.getByTestId("home-preview-row").filter({ hasText: ARTICLE_TITLE });
+    await expect(homeRow).toHaveAttribute("data-element-id", sourceId);
+    await expect(homeRow).toContainText("Continue reading from read point");
+
+    await app.close();
+
+    const restarted = await launchApp(returnPathDataDir);
+    const restartedPage = await restarted.firstWindow();
+    await restartedPage.waitForLoadState("domcontentloaded");
+
+    const afterRestart = await restartedPage.evaluate(async (id) => {
+      const api = window.appApi as unknown as {
+        inbox: {
+          list(): Promise<{ items: { id: string }[] }>;
+        };
+        readPoints: {
+          get(req: {
+            elementId: string;
+          }): Promise<{ readPoint: { blockId: string; offset: number } | null }>;
+        };
+      };
+      const inbox = await api.inbox.list();
+      const readPoint = await api.readPoints.get({ elementId: id });
+      return { inboxIds: inbox.items.map((item) => item.id), readPoint: readPoint.readPoint };
+    }, sourceId);
+
+    expect(afterRestart.inboxIds).not.toContain(sourceId);
+    expect(afterRestart.readPoint?.blockId).toBe(firstBlockId);
+
+    await restartedPage.goto(`${rendererBaseUrl}/source/${sourceId}`);
+    await restartedPage.waitForLoadState("domcontentloaded");
+    await expect(restartedPage.getByTestId("reader-title")).toHaveText(ARTICLE_TITLE);
+    await expect(restartedPage.locator(".reader .readpoint")).toBeVisible();
+    await expect(
+      restartedPage.locator(`.reader .readpoint + [data-block-id="${secondBlockId}"]`),
+    ).toHaveCount(1);
+
+    await restarted.close();
   });
 });
 

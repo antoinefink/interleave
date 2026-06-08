@@ -85,6 +85,57 @@ afterEach(() => {
 });
 
 describe("SchedulerService.rescheduleForAction", () => {
+  it("activates a source with a return due_at while keeping lifecycle active", () => {
+    const sourceId = seedSource(handle, 0.625); // band B
+    const service = new SchedulerService(handle.db);
+    const now = "2026-05-30T12:00:00.000Z";
+
+    const opsBefore = rescheduleOps(handle, sourceId).length;
+    const { element, intervalDays } = service.activateSourceWithReturn(sourceId, now);
+
+    expect(element.status).toBe("active");
+    expect(element.dueAt).toBeTruthy();
+    expect(intervalDays).toBe(3);
+    expect(
+      Math.round((Date.parse(element.dueAt as string) - Date.parse(now)) / 86_400_000),
+    ).toBe(3);
+
+    const persisted = new ElementRepository(handle.db).findById(sourceId);
+    expect(persisted?.status).toBe("active");
+    expect(persisted?.dueAt).toBe(element.dueAt);
+
+    const ops = rescheduleOps(handle, sourceId);
+    expect(ops).toHaveLength(opsBefore + 1);
+    expect(ops.at(-1)?.payload).toMatchObject({
+      action: "activate",
+      status: "active",
+      prevStatus: "active",
+    });
+
+    const reviewRow = handle.db
+      .select()
+      .from(reviewStates)
+      .where(eq(reviewStates.elementId, sourceId))
+      .get();
+    expect(reviewRow).toBeUndefined();
+  });
+
+  it("only activates sources with the inbox return-path seam", () => {
+    const { extractId } = seedExtract(handle);
+    const review = new ReviewRepository(handle.db);
+    const { element: card } = review.createCard({
+      kind: "qa",
+      title: "Capital of France",
+      prompt: "What is the capital of France?",
+      answer: "Paris",
+      priority: 0.625,
+    });
+    const service = new SchedulerService(handle.db);
+
+    expect(() => service.activateSourceWithReturn(extractId)).toThrow(/only sources/i);
+    expect(() => service.activateSourceWithReturn(card.id)).toThrow(/card/i);
+  });
+
   it("persists a future due_at, status scheduled, and exactly one reschedule_element op", () => {
     const sourceId = seedSource(handle, 0.625); // band B
     const service = new SchedulerService(handle.db);

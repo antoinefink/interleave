@@ -104,7 +104,7 @@ export function metaFor(item: QueueItemSummary): ReactElement | null {
 /** The open-action icon + label per type (the `next-action` affordance). */
 export function actionFor(item: QueueItemSummary): { icon: IconName; label: string } {
   if (item.type === "card") return { icon: "brain", label: "Review" };
-  if (item.type === "source") return { icon: "eye", label: "Read" };
+  if (item.type === "source") return { icon: "eye", label: "Continue reading from read point" };
   if (item.type === "extract") return { icon: "extract", label: "Process" };
   // A verification task LINKED to a protected element opens that element's reader (T092),
   // so the affordance reads "Verify" — a free-standing (unlinked) task reads "Open".

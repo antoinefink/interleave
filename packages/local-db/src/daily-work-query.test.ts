@@ -19,6 +19,7 @@ let query: DailyWorkQuery;
 
 const NOW = "2026-06-08T09:00:00.000Z" as IsoTimestamp;
 const PAST = "2026-06-07T09:00:00.000Z" as IsoTimestamp;
+const FUTURE = "2026-06-09T09:00:00.000Z" as IsoTimestamp;
 
 beforeEach(() => {
   handle = createInMemoryDb();
@@ -80,6 +81,17 @@ function createActiveUnscheduledSource(
   }).element.id;
 }
 
+function createActiveScheduledSource(title: string, dueAt: IsoTimestamp): ElementId {
+  const id = sources.createWithDocument({
+    title,
+    priority: 0.75,
+    status: "active",
+    body: "Started source.\n\nHas a return path.",
+  }).element.id;
+  handle.db.update(elements).set({ dueAt }).where(eq(elements.id, id)).run();
+  return id;
+}
+
 describe("DailyWorkQuery", () => {
   it("recommends processing the due queue before inbox or unscheduled resume work", () => {
     createDueCard();
@@ -116,6 +128,28 @@ describe("DailyWorkQuery", () => {
     expect(summary.activeUnscheduledSources).toBe(1);
     expect(summary.resumeSource?.id).toBe(id);
     expect(summary.resumeSource?.unresolvedBlocks).toBeGreaterThan(0);
+  });
+
+  it("counts active scheduled sources as due queue work instead of unscheduled resume work", () => {
+    const id = createActiveScheduledSource("Started scheduled read", PAST);
+
+    const summary = query.summary(NOW);
+
+    expect(summary.dueQueueItems).toBe(1);
+    expect(summary.activeUnscheduledSources).toBe(0);
+    expect(summary.resumeSource).toBeNull();
+    expect(summary.recommendedAction).toBe("process_due_queue");
+    expect(id).toBeTruthy();
+  });
+
+  it("does not treat active sources with a future return date as unscheduled resume work", () => {
+    createActiveScheduledSource("Started future read", FUTURE);
+
+    const summary = query.summary(NOW);
+
+    expect(summary.dueQueueItems).toBe(0);
+    expect(summary.activeUnscheduledSources).toBe(0);
+    expect(summary.recommendedAction).toBe("clear");
   });
 
   it("prefers the most recently updated active unscheduled source when unresolved work ties", () => {

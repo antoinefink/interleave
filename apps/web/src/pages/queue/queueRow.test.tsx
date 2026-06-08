@@ -46,7 +46,10 @@ describe("queue row helpers", () => {
 
   it("returns type-specific open actions", () => {
     expect(actionFor(queueItem({ type: "card" }))).toEqual({ icon: "brain", label: "Review" });
-    expect(actionFor(queueItem({ type: "source" }))).toEqual({ icon: "eye", label: "Read" });
+    expect(actionFor(queueItem({ type: "source" }))).toEqual({
+      icon: "eye",
+      label: "Continue reading from read point",
+    });
     expect(actionFor(queueItem({ type: "extract" }))).toEqual({
       icon: "extract",
       label: "Process",

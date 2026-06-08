@@ -30,7 +30,7 @@ Browser capture surfaces may collect selected text, page context, and priority i
 
 ### Read now
 
-The inbox action that accepts a source into active processing and immediately opens the local reader for that source.
+The inbox action that accepts a source into active reading, gives it an attention return date, and immediately opens the local reader for that source.
 
 ### Source reader
 
@@ -48,6 +48,12 @@ The floating action surface that appears over a live text selection in a reader 
 
 The toolbar is tied to the current visible selection and should remain reachable without becoming the persistence boundary itself; the action it dispatches owns any durable mutation.
 
+### Read point
+
+The saved position inside a Source that tells the Source reader where the user should resume.
+
+A Read point is not a schedule. It answers where reading stopped, while the Attention scheduler answers when the source should return.
+
 ### Source block processing
 
 The per-block progress model that records what happened to each stable block in a Source as the user reads, ignores, extracts from, or defers that block.
@@ -57,6 +63,12 @@ Source block processing is source progress, not decoration: visual marks may dis
 ### Block processing outcome
 
 The explicit result assigned to a source block, distinguishing unresolved reading work from blocks that produced output, were intentionally ignored, were processed without output, need later attention, or became stale after the source text changed.
+
+### Attention scheduler
+
+The scheduling model for sources, topics, extracts, and other non-card work that should return for further processing rather than recall testing.
+
+Attention scheduling is distinct from active-recall scheduling: it decides when to bring work back to the user's attention, not whether the user can remember an answer.
 
 ### Due queue
 
