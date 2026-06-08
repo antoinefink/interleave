@@ -16,6 +16,12 @@ A source that has been captured but not yet accepted into the user's active know
 
 The origin and reliability context attached to a source, including where it came from and how the app should describe that origin to the user.
 
+### Topic
+
+A schedulable knowledge-processing element that groups or narrows work under a broader source or idea.
+
+A Topic can carry its own document-like reading surface while still inheriting source lineage from the material it belongs to. Extracts made from that surface should preserve the Topic as the local location while keeping the original Source as evidence root.
+
 ### Source lineage
 
 The chain that lets a derived element point back to the source evidence it came from, including source identity, selected text, citation or link metadata, and a location the reader can jump to.

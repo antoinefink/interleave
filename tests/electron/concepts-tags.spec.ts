@@ -38,13 +38,15 @@ test.beforeAll(() => {
   dataDir = makeDataDir();
 });
 
-/** Select a seeded element from the inspector's picker by its (unique) title. */
-async function selectByTitle(page: Page, title: string) {
+/** Select a seeded element from the inspector's picker by type + title. */
+async function selectByTitle(page: Page, title: string, type?: string) {
   const clear = page.getByTestId("inspector-clear");
   if (await clear.isVisible()) {
     await clear.click();
   }
-  const item = page.getByTestId("element-picker-item").filter({ hasText: title });
+  const item = page
+    .locator(`[data-testid="element-picker-item"][data-element-type="${type ?? "card"}"]`)
+    .filter({ hasText: title });
   await expect(item).toBeVisible();
   await item.click();
   await expect(page.getByTestId("inspector-content")).toBeVisible();
@@ -90,7 +92,7 @@ test("create a concept + add a tag on a card via the inspector → both pills ap
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
 
-  await selectByTitle(page, CARD_TITLE);
+  await selectByTitle(page, CARD_TITLE, "card");
 
   // Add a tag via the inspector tag input.
   await page.getByTestId("tag-input").fill(TAG_NAME);

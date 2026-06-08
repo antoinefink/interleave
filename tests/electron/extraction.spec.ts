@@ -166,7 +166,7 @@ test("extracting selected text creates a scheduled extract + lineage that surviv
   expect(selected.trim().length).toBeGreaterThanOrEqual(3);
   await expect(page.getByTestId("selection-toolbar")).toBeVisible();
   await page.getByTestId("sel-tool-extract").click();
-  await expect(page.getByText("Extracted")).toBeVisible();
+  await expect(page.getByTestId("reader-flash")).toContainText("Extracted");
 
   // Exactly one NEW extract element, and the parent gains an extracted_span mark.
   await expect.poll(() => extractCount(page)).toBe(extractsBefore + 1);

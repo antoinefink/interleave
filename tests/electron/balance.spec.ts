@@ -162,7 +162,8 @@ test("the balance banner appears on the inbox when imports outpace processing", 
   await expect(page.getByTestId("balance-triage-inbox")).toBeVisible();
 
   await page.getByTestId("balance-triage-inbox").click();
-  await expect(page.getByTestId("inbox-row").first()).toBeFocused();
+  await expect(page.getByTestId("route-inbox")).toBeVisible();
+  await expect(page.getByTestId("inbox-row").first()).toHaveAttribute("aria-current", "true");
 
   await page.getByTestId("balance-dismiss-menu-trigger").click();
   await expect(page.getByTestId("balance-dismiss-menu")).toBeVisible();

@@ -178,12 +178,13 @@ test("a chapter opens in the reader + reads incrementally (read-point + extract)
   }, chapterId);
   expect(readPoint).not.toBeNull();
 
-  // Extract a paragraph from the chapter (the mouse-free `E` path).
+  // Extract a paragraph from the chapter. EPUB chapters are document-bearing
+  // topic children: extraction anchors to the chapter while lineage roots at the
+  // imported book source.
   const extractBlockId = await page.evaluate(() => {
     const nodes = Array.from(
       document.querySelectorAll<HTMLElement>(".reader .ProseMirror [data-block-id]"),
     );
-    // Pick the first paragraph (skip the heading) for a clean text extract.
     const para = nodes.find((n) => n.tagName.toLowerCase() === "p") ?? nodes[0];
     return para?.getAttribute("data-block-id") ?? "";
   });
@@ -191,13 +192,15 @@ test("a chapter opens in the reader + reads incrementally (read-point + extract)
   const block = page.locator(`.reader [data-block-id="${extractBlockId}"]`);
   await expect(block).toBeVisible();
   await block.click({ clickCount: 3 });
+  const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+  expect(selected.trim().length).toBeGreaterThanOrEqual(3);
   await expect(page.getByTestId("selection-toolbar")).toBeVisible();
-  await page.keyboard.press("e");
-  await expect(page.getByText("Extracted")).toBeVisible();
+  await page.getByTestId("sel-tool-extract").click();
+  await expect(page.getByTestId("reader-flash")).toContainText("Extracted");
 
-  // The new extract has the chapter as its source-location target + the chapter as
-  // lineage root — proving extraction works on a chapter exactly like a web source.
-  const extract = await page.evaluate(async (chId) => {
+  // The new extract is rooted at the EPUB book source and anchored to the chapter
+  // document location.
+  const extract = await page.evaluate(async ({ chId, sourceId }) => {
     const api = window.appApi as unknown as {
       inspector: {
         list(): Promise<{ elements: { id: string; type: string }[] }>;
@@ -213,10 +216,12 @@ test("a chapter opens in the reader + reads incrementally (read-point + extract)
     for (const el of elements) {
       if (el.type !== "extract") continue;
       const { data } = await api.inspector.get({ id: el.id });
-      if (data?.location?.sourceElementId === chId) return { id: el.id, ok: true };
+      if (data?.location?.sourceElementId === chId && data.source?.id === sourceId) {
+        return { id: el.id, ok: true };
+      }
     }
     return null;
-  }, chapterId);
+  }, { chId: chapterId, sourceId: bookId });
   expect(extract?.ok).toBe(true);
 
   await app.close();
@@ -237,17 +242,20 @@ test("the book, chapters, read-point, extract + .epub survive an app restart", a
     true,
   );
 
-  // The 3 chapters + the read-point + the extract persisted.
+  // The 3 chapters + the read-point + the chapter extract persisted.
   const chapters = await chapterIds(page, bookId);
   expect(chapters).toHaveLength(3);
 
-  const state = await page.evaluate(async (chIds) => {
+  const state = await page.evaluate(async ({ chIds, sourceId }) => {
     const api = window.appApi as unknown as {
       readPoints: { get(req: { elementId: string }): Promise<{ readPoint: unknown | null }> };
       inspector: {
         list(): Promise<{ elements: { id: string; type: string }[] }>;
         get(req: { id: string }): Promise<{
-          data: { location: { sourceElementId: string | null } | null } | null;
+          data: {
+            location: { sourceElementId: string | null } | null;
+            source: { id: string } | null;
+          } | null;
         }>;
       };
     };
@@ -261,12 +269,16 @@ test("the book, chapters, read-point, extract + .epub survive an app restart", a
     for (const el of elements) {
       if (el.type !== "extract") continue;
       const { data } = await api.inspector.get({ id: el.id });
-      if (data?.location?.sourceElementId && chIds.includes(data.location.sourceElementId)) {
+      if (
+        data?.location?.sourceElementId &&
+        chIds.includes(data.location.sourceElementId) &&
+        data.source?.id === sourceId
+      ) {
         hasChapterExtract = true;
       }
     }
     return { hasReadPoint, hasChapterExtract };
-  }, chapters);
+  }, { chIds: chapters, sourceId: bookId });
   expect(state.hasReadPoint).toBe(true);
   expect(state.hasChapterExtract).toBe(true);
 

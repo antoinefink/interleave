@@ -37,8 +37,10 @@ test.beforeAll(() => {
 });
 
 /** Select a seeded element from the inspector's picker by its (unique) title. */
-async function selectByTitle(page: Page, title: string) {
-  const item = page.getByTestId("element-picker-item").filter({ hasText: title });
+async function selectByTitle(page: Page, type: string, title: string) {
+  const item = page
+    .locator(`[data-testid="element-picker-item"][data-element-type="${type}"]`)
+    .filter({ hasText: title });
   await expect(item).toBeVisible();
   await item.click();
   await expect(page.getByTestId("inspector-content")).toBeVisible();
@@ -94,7 +96,7 @@ test("inspector Expiry: set a past valid_until + review_by → the badge reads E
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
 
-  await selectByTitle(page, CARD_TITLE);
+  await selectByTitle(page, "card", CARD_TITLE);
 
   // The Expiry section is present for a card; open its editor and set a PAST window.
   await expect(page.getByTestId("expiry-section")).toBeVisible();

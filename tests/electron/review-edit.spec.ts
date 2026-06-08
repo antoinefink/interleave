@@ -48,6 +48,12 @@ async function openReview(page: Page, asOf: string): Promise<void> {
   await expect(page.getByTestId("route-review")).toBeVisible();
 }
 
+async function revealForRepair(page: Page): Promise<void> {
+  await page.getByTestId("review-reveal").click();
+  await expect(page.getByTestId("review-answer")).toBeVisible();
+  await expect(page.getByTestId("review-repair-edit")).toBeVisible();
+}
+
 /** The due card (id + kind + body + flag) via the session bridge, or null. */
 async function dueCardView(
   page: Page,
@@ -145,6 +151,7 @@ test("editing a card's body in review persists and survives a restart", async ()
 
     await openReview(page, AS_OF);
     await expect(page.getByTestId("review-card")).toBeVisible();
+    await revealForRepair(page);
 
     await page.getByTestId("review-repair-edit").click();
     if (kind === "cloze") {
@@ -196,6 +203,7 @@ test("flagging a card as bad persists and survives an app restart", async () => 
 
     await openReview(page, AS_OF);
     await expect(page.getByTestId("review-card")).toBeVisible();
+    await revealForRepair(page);
 
     await page.getByTestId("review-repair-flag").click();
     await expect(page.getByTestId("review-repair-flag")).toHaveText(/flagged/i);
@@ -223,6 +231,7 @@ test("open source jumps back to the originating source reader (lineage)", async 
 
   await openReview(page, AS_OF);
   await expect(page.getByTestId("review-card")).toBeVisible();
+  await revealForRepair(page);
 
   const openBtn = page.getByTestId("review-repair-source");
   await expect(openBtn).toBeEnabled();
@@ -251,6 +260,7 @@ test("suspending a card removes it from the live deck (own dir; survives restart
 
     await openReview(page, AS_OF);
     await expect(page.getByTestId("review-card")).toBeVisible();
+    await revealForRepair(page);
     await page.getByTestId("review-repair-suspend").click();
     await page.waitForTimeout(250);
 

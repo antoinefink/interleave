@@ -13,6 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ElementId, IsoTimestamp } from "@interleave/core";
+import { priorityFromLabel } from "@interleave/core";
 import { MIGRATIONS_DIR, openDatabase } from "@interleave/db";
 import { seedDemoCollection } from "@interleave/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -1085,6 +1086,47 @@ describe("DbService", () => {
       )
       .all(sourceId) as { id: string; order: number }[];
   }
+
+  it("extracts from a chapter topic while preserving the book as lineage root", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const bookId = "book_source" as ElementId;
+    svc.repos.sources.createWithDocument({
+      id: bookId,
+      title: "The Memory Book",
+      priority: priorityFromLabel("C"),
+      body: "Contents\n\n- Conclusions",
+    });
+    const topic = svc.repos.sources.createTopicWithDocument({
+      title: "Conclusions",
+      priority: priorityFromLabel("C"),
+      parentId: bookId,
+      sourceId: bookId,
+      body: "Review just before forgetting.\n\nThat is the whole trick.",
+    });
+    const [block] = blockRowsFor(svc, topic.element.id);
+    expect(block?.id).toBeTruthy();
+
+    const { extract, location } = svc.createExtraction({
+      sourceElementId: topic.element.id,
+      selectedText: "Review just before forgetting.",
+      blockIds: [block?.id ?? ""],
+      startOffset: 0,
+      endOffset: 30,
+    });
+
+    expect(extract.sourceId).toBe(bookId);
+    expect(extract.parentId).toBe(topic.element.id);
+    expect(location.sourceElementId).toBe(topic.element.id);
+    const mark = svc.raw.sqlite
+      .prepare(
+        "SELECT block_id AS blockId, attrs FROM document_marks WHERE document_id = ? AND mark_type = 'extracted_span'",
+      )
+      .get(topic.element.id) as { blockId: string; attrs: string } | undefined;
+    expect(mark?.blockId).toBe(block?.id);
+    expect(JSON.parse(mark?.attrs ?? "{}")).toMatchObject({ extractId: extract.id });
+    svc.close();
+  });
 
   function expectZeroBlockProcessingSummary(
     result: BlockProcessingListResult | BlockProcessingSummaryResult,

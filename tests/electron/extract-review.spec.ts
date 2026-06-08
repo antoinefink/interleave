@@ -148,7 +148,7 @@ test("an extract advances raw → clean → atomic, reschedules on attention, an
   await expect.poll(async () => (await inspect(page, extractId))?.element.status).toBe("done");
 
   // (c) RESTART: relaunch against the same data dir — the advanced stage, done
-  // status, postpone count, and attention due all survive.
+  // status, and postpone count survive. Done extracts leave the active schedule.
   await app.close();
   app = await launchApp(dataDir);
   page = await app.firstWindow();
@@ -160,7 +160,7 @@ test("an extract advances raw → clean → atomic, reschedules on attention, an
   expect(afterRestart?.scheduler.kind).toBe("attention");
   expect(afterRestart?.scheduler.postponed).toBe(1);
   expect(afterRestart?.review).toBeNull();
-  expect(afterRestart?.element.dueAt).toBeTruthy();
+  expect(afterRestart?.element.dueAt).toBeNull();
 
   // The review view reopens on the persisted (atomic) stage after the restart.
   await openExtract(page, extractId);

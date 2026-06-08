@@ -40,8 +40,10 @@ test.beforeAll(() => {
 });
 
 /** Select a seeded element from the inspector's picker by its (unique) title. */
-async function selectByTitle(page: Page, title: string) {
-  const item = page.getByTestId("element-picker-item").filter({ hasText: title });
+async function selectByTitle(page: Page, type: string, title: string) {
+  const item = page
+    .locator(`[data-testid="element-picker-item"][data-element-type="${type}"]`)
+    .filter({ hasText: title });
   await expect(item).toBeVisible();
   await item.click();
   await expect(page.getByTestId("inspector-content")).toBeVisible();
@@ -102,7 +104,7 @@ test("inspector Reliability: set tier=primary / confidence=high / type=paper →
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
 
-  await selectByTitle(page, SOURCE_TITLE);
+  await selectByTitle(page, "source", SOURCE_TITLE);
 
   // The Reliability section is present for a source; the seed ships a secondary/medium
   // badge. Open its editor and raise it to primary / high / paper + a note.
@@ -133,7 +135,7 @@ test("a card derived from the source shows the same reliability on its refblock"
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
 
-  await selectByTitle(page, CARD_TITLE);
+  await selectByTitle(page, "card", CARD_TITLE);
 
   // The card's refblock (T043) carries the source's reliability badge (inherited
   // through lineage) — the "reliability on important cards" surfacing.

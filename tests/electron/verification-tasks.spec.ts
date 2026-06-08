@@ -126,6 +126,7 @@ test("inspector Maintenance: create a verification task → it shows in the sect
   baseUrl = `${url.protocol}//${url.host}`;
 
   await selectCardByTitle(page, CARD_TITLE);
+  const protectedCardId = await seededCardId(page);
 
   // The Maintenance section is present for a card and already lists the SEEDED
   // verify_claim task (the first seeded `task`).
@@ -158,9 +159,9 @@ test("inspector Maintenance: create a verification task → it shows in the sect
   await expect(seededTaskRow).toContainText(/Protects card/i);
   await expect(seededTaskRow.getByTestId("queue-open")).toContainText(/Verify/i);
   await seededTaskRow.getByTestId("queue-open").click();
-  expect(new URL(page.url()).pathname).toBe("/review");
-  expect(new URL(page.url()).searchParams.get("asOf")).toBe(FUTURE);
-  await expect(page.getByTestId("inspector-title")).toHaveText(CARD_TITLE);
+  expect(new URL(page.url()).pathname).toMatch(/^\/card\//);
+  await expect(page.getByTestId("route-card")).toBeVisible();
+  await expect(page.getByTestId("card-detail")).toHaveAttribute("data-card-id", protectedCardId);
 
   await app.close();
 });

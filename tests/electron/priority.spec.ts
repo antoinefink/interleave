@@ -35,12 +35,15 @@ test.beforeAll(() => {
  * picker only renders when nothing is selected, so clear any existing selection
  * first (so the helper can be called repeatedly within one page session).
  */
-async function selectByTitle(page: Page, title: string) {
+async function selectByTitle(page: Page, title: string, type?: string) {
   const clear = page.getByTestId("inspector-clear");
   if (await clear.isVisible()) {
     await clear.click();
   }
-  const item = page.getByTestId("element-picker-item").filter({ hasText: title });
+  const items = type
+    ? page.locator(`[data-testid="element-picker-item"][data-element-type="${type}"]`)
+    : page.getByTestId("element-picker-item");
+  const item = items.filter({ hasText: title });
   await expect(item).toBeVisible();
   await item.click();
   await expect(page.getByTestId("inspector-content")).toBeVisible();
@@ -269,7 +272,7 @@ test("the FSRS stat readout fits fully inside the fixed-width inspector (no clip
 
   // The seeded Q&A card has a review state, so it surfaces the FSRS (recall)
   // scheduler + the three-stat readout (Stability / Difficulty / Retrievability).
-  await selectByTitle(page, "Chollet's definition of intelligence");
+  await selectByTitle(page, "Chollet's definition of intelligence", "card");
   const stats = page.getByTestId("fsrs-stats");
   await expect(stats).toBeVisible();
 

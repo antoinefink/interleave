@@ -29,9 +29,11 @@ test.beforeAll(() => {
   dataDir = makeDataDir();
 });
 
-/** Select a seeded element from the inspector's picker by its (unique) title. */
-async function selectByTitle(page: Page, title: string) {
-  const item = page.getByTestId("element-picker-item").filter({ hasText: title });
+/** Select a seeded element from the inspector's picker by type + title. */
+async function selectByTitle(page: Page, title: string, type?: string) {
+  const item = page
+    .locator(`[data-testid="element-picker-item"][data-element-type="${type ?? "card"}"]`)
+    .filter({ hasText: title });
   await expect(item).toBeVisible();
   await item.click();
   await expect(page.getByTestId("inspector-content")).toBeVisible();
@@ -76,7 +78,7 @@ test("selecting a CARD shows card metadata and the FSRS scheduler chip", async (
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
 
-  await selectByTitle(page, "Chollet's definition of intelligence");
+  await selectByTitle(page, "Chollet's definition of intelligence", "card");
 
   const content = page.getByTestId("inspector-content");
   await expect(content).toHaveAttribute("data-element-type", "card");
@@ -99,14 +101,14 @@ test("selecting a SOURCE shows the attention scheduler chip + provenance", async
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
 
-  await selectByTitle(page, "On the Measure of Intelligence");
+  await selectByTitle(page, "On the Measure of Intelligence", "source");
 
   const content = page.getByTestId("inspector-content");
   await expect(content).toHaveAttribute("data-element-type", "source");
   await expect(page.getByTestId("meta-type")).toHaveText("Source");
 
   // The load-bearing split: a source is on the attention scheduler.
-  const chip = page.getByTestId("scheduler-chip").first();
+  const chip = page.locator('[data-testid="scheduler-chip"][data-scheduler="attention"]').first();
   await expect(chip).toHaveAttribute("data-scheduler", "attention");
 
   // A source has no FSRS readout but does have its children (the extract).
@@ -123,13 +125,15 @@ test("the inspector renders in both light and dark themes", async () => {
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
 
-  await selectByTitle(page, "Chollet's definition of intelligence");
+  await selectByTitle(page, "Chollet's definition of intelligence", "card");
   const html = page.locator("html");
   const before = await html.getAttribute("data-theme");
 
-  // Flip the theme via the user-chip menu and re-assert the inspector chip.
+  // Flip the theme via the shell's user-chip menu and re-assert the inspector chip.
   await page.getByTestId("user-chip").click();
-  await page.getByRole("menuitem", { name: /mode/i }).click();
+  await page
+    .getByTestId(before === "light" ? "shell-theme-option-dark" : "shell-theme-option-light")
+    .click();
   const after = await html.getAttribute("data-theme");
   expect(after).not.toBe(before);
 

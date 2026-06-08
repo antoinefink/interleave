@@ -290,11 +290,15 @@ test("markDone and dismiss remove a row and it stays gone on a re-read (T030)", 
   const due = await page.evaluate(async (asOf) => {
     const api = window.appApi as unknown as {
       queue: {
-        list(req: { asOf: string }): Promise<{ items: { id: string; status: string }[] }>;
+        list(req: {
+          asOf: string;
+        }): Promise<{ items: { id: string; status: string; type: string; dueAt: string | null }[] }>;
       };
     };
     const res = await api.queue.list({ asOf });
-    return res.items.map((i) => ({ id: i.id, status: i.status }));
+    return res.items
+      .filter((i) => i.type !== "card")
+      .map((i) => ({ id: i.id, status: i.status, dueAt: i.dueAt }));
   }, AS_OF);
   expect(due.length).toBeGreaterThanOrEqual(2);
   const doneRow = due[0];
@@ -344,7 +348,10 @@ test("markDone and dismiss remove a row and it stays gone on a re-read (T030)", 
         };
       };
       for (const r of rowsToRestore) {
-        await api.queue.undo({ id: r.id, undo: { kind: "status", previousStatus: r.status } });
+        await api.queue.undo({
+          id: r.id,
+          undo: { kind: "status", previousStatus: r.status, previousDueAt: r.dueAt },
+        });
       }
     },
     [doneRow, dismissRowMeta],

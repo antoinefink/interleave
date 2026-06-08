@@ -191,9 +191,10 @@ test("2. activate: accepting the source moves it to active and out of the inbox"
   await page.getByTestId("inbox-row").filter({ hasText: SOURCE_TITLE }).click();
   await expect(page.getByTestId("inbox-preview-title")).toHaveText(SOURCE_TITLE);
 
-  // Accept → status active; leaves the inbox (the SAME inbox.triage the row uses).
-  await page.getByTestId("inbox-accept").click();
-  await expect(page.getByTestId("inbox-empty")).toBeVisible();
+  // Read now → status active, leaves the inbox, and opens the reader.
+  await page.getByTestId("inbox-read-now").click();
+  await expect(page.getByTestId("route-source")).toBeVisible();
+  await expect(page.getByTestId("reader-title")).toHaveText(SOURCE_TITLE);
 
   // The inbox is empty; the source is now `active` (read through the bridge).
   expect(await listInbox(page)).toHaveLength(0);
@@ -279,7 +280,7 @@ test("4. extract: selecting a paragraph and pressing E creates a scheduled extra
   expect(selected.trim().length).toBeGreaterThanOrEqual(3);
   await expect(page.getByTestId("selection-toolbar")).toBeVisible();
   await page.keyboard.press("e");
-  await expect(page.getByText("Extracted")).toBeVisible();
+  await expect(page.getByTestId("reader-flash")).toContainText("Extracted");
 
   // Exactly one extract now exists; resolve its id through the bridge.
   const extracts = await page.evaluate(async () => {
@@ -728,7 +729,7 @@ test("12. render-loop continuity: review resume is preserved across relaunch", a
   await expect(pageA.getByTestId("route-review")).toBeVisible();
 
   const firstReview = await pageA.evaluate(
-    async (cardId, clock) => {
+    async ({ cardId, clock }) => {
       const api = window.appApi as unknown as {
         review: {
           preview(req: { cardId: string; asOf?: string }): Promise<{
@@ -738,8 +739,7 @@ test("12. render-loop continuity: review resume is preserved across relaunch", a
       };
       return api.review.preview({ cardId, asOf: clock });
     },
-    qaCardId,
-    renderClock,
+    { cardId: qaCardId, clock: renderClock },
   );
   expect(firstReview.intervals).toBeTruthy();
   await appA.close();
@@ -755,7 +755,7 @@ test("12. render-loop continuity: review resume is preserved across relaunch", a
   await expect(pageB.getByTestId("route-review")).toBeVisible();
 
   const secondReview = await pageB.evaluate(
-    async (cardId, clock) => {
+    async ({ cardId, clock }) => {
       const api = window.appApi as unknown as {
         review: {
           preview(req: { cardId: string; asOf?: string }): Promise<{
@@ -765,8 +765,7 @@ test("12. render-loop continuity: review resume is preserved across relaunch", a
       };
       return api.review.preview({ cardId, asOf: clock });
     },
-    qaCardId,
-    renderClock,
+    { cardId: qaCardId, clock: renderClock },
   );
   expect(secondReview.intervals).toEqual(firstReview.intervals);
 

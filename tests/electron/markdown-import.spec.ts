@@ -150,7 +150,7 @@ test("extracting from the imported source + exporting it to Markdown both work",
   await block.click({ clickCount: 3 });
   await expect(page.getByTestId("selection-toolbar")).toBeVisible();
   await page.keyboard.press("e");
-  await expect(page.getByText("Extracted")).toBeVisible();
+  await expect(page.getByTestId("reader-flash")).toContainText("Extracted");
 
   // Export the source to Markdown via the bridge → a .md lands in Downloads.
   const exportedResult = await page.evaluate(async (elementId) => {

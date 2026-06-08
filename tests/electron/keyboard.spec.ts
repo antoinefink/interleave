@@ -166,7 +166,7 @@ test("the reader's E key creates an extract mouse-free (same path as the button)
   expect(selected.trim().length).toBeGreaterThanOrEqual(3);
   await expect(page.getByTestId("selection-toolbar")).toBeVisible();
   await page.keyboard.press("e");
-  await expect(page.getByText("Extracted")).toBeVisible();
+  await expect(page.getByTestId("reader-flash")).toContainText("Extracted");
 
   // Exactly one NEW extract — the SAME extractions.create the button calls.
   await expect.poll(() => extractCount(page)).toBe(before + 1);
@@ -219,18 +219,19 @@ test("the queue process loop is keyboard-drivable (p postpones via queue.act)", 
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
 
-  // Give the seeded extract a due_at so an attention item is in the due set.
-  const extractId = await page.evaluate(async () => {
+  // Give the seeded extract a fixed due_at so an attention item is in the due set,
+  // then `p` can move it later deterministically.
+  const extractId = await page.evaluate(async (asOf) => {
     const api = window.appApi as unknown as {
       inspector: { list(): Promise<{ elements: { id: string; type: string }[] }> };
-      extracts: { postpone(req: { id: string }): Promise<unknown> };
+      queue: { schedule(req: { id: string; choice: { kind: "manual"; date: string } }): Promise<unknown> };
     };
     const { elements } = await api.inspector.list();
     const ex = elements.find((e) => e.type === "extract");
     if (!ex) throw new Error("no seeded extract");
-    await api.extracts.postpone({ id: ex.id });
+    await api.queue.schedule({ id: ex.id, choice: { kind: "manual", date: asOf } });
     return ex.id;
-  });
+  }, AS_OF);
 
   // Open the process loop (date-scoped so the seeded items read as due).
   await page.goto(`${baseUrl}/process?asOf=${encodeURIComponent(AS_OF)}`);

@@ -3015,19 +3015,25 @@ export class DbService {
    * the IPC boundary.
    */
   createExtraction(request: ExtractionCreateRequest): ExtractionCreateResult {
-    const sourceElementId = request.sourceElementId as ElementId;
-    const sourceElement = this.repos.elements.findById(sourceElementId);
-    if (!sourceElement || sourceElement.deletedAt) {
-      throw new Error(`DbService.createExtraction: source ${sourceElementId} not found`);
+    const originElementId = request.sourceElementId as ElementId;
+    const originElement = this.repos.elements.findById(originElementId);
+    if (!originElement || originElement.deletedAt) {
+      throw new Error(`DbService.createExtraction: source ${originElementId} not found`);
+    }
+    const explicitParentId = request.parentId as ElementId | undefined;
+    const lineageSourceId =
+      explicitParentId || originElement.type === "source" ? originElementId : originElement.sourceId;
+    if (!lineageSourceId) {
+      throw new Error(`DbService.createExtraction: source ${originElementId} has no lineage root`);
     }
     // Inherit the source's numeric priority unless the renderer overrode it.
     const priority: Priority = request.priority
       ? priorityFromLabel(request.priority)
-      : sourceElement.priority;
+      : originElement.priority;
 
     const { element, location } = this.extractionService.createExtraction({
-      sourceElementId,
-      parentId: request.parentId as ElementId | undefined,
+      sourceElementId: lineageSourceId,
+      parentId: explicitParentId ?? (originElement.type === "source" ? undefined : originElement.id),
       selectedText: request.selectedText,
       blockIds: request.blockIds as BlockId[],
       startOffset: request.startOffset,

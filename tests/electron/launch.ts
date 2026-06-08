@@ -9,6 +9,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -23,6 +24,25 @@ const packagesDir = path.join(repoRoot, "packages");
 const webDist = path.join(webDir, "dist", "index.html");
 const mainBundle = path.join(desktopDir, "dist", "main.cjs");
 const preloadBundle = path.join(desktopDir, "dist", "preload.cjs");
+const buildLockPath = path.join(
+  os.tmpdir(),
+  `interleave-e2e-build-${createHash("sha256").update(repoRoot).digest("hex").slice(0, 16)}.lock`,
+);
+const buildLockOwnerFile = path.join(buildLockPath, "owner.json");
+const buildLockPollMs = 100;
+const buildLockTimeoutMs = 30 * 60 * 1000;
+const staleBuildLockMs = 2 * 60 * 1000;
+const buildStepTimeoutMs = 5 * 60 * 1000;
+
+interface BuildLock {
+  readonly token: string;
+}
+
+interface BuildLockOwner {
+  readonly pid?: number;
+  readonly token?: string;
+  readonly createdAt?: string;
+}
 
 /**
  * The newest mtime (ms) of any `.ts`/`.tsx`/`.css` source under `roots`, or `0`
@@ -59,6 +79,135 @@ function isStale(artifact: string, roots: readonly string[]): boolean {
   return fs.statSync(artifact).mtimeMs < newestSourceMtime(roots);
 }
 
+function needsBuild(): boolean {
+  const rendererStale = isStale(webDist, [path.join(webDir, "src"), packagesDir]);
+  const desktopStale =
+    isStale(mainBundle, [path.join(desktopDir, "src"), packagesDir]) ||
+    isStale(preloadBundle, [path.join(desktopDir, "src"), packagesDir]);
+  return rendererStale || desktopStale;
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function readBuildLockOwner(): BuildLockOwner | null {
+  try {
+    return JSON.parse(fs.readFileSync(buildLockOwnerFile, "utf8")) as BuildLockOwner;
+  } catch {
+    return null;
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function isLockStale(now: number): boolean {
+  const owner = readBuildLockOwner();
+  if (owner?.pid) return !isPidAlive(owner.pid);
+
+  try {
+    const stat = fs.statSync(buildLockPath);
+    return now - stat.mtimeMs > staleBuildLockMs;
+  } catch {
+    return false;
+  }
+}
+
+function isBuildLockPresent(): boolean {
+  return fs.existsSync(buildLockPath);
+}
+
+function stealStaleBuildLock(): void {
+  const stalePath = `${buildLockPath}.stale-${process.pid}-${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}`;
+  try {
+    fs.renameSync(buildLockPath, stalePath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST") return;
+    throw error;
+  }
+  fs.rmSync(stalePath, { force: true, recursive: true });
+}
+
+function tryAcquireBuildLock(): BuildLock | undefined {
+  const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  try {
+    fs.mkdirSync(buildLockPath);
+    fs.writeFileSync(
+      buildLockOwnerFile,
+      JSON.stringify({ pid: process.pid, token, createdAt: new Date().toISOString() }),
+    );
+    return { token };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return undefined;
+    throw error;
+  }
+}
+
+function acquireBuildLock(): BuildLock {
+  const startedAt = Date.now();
+  while (true) {
+    const lock = tryAcquireBuildLock();
+    if (lock) return lock;
+
+    const now = Date.now();
+    if (isLockStale(now)) {
+      stealStaleBuildLock();
+      continue;
+    }
+    if (now - startedAt > buildLockTimeoutMs) {
+      throw new Error(
+        `Timed out waiting for Electron E2E build lock after ${Math.round(
+          buildLockTimeoutMs / 1000,
+        )}s: ${buildLockPath}`,
+      );
+    }
+    sleepSync(buildLockPollMs);
+  }
+}
+
+function releaseBuildLock(lock: BuildLock): void {
+  try {
+    const owner = JSON.parse(fs.readFileSync(buildLockOwnerFile, "utf8")) as { token?: string };
+    if (owner.token !== lock.token) return;
+  } catch {
+    return;
+  }
+  fs.rmSync(buildLockPath, { force: true, recursive: true });
+}
+
+function runBuildsIfStale(): void {
+  // The renderer bundles apps/web/src + the shared packages it imports.
+  if (isStale(webDist, [path.join(webDir, "src"), packagesDir])) {
+    execFileSync("pnpm", ["--filter", "@interleave/web", "build"], {
+      cwd: repoRoot,
+      stdio: "inherit",
+      timeout: buildStepTimeoutMs,
+    });
+  }
+  // The main bundle compiles apps/desktop/src + the shared packages (db/core/
+  // local-db/scheduler) it bundles into a self-contained main.cjs.
+  const desktopStale =
+    isStale(mainBundle, [path.join(desktopDir, "src"), packagesDir]) ||
+    isStale(preloadBundle, [path.join(desktopDir, "src"), packagesDir]);
+  if (desktopStale) {
+    execFileSync("pnpm", ["--filter", "@interleave/desktop", "build:bundle"], {
+      cwd: repoRoot,
+      stdio: "inherit",
+      timeout: buildStepTimeoutMs,
+    });
+  }
+}
+
 /**
  * Build the renderer + desktop bundle when the artifacts are missing OR STALE.
  *
@@ -71,23 +220,16 @@ function isStale(artifact: string, roots: readonly string[]): boolean {
  * sub-second), so the staleness scan is cheap insurance for correctness.
  */
 export function ensureBuilt(): void {
-  // The renderer bundles apps/web/src + the shared packages it imports.
-  if (isStale(webDist, [path.join(webDir, "src"), packagesDir])) {
-    execFileSync("pnpm", ["--filter", "@interleave/web", "build"], {
-      cwd: repoRoot,
-      stdio: "inherit",
-    });
-  }
-  // The main bundle compiles apps/desktop/src + the shared packages (db/core/
-  // local-db/scheduler) it bundles into a self-contained main.cjs.
-  const desktopStale =
-    isStale(mainBundle, [path.join(desktopDir, "src"), packagesDir]) ||
-    isStale(preloadBundle, [path.join(desktopDir, "src"), packagesDir]);
-  if (desktopStale) {
-    execFileSync("pnpm", ["--filter", "@interleave/desktop", "build:bundle"], {
-      cwd: repoRoot,
-      stdio: "inherit",
-    });
+  if (!needsBuild() && !isBuildLockPresent()) return;
+
+  const lock = acquireBuildLock();
+  try {
+    // Another Playwright worker may have produced fresh artifacts while we were
+    // waiting. Re-check under the cross-process lock to avoid concurrent
+    // build:bundle runs deleting/copying apps/desktop/dist at the same time.
+    runBuildsIfStale();
+  } finally {
+    releaseBuildLock(lock);
   }
 }
 
