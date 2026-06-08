@@ -233,7 +233,7 @@ test("raise priority changes a row's Prio badge in place (T030)", async () => {
   await app.close();
 });
 
-test("delete removes a row + an undo snackbar restores it (T030)", async () => {
+test("delete removes a row + global undo restores it (T030)", async () => {
   const app = await launchApp(dataDir, { seedOnEmpty: true });
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
@@ -244,12 +244,12 @@ test("delete removes a row + an undo snackbar restores it (T030)", async () => {
   const cardId = await cardRow.getAttribute("data-element-id");
   if (!cardId) throw new Error("card row has no element id");
 
-  // Delete it → the row is removed and an undo snackbar appears.
+  // Delete it → the row is removed. Per-row lifecycle actions use the shell-level
+  // command undo instead of showing a snackbar on every queue transition.
   await cardRow.getByTestId("queue-action-delete").click();
   await expect(page.locator(`[data-testid="queue-item"][data-element-id="${cardId}"]`)).toHaveCount(
     0,
   );
-  await expect(page.getByTestId("queue-snackbar")).toBeVisible();
 
   // The delete is SOFT — the element still exists with deletedAt set (queried via
   // the bridge, not raw SQL).
@@ -263,8 +263,9 @@ test("delete removes a row + an undo snackbar restores it (T030)", async () => {
   }, cardId);
   expect(deletedState.data).toBeNull(); // soft-deleted → not inspectable as a live element
 
-  // Undo restores the row.
-  await page.getByTestId("queue-snackbar-undo").click();
+  // Global undo restores the row and the active queue re-reads on UNDO_EVENT.
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
+  await expect(page.getByTestId("shell-undo-snackbar")).toBeVisible();
   await expect(
     page.locator(`[data-testid="queue-item"][data-element-id="${cardId}"]`),
   ).toBeVisible();

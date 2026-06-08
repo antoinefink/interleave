@@ -544,7 +544,12 @@ export function ProcessQueue() {
         requestInspectorRefresh();
         const undo: ProcessUndoState["undo"] | null = res.undo
           ? { kind: "queue", recipe: res.undo }
-          : kind === "postpone" || kind === "raise" || kind === "lower"
+          : kind === "postpone" ||
+              kind === "raise" ||
+              kind === "lower" ||
+              kind === "markDone" ||
+              kind === "dismiss" ||
+              kind === "delete"
             ? { kind: "last" }
             : null;
         if (undo) {

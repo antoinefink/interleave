@@ -120,10 +120,10 @@ test("the reader shows title, body, progress, action bar, and extracted-span mar
   // The body rendered (the definition paragraph is present).
   await expect(page.locator(".reader .ProseMirror")).toContainText("skill-acquisition efficiency");
 
-  // Action bar: the primary Set read-point button + the deferred (disabled) ones.
+  // Action bar: read-point plus working source lifecycle exits.
   await expect(page.getByTestId("reader-set-readpoint")).toBeEnabled();
-  await expect(page.getByTestId("reader-postpone")).toBeDisabled();
-  await expect(page.getByTestId("reader-mark-done")).toBeDisabled();
+  await expect(page.getByTestId("reader-postpone")).toBeEnabled();
+  await expect(page.getByTestId("reader-mark-done")).toBeEnabled();
 
   // Progress bar present.
   await expect(page.getByTestId("reader-pbar-fill")).toBeVisible();

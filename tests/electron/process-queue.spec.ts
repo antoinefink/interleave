@@ -230,6 +230,9 @@ test("processes ten mixed elements one at a time, advancing after each action wi
     if (id) seen.add(id);
 
     await item.getByTestId(`process-action-${action}`).click();
+    if (action === "postpone" && (await page.getByTestId("schedule-menu-pop").isVisible())) {
+      await page.getByTestId("schedule-nextWeek").click();
+    }
     processedCount++;
 
     // After each action the cursor advanced: either a NEW item shows or we hit done.
