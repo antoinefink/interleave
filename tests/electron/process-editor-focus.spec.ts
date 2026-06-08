@@ -29,9 +29,10 @@ async function createExtract(
   page: Page,
   sourceId: string,
   selectedText = "Focused process editor extract",
+  options: { readonly saveSelectedTextAsBody?: boolean } = {},
 ): Promise<string> {
   return page.evaluate(
-    async ({ sourceElementId, text }) => {
+    async ({ sourceElementId, text, saveSelectedTextAsBody }) => {
       const api = window.appApi as unknown as {
         extractions: {
           create(req: {
@@ -43,6 +44,14 @@ async function createExtract(
             title?: string;
           }): Promise<{ extract: { id: string } }>;
         };
+        documents: {
+          save(req: {
+            elementId: string;
+            prosemirrorJson: unknown;
+            plainText: string;
+            blocks?: { blockType: string; order: number; stableBlockId: string }[];
+          }): Promise<unknown>;
+        };
       };
       const res = await api.extractions.create({
         sourceElementId,
@@ -52,9 +61,33 @@ async function createExtract(
         endOffset: text.length,
         title: "Focused process editor extract",
       });
+      if (saveSelectedTextAsBody) {
+        const paragraphs = text
+          .split(/\n\s*\n/)
+          .map((paragraph) => paragraph.trim())
+          .filter((paragraph) => paragraph.length > 0);
+        const blocks = paragraphs.map((_, order) => ({
+          blockType: "paragraph",
+          order,
+          stableBlockId: `process_extract_long_${order + 1}`,
+        }));
+        await api.documents.save({
+          elementId: res.extract.id,
+          prosemirrorJson: {
+            type: "doc",
+            content: paragraphs.map((paragraph, order) => ({
+              type: "paragraph",
+              attrs: { blockId: blocks[order]?.stableBlockId },
+              content: [{ type: "text", text: paragraph }],
+            })),
+          },
+          plainText: paragraphs.join("\n\n"),
+          blocks,
+        });
+      }
       return res.extract.id;
     },
-    { sourceElementId: sourceId, text: selectedText },
+    { sourceElementId: sourceId, text: selectedText, ...options },
   );
 }
 
@@ -127,7 +160,9 @@ test("process extract card fills the work area while keeping actions reachable",
         "Final process extract paragraph. It should be reachable by scrolling the reader, not the whole process card.",
       )
       .join("\n\n");
-    const extractId = await createExtract(page, sourceId, extractText);
+    const extractId = await createExtract(page, sourceId, extractText, {
+      saveSelectedTextAsBody: true,
+    });
 
     await openProcess(page, baseUrl);
     await moveProcessCursorTo(page, extractId);
