@@ -51,8 +51,19 @@ vi.mock("@interleave/editor", () => ({
 }));
 
 vi.mock("../../components/BalanceBanner", () => ({
-  BalanceBanner: ({ refreshKey }: { refreshKey: number }) => (
-    <div data-testid="mock-balance-banner">{refreshKey}</div>
+  BalanceBanner: ({
+    refreshKey,
+    onTriageInbox,
+  }: {
+    refreshKey: number;
+    onTriageInbox?: () => void;
+  }) => (
+    <div data-testid="mock-balance-banner">
+      {refreshKey}
+      <button type="button" data-testid="mock-balance-triage-inbox" onClick={onTriageInbox}>
+        Triage inbox
+      </button>
+    </div>
   ),
 }));
 
@@ -279,6 +290,7 @@ beforeEach(() => {
     .mockResolvedValueOnce({ paths: ["/vault/video.mp4"] })
     .mockResolvedValueOnce({ cancelled: true });
   h.importMediaSource.mockResolvedValue({ status: "imported", id: "media-1" });
+  Element.prototype.scrollIntoView = vi.fn();
 });
 
 describe("InboxScreen", () => {
@@ -316,6 +328,15 @@ describe("InboxScreen", () => {
     expect(getByTestId("inbox-count")).toHaveTextContent("2 items awaiting triage");
     expect(getByTestId("mock-balance-banner").parentElement).toHaveClass("px-2");
     expect(getByTestId("mock-balance-banner").parentElement).not.toHaveClass("px-6");
+  });
+
+  it("focuses the selected inbox row when the balance banner triage action is clicked", async () => {
+    const { getAllByTestId, getByTestId, findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    fireEvent.click(getByTestId("mock-balance-triage-inbox"));
+
+    expect(getAllByTestId("inbox-row")[0]).toHaveFocus();
   });
 
   it("reads now by activating the selected item and navigating to the source reader", async () => {

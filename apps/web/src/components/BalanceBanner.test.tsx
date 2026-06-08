@@ -13,7 +13,7 @@
  * component's wiring.
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings, BalanceGetResult } from "../lib/appApi";
 
@@ -36,6 +36,9 @@ const h = vi.hoisted(() => {
     settings,
     getBalance: vi.fn(),
     getAppSettings: vi.fn(),
+    getSettings: vi.fn(),
+    updateSetting: vi.fn(),
+    updateAppSettings: vi.fn(),
     navigateSpy: vi.fn(),
   };
 });
@@ -49,7 +52,13 @@ vi.mock("../lib/appApi", async () => {
   return {
     ...actual,
     isDesktop: () => true,
-    appApi: { getBalance: h.getBalance, getAppSettings: h.getAppSettings },
+    appApi: {
+      getBalance: h.getBalance,
+      getAppSettings: h.getAppSettings,
+      getSettings: h.getSettings,
+      updateSetting: h.updateSetting,
+      updateAppSettings: h.updateAppSettings,
+    },
   };
 });
 
@@ -59,6 +68,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.getBalance.mockResolvedValue(h.imbalanced);
   h.getAppSettings.mockResolvedValue({ settings: h.settings });
+  h.getSettings.mockResolvedValue({ settings: {} });
+  h.updateSetting.mockResolvedValue({ key: "ui.noticeDismissals", value: {} });
+  h.updateAppSettings.mockResolvedValue({ settings: h.settings });
 });
 
 describe("BalanceBanner (T046)", () => {
@@ -131,6 +143,96 @@ describe("BalanceBanner (T046)", () => {
     });
     render(<BalanceBanner />);
     await waitFor(() => expect(h.getAppSettings).toHaveBeenCalled());
+    expect(screen.queryByTestId("balance-banner")).toBeNull();
+  });
+
+  it("navigates to inbox when no same-route triage callback is supplied", async () => {
+    render(<BalanceBanner />);
+
+    fireEvent.click(await screen.findByTestId("balance-triage-inbox"));
+
+    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/inbox" });
+  });
+
+  it("uses the same-route triage callback instead of navigating when supplied", async () => {
+    const onTriageInbox = vi.fn();
+    render(<BalanceBanner onTriageInbox={onTriageInbox} />);
+
+    fireEvent.click(await screen.findByTestId("balance-triage-inbox"));
+
+    expect(onTriageInbox).toHaveBeenCalledTimes(1);
+    expect(h.navigateSpy).not.toHaveBeenCalledWith({ to: "/inbox" });
+  });
+
+  it("is hidden while the one-week notice dismissal is still active", async () => {
+    h.getSettings.mockResolvedValue({
+      settings: {
+        "ui.noticeDismissals": {
+          "balance.importProcess": {
+            until: new Date(Date.now() + 60_000).toISOString(),
+          },
+        },
+      },
+    });
+    const { container } = render(<BalanceBanner />);
+
+    await waitFor(() => expect(h.getSettings).toHaveBeenCalledWith({ key: "ui.noticeDismissals" }));
+
+    expect(screen.queryByTestId("balance-banner")).toBeNull();
+    expect(container.querySelector("[data-testid='balance-banner']")).toBeNull();
+  });
+
+  it("shows again after a one-week notice dismissal expires", async () => {
+    h.getSettings.mockResolvedValue({
+      settings: {
+        "ui.noticeDismissals": {
+          "balance.importProcess": {
+            until: new Date(Date.now() - 60_000).toISOString(),
+          },
+        },
+      },
+    });
+    render(<BalanceBanner />);
+
+    expect(await screen.findByTestId("balance-banner")).toBeVisible();
+  });
+
+  it("hides for a week through the generic settings surface", async () => {
+    render(<BalanceBanner />);
+
+    fireEvent.click(await screen.findByTestId("balance-dismiss-menu-trigger"));
+    fireEvent.click(screen.getByTestId("balance-hide-week"));
+
+    await waitFor(() =>
+      expect(h.updateSetting).toHaveBeenCalledWith({
+        key: "ui.noticeDismissals",
+        value: expect.objectContaining({
+          "balance.importProcess": expect.objectContaining({
+            until: expect.any(String),
+          }),
+        }),
+      }),
+    );
+    const call = h.updateSetting.mock.calls.at(-1)?.[0] as {
+      value: { "balance.importProcess": { until: string } };
+    };
+    expect(Date.parse(call.value["balance.importProcess"].until)).toBeGreaterThan(
+      Date.now() + 6 * 24 * 60 * 60 * 1000,
+    );
+    expect(screen.queryByTestId("balance-banner")).toBeNull();
+  });
+
+  it("turns the warning off through typed app settings", async () => {
+    render(<BalanceBanner />);
+
+    fireEvent.click(await screen.findByTestId("balance-dismiss-menu-trigger"));
+    fireEvent.click(screen.getByTestId("balance-turn-off"));
+
+    await waitFor(() =>
+      expect(h.updateAppSettings).toHaveBeenCalledWith({
+        patch: { balanceWarnings: false },
+      }),
+    );
     expect(screen.queryByTestId("balance-banner")).toBeNull();
   });
 });

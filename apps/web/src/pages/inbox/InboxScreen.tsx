@@ -21,7 +21,7 @@
 
 import { buildSchema, SourceEditor } from "@interleave/editor";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BalanceBanner } from "../../components/BalanceBanner";
 import { ExternalUrlLink } from "../../components/ExternalUrlLink";
 import { Icon, type IconName } from "../../components/Icon";
@@ -427,6 +427,7 @@ export function InboxScreen() {
   const [defaultSourcePriority, setDefaultSourcePriority] = useState<PriorityLabelInput>("C");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inboxListRef = useRef<HTMLDivElement | null>(null);
   // Bumped after any list change (import / triage) so the balance banner re-reads
   // the week's counts without a full remount.
   const [balanceRefresh, setBalanceRefresh] = useState(0);
@@ -494,6 +495,16 @@ export function InboxScreen() {
   }, [selId, select]);
 
   const onSelect = useCallback((id: string) => setSelId(id), []);
+
+  const focusInboxTriageTarget = useCallback(() => {
+    const list = inboxListRef.current;
+    if (!list) return;
+    list.scrollIntoView({ block: "nearest" });
+    const activeRow =
+      list.querySelector<HTMLButtonElement>('[data-testid="inbox-row"][aria-current="true"]') ??
+      list.querySelector<HTMLButtonElement>('[data-testid="inbox-row"]');
+    activeRow?.focus({ preventScroll: true });
+  }, []);
 
   // Import a local PDF (T064) — the MAIN process opens the native file picker,
   // streams the original into the vault, parses per-page text, and creates an
@@ -763,7 +774,7 @@ export function InboxScreen() {
 
       {/* Import/process balance warning (T046) — advisory; hidden when balanced. */}
       <div className="px-2 pt-4 empty:hidden">
-        <BalanceBanner refreshKey={balanceRefresh} />
+        <BalanceBanner refreshKey={balanceRefresh} onTriageInbox={focusInboxTriageTarget} />
       </div>
 
       {error ? (
@@ -801,6 +812,7 @@ export function InboxScreen() {
             <div
               className="w-[360px] flex-none space-y-1 overflow-y-auto border-border border-r p-2"
               data-testid="inbox-list"
+              ref={inboxListRef}
             >
               {items.map((it) => (
                 <InboxRow

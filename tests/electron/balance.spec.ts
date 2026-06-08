@@ -77,6 +77,30 @@ async function setBalanceWarnings(page: Page, on: boolean): Promise<void> {
   }, on);
 }
 
+async function balanceWarningsEnabled(page: Page): Promise<boolean> {
+  return page.evaluate(async () => {
+    const api = window.appApi as unknown as {
+      settings: { getAll(): Promise<{ settings: { balanceWarnings: boolean } }> };
+    };
+    return (await api.settings.getAll()).settings.balanceWarnings;
+  });
+}
+
+async function balanceNoticeDismissalUntil(page: Page): Promise<string | null> {
+  return page.evaluate(async () => {
+    const api = window.appApi as unknown as {
+      settings: { get(req: { key: string }): Promise<{ settings: Record<string, unknown> }> };
+    };
+    const { settings } = await api.settings.get({ key: "ui.noticeDismissals" });
+    const raw = settings["ui.noticeDismissals"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const notice = (raw as Record<string, unknown>)["balance.importProcess"];
+    if (!notice || typeof notice !== "object" || Array.isArray(notice)) return null;
+    const until = (notice as Record<string, unknown>).until;
+    return typeof until === "string" ? until : null;
+  });
+}
+
 test.beforeAll(() => {
   ensureBuilt();
   dataDir = makeDataDir();
@@ -137,6 +161,17 @@ test("the balance banner appears on the inbox when imports outpace processing", 
   await expect(page.getByTestId("balance-open-queue")).toHaveCount(0);
   await expect(page.getByTestId("balance-triage-inbox")).toBeVisible();
 
+  await page.getByTestId("balance-triage-inbox").click();
+  await expect(page.getByTestId("inbox-row").first()).toBeFocused();
+
+  await page.getByTestId("balance-dismiss-menu-trigger").click();
+  await expect(page.getByTestId("balance-dismiss-menu")).toBeVisible();
+  await expect(page.getByTestId("balance-hide-week")).toHaveText("Hide for a week");
+  await expect(page.getByTestId("balance-turn-off")).toContainText("Hide forever");
+  await page.screenshot({
+    path: test.info().outputPath("balance-warning-dismiss-menu.png"),
+  });
+
   const bannerBox = await banner.boundingBox();
   const rowBox = await page.getByTestId("inbox-row").first().boundingBox();
   const routeBox = await page.getByTestId("route-inbox").boundingBox();
@@ -149,7 +184,35 @@ test("the balance banner appears on the inbox when imports outpace processing", 
   await app.close();
 });
 
-test("toggling balance warnings off hides the banner", async () => {
+test("hide for a week persists through an app restart", async () => {
+  const weeklyDir = makeDataDir();
+  const app1 = await launchApp(weeklyDir);
+  const page1 = await app1.firstWindow();
+  await page1.waitForLoadState("domcontentloaded");
+  await importSources(page1, 10);
+
+  await page1.goto(`${baseUrl}/inbox`);
+  await page1.waitForLoadState("domcontentloaded");
+  await expect(page1.getByTestId("balance-banner")).toBeVisible();
+  await page1.getByTestId("balance-dismiss-menu-trigger").click();
+  await page1.getByTestId("balance-hide-week").click();
+  await expect(page1.getByTestId("balance-banner")).toHaveCount(0);
+  const until = await balanceNoticeDismissalUntil(page1);
+  expect(typeof until).toBe("string");
+  expect(Date.parse(until as string)).toBeGreaterThan(Date.now() + 6 * 24 * 60 * 60 * 1000);
+  await app1.close();
+
+  const app2 = await launchApp(weeklyDir);
+  const page2 = await app2.firstWindow();
+  await page2.waitForLoadState("domcontentloaded");
+  await page2.goto(`${baseUrl}/inbox`);
+  await page2.waitForLoadState("domcontentloaded");
+  await expect(page2.getByTestId("route-inbox")).toBeVisible();
+  await expect(page2.getByTestId("balance-banner")).toHaveCount(0);
+  await app2.close();
+});
+
+test("hiding forever through the banner menu persists in typed settings", async () => {
   const app = await launchApp(dataDir);
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
@@ -159,8 +222,13 @@ test("toggling balance warnings off hides the banner", async () => {
   await page.waitForLoadState("domcontentloaded");
   await expect(page.getByTestId("balance-banner")).toBeVisible();
 
-  // Turn the warning off → the banner disappears on re-render.
-  await setBalanceWarnings(page, false);
+  // Hide forever through the real menu action -> the typed setting flips off and
+  // the banner stays hidden after reload.
+  await page.getByTestId("balance-dismiss-menu-trigger").click();
+  await expect(page.getByTestId("balance-turn-off")).toContainText("Hide forever");
+  await page.getByTestId("balance-turn-off").click();
+  await expect(page.getByTestId("balance-banner")).toHaveCount(0);
+  expect(await balanceWarningsEnabled(page)).toBe(false);
   await page.reload();
   await page.waitForLoadState("domcontentloaded");
   await expect(page.getByTestId("route-inbox")).toBeVisible();
