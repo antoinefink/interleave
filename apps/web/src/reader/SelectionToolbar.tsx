@@ -6,7 +6,8 @@
  * (accent, `E`), **Cloze** (`C`), **Highlight** (`H`), **Copy**, and **Cancel**.
  * It rebuilds `design/kit/app/screen-reader.jsx`'s `SelToolbar` against the
  * canonical `.sel-toolbar` / `.sel-tool` tokens, positioned `fixed` above the
- * selection's bounding rect with `transform: translate(-50%, -100%)`.
+ * selection's visible rect with `transform: translate(-50%, -100%)`; after
+ * render it clamps that anchor so the measured toolbar remains in the viewport.
  *
  * This component is PURELY PRESENTATIONAL — it holds no SQL, no lineage logic, no
  * selection state: it takes the resolved anchor position from the
@@ -18,8 +19,11 @@
  * applied through Tiptap commands, never DOM surgery — see the T019 risk note).
  */
 
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "../components/Icon";
 import { Kbd } from "../shell/Kbd";
+
+const VIEWPORT_MARGIN = 12;
 
 /** The action a toolbar button dispatches. */
 export type SelectionToolbarAction = "extract" | "cloze" | "highlight" | "copy" | "cancel";
@@ -51,7 +55,7 @@ export const EXTRACT_SELECTION_ACTIONS: readonly SelectionToolbarItem[] = [
   { action: "cancel", label: "", icon: "x", title: "Cancel (Esc)", ariaLabel: "Cancel" },
 ];
 
-/** Where to anchor the toolbar: the top + horizontal-centre of the selection rect. */
+/** Where to anchor the toolbar: the top + horizontal-centre of the visible selection rect. */
 export interface SelectionToolbarPosition {
   /** Viewport `top` (px) — the toolbar is translated up by 100% above this. */
   readonly top: number;
@@ -68,6 +72,42 @@ export interface SelectionToolbarProps {
   readonly actions?: readonly SelectionToolbarItem[];
 }
 
+function viewportSize(): { width: number; height: number } {
+  const doc = typeof document !== "undefined" ? document.documentElement : null;
+  return {
+    width: typeof window !== "undefined" ? (window.innerWidth ?? doc?.clientWidth ?? 0) : 0,
+    height: typeof window !== "undefined" ? (window.innerHeight ?? doc?.clientHeight ?? 0) : 0,
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  if (max < min) return value;
+  return Math.min(Math.max(value, min), max);
+}
+
+function clampRenderedToolbarAnchor(
+  position: SelectionToolbarPosition,
+  toolbar: HTMLElement,
+): SelectionToolbarPosition {
+  const { width: viewportWidth, height: viewportHeight } = viewportSize();
+  const rect = toolbar.getBoundingClientRect();
+  if (viewportWidth <= 0 || viewportHeight <= 0 || rect.width <= 0 || rect.height <= 0) {
+    return position;
+  }
+  return {
+    top: clamp(position.top, rect.height + VIEWPORT_MARGIN, viewportHeight - VIEWPORT_MARGIN),
+    left: clamp(
+      position.left,
+      rect.width / 2 + VIEWPORT_MARGIN,
+      viewportWidth - rect.width / 2 - VIEWPORT_MARGIN,
+    ),
+  };
+}
+
+function samePosition(a: SelectionToolbarPosition, b: SelectionToolbarPosition): boolean {
+  return Math.abs(a.top - b.top) < 0.5 && Math.abs(a.left - b.left) < 0.5;
+}
+
 /**
  * Render the floating selection toolbar, or nothing when `position` is null.
  *
@@ -80,17 +120,55 @@ export function SelectionToolbar({
   onAction,
   actions = SOURCE_SELECTION_ACTIONS,
 }: SelectionToolbarProps): React.ReactElement | null {
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const [renderedPosition, setRenderedPosition] = useState(position);
+
+  const clampToViewport = useCallback(() => {
+    if (!position || !toolbarRef.current) {
+      setRenderedPosition(position);
+      return;
+    }
+    const next = clampRenderedToolbarAnchor(position, toolbarRef.current);
+    setRenderedPosition((current) => (current && samePosition(current, next) ? current : next));
+  }, [position]);
+
+  useLayoutEffect(() => {
+    if (!position) {
+      setRenderedPosition(null);
+      return;
+    }
+    setRenderedPosition(position);
+  }, [position]);
+
+  useLayoutEffect(() => {
+    if (!position || typeof window === "undefined") return;
+    clampToViewport();
+
+    const toolbar = toolbarRef.current;
+    let resizeObserver: ResizeObserver | null = null;
+    if (toolbar && typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(() => clampToViewport());
+      resizeObserver.observe(toolbar);
+    }
+    window.addEventListener("resize", clampToViewport);
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", clampToViewport);
+    };
+  }, [position, clampToViewport]);
+
   if (!position) return null;
   return (
     <div
+      ref={toolbarRef}
       className="sel-toolbar fade-up"
       data-testid="selection-toolbar"
       role="toolbar"
       aria-label="Selection actions"
       style={{
         position: "fixed",
-        top: position.top,
-        left: position.left,
+        top: renderedPosition?.top ?? position.top,
+        left: renderedPosition?.left ?? position.left,
         transform: "translate(-50%, -100%)",
         zIndex: 80,
       }}

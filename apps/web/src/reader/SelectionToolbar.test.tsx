@@ -19,10 +19,10 @@
  */
 
 import { buildSchema, resolveSelectionLocation } from "@interleave/editor";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Node as PmNode } from "@tiptap/pm/model";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   EXTRACT_SELECTION_ACTIONS,
   SelectionToolbar,
@@ -30,6 +30,22 @@ import {
 } from "./SelectionToolbar";
 
 const POS = { top: 120, left: 240 } as const;
+
+function rect(width: number, height: number): DOMRect {
+  return {
+    top: 0,
+    left: 0,
+    width,
+    height,
+    right: width,
+    bottom: height,
+  } as DOMRect;
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("SelectionToolbar — presentation + actions", () => {
   it("renders nothing when there is no position (no selection)", () => {
@@ -69,6 +85,33 @@ describe("SelectionToolbar — presentation + actions", () => {
     expect(el.style.top).toBe("120px");
     expect(el.style.left).toBe("240px");
     expect(el.style.transform).toBe("translate(-50%, -100%)");
+  });
+
+  it("clamps the measured toolbar bounds inside the viewport near all edges", async () => {
+    vi.stubGlobal("innerWidth", 500);
+    vi.stubGlobal("innerHeight", 300);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this instanceof HTMLElement && this.dataset.testid === "selection-toolbar"
+        ? rect(320, 40)
+        : rect(0, 0);
+    });
+
+    const { rerender } = render(
+      <SelectionToolbar position={{ top: 4, left: 8 }} onAction={() => {}} />,
+    );
+    const el = screen.getByTestId("selection-toolbar");
+    await waitFor(() => {
+      expect(el.style.top).toBe("52px");
+      expect(el.style.left).toBe("172px");
+    });
+
+    rerender(<SelectionToolbar position={{ top: 296, left: 496 }} onAction={() => {}} />);
+    await waitFor(() => {
+      expect(el.style.top).toBe("288px");
+      expect(el.style.left).toBe("328px");
+    });
   });
 
   it("dispatches each action on click", () => {

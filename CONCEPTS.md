@@ -36,6 +36,18 @@ The inbox action that accepts a source into active processing and immediately op
 
 The local reading surface for processing a source inside the app, distinct from opening the source's external canonical URL.
 
+### Extract
+
+A scheduled element created from selected source or extract material so the user can process that fragment independently while preserving source lineage.
+
+An Extract is not just a highlight: it carries its own lifecycle, priority, distillation stage, due date, body, and source location so it can become cleaner notes, child extracts, or cards.
+
+### Selection toolbar
+
+The floating action surface that appears over a live text selection in a reader or extract workspace and offers selection-scoped actions such as extract, sub-extract, highlight, copy, or card-entry actions.
+
+The toolbar is tied to the current visible selection and should remain reachable without becoming the persistence boundary itself; the action it dispatches owns any durable mutation.
+
 ### Source block processing
 
 The per-block progress model that records what happened to each stable block in a Source as the user reads, ignores, extracts from, or defers that block.

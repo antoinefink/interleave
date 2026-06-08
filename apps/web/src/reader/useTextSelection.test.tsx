@@ -6,15 +6,15 @@
  * without mutating the document, and the document/selection are only ever READ.
  *
  * The hook reads `editor.state` (a real ProseMirror `EditorState`) and the DOM
- * selection rect, so the test stands up a real state behind a minimal fake editor
- * and stubs `window.getSelection()` to return a range with a bounding rect.
+ * selection rects, so the test stands up a real state behind a minimal fake editor
+ * and stubs `window.getSelection()` to return a range with visible client rects.
  */
 
 import { buildSchema, type Editor } from "@interleave/editor";
 import { act, renderHook } from "@testing-library/react";
 import { Node as PmNode } from "@tiptap/pm/model";
 import { EditorState, TextSelection } from "@tiptap/pm/state";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useTextSelection } from "./useTextSelection";
 
 const schema = buildSchema();
@@ -45,10 +45,39 @@ function fakeEditor(from: number, to: number): { editor: Editor; selectedNode: T
   };
 }
 
-/** Stub the DOM selection so the hook can read a bounding rect on mouseup. */
-function stubDomSelection(anchorNode: Node) {
+type TestRect = Pick<DOMRect, "top" | "left" | "right" | "bottom" | "width" | "height">;
+
+function rect(top: number, left: number, width: number, height: number): DOMRect {
+  return {
+    top,
+    left,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+  } as DOMRect;
+}
+
+function rectList(rects: readonly TestRect[]): DOMRectList {
+  return {
+    length: rects.length,
+    item: (index: number) => (rects[index] as DOMRect | undefined) ?? null,
+    [Symbol.iterator]: function* () {
+      for (const r of rects) yield r as DOMRect;
+    },
+  } as DOMRectList;
+}
+
+/** Stub the DOM selection so the hook can read selection geometry on mouseup. */
+function stubDomSelection(
+  anchorNode: Node,
+  options: { bounding?: DOMRect; clientRects?: readonly DOMRect[] } = {},
+) {
+  const bounding = options.bounding ?? rect(100, 200, 80, 18);
+  const clientRects = options.clientRects ?? [bounding];
   const range = {
-    getBoundingClientRect: () => ({ top: 100, left: 200, width: 80, height: 18 }),
+    getBoundingClientRect: () => bounding,
+    getClientRects: () => rectList(clientRects),
   };
   vi.spyOn(window, "getSelection").mockReturnValue({
     rangeCount: 1,
@@ -60,11 +89,17 @@ function stubDomSelection(anchorNode: Node) {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
   document.body.innerHTML = "";
 });
 
 describe("useTextSelection", () => {
+  beforeEach(() => {
+    vi.stubGlobal("innerWidth", 1000);
+    vi.stubGlobal("innerHeight", 800);
+  });
+
   it("surfaces a position + location for a ≥3-char selection on mouseup", () => {
     vi.useFakeTimers();
     // "Alpha" = positions 1..6 inside the single paragraph.
@@ -82,6 +117,101 @@ describe("useTextSelection", () => {
     expect(result.current.location?.selectedText).toBe("Alpha");
   });
 
+  it("anchors a huge multi-viewport selection to a visible client rect, not the off-screen union rect", () => {
+    vi.useFakeTimers();
+    const { editor, selectedNode } = fakeEditor(1, 6);
+    stubDomSelection(selectedNode, {
+      // The failure mode: the union rect starts far above the current viewport.
+      bounding: rect(-1400, 180, 620, 1800),
+      clientRects: [rect(-1400, 180, 620, 20), rect(-40, 180, 620, 20), rect(420, 180, 620, 20)],
+    });
+    const { result } = renderHook(() => useTextSelection(editor, true));
+
+    act(() => {
+      window.dispatchEvent(new MouseEvent("mouseup"));
+      vi.runAllTimers();
+    });
+
+    expect(result.current.position).toEqual({ top: 412, left: 490 });
+  });
+
+  it("uses the first positively visible client rect for a huge selection", () => {
+    vi.useFakeTimers();
+    const { editor, selectedNode } = fakeEditor(1, 6);
+    stubDomSelection(selectedNode, {
+      bounding: rect(-1200, 180, 620, 1800),
+      clientRects: [
+        rect(-2, 180, 620, 20),
+        // Taller, but lower: the toolbar belongs to the first visible line.
+        rect(420, 180, 620, 80),
+      ],
+    });
+    const { result } = renderHook(() => useTextSelection(editor, true));
+
+    act(() => {
+      window.dispatchEvent(new MouseEvent("mouseup"));
+      vi.runAllTimers();
+    });
+
+    expect(result.current.position).toEqual({ top: 12, left: 490 });
+  });
+
+  it("ignores zero-size client rects when choosing the visible anchor", () => {
+    vi.useFakeTimers();
+    const { editor, selectedNode } = fakeEditor(1, 6);
+    stubDomSelection(selectedNode, {
+      bounding: rect(-600, 50, 300, 900),
+      clientRects: [rect(0, 0, 0, 0), rect(180, 210, 120, 18)],
+    });
+    const { result } = renderHook(() => useTextSelection(editor, true));
+
+    act(() => {
+      window.dispatchEvent(new MouseEvent("mouseup"));
+      vi.runAllTimers();
+    });
+
+    expect(result.current.position).toEqual({ top: 172, left: 270 });
+  });
+
+  it("clamps a visible near-edge selection anchor point into the viewport", () => {
+    vi.useFakeTimers();
+    const { editor, selectedNode } = fakeEditor(1, 6);
+    stubDomSelection(selectedNode, {
+      bounding: rect(6, -40, 20, 16),
+      clientRects: [rect(6, -40, 20, 16)],
+    });
+    const { result } = renderHook(() => useTextSelection(editor, true));
+
+    act(() => {
+      window.dispatchEvent(new MouseEvent("mouseup"));
+      vi.runAllTimers();
+    });
+
+    expect(result.current.position).toEqual({ top: 12, left: 12 });
+  });
+
+  it("keeps toolbar anchors in viewport coordinates when window and reader scrollers are non-zero", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("scrollY", 9000);
+    const { editor, selectedNode } = fakeEditor(1, 6);
+    const scroller = document.createElement("div");
+    scroller.className = "reader-page";
+    scroller.scrollTop = 3200;
+    document.body.append(scroller);
+    stubDomSelection(selectedNode, {
+      bounding: rect(260, 220, 100, 18),
+      clientRects: [rect(260, 220, 100, 18)],
+    });
+    const { result } = renderHook(() => useTextSelection(editor, true));
+
+    act(() => {
+      window.dispatchEvent(new MouseEvent("mouseup"));
+      vi.runAllTimers();
+    });
+
+    expect(result.current.position).toEqual({ top: 252, left: 270 });
+  });
+
   it("Escape dismisses the toolbar", () => {
     vi.useFakeTimers();
     const { editor, selectedNode } = fakeEditor(1, 6);
@@ -96,6 +226,51 @@ describe("useTextSelection", () => {
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     });
+    expect(result.current.position).toBeNull();
+    expect(result.current.location).toBeNull();
+  });
+
+  it("does not reopen after dismissing while a deferred mouseup recompute is pending", () => {
+    vi.useFakeTimers();
+    const { editor, selectedNode } = fakeEditor(1, 6);
+    stubDomSelection(selectedNode);
+    const { result } = renderHook(() => useTextSelection(editor, true));
+    act(() => {
+      window.dispatchEvent(new MouseEvent("mouseup"));
+      vi.runAllTimers();
+    });
+    expect(result.current.position).not.toBeNull();
+
+    act(() => {
+      window.dispatchEvent(new MouseEvent("mouseup"));
+      result.current.dismiss();
+      vi.runAllTimers();
+    });
+
+    expect(result.current.position).toBeNull();
+    expect(result.current.location).toBeNull();
+  });
+
+  it("ignores toolbar-originated mouseup events so action clicks cannot reopen it", () => {
+    vi.useFakeTimers();
+    const { editor, selectedNode } = fakeEditor(1, 6);
+    stubDomSelection(selectedNode);
+    const toolbar = document.createElement("div");
+    toolbar.dataset.testid = "selection-toolbar";
+    document.body.append(toolbar);
+    const { result } = renderHook(() => useTextSelection(editor, true));
+    act(() => {
+      window.dispatchEvent(new MouseEvent("mouseup"));
+      vi.runAllTimers();
+    });
+    expect(result.current.position).not.toBeNull();
+
+    act(() => {
+      result.current.dismiss();
+      toolbar.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      vi.runAllTimers();
+    });
+
     expect(result.current.position).toBeNull();
     expect(result.current.location).toBeNull();
   });
