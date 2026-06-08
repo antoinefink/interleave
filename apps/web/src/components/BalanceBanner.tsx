@@ -71,9 +71,16 @@ export interface BalanceBannerProps {
   readonly refreshKey?: number;
   /** Optional same-route handler; when absent the action navigates to `/inbox`. */
   readonly onTriageInbox?: () => void;
+  /** Optional label for same-route hosts that reveal existing triage controls. */
+  readonly triageInboxLabel?: string;
 }
 
-export function BalanceBanner({ asOf, refreshKey = 0, onTriageInbox }: BalanceBannerProps) {
+export function BalanceBanner({
+  asOf,
+  refreshKey = 0,
+  onTriageInbox,
+  triageInboxLabel = "Triage inbox",
+}: BalanceBannerProps) {
   const navigate = useNavigate();
   const [data, setData] = useState<BalanceGetResult | null>(null);
   const [enabled, setEnabled] = useState(true);
@@ -257,7 +264,7 @@ export function BalanceBanner({ asOf, refreshKey = 0, onTriageInbox }: BalanceBa
             className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface px-2.5 py-1 font-medium text-sm text-text-2 hover:text-text"
           >
             <Icon name="inbox" size={13} />
-            Triage inbox
+            {triageInboxLabel}
           </button>
         ) : null}
         <div className="relative" ref={menuRef}>

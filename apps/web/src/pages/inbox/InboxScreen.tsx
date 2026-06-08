@@ -21,7 +21,7 @@
 
 import { buildSchema, SourceEditor } from "@interleave/editor";
 import { useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type Ref, useCallback, useEffect, useRef, useState } from "react";
 import { BalanceBanner } from "../../components/BalanceBanner";
 import { ExternalUrlLink } from "../../components/ExternalUrlLink";
 import { Icon, type IconName } from "../../components/Icon";
@@ -192,6 +192,7 @@ function TriageButton({
   ariaLabel,
   onClick,
   testid,
+  buttonRef,
 }: {
   icon: IconName;
   label: string;
@@ -202,6 +203,7 @@ function TriageButton({
   ariaLabel?: string;
   onClick: () => void;
   testid: string;
+  buttonRef?: Ref<HTMLButtonElement>;
 }) {
   const tone = danger
     ? "border-danger-soft bg-danger-soft text-danger hover:opacity-90"
@@ -212,6 +214,7 @@ function TriageButton({
     <button
       type="button"
       data-testid={testid}
+      ref={buttonRef}
       disabled={disabled}
       aria-label={ariaLabel}
       onClick={onClick}
@@ -244,12 +247,18 @@ function PreviewPane({
   onReadNow,
   onTriage,
   onSetPriority,
+  triageActionsRef,
+  readNowButtonRef,
+  triageHighlighted,
 }: {
   detail: InboxItemDetail;
   busy: boolean;
   onReadNow: () => void;
   onTriage: (kind: "keepForLater" | "delete") => void;
   onSetPriority: (label: PriorityLabelInput) => void;
+  triageActionsRef: Ref<HTMLElement>;
+  readNowButtonRef: Ref<HTMLButtonElement>;
+  triageHighlighted: boolean;
 }) {
   const { summary, provenance } = detail;
   const bodyDoc = validBodyDoc(detail.bodyDoc);
@@ -391,13 +400,23 @@ function PreviewPane({
           <p className="mt-1.5 text-text-3 text-xs">{PRIORITY_HINT[current]}</p>
         </section>
 
-        <section>
+        <section
+          ref={triageActionsRef}
+          data-testid="inbox-triage-actions"
+          data-highlighted={triageHighlighted ? "true" : undefined}
+          className={
+            triageHighlighted
+              ? "rounded-md ring-2 ring-accent ring-offset-2 ring-offset-surface motion-safe:animate-pulse"
+              : undefined
+          }
+        >
           <div className="mb-2 font-medium text-text-2 text-xs uppercase tracking-wide">
             Triage <span className="font-normal text-text-3 normal-case">1 · 3 · 6</span>
           </div>
           <div className="space-y-2">
             <TriageButton
               testid="inbox-read-now"
+              buttonRef={readNowButtonRef}
               icon="play"
               label="Read now"
               hint="1"
@@ -443,7 +462,11 @@ export function InboxScreen() {
   const [defaultSourcePriority, setDefaultSourcePriority] = useState<PriorityLabelInput>("C");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const inboxListRef = useRef<HTMLDivElement | null>(null);
+  const triageActionsRef = useRef<HTMLElement | null>(null);
+  const readNowButtonRef = useRef<HTMLButtonElement | null>(null);
+  const triageHighlightTimerRef = useRef<number | null>(null);
+  const pendingTriageFocusRef = useRef<string | null>(null);
+  const [triageHighlighted, setTriageHighlighted] = useState(false);
   // Bumped after any list change (import / triage) so the balance banner re-reads
   // the week's counts without a full remount.
   const [balanceRefresh, setBalanceRefresh] = useState(0);
@@ -502,7 +525,10 @@ export function InboxScreen() {
         const { detail: next } = await appApi.getInboxItem({ id: selId });
         if (!cancelled) setDetail(next);
       } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+        if (!cancelled) {
+          pendingTriageFocusRef.current = null;
+          setError(e instanceof Error ? e.message : String(e));
+        }
       }
     })();
     return () => {
@@ -512,14 +538,48 @@ export function InboxScreen() {
 
   const onSelect = useCallback((id: string) => setSelId(id), []);
 
+  const revealInboxTriageActions = useCallback(() => {
+    const triageActions = triageActionsRef.current;
+    const readNowButton = readNowButtonRef.current;
+    if (!triageActions || !readNowButton) return false;
+
+    triageActions.scrollIntoView({ block: "nearest" });
+    readNowButton.focus({ preventScroll: true });
+    setTriageHighlighted(true);
+    if (triageHighlightTimerRef.current !== null) {
+      window.clearTimeout(triageHighlightTimerRef.current);
+    }
+    triageHighlightTimerRef.current = window.setTimeout(() => {
+      setTriageHighlighted(false);
+      triageHighlightTimerRef.current = null;
+    }, 1400);
+    return true;
+  }, []);
+
   const focusInboxTriageTarget = useCallback(() => {
-    const list = inboxListRef.current;
-    if (!list) return;
-    list.scrollIntoView({ block: "nearest" });
-    const activeRow =
-      list.querySelector<HTMLButtonElement>('[data-testid="inbox-row"][aria-current="true"]') ??
-      list.querySelector<HTMLButtonElement>('[data-testid="inbox-row"]');
-    activeRow?.focus({ preventScroll: true });
+    if (!revealInboxTriageActions()) {
+      pendingTriageFocusRef.current = selId;
+    }
+  }, [revealInboxTriageActions, selId]);
+
+  useEffect(() => {
+    const pendingId = pendingTriageFocusRef.current;
+    if (!pendingId || detail?.summary.id !== pendingId) return;
+    if (revealInboxTriageActions()) {
+      pendingTriageFocusRef.current = null;
+    }
+  }, [detail, revealInboxTriageActions]);
+
+  useEffect(() => {
+    pendingTriageFocusRef.current = null;
+  }, [selId]);
+
+  useEffect(() => {
+    return () => {
+      if (triageHighlightTimerRef.current !== null) {
+        window.clearTimeout(triageHighlightTimerRef.current);
+      }
+    };
   }, []);
 
   // Import a local PDF (T064) — the MAIN process opens the native file picker,
@@ -790,7 +850,11 @@ export function InboxScreen() {
 
       {/* Import/process balance warning (T046) — advisory; hidden when balanced. */}
       <div className="px-2 pt-4 empty:hidden">
-        <BalanceBanner refreshKey={balanceRefresh} onTriageInbox={focusInboxTriageTarget} />
+        <BalanceBanner
+          refreshKey={balanceRefresh}
+          onTriageInbox={focusInboxTriageTarget}
+          triageInboxLabel="Show triage actions"
+        />
       </div>
 
       {error ? (
@@ -828,7 +892,6 @@ export function InboxScreen() {
             <div
               className="w-[360px] flex-none space-y-1 overflow-y-auto border-border border-r p-2"
               data-testid="inbox-list"
-              ref={inboxListRef}
             >
               {items.map((it) => (
                 <InboxRow
@@ -846,6 +909,9 @@ export function InboxScreen() {
                 onReadNow={onReadNow}
                 onTriage={onTriage}
                 onSetPriority={onSetPriority}
+                triageActionsRef={triageActionsRef}
+                readNowButtonRef={readNowButtonRef}
+                triageHighlighted={triageHighlighted}
               />
             ) : (
               <div className="flex flex-1 items-center justify-center text-sm text-text-3">

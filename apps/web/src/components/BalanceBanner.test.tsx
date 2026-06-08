@@ -149,19 +149,23 @@ describe("BalanceBanner (T046)", () => {
   it("navigates to inbox when no same-route triage callback is supplied", async () => {
     render(<BalanceBanner />);
 
-    fireEvent.click(await screen.findByTestId("balance-triage-inbox"));
+    const button = await screen.findByTestId("balance-triage-inbox");
+    expect(button).toHaveTextContent("Triage inbox");
+    fireEvent.click(button);
 
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/inbox" });
   });
 
   it("uses the same-route triage callback instead of navigating when supplied", async () => {
     const onTriageInbox = vi.fn();
-    render(<BalanceBanner onTriageInbox={onTriageInbox} />);
+    render(<BalanceBanner onTriageInbox={onTriageInbox} triageInboxLabel="Show triage actions" />);
 
-    fireEvent.click(await screen.findByTestId("balance-triage-inbox"));
+    const button = await screen.findByTestId("balance-triage-inbox");
+    expect(button).toHaveTextContent("Show triage actions");
+    fireEvent.click(button);
 
     expect(onTriageInbox).toHaveBeenCalledTimes(1);
-    expect(h.navigateSpy).not.toHaveBeenCalledWith({ to: "/inbox" });
+    expect(h.navigateSpy).not.toHaveBeenCalled();
   });
 
   it("is hidden while the one-week notice dismissal is still active", async () => {

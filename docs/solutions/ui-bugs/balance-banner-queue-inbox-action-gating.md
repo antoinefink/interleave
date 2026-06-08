@@ -23,6 +23,7 @@ tags:
   - "import-balance"
   - "queue"
   - "inbox"
+  - "focus-management"
   - "settings"
   - "ipc"
   - "actionable-counts"
@@ -45,6 +46,7 @@ A later follow-up exposed the same product rule from another angle: after the ba
 - Forward-looking "reviews due this week" could be nonzero before any review was due now.
 - The warning was analytically correct but operationally misleading.
 - On `/inbox`, `Triage inbox` produced no focus movement, scroll, or visible confirmation.
+- Focusing the inbox row was still too weak: when the row was already visible, the click looked inert and did not point to `Read now`, `Save for later`, or `Delete`.
 - Temporary dismissal needed to survive restart and then expire.
 - Permanent dismissal needed to reuse the existing balance-warning setting instead of local UI state.
 
@@ -56,6 +58,8 @@ A later follow-up exposed the same product rule from another angle: after the ba
 - Scheduling fresh imports as part of this fix would have changed source lifecycle behavior and mixed an advisory banner with scheduler side effects.
 - Suppressing the raw imbalance judgment in the domain result would have hidden a truthful analytics signal from the renderer.
 - Keeping `Triage inbox` as plain route navigation was only useful from other routes; same-route navigation did not create an actionable local effect.
+- Focusing the selected inbox row on the same route improved keyboard position but still targeted navigation context, not the controls that complete triage.
+- A simple immediate focus call also missed the async detail-loading case, where the selected item's preview and triage rail may not be mounted yet.
 - Keeping warning dismissal in React state would have hidden it only until remount or restart.
 - Writing Playwright screenshots to a hard-coded local checkout path made visual verification non-portable; use Playwright-managed output paths.
 
@@ -95,6 +99,7 @@ For route actions that can target the current page, keep the banner reusable but
 ```tsx
 export interface BalanceBannerProps {
   readonly onTriageInbox?: () => void;
+  readonly triageInboxLabel?: string;
 }
 
 const triageInbox = () => {
@@ -103,17 +108,24 @@ const triageInbox = () => {
 };
 ```
 
-`InboxScreen` owns the inbox list ref, so its callback scrolls the list into view and focuses the active row, falling back to the first row:
+Use the default `triageInboxLabel = "Triage inbox"` for cross-route navigation. On `/inbox`, pass `triageInboxLabel="Show triage actions"` so the label describes the local effect instead of pretending to navigate somewhere new.
+
+`InboxScreen` owns the preview-pane refs, so its callback scrolls the actual triage section into view, focuses the primary `Read now` action, and applies a short motion-safe highlight ring:
 
 ```tsx
-const focusInboxTriageTarget = () => {
-  const list = inboxListRef.current;
-  const activeRow =
-    list?.querySelector<HTMLButtonElement>('[data-testid="inbox-row"][aria-current="true"]') ??
-    list?.querySelector<HTMLButtonElement>('[data-testid="inbox-row"]');
-  activeRow?.focus({ preventScroll: true });
+const revealInboxTriageActions = () => {
+  const triageActions = triageActionsRef.current;
+  const readNowButton = readNowButtonRef.current;
+  if (!triageActions || !readNowButton) return false;
+
+  triageActions.scrollIntoView({ block: "nearest" });
+  readNowButton.focus({ preventScroll: true });
+  setTriageHighlighted(true);
+  return true;
 };
 ```
+
+If the selected item detail has not mounted yet, record the pending focus target by element id and replay only when that same detail appears. Clear the pending id on selection change and detail-fetch failure so a click intended for one inbox item never focuses or highlights another.
 
 For durable dismissal, persist through the existing settings bridge rather than local storage or renderer-only state:
 
@@ -136,7 +148,11 @@ The fix separates analytics truth from UI actionability. `imbalanced` still mean
 
 Inbox imports are represented as inbox work, not queue work. Future reviews remain visible in the weekly count, but they no longer make `/queue` look actionable before they are due. All counting stays behind the Electron/IPC boundary, so React renders a typed snapshot instead of duplicating queue or inbox predicates.
 
-The same-route callback keeps destination-specific behavior where the destination state lives. The banner does not need to know how `/inbox` renders rows, but `/inbox` can make the CTA visibly useful by focusing the row the user can triage next.
+The same-route callback keeps destination-specific behavior where the destination state lives. The banner does not need to know how `/inbox` renders rows or preview panes, but `/inbox` can make the CTA visibly useful by focusing the controls the user can act on next.
+
+The route-specific label prevents a misleading navigation promise: `Triage inbox` remains correct from other routes, while `Show triage actions` is correct when the user is already on `/inbox`. Focusing `Read now` puts keyboard users on the first concrete triage command, and the motion-safe ring gives visible feedback even when the section was already in view.
+
+Tying pending focus to the selected element id makes async detail loading safe. If the user changes selection before the old detail resolves, the pending reveal is cleared instead of replaying onto the wrong item.
 
 The dismissal split matches product semantics. A one-week snooze is a notice acknowledgement, so generic settings are enough and avoid expanding typed domain settings for one timestamp. A forever hide is the existing product preference, so `balanceWarnings` remains the single source of truth and Settings can re-enable it later.
 
@@ -148,7 +164,7 @@ The dismissal split matches product semantics. A one-week snooze is a notice ack
 - Test inbox-only imports, due-now queue work, future-only reviews, and imbalanced/no-action snapshots.
 - Preserve E2E coverage that imports fresh sources and asserts `Open queue` is absent while `Triage inbox` is visible.
 - Include contract tests whenever balance snapshot fields change across local-db, desktop IPC, preload, and renderer wrappers.
-- For CTAs that can target the current route, test both cross-route navigation and same-route visible behavior such as focus, selection, or scroll.
+- For CTAs that can target the current route, test cross-route navigation, same-route label copy, focus movement to the next actionable control, visible feedback, async mount replay, and stale-selection cancellation.
 - For dismissals that claim to be durable, add Electron restart coverage proving the setting survives outside mocked renderer APIs.
 - Capture visual verification with `test.info().outputPath(...)` so artifacts are portable across worktrees and CI.
 - Hide warnings only after persistence succeeds, or keep the warning visible with a clear error if saving fails.
@@ -156,7 +172,9 @@ The dismissal split matches product semantics. A one-week snooze is a notice ack
 ## Related Issues
 
 - [URL and browser-captured articles should open as internal readable sources](./url-imported-articles-inbox-processing.md) documents the lifecycle invariant that imported articles remain inbox work until accepted or opened.
+- [Daily work read model routes inbox-only days honestly](./daily-work-read-model-inbox-only-routing.md) documents the same invariant at the home/daily-work layer: primary CTAs should point at the current actionable work, not an analytically related empty surface.
 - [Extract inspector single-responsibility layout and scheduler refresh](./extract-inspector-single-responsibility-lineage-scheduler.md) is a queue membership precedent: mutations from one surface must refresh the surfaces that render queue state.
 - [Active card rows should open a protected card detail surface](./active-card-rows-open-card-detail-surface.md) is a routing precedent: a due-session route is not a generic destination for every item-related action.
 - Plan artifact: `docs/plans/2026-06-07-fix-balance-empty-queue.md`.
 - Follow-up plan artifact: `docs/plans/2026-06-08-fix-triage-inbox-warning.md`.
+- Follow-up plan artifact: `docs/plans/2026-06-08-inbox-banner-show-triage-actions.md`.

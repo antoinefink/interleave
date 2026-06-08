@@ -54,14 +54,16 @@ vi.mock("../../components/BalanceBanner", () => ({
   BalanceBanner: ({
     refreshKey,
     onTriageInbox,
+    triageInboxLabel,
   }: {
     refreshKey: number;
     onTriageInbox?: () => void;
+    triageInboxLabel?: string;
   }) => (
     <div data-testid="mock-balance-banner">
       {refreshKey}
       <button type="button" data-testid="mock-balance-triage-inbox" onClick={onTriageInbox}>
-        Triage inbox
+        {triageInboxLabel ?? "Triage inbox"}
       </button>
     </div>
   ),
@@ -389,13 +391,58 @@ describe("InboxScreen", () => {
     expect(priority).toHaveClass("shrink-0");
   });
 
-  it("focuses the selected inbox row when the balance banner triage action is clicked", async () => {
+  it("shows and focuses the selected item's triage actions when the balance banner action is clicked", async () => {
+    const { getByTestId, findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-read-now");
+    expect(getByTestId("mock-balance-triage-inbox")).toHaveTextContent("Show triage actions");
+    fireEvent.click(getByTestId("mock-balance-triage-inbox"));
+
+    expect(getByTestId("inbox-triage-actions")).toHaveAttribute("data-highlighted", "true");
+    expect(getByTestId("inbox-read-now")).toHaveFocus();
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("honors a balance banner triage click while the selected item is still loading", async () => {
+    let resolveDetail!: (value: { detail: ReturnType<typeof detail> }) => void;
+    h.getInboxItem.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveDetail = resolve;
+      }),
+    );
+    const { getByTestId, findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    fireEvent.click(getByTestId("mock-balance-triage-inbox"));
+    resolveDetail({ detail: detail("src-1") });
+
+    await findByTestId("inbox-read-now");
+    await waitFor(() => expect(getByTestId("inbox-read-now")).toHaveFocus());
+    expect(getByTestId("inbox-triage-actions")).toHaveAttribute("data-highlighted", "true");
+  });
+
+  it("does not replay a pending balance banner triage click onto a newly selected item", async () => {
+    let resolveFirstDetail!: (value: { detail: ReturnType<typeof detail> }) => void;
+    h.getInboxItem
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveFirstDetail = resolve;
+        }),
+      )
+      .mockResolvedValueOnce({ detail: detail("src-2") });
     const { getAllByTestId, getByTestId, findByTestId } = render(<InboxScreen />);
 
     await findByTestId("inbox-list");
     fireEvent.click(getByTestId("mock-balance-triage-inbox"));
+    const secondRow = getAllByTestId("inbox-row")[1];
+    if (!secondRow) throw new Error("expected a second inbox row");
+    fireEvent.click(secondRow);
+    resolveFirstDetail({ detail: detail("src-1") });
 
-    expect(getAllByTestId("inbox-row")[0]).toHaveFocus();
+    await waitFor(() => expect(getByTestId("inbox-preview-title")).toHaveTextContent("Second source"));
+    expect(getByTestId("inbox-read-now")).not.toHaveFocus();
+    expect(getByTestId("inbox-triage-actions")).not.toHaveAttribute("data-highlighted", "true");
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
   });
 
   it("reads now by activating the selected item and navigating to the source reader", async () => {
