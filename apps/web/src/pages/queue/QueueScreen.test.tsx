@@ -759,7 +759,17 @@ describe("QueueScreen", () => {
     );
   });
 
-  it("marks source rows done without confirmation when block processing is complete", async () => {
+  // -------------------------------------------------------------------------
+  // Partial-source "Done" intent surface (replaces the old window.confirm gate).
+  // A SOURCE's "Mark done" routes through the shared DoneIntentMenu: 0-unresolved
+  // marks done immediately (fast path, no popover); ≥1 unresolved opens a non-modal
+  // popover offering Finished / Return later / Abandon. The native window.confirm is
+  // gone — these assert no dialog is ever raised on the row path (R8).
+  // -------------------------------------------------------------------------
+
+  it("marks source rows done immediately (no popover) when block processing is complete", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    // The beforeEach mock already returns canMarkDoneWithoutConfirmation: true.
     render(<QueueScreen />);
     const rows = await screen.findAllByTestId("queue-item");
     const source = rows.find((el) => el.getAttribute("data-element-id") === "source-1");
@@ -772,46 +782,25 @@ describe("QueueScreen", () => {
     await waitFor(() =>
       expect(h.getBlockProcessingSummary).toHaveBeenCalledWith({ sourceElementId: "source-1" }),
     );
-    await waitFor(() =>
-      expect(h.actOnQueueItem).toHaveBeenCalledWith({
-        id: "source-1",
-        action: { kind: "markDone" },
-      }),
-    );
-  });
-
-  it("confirms unresolved source rows before marking them done", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(true);
-    h.getBlockProcessingSummary.mockResolvedValueOnce({
-      summary: {
-        canMarkDoneWithoutConfirmation: false,
-        unresolvedBlocks: 2,
-      },
-    });
-    render(<QueueScreen />);
-    const rows = await screen.findAllByTestId("queue-item");
-    const source = rows.find((el) => el.getAttribute("data-element-id") === "source-1");
-    const done = source?.querySelector('[data-testid="queue-action-markDone"]') as HTMLElement;
-
-    h.actOnQueueItem.mockResolvedValueOnce({ item: null, removed: true, undo: null });
-
-    fireEvent.click(done);
-
-    await waitFor(() => expect(confirm).toHaveBeenCalledWith(expect.stringContaining("2")));
+    // Fast path: the intent is "finished" → markDone with the server gate override.
     await waitFor(() =>
       expect(h.actOnQueueItem).toHaveBeenCalledWith({
         id: "source-1",
         action: { kind: "markDone", confirmUnresolvedBlocks: true },
       }),
     );
+    // No popover ever opened — the surface marked done with no fuss.
+    expect(screen.queryByTestId("done-intent-pop")).toBeNull();
+    expect(confirm).not.toHaveBeenCalled();
   });
 
-  it("cancels source mark-done when unresolved blocks are not confirmed", async () => {
-    vi.spyOn(window, "confirm").mockReturnValueOnce(false);
+  it("opens the intent surface (no window.confirm) for an unresolved source row", async () => {
+    const confirm = vi.spyOn(window, "confirm");
     h.getBlockProcessingSummary.mockResolvedValueOnce({
       summary: {
         canMarkDoneWithoutConfirmation: false,
         unresolvedBlocks: 2,
+        stateCounts: { unread: 2, read: 0, needs_later: 0, stale_after_edit: 0 },
       },
     });
     render(<QueueScreen />);
@@ -821,8 +810,166 @@ describe("QueueScreen", () => {
 
     fireEvent.click(done);
 
-    await waitFor(() => expect(h.getBlockProcessingSummary).toHaveBeenCalledTimes(1));
+    // The non-modal popover opens; the native confirm is never called and no mutation runs yet.
+    await screen.findByTestId("done-intent-pop");
+    expect(confirm).not.toHaveBeenCalled();
     expect(h.actOnQueueItem).not.toHaveBeenCalled();
+  });
+
+  it("Finished routes the unresolved source to markDone with the confirm override and shows an Undo snackbar", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    h.getBlockProcessingSummary.mockResolvedValueOnce({
+      summary: {
+        canMarkDoneWithoutConfirmation: false,
+        unresolvedBlocks: 2,
+        stateCounts: { unread: 2, read: 0, needs_later: 0, stale_after_edit: 0 },
+      },
+    });
+    h.actOnQueueItem.mockResolvedValueOnce({
+      item: null,
+      removed: true,
+      undo: { kind: "status", previousStatus: "active", previousDueAt: "2026-05-29T08:00:00.000Z" },
+    });
+    render(<QueueScreen />);
+    const rows = await screen.findAllByTestId("queue-item");
+    const source = rows.find((el) => el.getAttribute("data-element-id") === "source-1");
+    const done = source?.querySelector('[data-testid="queue-action-markDone"]') as HTMLElement;
+
+    fireEvent.click(done);
+    await screen.findByTestId("done-intent-pop");
+    fireEvent.click(screen.getByTestId("done-intent-finished"));
+
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({
+        id: "source-1",
+        action: { kind: "markDone", confirmUnresolvedBlocks: true },
+      }),
+    );
+    // Finished returns an undo recipe → the single-action Undo snackbar appears, and its
+    // Undo hits the row's own queue.act recipe (the same op as the shell ⌘Z).
+    const snackbar = await screen.findByTestId("queue-snackbar");
+    expect(snackbar).toHaveTextContent("Source done");
+    fireEvent.click(screen.getByTestId("queue-snackbar-undo"));
+    await waitFor(() =>
+      expect(h.undoQueueAction).toHaveBeenCalledWith({
+        id: "source-1",
+        undo: {
+          kind: "status",
+          previousStatus: "active",
+          previousDueAt: "2026-05-29T08:00:00.000Z",
+        },
+      }),
+    );
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("Return later routes the unresolved source to postpone (no snackbar — non-destructive)", async () => {
+    h.getBlockProcessingSummary.mockResolvedValueOnce({
+      summary: {
+        canMarkDoneWithoutConfirmation: false,
+        unresolvedBlocks: 2,
+        stateCounts: { unread: 2, read: 0, needs_later: 0, stale_after_edit: 0 },
+      },
+    });
+    h.actOnQueueItem.mockResolvedValueOnce({ item: null, removed: false, undo: null });
+    render(<QueueScreen />);
+    const rows = await screen.findAllByTestId("queue-item");
+    const source = rows.find((el) => el.getAttribute("data-element-id") === "source-1");
+    const done = source?.querySelector('[data-testid="queue-action-markDone"]') as HTMLElement;
+
+    fireEvent.click(done);
+    await screen.findByTestId("done-intent-pop");
+    fireEvent.click(screen.getByTestId("done-intent-later"));
+
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({
+        id: "source-1",
+        action: { kind: "postpone" },
+      }),
+    );
+    // postpone returns undo:null → no snackbar (it relies on the shell ⌘Z).
+    expect(screen.queryByTestId("queue-snackbar")).toBeNull();
+  });
+
+  it("Abandon routes the unresolved source to dismiss and shows an Undo snackbar", async () => {
+    h.getBlockProcessingSummary.mockResolvedValueOnce({
+      summary: {
+        canMarkDoneWithoutConfirmation: false,
+        unresolvedBlocks: 2,
+        stateCounts: { unread: 2, read: 0, needs_later: 0, stale_after_edit: 0 },
+      },
+    });
+    h.actOnQueueItem.mockResolvedValueOnce({
+      item: null,
+      removed: true,
+      undo: { kind: "status", previousStatus: "active", previousDueAt: "2026-05-29T08:00:00.000Z" },
+    });
+    render(<QueueScreen />);
+    const rows = await screen.findAllByTestId("queue-item");
+    const source = rows.find((el) => el.getAttribute("data-element-id") === "source-1");
+    const done = source?.querySelector('[data-testid="queue-action-markDone"]') as HTMLElement;
+
+    fireEvent.click(done);
+    await screen.findByTestId("done-intent-pop");
+    fireEvent.click(screen.getByTestId("done-intent-abandon"));
+
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({
+        id: "source-1",
+        action: { kind: "dismiss" },
+      }),
+    );
+    const snackbar = await screen.findByTestId("queue-snackbar");
+    expect(snackbar).toHaveTextContent("Source abandoned");
+  });
+
+  it("cancels the intent surface on Esc without mutating (the row stays)", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    h.getBlockProcessingSummary.mockResolvedValueOnce({
+      summary: {
+        canMarkDoneWithoutConfirmation: false,
+        unresolvedBlocks: 2,
+        stateCounts: { unread: 2, read: 0, needs_later: 0, stale_after_edit: 0 },
+      },
+    });
+    render(<QueueScreen />);
+    const rows = await screen.findAllByTestId("queue-item");
+    const source = rows.find((el) => el.getAttribute("data-element-id") === "source-1");
+    const done = source?.querySelector('[data-testid="queue-action-markDone"]') as HTMLElement;
+
+    fireEvent.click(done);
+    await screen.findByTestId("done-intent-pop");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByTestId("done-intent-pop")).toBeNull());
+    expect(h.actOnQueueItem).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("opening the intent surface on a source row does not disable other rows' actions", async () => {
+    h.getBlockProcessingSummary.mockResolvedValueOnce({
+      summary: {
+        canMarkDoneWithoutConfirmation: false,
+        unresolvedBlocks: 2,
+        stateCounts: { unread: 2, read: 0, needs_later: 0, stale_after_edit: 0 },
+      },
+    });
+    render(<QueueScreen />);
+    const rows = await screen.findAllByTestId("queue-item");
+    const source = rows.find((el) => el.getAttribute("data-element-id") === "source-1");
+    const done = source?.querySelector('[data-testid="queue-action-markDone"]') as HTMLElement;
+
+    fireEvent.click(done);
+    await screen.findByTestId("done-intent-pop");
+
+    // Another row's action button stays enabled — opening the surface is non-modal and
+    // never sets the queue-wide busy (busyId is set only when an intent is submitted).
+    const extract = screen
+      .getAllByTestId("queue-item")
+      .find((el) => el.getAttribute("data-element-id") === "extract-1");
+    const postpone = extract?.querySelector('[data-testid="queue-action-postpone"]') as HTMLElement;
+    expect(postpone).not.toBeDisabled();
   });
 
   it("maps the ↑ arrow to raise and the ↓ arrow to lower (direction is not swapped)", async () => {

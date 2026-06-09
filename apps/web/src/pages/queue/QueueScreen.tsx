@@ -28,6 +28,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Icon, type IconName } from "../../components/Icon";
 import { Prio, SchedulerChip, TypeIcon } from "../../components/inspector/primitives";
 import { BudgetMeter } from "../../components/queue/BudgetMeter";
+import { type DoneIntent, DoneIntentMenu } from "../../components/queue/DoneIntentMenu";
 import { QueueSnackbar } from "../../components/queue/QueueSnackbar";
 import { listenQueueRefresh } from "../../components/queue/queueRefresh";
 import { ScheduleMenu } from "../../components/queue/ScheduleMenu";
@@ -39,6 +40,7 @@ import {
   type DailyWorkSummaryResult,
   isDesktop,
   type QueueActAction,
+  type QueueActUndo,
   type QueueItemSummary,
   type QueueListResult,
   type QueueScheduleChoice,
@@ -113,17 +115,11 @@ const STATUS_FILTERS: readonly {
   { id: "scheduled", label: "Scheduled", statuses: ["scheduled"] },
 ];
 
-async function actionWithSourceDoneGate(
-  item: QueueItemSummary,
-  kind: RowActionKind,
-): Promise<QueueActAction | null> {
-  if (kind !== "markDone" || item.type !== "source") return { kind };
-  const { summary } = await appApi.getBlockProcessingSummary({ sourceElementId: item.id });
-  if (summary.canMarkDoneWithoutConfirmation) return { kind };
-  const ok = window.confirm(
-    `This source still has ${summary.unresolvedBlocks} unresolved blocks. Mark it done anyway?`,
-  );
-  return ok ? { kind, confirmUnresolvedBlocks: true } : null;
+/** Map a {@link DoneIntent} to the existing `queue.act` mutation for a source row. */
+function actionForDoneIntent(intent: DoneIntent): QueueActAction {
+  if (intent === "later") return { kind: "postpone" };
+  if (intent === "abandon") return { kind: "dismiss" };
+  return { kind: "markDone", confirmUnresolvedBlocks: true };
 }
 
 /** One queue row (the kit's `qitem`). */
@@ -134,6 +130,7 @@ function QueueItem({
   onSelect,
   onOpen,
   onAction,
+  onResolveDone,
   onSchedule,
 }: {
   item: QueueItemSummary;
@@ -143,6 +140,12 @@ function QueueItem({
   onSelect: (item: QueueItemSummary) => void;
   onOpen: (item: QueueItemSummary) => void;
   onAction: (item: QueueItemSummary, kind: RowActionKind) => void;
+  /**
+   * Resolve a source's "Done" intent (Finished / Return later / Abandon) chosen in the
+   * {@link DoneIntentMenu}. Source rows route their `markDone` action through this rather than
+   * the plain {@link onAction} so a partially-processed source gets the intent surface.
+   */
+  onResolveDone: (item: QueueItemSummary, intent: DoneIntent) => void;
   /** Explicit (tomorrow/next-week/next-month/manual) scheduling — attention items only. */
   onSchedule: (item: QueueItemSummary, choice: QueueScheduleChoice) => void;
 }) {
@@ -220,24 +223,50 @@ function QueueItem({
         {item.type !== "card" ? (
           <ScheduleMenu disabled={busy} onSchedule={(choice) => onSchedule(item, choice)} />
         ) : null}
-        {ROW_ACTIONS.map((a) => (
-          // Styled (portaled) tooltip in place of the slow native `title`; the
-          // button keeps its `aria-label` as the accessible name. Suppressed while
-          // busy (the buttons are disabled then — don't surface an affordance for a
-          // control that can't be used).
-          <Tooltip key={a.kind} label={a.label} disabled={busy}>
-            <button
-              type="button"
-              disabled={busy}
-              aria-label={a.label}
-              data-testid={`queue-action-${a.kind}`}
-              className={`qitem__act${a.danger ? " qitem__act--danger" : ""}`}
-              onClick={() => onAction(item, a.kind)}
-            >
-              <Icon name={a.icon} size={14} />
-            </button>
-          </Tooltip>
-        ))}
+        {ROW_ACTIONS.map((a) =>
+          // A SOURCE's "Mark done" routes through the non-modal DoneIntentMenu (the
+          // partial-source intent surface): 0-unresolved marks done immediately (fast
+          // path inside the menu); ≥1 unresolved opens a popover offering Finished /
+          // Return later / Abandon. Non-source rows (and every other action) keep the
+          // plain icon-button. The trigger keeps the row icon-button look + the
+          // `queue-action-markDone` testid so existing tests/e2e still find it.
+          a.kind === "markDone" && item.type === "source" ? (
+            <DoneIntentMenu
+              key={a.kind}
+              getSummary={() =>
+                appApi
+                  .getBlockProcessingSummary({ sourceElementId: item.id })
+                  .then((r) => r.summary)
+                  .catch(() => null)
+              }
+              onResolved={(intent) => onResolveDone(item, intent)}
+              busy={busy}
+              resumeLabel={null}
+              triggerClassName="qitem__act"
+              triggerIcon={a.icon}
+              triggerTestId={`queue-action-${a.kind}`}
+              tooltipLabel={a.label}
+              triggerAriaLabel={a.label}
+            />
+          ) : (
+            // Styled (portaled) tooltip in place of the slow native `title`; the
+            // button keeps its `aria-label` as the accessible name. Suppressed while
+            // busy (the buttons are disabled then — don't surface an affordance for a
+            // control that can't be used).
+            <Tooltip key={a.kind} label={a.label} disabled={busy}>
+              <button
+                type="button"
+                disabled={busy}
+                aria-label={a.label}
+                data-testid={`queue-action-${a.kind}`}
+                className={`qitem__act${a.danger ? " qitem__act--danger" : ""}`}
+                onClick={() => onAction(item, a.kind)}
+              >
+                <Icon name={a.icon} size={14} />
+              </button>
+            </Tooltip>
+          ),
+        )}
       </span>
     </div>
   );
@@ -266,6 +295,17 @@ export function QueueScreen() {
   const [busyId, setBusyId] = useState<string | null>(null);
   /** Batch queue operations keep a snackbar because they are not simple row advancement. */
   const [batchUndoState, setBatchUndoState] = useState<{ message: string } | null>(null);
+  /**
+   * A destructive source "Done" intent (Finished / Abandon) raises a single-action Undo
+   * snackbar with the row's own `queue.act` undo recipe — distinct from the batch snackbar
+   * (which reverses through the command-level `undo.last`). Return later is non-destructive
+   * (its `undo` recipe is null) and relies on the shell ⌘Z, so it raises no snackbar.
+   */
+  const [doneUndoState, setDoneUndoState] = useState<{
+    id: string;
+    message: string;
+    undo: QueueActUndo;
+  } | null>(null);
 
   const refresh = useCallback(async () => {
     if (!isDesktop()) return;
@@ -402,9 +442,41 @@ export function QueueScreen() {
       if (!isDesktop() || busyId) return;
       setBusyId(item.id);
       try {
-        const action = await actionWithSourceDoneGate(item, kind);
-        if (!action) return;
-        await appApi.actOnQueueItem({ id: item.id, action });
+        await appApi.actOnQueueItem({ id: item.id, action: { kind } });
+        await refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [busyId, refresh],
+  );
+
+  /**
+   * Resolve a source's "Done" intent chosen in the {@link DoneIntentMenu} (T-partial-source).
+   * The three intents map 1:1 to existing `queue.act` mutations: Finished → `markDone` with the
+   * server gate's `confirmUnresolvedBlocks` override, Return later → `postpone`, Abandon →
+   * `dismiss`. Same re-read-after-action model as {@link onAction} (the row leaves on refresh);
+   * `busyId` is set only HERE (on submit), never when the surface merely opens, so opening the
+   * menu on one row leaves every other row's actions usable (the surface is truly non-modal).
+   * Finished / Abandon return an undo recipe → raise the single-action Undo snackbar; Return
+   * later returns `undo:null` and relies on the shell ⌘Z.
+   */
+  const onResolveDone = useCallback(
+    async (item: QueueItemSummary, intent: DoneIntent) => {
+      if (!isDesktop() || busyId) return;
+      setBusyId(item.id);
+      try {
+        const action = actionForDoneIntent(intent);
+        const res = await appApi.actOnQueueItem({ id: item.id, action });
+        if (res.undo) {
+          setDoneUndoState({
+            id: item.id,
+            message: intent === "abandon" ? "Source abandoned" : "Source done",
+            undo: res.undo,
+          });
+        }
         await refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -453,6 +525,23 @@ export function QueueScreen() {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, [batchUndoState, refresh]);
+
+  /**
+   * Undo a source "Done" intent (Finished / Abandon) through the row's own `queue.act` undo
+   * recipe, then re-read the queue (the restored row reappears). Hits the same op as the shell
+   * ⌘Z, so both paths restore the prior status + `due_at`.
+   */
+  const onUndoDone = useCallback(async () => {
+    const pending = doneUndoState;
+    setDoneUndoState(null);
+    if (!pending || !isDesktop()) return;
+    try {
+      await appApi.undoQueueAction({ id: pending.id, undo: pending.undo });
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [doneUndoState, refresh]);
 
   /**
    * After a successful overload auto-postpone (T077): re-read the queue (the sweep moved N
@@ -676,6 +765,7 @@ export function QueueScreen() {
                     onSelect={onSelect}
                     onOpen={onOpen}
                     onAction={onAction}
+                    onResolveDone={onResolveDone}
                     onSchedule={onSchedule}
                   />
                 ))}
@@ -693,6 +783,7 @@ export function QueueScreen() {
                 onSelect={onSelect}
                 onOpen={onOpen}
                 onAction={onAction}
+                onResolveDone={onResolveDone}
                 onSchedule={onSchedule}
               />
             )}
@@ -783,12 +874,24 @@ export function QueueScreen() {
         )}
       </div>
 
-      {/* Undo snackbar for larger queue batches; ordinary row advancement stays quiet. */}
-      <QueueSnackbar
-        message={batchUndoState?.message ?? null}
-        onUndo={batchUndoState ? onUndo : undefined}
-        onClose={() => setBatchUndoState(null)}
-      />
+      {/* Undo snackbar for a source's destructive "Done" intent (Finished / Abandon) — its
+          Undo hits the row's own queue.act recipe (the same op as the shell ⌘Z). Return later
+          is non-destructive and stays quiet. Takes precedence over the batch snackbar when both
+          are pending (the just-resolved source is the freshest action). */}
+      {doneUndoState ? (
+        <QueueSnackbar
+          message={doneUndoState.message}
+          onUndo={onUndoDone}
+          onClose={() => setDoneUndoState(null)}
+        />
+      ) : (
+        /* Undo snackbar for larger queue batches; ordinary row advancement stays quiet. */
+        <QueueSnackbar
+          message={batchUndoState?.message ?? null}
+          onUndo={batchUndoState ? onUndo : undefined}
+          onClose={() => setBatchUndoState(null)}
+        />
+      )}
     </div>
   );
 }
