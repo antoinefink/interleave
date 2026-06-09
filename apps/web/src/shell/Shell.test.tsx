@@ -191,7 +191,47 @@ describe("Shell", () => {
     expect(screen.queryByTestId("backup-reminder")).not.toBeInTheDocument();
   });
 
+  it("hides the command/search topbar on the Queue route", () => {
+    render(<Shell />);
+
+    expect(screen.getByTestId("route-outlet")).toBeInTheDocument();
+    expect(screen.queryByTestId("command-bar")).not.toBeInTheDocument();
+  });
+
+  it("keeps shell shortcuts live when the Queue topbar is hidden", () => {
+    render(<Shell />);
+
+    const handlers = h.useShellShortcuts.mock.calls[0]?.[0] as
+      | {
+          onSearch: () => void;
+          toggleCommandPalette: () => void;
+        }
+      | undefined;
+    expect(handlers).toBeTruthy();
+
+    act(() => {
+      handlers?.onSearch();
+    });
+    expect(h.globalActions.search).toHaveBeenCalledTimes(1);
+
+    expect(screen.getByTestId("command-palette")).toHaveAttribute("data-open", "false");
+    act(() => {
+      handlers?.toggleCommandPalette();
+    });
+    expect(screen.getByTestId("command-palette")).toHaveAttribute("data-open", "true");
+  });
+
+  it("renders the command/search topbar on non-Queue routes", () => {
+    h.pathname = "/inbox";
+
+    render(<Shell />);
+
+    expect(screen.getByTestId("command-bar")).toBeInTheDocument();
+  });
+
   it("opens the command palette and routes palette actions to the cheat sheet", () => {
+    h.pathname = "/inbox";
+
     render(<Shell />);
 
     expect(screen.getByTestId("command-palette")).toHaveAttribute("data-open", "false");

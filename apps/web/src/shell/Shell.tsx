@@ -368,6 +368,7 @@ function ShellInner() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { selectedId } = useSelection();
   const globalActions = useGlobalActions();
+  const hideTopbar = pathname === "/queue";
 
   const [commandOpen, setCommandOpen] = useState(false);
   const [cheatOpen, setCheatOpen] = useState(false);
@@ -656,7 +657,7 @@ function ShellInner() {
         />
 
         <div className="shell-main">
-          <Topbar onOpenCommand={() => setCommandOpen(true)} />
+          {hideTopbar ? null : <Topbar onOpenCommand={() => setCommandOpen(true)} />}
           <main className="shell-page">
             <Outlet />
           </main>
