@@ -9,6 +9,8 @@ const h = vi.hoisted(() => ({
   openBackupsFolder: vi.fn(),
   listBackups: vi.fn(),
   restoreBackup: vi.fn(),
+  pickBackupArchive: vi.fn(),
+  restoreBackupFromFile: vi.fn(),
   resetLocalData: vi.fn(),
   getCapturePairing: vi.fn(),
   setCaptureEnabled: vi.fn(),
@@ -43,6 +45,8 @@ vi.mock("../lib/appApi", async () => {
       openBackupsFolder: h.openBackupsFolder,
       listBackups: h.listBackups,
       restoreBackup: h.restoreBackup,
+      pickBackupArchive: h.pickBackupArchive,
+      restoreBackupFromFile: h.restoreBackupFromFile,
       resetLocalData: h.resetLocalData,
       getCapturePairing: h.getCapturePairing,
       setCaptureEnabled: h.setCaptureEnabled,
@@ -135,6 +139,13 @@ beforeEach(() => {
     ],
   });
   h.restoreBackup.mockResolvedValue({
+    status: "restored",
+    timestamp: "2026-06-07T10-20-30-000Z",
+    restoredAt: "2026-06-07T10:35:00.000Z",
+    reloadRequired: true,
+  });
+  h.pickBackupArchive.mockResolvedValue({ path: "/tmp/backups/foo.zip" });
+  h.restoreBackupFromFile.mockResolvedValue({
     status: "restored",
     timestamp: "2026-06-07T10-20-30-000Z",
     restoredAt: "2026-06-07T10:35:00.000Z",
@@ -454,6 +465,95 @@ describe("Settings", () => {
       "aria-pressed",
       "true",
     );
+  });
+
+  it("picks a backup file and reveals the basename plus confirm input", async () => {
+    h.pickBackupArchive.mockResolvedValueOnce({ path: "/tmp/backups/foo.zip" });
+    const { findByTestId, getByTestId, queryByTestId } = render(<Settings />);
+
+    await findByTestId("settings-restore-file-choose");
+    expect(queryByTestId("settings-restore-file-path")).toBeNull();
+    expect(queryByTestId("settings-restore-file-confirm")).toBeNull();
+
+    fireEvent.click(getByTestId("settings-restore-file-choose"));
+
+    await waitFor(() => expect(h.pickBackupArchive).toHaveBeenCalledTimes(1));
+    expect(await findByTestId("settings-restore-file-path")).toHaveTextContent("foo.zip");
+    expect(getByTestId("settings-restore-file-confirm")).toBeInTheDocument();
+  });
+
+  it("leaves the file-restore row unchanged when the picker is cancelled", async () => {
+    h.pickBackupArchive.mockResolvedValueOnce({ cancelled: true });
+    const { findByTestId, getByTestId, queryByTestId } = render(<Settings />);
+
+    await findByTestId("settings-restore-file-choose");
+    fireEvent.click(getByTestId("settings-restore-file-choose"));
+
+    await waitFor(() => expect(h.pickBackupArchive).toHaveBeenCalledTimes(1));
+    expect(queryByTestId("settings-restore-file-path")).toBeNull();
+    expect(queryByTestId("settings-restore-file-confirm")).toBeNull();
+    expect(h.restoreBackupFromFile).not.toHaveBeenCalled();
+  });
+
+  it("requires both a chosen file and the exact phrase before restoring from a file", async () => {
+    const { findByTestId, getByTestId } = render(<Settings />);
+
+    await findByTestId("settings-restore-file-choose");
+    fireEvent.click(getByTestId("settings-restore-file-choose"));
+
+    const confirm = await findByTestId("settings-restore-file-confirm");
+    const restoreButton = getByTestId("settings-restore-file");
+    expect(restoreButton).toBeDisabled();
+
+    fireEvent.change(confirm, { target: { value: "restore backup" } });
+    expect(restoreButton).toBeDisabled();
+    expect(h.restoreBackupFromFile).not.toHaveBeenCalled();
+
+    fireEvent.change(confirm, { target: { value: RESTORE_BACKUP_CONFIRMATION_PHRASE } });
+    expect(restoreButton).not.toBeDisabled();
+    fireEvent.click(restoreButton);
+
+    await waitFor(() =>
+      expect(h.restoreBackupFromFile).toHaveBeenCalledWith({
+        path: "/tmp/backups/foo.zip",
+        confirm: true,
+        phrase: RESTORE_BACKUP_CONFIRMATION_PHRASE,
+      }),
+    );
+  });
+
+  it("locks the panel and shows restart-required after a file restore succeeds", async () => {
+    const { findByTestId, getByTestId } = render(<Settings />);
+
+    await findByTestId("settings-restore-file-choose");
+    fireEvent.click(getByTestId("settings-restore-file-choose"));
+    fireEvent.change(await findByTestId("settings-restore-file-confirm"), {
+      target: { value: RESTORE_BACKUP_CONFIRMATION_PHRASE },
+    });
+    fireEvent.click(getByTestId("settings-restore-file"));
+
+    expect(await findByTestId("settings-restore-file-success")).toHaveTextContent("foo.zip");
+    expect(getByTestId("settings-data-restart-required")).toHaveTextContent("Restart Interleave");
+    expect(getByTestId("settings-backup-now")).toBeDisabled();
+    expect(getByTestId("settings-backup-refresh")).toBeDisabled();
+    expect(getByTestId("settings-restore-backup")).toBeDisabled();
+    expect(getByTestId("settings-restore-file-choose")).toBeDisabled();
+  });
+
+  it("surfaces a file-restore error without entering restart-required", async () => {
+    h.restoreBackupFromFile.mockRejectedValueOnce(new Error("zip-slip entry"));
+    const { findByTestId, getByTestId, queryByTestId } = render(<Settings />);
+
+    await findByTestId("settings-restore-file-choose");
+    fireEvent.click(getByTestId("settings-restore-file-choose"));
+    fireEvent.change(await findByTestId("settings-restore-file-confirm"), {
+      target: { value: RESTORE_BACKUP_CONFIRMATION_PHRASE },
+    });
+    fireEvent.click(getByTestId("settings-restore-file"));
+
+    expect(await findByTestId("settings-restore-file-error")).toHaveTextContent("zip-slip entry");
+    expect(queryByTestId("settings-data-restart-required")).toBeNull();
+    expect(getByTestId("settings-backup-now")).not.toBeDisabled();
   });
 
   it("requires the exact fresh-start phrase before resetting local data", async () => {

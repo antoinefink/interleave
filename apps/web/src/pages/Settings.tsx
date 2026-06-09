@@ -667,6 +667,15 @@ export function Settings() {
   const [resetBusy, setResetBusy] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetSuccess, setResetSuccess] = useState<string | null>(null);
+  // Restore from a file on disk (T056) — independent of the timestamp restore above so the two
+  // rows stay separately controllable, but they share the panel's in-flight / restart locking.
+  const [selectedArchivePath, setSelectedArchivePath] = useState("");
+  const [selectedArchiveName, setSelectedArchiveName] = useState("");
+  const [restoreFilePhrase, setRestoreFilePhrase] = useState("");
+  const [restoreFileBusy, setRestoreFileBusy] = useState(false);
+  const [restoreFileError, setRestoreFileError] = useState<string | null>(null);
+  const [restoreFileSuccess, setRestoreFileSuccess] = useState<string | null>(null);
+  const [choosingArchive, setChoosingArchive] = useState(false);
   const [dataRestartRequired, setDataRestartRequired] = useState(false);
   const backupListRequestId = useRef(0);
   const mounted = useRef(true);
@@ -756,6 +765,70 @@ export function Settings() {
       setRestoreBusy(false);
     }
   }, [dataRestartRequired, restorePhrase, selectedBackupTimestamp]);
+
+  /**
+   * Pick a backup `.zip` on disk through the main-owned native open-file dialog
+   * (`appApi.pickBackupArchive`). The renderer only ever receives the chosen path; it never
+   * reads the file. A `cancelled` result is a no-op. We store the path plus a display basename
+   * and clear any stale phrase/result so the row re-arms for the freshly chosen archive.
+   */
+  const chooseArchive = useCallback(async () => {
+    setChoosingArchive(true);
+    try {
+      const result = await appApi.pickBackupArchive();
+      if ("cancelled" in result) return;
+      const basename = result.path.split(/[\\/]/).pop() ?? result.path;
+      setSelectedArchivePath(result.path);
+      setSelectedArchiveName(basename);
+      setRestoreFilePhrase("");
+      setRestoreFileError(null);
+      setRestoreFileSuccess(null);
+    } catch (e) {
+      setRestoreFileError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setChoosingArchive(false);
+    }
+  }, []);
+
+  /**
+   * Restore the chosen archive — mirrors `restoreSelectedBackup` but feeds the picked path to
+   * `appApi.restoreBackupFromFile`. Main extracts + verifies + installs through the same
+   * rollback pipeline. Shares the `replacementInFlight` ref so it cannot overlap the other
+   * destructive backup operations, and flips the panel into restart-required on success.
+   */
+  const restoreFromFile = useCallback(async () => {
+    if (
+      replacementInFlight.current ||
+      dataRestartRequired ||
+      !selectedArchivePath ||
+      restoreFilePhrase !== RESTORE_BACKUP_CONFIRMATION_PHRASE
+    ) {
+      return;
+    }
+    replacementInFlight.current = true;
+    setRestoreFileBusy(true);
+    setRestoreFileError(null);
+    setRestoreFileSuccess(null);
+    try {
+      await appApi.restoreBackupFromFile({
+        path: selectedArchivePath,
+        confirm: true,
+        phrase: RESTORE_BACKUP_CONFIRMATION_PHRASE,
+      });
+      setRestoreFilePhrase("");
+      setRestorePhrase("");
+      setResetPhrase("");
+      setDataRestartRequired(true);
+      setRestoreFileSuccess(
+        `Restored backup from ${selectedArchiveName}. Restart Interleave before continuing.`,
+      );
+    } catch (e) {
+      setRestoreFileError(e instanceof Error ? e.message : String(e));
+    } finally {
+      replacementInFlight.current = false;
+      setRestoreFileBusy(false);
+    }
+  }, [dataRestartRequired, restoreFilePhrase, selectedArchivePath, selectedArchiveName]);
 
   const resetLocalData = useCallback(async () => {
     if (
@@ -1009,11 +1082,15 @@ export function Settings() {
   const selectedBackup = backupArtifacts.find(
     (artifact) => artifact.timestamp === selectedBackupTimestamp,
   );
-  const dataReplacementBusy = restoreBusy || resetBusy;
+  const dataReplacementBusy = restoreBusy || resetBusy || restoreFileBusy;
   const backupControlsLocked = dataRestartRequired || dataReplacementBusy;
   const canRestore =
     selectedBackupTimestamp.length > 0 &&
     restorePhrase === RESTORE_BACKUP_CONFIRMATION_PHRASE &&
+    !backupControlsLocked;
+  const canRestoreFile =
+    selectedArchivePath.length > 0 &&
+    restoreFilePhrase === RESTORE_BACKUP_CONFIRMATION_PHRASE &&
     !backupControlsLocked;
   const canReset = resetPhrase === RESET_LOCAL_DATA_CONFIRMATION_PHRASE && !backupControlsLocked;
 
@@ -1418,6 +1495,89 @@ export function Settings() {
           <SettingRow label="Restore failed" hint="Backups were preserved. Review the error below.">
             <span data-testid="settings-restore-error" className="text-danger text-sm">
               {restoreError}
+            </span>
+          </SettingRow>
+        ) : null}
+        <SettingRow
+          label="Restore from a file"
+          hint={
+            selectedArchiveName
+              ? `Type ${RESTORE_BACKUP_CONFIRMATION_PHRASE} to replace this vault with ${selectedArchiveName}.`
+              : "Choose a backup .zip saved on this device or an external drive."
+          }
+        >
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              data-testid="settings-restore-file-choose"
+              disabled={choosingArchive || backupControlsLocked}
+              onClick={() => void chooseArchive()}
+              className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 font-medium text-sm text-text-2 hover:border-border-strong hover:text-text disabled:opacity-40"
+            >
+              <Icon name="external" size={14} />
+              {choosingArchive ? "Choosing…" : "Choose backup file…"}
+            </button>
+            {selectedArchiveName ? (
+              <span
+                data-testid="settings-restore-file-path"
+                className="min-w-0 truncate font-mono text-sm text-text-3"
+              >
+                {selectedArchiveName}
+              </span>
+            ) : null}
+          </div>
+        </SettingRow>
+        {selectedArchiveName ? (
+          <SettingRow
+            label="Confirm file restore"
+            hint={`Replaces this vault with ${selectedArchiveName}. This cannot be undone.`}
+          >
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <span id="settings-restore-file-confirm-help" className="sr-only">
+                Type {RESTORE_BACKUP_CONFIRMATION_PHRASE} to restore the chosen backup file.
+              </span>
+              <input
+                type="text"
+                data-testid="settings-restore-file-confirm"
+                aria-label="Restore from a file"
+                aria-describedby="settings-restore-file-confirm-help"
+                value={restoreFilePhrase}
+                disabled={!selectedArchivePath || backupControlsLocked}
+                placeholder={RESTORE_BACKUP_CONFIRMATION_PHRASE}
+                onChange={(e) => setRestoreFilePhrase(e.target.value)}
+                className="w-full rounded-md border border-border bg-surface px-2.5 py-1 text-sm text-text placeholder:text-text-3 focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-40 sm:w-44"
+              />
+              <button
+                type="button"
+                data-testid="settings-restore-file"
+                disabled={!canRestoreFile}
+                onClick={() => void restoreFromFile()}
+                className={
+                  canRestoreFile
+                    ? "inline-flex items-center gap-2 rounded-md border border-accent-soft-bd bg-accent-soft px-3 py-1.5 font-medium text-accent-text text-sm hover:bg-accent-soft/80"
+                    : "inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 font-medium text-sm text-text-3"
+                }
+              >
+                <Icon name="restore" size={14} />
+                {restoreFileBusy ? "Restoring…" : "Restore from file"}
+              </button>
+            </div>
+          </SettingRow>
+        ) : null}
+        {restoreFileSuccess ? (
+          <SettingRow label="Restore complete" hint="The app data changed underneath this UI.">
+            <span data-testid="settings-restore-file-success" className="text-ok text-sm">
+              {restoreFileSuccess}
+            </span>
+          </SettingRow>
+        ) : null}
+        {restoreFileError ? (
+          <SettingRow
+            label="File restore failed"
+            hint="Backups were preserved. Review the error below."
+          >
+            <span data-testid="settings-restore-file-error" className="text-danger text-sm">
+              {restoreFileError}
             </span>
           </SettingRow>
         ) : null}
