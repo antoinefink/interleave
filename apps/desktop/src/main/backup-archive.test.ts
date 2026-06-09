@@ -101,6 +101,38 @@ describe("extractBackupArchive", () => {
     expect(() => extractBackupArchive(zipPath, destDir)).toThrow(/could not read archive/);
   });
 
+  it("rejects an archive that expands past the uncompressed cap before writing anything past it", () => {
+    writeZip({
+      "manifest.json": strToU8("aaaa"),
+      "app.sqlite": strToU8("bbbb"),
+      "assets/sources/a.txt": strToU8("cccc"),
+    });
+
+    // A 4-byte cumulative cap is exceeded by the first entry's uncompressed size,
+    // so the decompression-bomb backstop trips before extraction completes.
+    expect(() => extractBackupArchive(zipPath, destDir, { maxTotalUncompressedBytes: 4 })).toThrow(
+      /expands too large/,
+    );
+    // Nothing escaped the cap: none of the entries were written to disk.
+    expect(fs.existsSync(path.join(destDir, "manifest.json"))).toBe(false);
+    expect(fs.existsSync(path.join(destDir, "app.sqlite"))).toBe(false);
+    expect(fs.existsSync(path.join(destDir, "assets/sources/a.txt"))).toBe(false);
+  });
+
+  it("rejects an archive whose compressed file size exceeds the archive cap", () => {
+    writeZip({ "manifest.json": strToU8("{}") });
+
+    expect(() => extractBackupArchive(zipPath, destDir, { maxArchiveBytes: 1 })).toThrow(
+      /archive too large/,
+    );
+  });
+
+  it("throws a clear error when the archive file does not exist", () => {
+    const missing = path.join(workDir, "does-not-exist.zip");
+
+    expect(() => extractBackupArchive(missing, destDir)).toThrow(/could not read archive file/);
+  });
+
   it("skips directory entries and still writes the contained files", () => {
     writeZip({
       "assets/": new Uint8Array(),

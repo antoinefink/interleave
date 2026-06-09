@@ -601,6 +601,19 @@ describe("registerIpcHandlers", () => {
     expect(showOpenDialog).toHaveBeenCalledTimes(1);
   });
 
+  it("pickArchive returns the chosen path when the dialog resolves a file", async () => {
+    // No env override in play (cleared in beforeEach), so the native dialog runs.
+    showOpenDialog.mockResolvedValue({ canceled: false, filePaths: ["/some/backup.zip"] });
+    registerIpcHandlers(fakeDbService() as never, fakeIpcContext());
+
+    const pickArchive = electron.handlers.get(IPC_CHANNELS.backupsPickArchive);
+
+    await expect(pickArchive?.({}) as Promise<unknown>).resolves.toEqual({
+      path: "/some/backup.zip",
+    });
+    expect(showOpenDialog).toHaveBeenCalledTimes(1);
+  });
+
   it("broadcasts runner job updates to live renderer windows and unsubscribes on dispose", () => {
     const sent: unknown[] = [];
     const liveWindow = {

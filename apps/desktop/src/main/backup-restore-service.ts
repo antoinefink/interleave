@@ -16,6 +16,7 @@ import {
 import { BackupService } from "./backup-service";
 import type { DbService } from "./db-service";
 import { type AppPaths, ensureVaultSkeleton } from "./paths";
+import { safeContainedJoin } from "./safe-archive-path";
 
 export interface BackupArtifactSummary {
   readonly timestamp: string;
@@ -96,19 +97,7 @@ export class BackupRestoreService {
       const stageDir = fs.mkdtempSync(path.join(this.deps.paths.dataDir, ".restore-stage-"));
       try {
         copyBackupToStage(verified.backupDir, verified.manifest, stageDir);
-        this.deps.dbService.beginLocalDataReplacement();
-        try {
-          await this.deps.beforeReplaceLocalData?.();
-          this.installStageWithRollback(stageDir);
-          this.deps.dbService.completeLocalDataReplacement();
-        } catch (error) {
-          if (error instanceof LocalDataReplacementUnrecoverableError) {
-            this.deps.dbService.completeLocalDataReplacement();
-          } else {
-            this.deps.dbService.abortLocalDataReplacement();
-          }
-          throw error;
-        }
+        await this.runInstallPipeline(stageDir);
       } finally {
         fs.rmSync(stageDir, { recursive: true, force: true });
       }
@@ -143,28 +132,16 @@ export class BackupRestoreService {
         const stageDir = fs.mkdtempSync(path.join(this.deps.paths.dataDir, ".restore-stage-"));
         try {
           copyBackupToStage(verified.backupDir, verified.manifest, stageDir);
-          this.deps.dbService.beginLocalDataReplacement();
-          try {
-            await this.deps.beforeReplaceLocalData?.();
-            this.installStageWithRollback(stageDir);
-            this.deps.dbService.completeLocalDataReplacement();
-          } catch (error) {
-            if (error instanceof LocalDataReplacementUnrecoverableError) {
-              this.deps.dbService.completeLocalDataReplacement();
-            } else {
-              this.deps.dbService.abortLocalDataReplacement();
-            }
-            throw error;
-          }
+          await this.runInstallPipeline(stageDir);
         } finally {
           fs.rmSync(stageDir, { recursive: true, force: true });
         }
         return {
           restored: true,
-          // The archive is not app-managed, so there is no app timestamp. Carry
-          // the chosen filename as a renderer-safe DISPLAY LABEL only (never a
-          // path or app-managed identifier).
-          timestamp: path.basename(zipPath),
+          // No app-managed directory timestamp exists for a file restore; report
+          // the backup's recorded ISO creation time (manifest.createdAt), never
+          // the filename.
+          timestamp: verified.manifest.createdAt,
           schemaVersion: verified.manifest.schemaVersion,
           counts: verified.manifest.counts,
           restartRequired: true,
@@ -180,19 +157,7 @@ export class BackupRestoreService {
       const stageDir = fs.mkdtempSync(path.join(this.deps.paths.dataDir, ".reset-stage-"));
       try {
         createEmptyStageStore(stageDir, this.deps);
-        this.deps.dbService.beginLocalDataReplacement();
-        try {
-          await this.deps.beforeReplaceLocalData?.();
-          this.installStageWithRollback(stageDir);
-          this.deps.dbService.completeLocalDataReplacement();
-        } catch (error) {
-          if (error instanceof LocalDataReplacementUnrecoverableError) {
-            this.deps.dbService.completeLocalDataReplacement();
-          } else {
-            this.deps.dbService.abortLocalDataReplacement();
-          }
-          throw error;
-        }
+        await this.runInstallPipeline(stageDir);
       } finally {
         fs.rmSync(stageDir, { recursive: true, force: true });
       }
@@ -226,6 +191,31 @@ export class BackupRestoreService {
     verifyManifestFiles(backupDir, manifest);
     verifySqliteFile(path.join(backupDir, "app.sqlite"), manifest, this.deps);
     return { backupDir, manifest };
+  }
+
+  /**
+   * Shared begin → install-with-rollback → complete pipeline for every store
+   * replacement (timestamp restore, file restore, reset). Stops local writers
+   * first, swaps the staged store in with rollback protection, and resolves the
+   * DB-service replacement window: a normal failure ABORTS (current store is
+   * intact); an unrecoverable failure (install + rollback both failed) COMPLETES
+   * the window because there is no good store to return to and the rollback copy
+   * is preserved on disk. The original error is always re-thrown.
+   */
+  private async runInstallPipeline(stageDir: string): Promise<void> {
+    this.deps.dbService.beginLocalDataReplacement();
+    try {
+      await this.deps.beforeReplaceLocalData?.();
+      this.installStageWithRollback(stageDir);
+      this.deps.dbService.completeLocalDataReplacement();
+    } catch (error) {
+      if (error instanceof LocalDataReplacementUnrecoverableError) {
+        this.deps.dbService.completeLocalDataReplacement();
+      } else {
+        this.deps.dbService.abortLocalDataReplacement();
+      }
+      throw error;
+    }
   }
 
   private installStageWithRollback(stageDir: string): void {
@@ -438,19 +428,7 @@ function resolveBackupDir(backupsDir: string, timestamp: string): string {
 }
 
 function safeJoin(root: string, rel: string): string {
-  if (path.isAbsolute(rel) || rel.includes("\\") || rel.length === 0) {
-    throw new Error(`backup restore: unsafe path ${rel}`);
-  }
-  const parts = rel.split("/");
-  if (parts.some((part) => part.length === 0 || part === "." || part === "..")) {
-    throw new Error(`backup restore: unsafe path ${rel}`);
-  }
-  const abs = path.join(root, ...parts);
-  const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
-  if (abs !== root && !abs.startsWith(rootWithSep)) {
-    throw new Error(`backup restore: unsafe path ${rel}`);
-  }
-  return abs;
+  return safeContainedJoin(root, rel, "backup restore: unsafe path");
 }
 
 function copyBackupToStage(backupDir: string, manifest: BackupManifest, stageDir: string): void {

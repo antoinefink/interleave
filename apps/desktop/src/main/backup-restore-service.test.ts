@@ -6,6 +6,7 @@ import { seedDemoCollection } from "@interleave/testing";
 import Database from "better-sqlite3";
 import { strToU8, unzipSync, zipSync } from "fflate";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { extractBackupArchive } from "./backup-archive";
 import * as backupManifest from "./backup-manifest";
 import { resolveSchemaVersion } from "./backup-manifest";
 import { BackupRestoreService } from "./backup-restore-service";
@@ -366,8 +367,16 @@ describe("BackupRestoreService", () => {
 
       expect(restored.restored).toBe(true);
       expect(restored.restartRequired).toBe(true);
-      // The display label is the renderer-safe archive filename, not an app timestamp.
-      expect(restored.timestamp).toBe(`${result.timestamp}.zip`);
+      // No app-managed directory timestamp exists for a file restore, so the
+      // result reports the backup's recorded ISO creation time (manifest.createdAt),
+      // never the archive filename.
+      const manifestCreatedAt = (
+        JSON.parse(
+          fs.readFileSync(path.join(paths.backupsDir, result.timestamp, "manifest.json"), "utf8"),
+        ) as { createdAt: string }
+      ).createdAt;
+      expect(restored.timestamp).toBe(manifestCreatedAt);
+      expect(restored.timestamp).toBe("2026-06-07T10:00:00.000Z");
       expect(restored.counts.elements).toBe(backedUpElements);
       expect(rowCount(paths.dbPath, "elements")).toBe(backedUpElements);
       expect(
@@ -496,6 +505,79 @@ describe("BackupRestoreService", () => {
       expect(listRestoreTempDirs(dataDir)).toEqual([]);
       expect(svc.isOpen).toBe(true);
       expect(svc.localDataRestartRequired).toBe(false);
+    });
+
+    it("rejects a non-zip junk file without touching data or leaking temp dirs", async () => {
+      const { paths, restore } = openSeeded();
+      const currentOnly = svc.importManualSource({
+        title: "Current only",
+        body: "must survive failed restore",
+        priority: "B",
+      });
+      const currentCount = rowCount(paths.dbPath, "elements");
+      const snapshotPath = path.join(paths.assetsDir, "sources", "seed-source", "snapshot.json");
+
+      // Random bytes that are not a valid zip central directory.
+      const junkZip = path.join(dataDir, "junk.zip");
+      fs.writeFileSync(junkZip, Buffer.from([0xde, 0xad, 0xbe, 0xef, 0x00, 0x01, 0x02, 0x03]));
+
+      await expect(restore.restoreBackupFromArchive(junkZip)).rejects.toThrow(
+        /could not read archive/,
+      );
+
+      expect(rowCount(paths.dbPath, "elements")).toBe(currentCount);
+      expect(svc.getInspectorData(currentOnly.id).data?.element.title).toBe("Current only");
+      expect(fs.readFileSync(snapshotPath, "utf8")).toBe('{"version":"backup"}');
+      expect(svc.isOpen).toBe(true);
+      expect(svc.localDataRestartRequired).toBe(false);
+      expect(listRestoreTempDirs(dataDir)).toEqual([]);
+    });
+
+    it("rejects an archive with an unmanifested extra entry without touching current data", async () => {
+      const { paths, backup, restore } = openSeeded();
+      const result = await backup.createBackup(new Date("2026-06-07T10:00:00.000Z"));
+      const currentCount = rowCount(paths.dbPath, "elements");
+
+      // An attacker appends an extra entry not listed in the manifest. The
+      // directory-vs-manifest reconciliation must reject it before any install.
+      const entries = readZipEntries(result.path);
+      entries["assets/sources/seed-source/extra-injected.txt"] = strToU8("not in manifest");
+      const extraEntryZip = path.join(dataDir, "extra-entry.zip");
+      writeZip(extraEntryZip, entries);
+
+      await expect(restore.restoreBackupFromArchive(extraEntryZip)).rejects.toThrow(
+        /manifest does not match/,
+      );
+
+      expect(rowCount(paths.dbPath, "elements")).toBe(currentCount);
+      expect(svc.isOpen).toBe(true);
+      expect(svc.localDataRestartRequired).toBe(false);
+      expect(listRestoreTempDirs(dataDir)).toEqual([]);
+    });
+
+    it("writes archive entries as regular files, never symlinks that could escape", () => {
+      // fflate cannot emit a real symlink entry, so we lock in the guarantee at
+      // the extraction layer: an entry whose BYTES look like a path target is
+      // still written as a plain file inside destDir — it never becomes a symlink
+      // and never escapes the extraction root.
+      const extractDir = fs.mkdtempSync(path.join(dataDir, ".restore-extract-test-"));
+      const zipPath = path.join(dataDir, "symlink-shaped.zip");
+      const escapeTarget = path.join(dataDir, "..", "escape-target.txt");
+      writeZip(zipPath, {
+        "assets/sources/seed-source/link": strToU8(escapeTarget),
+      });
+
+      extractBackupArchive(zipPath, extractDir);
+
+      const written = path.join(extractDir, "assets", "sources", "seed-source", "link");
+      const stat = fs.lstatSync(written);
+      expect(stat.isSymbolicLink()).toBe(false);
+      expect(stat.isFile()).toBe(true);
+      // The bytes are stored verbatim; nothing was resolved/followed to escape.
+      expect(fs.readFileSync(written, "utf8")).toBe(escapeTarget);
+      expect(fs.existsSync(path.join(dataDir, "..", "escape-target.txt"))).toBe(false);
+
+      fs.rmSync(extractDir, { recursive: true, force: true });
     });
   });
 });

@@ -1361,6 +1361,33 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
     return dbService.listStagnantExtracts(request);
   });
 
+  /**
+   * Build a {@link BackupRestoreService} with the standard main-side dep wiring.
+   * All four backup-restore handlers (list, restore, restoreFile, resetLocalData)
+   * share identical deps; `withReplaceHooks` adds the writer-quiescing hook the
+   * store-replacing handlers need (and that `list` does not). Throws clearly if
+   * the filesystem context was never wired, so handlers don't repeat the guard.
+   */
+  function makeBackupRestoreService(withReplaceHooks: boolean): BackupRestoreService {
+    if (!context) {
+      throw new Error("backups: handler registered without filesystem context");
+    }
+    return new BackupRestoreService({
+      dbService,
+      paths: context.paths,
+      migrationsDir: context.migrationsDir,
+      nativeBinding: context.nativeBinding,
+      ...(withReplaceHooks
+        ? {
+            beforeReplaceLocalData: async () => {
+              await context?.runner?.stopAndDrain();
+              await context?.captureController?.stop();
+            },
+          }
+        : {}),
+    });
+  }
+
   ipcMain.handle(IPC_CHANNELS.backupsCreate, async (_event, rawRequest: unknown) => {
     // No payload is allowed; validate the actual renderer argument so unexpected
     // paths/options are rejected before any filesystem work starts.
@@ -1404,12 +1431,7 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
     if (!context) {
       throw new Error("backups.list: handler registered without filesystem context");
     }
-    const restoreService = new BackupRestoreService({
-      dbService,
-      paths: context.paths,
-      migrationsDir: context.migrationsDir,
-      nativeBinding: context.nativeBinding,
-    });
+    const restoreService = makeBackupRestoreService(false);
     return { backups: restoreService.listBackups() };
   });
 
@@ -1418,16 +1440,7 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
     if (!context) {
       throw new Error("backups.restore: handler registered without filesystem context");
     }
-    const restoreService = new BackupRestoreService({
-      dbService,
-      paths: context.paths,
-      migrationsDir: context.migrationsDir,
-      nativeBinding: context.nativeBinding,
-      beforeReplaceLocalData: async () => {
-        await context.runner?.stopAndDrain();
-        await context.captureController?.stop();
-      },
-    });
+    const restoreService = makeBackupRestoreService(true);
     const result = await restoreService.restoreBackup(request.timestamp);
     return {
       status: "restored" as const,
@@ -1451,16 +1464,7 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
     if (!context) {
       throw new Error("backups.restoreFile: handler registered without filesystem context");
     }
-    const restoreService = new BackupRestoreService({
-      dbService,
-      paths: context.paths,
-      migrationsDir: context.migrationsDir,
-      nativeBinding: context.nativeBinding,
-      beforeReplaceLocalData: async () => {
-        await context.runner?.stopAndDrain();
-        await context.captureController?.stop();
-      },
-    });
+    const restoreService = makeBackupRestoreService(true);
     const result = await restoreService.restoreBackupFromArchive(request.path);
     return {
       status: "restored" as const,
@@ -1475,16 +1479,7 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
     if (!context) {
       throw new Error("backups.resetLocalData: handler registered without filesystem context");
     }
-    const restoreService = new BackupRestoreService({
-      dbService,
-      paths: context.paths,
-      migrationsDir: context.migrationsDir,
-      nativeBinding: context.nativeBinding,
-      beforeReplaceLocalData: async () => {
-        await context.runner?.stopAndDrain();
-        await context.captureController?.stop();
-      },
-    });
+    const restoreService = makeBackupRestoreService(true);
     await restoreService.resetLocalData();
     return {
       status: "reset" as const,
