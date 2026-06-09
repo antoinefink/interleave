@@ -8,7 +8,7 @@
  *
  *   n / → / Space  → next / skip (advance the cursor without mutating)
  *   p              → postpone the current item (opens attention schedule menu; cards postpone)
- *   d              → mark done
+ *   d              → mark done (a SOURCE opens the done-intent surface; others mark done now)
  *   x              → dismiss
  *   ⌫ / Delete     → delete (soft, undoable)
  *   + / =          → raise priority

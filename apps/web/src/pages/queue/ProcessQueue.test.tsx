@@ -20,7 +20,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   DailyWorkSummaryResult,
@@ -680,12 +680,13 @@ describe("ProcessQueue", () => {
     await waitFor(() => expect(currentItemId()).toBe("extract-1"));
   });
 
-  it("confirms unresolved source rows before marking them done", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(true);
-    h.getBlockProcessingSummary.mockResolvedValueOnce({
+  it("opens the in-app done-intent surface for an unresolved source instead of a native confirm", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    h.getBlockProcessingSummary.mockResolvedValue({
       summary: {
         canMarkDoneWithoutConfirmation: false,
         unresolvedBlocks: 3,
+        stateCounts: { unread: 2, read: 1 },
       },
     });
     render(<ProcessQueue />);
@@ -693,31 +694,199 @@ describe("ProcessQueue", () => {
 
     fireEvent.click(screen.getByTestId("process-action-markDone"));
 
-    await waitFor(() => expect(confirm).toHaveBeenCalledWith(expect.stringContaining("3")));
+    // The non-modal intent popover appears with the three choices — no native dialog, no mutation.
+    expect(await screen.findByTestId("done-intent-pop")).toBeInTheDocument();
+    expect(screen.getByTestId("done-intent-later")).toBeInTheDocument();
+    expect(screen.getByTestId("done-intent-finished")).toBeInTheDocument();
+    expect(screen.getByTestId("done-intent-abandon")).toBeInTheDocument();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(h.actOnQueueItem).not.toHaveBeenCalled();
+    expect(currentItemId()).toBe("source-1");
+  });
+
+  it("marks an unresolved source done with the confirm override from the Finished intent", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    h.getBlockProcessingSummary.mockResolvedValue({
+      summary: {
+        canMarkDoneWithoutConfirmation: false,
+        unresolvedBlocks: 3,
+        stateCounts: { unread: 3 },
+      },
+    });
+    render(<ProcessQueue />);
+    await moveToSource();
+
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+    fireEvent.click(await screen.findByTestId("done-intent-finished"));
+
     await waitFor(() =>
       expect(h.actOnQueueItem).toHaveBeenCalledWith({
         id: "source-1",
         action: { kind: "markDone", confirmUnresolvedBlocks: true },
       }),
     );
+    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+    expect(confirm).not.toHaveBeenCalled();
   });
 
-  it("does not advance when unresolved source mark-done is cancelled", async () => {
-    vi.spyOn(window, "confirm").mockReturnValueOnce(false);
-    h.getBlockProcessingSummary.mockResolvedValueOnce({
+  it("shows an Undo snackbar after finishing an unresolved source and undoes the same op", async () => {
+    h.getBlockProcessingSummary.mockResolvedValue({
       summary: {
         canMarkDoneWithoutConfirmation: false,
         unresolvedBlocks: 3,
+        stateCounts: { unread: 3 },
+      },
+    });
+    h.actOnQueueItem.mockResolvedValueOnce({
+      item: null,
+      removed: true,
+      undo: { kind: "status", previousStatus: "scheduled" },
+    });
+    render(<ProcessQueue />);
+    await moveToSource();
+
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+    fireEvent.click(await screen.findByTestId("done-intent-finished"));
+    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+
+    // A VISIBLE Undo affordance appears for the destructive intent (not the silent ⌘Z-only path).
+    const snackbar = await screen.findByTestId("queue-snackbar");
+    fireEvent.click(within(snackbar).getByRole("button", { name: /undo/i }));
+
+    await waitFor(() =>
+      expect(h.undoQueueAction).toHaveBeenCalledWith({
+        id: "source-1",
+        undo: { kind: "status", previousStatus: "scheduled" },
+      }),
+    );
+    await waitFor(() => expect(currentItemId()).toBe("source-1"));
+  });
+
+  it("postpones an unresolved source through the Return later intent", async () => {
+    h.getBlockProcessingSummary.mockResolvedValue({
+      summary: {
+        canMarkDoneWithoutConfirmation: false,
+        unresolvedBlocks: 3,
+        stateCounts: { unread: 3 },
       },
     });
     render(<ProcessQueue />);
     await moveToSource();
 
     fireEvent.click(screen.getByTestId("process-action-markDone"));
+    fireEvent.click(await screen.findByTestId("done-intent-later"));
 
-    await waitFor(() => expect(h.getBlockProcessingSummary).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({
+        id: "source-1",
+        action: { kind: "postpone" },
+      }),
+    );
+    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+    // Return later is non-destructive — no visible Undo snackbar (⌘Z only).
+    expect(screen.queryByTestId("queue-snackbar")).toBeNull();
+  });
+
+  it("abandons an unresolved source through the Abandon intent", async () => {
+    h.getBlockProcessingSummary.mockResolvedValue({
+      summary: {
+        canMarkDoneWithoutConfirmation: false,
+        unresolvedBlocks: 3,
+        stateCounts: { unread: 3 },
+      },
+    });
+    render(<ProcessQueue />);
+    await moveToSource();
+
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+    fireEvent.click(await screen.findByTestId("done-intent-abandon"));
+
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({
+        id: "source-1",
+        action: { kind: "dismiss" },
+      }),
+    );
+    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+  });
+
+  it("closes the done-intent surface on Escape without mutating", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    h.getBlockProcessingSummary.mockResolvedValue({
+      summary: {
+        canMarkDoneWithoutConfirmation: false,
+        unresolvedBlocks: 3,
+        stateCounts: { unread: 3 },
+      },
+    });
+    render(<ProcessQueue />);
+    await moveToSource();
+
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+    await screen.findByTestId("done-intent-pop");
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByTestId("done-intent-pop")).toBeNull());
     expect(h.actOnQueueItem).not.toHaveBeenCalled();
     expect(currentItemId()).toBe("source-1");
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("opens the done-intent surface from the d shortcut on an unresolved source", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    h.getBlockProcessingSummary.mockResolvedValue({
+      summary: {
+        canMarkDoneWithoutConfirmation: false,
+        unresolvedBlocks: 3,
+        stateCounts: { unread: 3 },
+      },
+    });
+    render(<ProcessQueue />);
+    await moveToSource();
+
+    fireEvent.keyDown(window, { key: "d" });
+
+    expect(await screen.findByTestId("done-intent-pop")).toBeInTheDocument();
+    expect(h.actOnQueueItem).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("marks a complete source done from the d shortcut with no popover", async () => {
+    const confirm = vi.spyOn(window, "confirm");
+    // The default summary mock reports 0 unresolved (fast path).
+    render(<ProcessQueue />);
+    await moveToSource();
+
+    fireEvent.keyDown(window, { key: "d" });
+
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({
+        id: "source-1",
+        action: { kind: "markDone" },
+      }),
+    );
+    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+    expect(screen.queryByTestId("done-intent-pop")).toBeNull();
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("marks a card done immediately from the d shortcut (source-only gate)", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    expect(currentItemId()).toBe("card-1");
+
+    fireEvent.keyDown(window, { key: "d" });
+
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({
+        id: "card-1",
+        action: { kind: "markDone" },
+      }),
+    );
+    // No source done-gate read for a card, and no intent popover.
+    expect(h.getBlockProcessingSummary).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("done-intent-pop")).toBeNull();
   });
 
   it("keeps command-log undo after postponing through the merged menu", async () => {

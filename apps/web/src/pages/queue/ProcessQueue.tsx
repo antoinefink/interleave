@@ -53,6 +53,8 @@ import {
   stageLabel,
   TypeIcon,
 } from "../../components/inspector/primitives";
+import { type DoneIntent, DoneIntentMenu } from "../../components/queue/DoneIntentMenu";
+import { QueueSnackbar } from "../../components/queue/QueueSnackbar";
 import { listenQueueRefresh } from "../../components/queue/queueRefresh";
 import { ScheduleMenu } from "../../components/queue/ScheduleMenu";
 import { RefBlock } from "../../components/RefBlock";
@@ -72,6 +74,7 @@ import {
   type ReviewIntervalPreview,
   type ReviewRating,
   type SchedulerSignals,
+  type SourceBlockProcessingSummaryPayload,
 } from "../../lib/appApi";
 import { formatDifficulty, formatStability } from "../../lib/formatFsrs";
 import { CardBody } from "../../review/CardBody";
@@ -93,6 +96,7 @@ import { useTextSelection } from "../../reader/useTextSelection";
 import { useActiveScope } from "../../shell/activeScope";
 import { Kbd } from "../../shell/Kbd";
 import { useSelection } from "../../shell/selection";
+import { resumeLabel } from "./doneIntentBreakdown";
 import { jitterOrder } from "./jitter";
 import { openQueueItem } from "./openQueueItem";
 import "./queue.css";
@@ -122,19 +126,6 @@ const GRADES: readonly { rating: ReviewRating; label: string; key: string }[] = 
 
 /** The inline non-open actions a loop item exposes (the T030 set + skip). */
 type LoopActionKind = QueueActAction["kind"];
-
-async function actionWithSourceDoneGate(
-  item: QueueItemSummary,
-  kind: LoopActionKind,
-): Promise<QueueActAction | null> {
-  if (kind !== "markDone" || item.type !== "source") return { kind };
-  const { summary } = await appApi.getBlockProcessingSummary({ sourceElementId: item.id });
-  if (summary.canMarkDoneWithoutConfirmation) return { kind };
-  const ok = window.confirm(
-    `This source still has ${summary.unresolvedBlocks} unresolved blocks. Mark it done anyway?`,
-  );
-  return ok ? { kind, confirmUnresolvedBlocks: true } : null;
-}
 
 type ProcessUndoState = {
   readonly id: string;
@@ -241,10 +232,17 @@ export function ProcessQueue() {
     clozeText?: string;
   } | null>(null);
   const [postponeMenuOpenSignal, setPostponeMenuOpenSignal] = useState(0);
+  // Bumped by the `d` key (or the action bar) to run the DoneIntentMenu trigger logic
+  // for a SOURCE — fetch the block summary, then take the 0-unresolved fast path or open
+  // the intent popover. Mirrors `postponeMenuOpenSignal`/`ScheduleMenu`.
+  const [doneIntentSignal, setDoneIntentSignal] = useState(0);
   const [flash, setFlash] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [undoState, setUndoState] = useState<ProcessUndoState | null>(null);
+  // The visible Undo snackbar for the destructive source intents (Finished / Abandon).
+  // Other loop actions keep the silent local ⌘Z undo only — this stays null for them.
+  const [doneIntentSnackbar, setDoneIntentSnackbar] = useState<string | null>(null);
   const [dailyWork, setDailyWork] = useState<DailyWorkSummaryResult | null>(null);
   const [deckLoading, setDeckLoading] = useState(true);
   const [deckLoaded, setDeckLoaded] = useState(false);
@@ -315,6 +313,11 @@ export function ProcessQueue() {
 
   const clearUndo = useCallback(() => {
     setUndoState(null);
+    setDoneIntentSnackbar(null);
+  }, []);
+
+  const dismissDoneIntentSnackbar = useCallback(() => {
+    setDoneIntentSnackbar(null);
   }, []);
 
   const patchCurrentExtract = useCallback(
@@ -389,6 +392,7 @@ export function ProcessQueue() {
         ]);
         let nextError: string | null = null;
         setUndoState(null);
+        setDoneIntentSnackbar(null);
         if (queueResult.status === "fulfilled") {
           setOrder(jitterOrder(queueResult.value.items));
           setCursor(0);
@@ -527,22 +531,25 @@ export function ProcessQueue() {
   }, [dailyWork, navigate, select]);
 
   /**
-   * Apply one in-place action through the SAME typed mutation path as the list
+   * Apply one fully-shaped action through the SAME typed mutation path as the list
    * (T030), then ADVANCE to the next item. raise/lower/done/dismiss/delete and
    * card-only postpone route through `queue.act`; attention-item postpone uses the
    * explicit schedule menu below. The loop never returns to the list — it just moves
    * the cursor. Recoverable mutations keep a local undo recipe so ⌘Z can restore the
    * item and cursor in place, but they do not raise a snackbar on every item transition.
+   *
+   * `withSnackbar` raises a VISIBLE Undo snackbar for the destructive source-lifecycle
+   * intents (Finished / Abandon) routed from {@link DoneIntentMenu}; the recipe it shows
+   * is the SAME op ⌘Z hits, so the two paths can never diverge.
    */
-  const act = useCallback(
-    async (kind: LoopActionKind) => {
+  const runAction = useCallback(
+    async (action: QueueActAction, withSnackbar = false) => {
       if (!current || busy || !isDesktop()) return;
       const undoIndex = cursor;
+      const kind = action.kind;
       clearUndo();
       setBusy(true);
       try {
-        const action = await actionWithSourceDoneGate(current, kind);
-        if (!action) return;
         const res = await appApi.actOnQueueItem({ id: current.id, action });
         setProcessed((p) => p + 1);
         advance();
@@ -563,6 +570,9 @@ export function ProcessQueue() {
             index: undoIndex,
             undo,
           });
+          if (withSnackbar) {
+            setDoneIntentSnackbar(kind === "dismiss" ? "Source abandoned" : "Source done");
+          }
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -571,6 +581,60 @@ export function ProcessQueue() {
       }
     },
     [current, busy, cursor, clearUndo, advance],
+  );
+
+  /**
+   * Apply a simple keyboard/button action by kind. The source done-gate is handled
+   * separately by {@link DoneIntentMenu} (the `d` key / Done button for a source bumps
+   * `doneIntentSignal`), so this never carries the `confirmUnresolvedBlocks` override.
+   */
+  const act = useCallback((kind: LoopActionKind) => runAction({ kind }), [runAction]);
+
+  /**
+   * Fetch the current source's block-processing summary for {@link DoneIntentMenu}. The
+   * surface uses it to take the 0-unresolved fast path (mark done with no popover) or to
+   * render the honest per-state breakdown. A failed read aborts silently (returns null).
+   */
+  const getDoneIntentSummary = useCallback(async () => {
+    if (current?.type !== "source") return null;
+    try {
+      const res = await appApi.getBlockProcessingSummary({ sourceElementId: current.id });
+      return res.summary;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      return null;
+    }
+  }, [current]);
+
+  /**
+   * Route a chosen done-intent to the SAME `act()` paths the rest of the loop uses, so
+   * `ProcessUndoState` + local ⌘Z keep working. Return later → postpone (read-point left
+   * untouched); Abandon → dismiss. Finished/Abandon raise the visible Undo snackbar.
+   *
+   * Finished RE-FETCHES the summary (KTD5) to close the non-modal staleness race: the doc
+   * can change while the popover is open, so the 0-unresolved fast path (and any blocks the
+   * user resolved meanwhile) marks done cleanly with NO confirm override, while a still-open
+   * source passes `confirmUnresolvedBlocks` for the authoritative server gate.
+   */
+  const onDoneIntentResolved = useCallback(
+    (intent: DoneIntent) => {
+      if (intent === "later") {
+        void runAction({ kind: "postpone" });
+      } else if (intent === "abandon") {
+        void runAction({ kind: "dismiss" }, true);
+      } else {
+        void (async () => {
+          const summary = await getDoneIntentSummary();
+          // A failed re-read (null) is treated as still-unresolved — the server gate is
+          // the final authority and rejects a bad override anyway.
+          const fresh = summary?.canMarkDoneWithoutConfirmation
+            ? { kind: "markDone" as const }
+            : { kind: "markDone" as const, confirmUnresolvedBlocks: true };
+          await runAction(fresh, true);
+        })();
+      }
+    },
+    [runAction, getDoneIntentSummary],
   );
 
   /**
@@ -608,6 +672,7 @@ export function ProcessQueue() {
     const pending = undoState;
     if (!pending || busy || !isDesktop()) return;
     setUndoState(null);
+    setDoneIntentSnackbar(null);
     setBusy(true);
     try {
       if (pending.undo.kind === "queue") {
@@ -1142,7 +1207,15 @@ export function ProcessQueue() {
         if (current?.type === "card") void act("postpone");
         else if (current) setPostponeMenuOpenSignal((n) => n + 1);
       },
-      markDone: () => void act("markDone"),
+      markDone: () => {
+        if (busy) return;
+        // A SOURCE routes Done through the intent surface (fetch → 0-unresolved fast path
+        // or open the popover) by bumping its trigger signal — mirroring the Postpone menu.
+        // Everything else (cards/extracts/topics) keeps the immediate, source-only-gate-free
+        // markDone.
+        if (current?.type === "source") setDoneIntentSignal((n) => n + 1);
+        else void act("markDone");
+      },
       dismiss: () => void act("dismiss"),
       delete: () => void act("delete"),
       raise: () => void act("raise"),
@@ -1186,6 +1259,16 @@ export function ProcessQueue() {
     onModeChange,
     onEnd: () => navigate({ to: "/queue", search: asOf ? { asOf } : {} }),
   };
+
+  // The source's "block N of M" resume location for the DoneIntentMenu — only when an
+  // actual read-point exists (read-point = where, decoupled from due-date = when). Null
+  // for a never-opened source or a non-source item.
+  const sourceDoneProgress =
+    current?.type === "source" ? sourceReadPoint.progress(doc.currentDoc) : null;
+  const sourceDoneResumeLabel =
+    current?.type === "source" && sourceReadPoint.readPoint && sourceDoneProgress
+      ? resumeLabel(sourceDoneProgress.index + 1, sourceDoneProgress.total)
+      : null;
 
   return (
     <div className="pq-shell" data-testid="route-process">
@@ -1281,6 +1364,10 @@ export function ProcessQueue() {
             extractDraft={extractDraft}
             extractBuilder={extractBuilder}
             postponeMenuOpenSignal={postponeMenuOpenSignal}
+            doneIntentSignal={doneIntentSignal}
+            doneIntentResumeLabel={sourceDoneResumeLabel}
+            onDoneIntentSummary={getDoneIntentSummary}
+            onDoneIntentResolved={onDoneIntentResolved}
             cardView={cardView}
             revealed={revealed}
             previews={previews}
@@ -1319,6 +1406,14 @@ export function ProcessQueue() {
           </span>
         </div>
       ) : null}
+      {/* The visible Undo affordance for the destructive source intents (Finished / Abandon).
+          Undo hits the SAME op as ⌘Z; auto-dismiss only clears the toast, so ⌘Z still works
+          after it fades. Other loop actions stay silent (local ⌘Z only). */}
+      <QueueSnackbar
+        message={doneIntentSnackbar}
+        onUndo={undoState ? () => void undoLastProcessAction() : undefined}
+        onClose={dismissDoneIntentSnackbar}
+      />
     </div>
   );
 }
@@ -1852,6 +1947,10 @@ function ProcessCard({
   extractDraft,
   extractBuilder,
   postponeMenuOpenSignal,
+  doneIntentSignal,
+  doneIntentResumeLabel,
+  onDoneIntentSummary,
+  onDoneIntentResolved,
   cardView,
   revealed,
   previews,
@@ -1886,6 +1985,14 @@ function ProcessCard({
   extractDraft: SourceEditorChange | null;
   extractBuilder: { tab: CardKind; clozeText?: string } | null;
   postponeMenuOpenSignal: number;
+  /** Bumped by the `d` key to run the DoneIntentMenu trigger logic for a SOURCE. */
+  doneIntentSignal: number;
+  /** The source's "block N of M" resume location, or null when there is no read-point. */
+  doneIntentResumeLabel: string | null;
+  /** Fetch the source's block summary for DoneIntentMenu; null aborts silently. */
+  onDoneIntentSummary: () => Promise<SourceBlockProcessingSummaryPayload | null>;
+  /** Apply a chosen done-intent (Finished / Return later / Abandon). */
+  onDoneIntentResolved: (intent: DoneIntent) => void;
   /** The full reveal-ready view for a CARD item (fetched by id), or null. */
   cardView: ReviewCardView | null;
   revealed: boolean;
@@ -2243,16 +2350,32 @@ function ProcessCard({
           <Icon name="return" size={14} />
           Skip
         </button>
-        <button
-          type="button"
-          className="pq-btn pq-btn--done"
-          disabled={busy}
-          data-testid="process-action-markDone"
-          onClick={() => onAction("markDone")}
-        >
-          <Icon name="check" size={14} />
-          Done
-        </button>
+        {isSource ? (
+          // A SOURCE routes Done through the non-modal intent surface (0-unresolved fast
+          // path → immediate markDone with no popover; otherwise Finished / Return later /
+          // Abandon). The server done-gate stays authoritative; this only collects intent.
+          <DoneIntentMenu
+            getSummary={onDoneIntentSummary}
+            onResolved={onDoneIntentResolved}
+            busy={busy}
+            resumeLabel={doneIntentResumeLabel}
+            triggerSignal={doneIntentSignal}
+            triggerClassName="pq-btn pq-btn--done"
+            triggerLabel="Done"
+            triggerTestId="process-action-markDone"
+          />
+        ) : (
+          <button
+            type="button"
+            className="pq-btn pq-btn--done"
+            disabled={busy}
+            data-testid="process-action-markDone"
+            onClick={() => onAction("markDone")}
+          >
+            <Icon name="check" size={14} />
+            Done
+          </button>
+        )}
       </div>
 
       <p className="pq-keys">
