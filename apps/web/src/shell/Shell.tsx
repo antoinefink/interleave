@@ -329,7 +329,7 @@ function Topbar({ onOpenCommand }: { onOpenCommand: () => void }) {
  * canonical name — and demonstrably never resolves a raw filesystem path itself
  * (path resolution belongs to the Electron main process; T007). Live DB/vault
  * status (open/migrated) is read through `appApi.db.getStatus()` in the
- * DesktopStatusPanel on /settings; this constant only labels the status bar.
+ * Settings System section on /settings; this constant only labels the status bar.
  */
 const VAULT_ROOT: VaultRoot = "assets";
 const VAULT_DB_PATH: LocalVaultPath = { root: VAULT_ROOT, relativePath: "app.sqlite" };

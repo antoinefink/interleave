@@ -33,7 +33,6 @@
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { AnalyticsScreen } from "./analytics/AnalyticsScreen";
 import { SourceYield } from "./analytics/SourceYield";
-import { DesktopStatusPanel } from "./components/DesktopStatusPanel";
 import { ConceptsScreen } from "./concepts/ConceptsScreen";
 import { BrowseScreen } from "./library/BrowseScreen";
 import { LibraryScreen } from "./library/LibraryScreen";
@@ -315,16 +314,12 @@ const settingsRoute = createRoute({
  * budget, desired retention, default topic interval, default source priority,
  * keyboard layout, and theme — all read/written through the typed
  * `window.appApi` (`settings.getAll()` / `settings.updateMany()`) and persisted
- * in the SQLite `settings` table. The desktop status panel (T007) stays below as
- * the shell health/DB-status readout and a key/value persistence demonstration.
+ * in the SQLite `settings` table.
  */
 function SettingsScreen() {
   return (
     <div className="flex h-full min-h-full flex-col overflow-auto">
       <Settings />
-      <div className="mx-auto w-full max-w-3xl px-7 pb-10">
-        <DesktopStatusPanel />
-      </div>
     </div>
   );
 }

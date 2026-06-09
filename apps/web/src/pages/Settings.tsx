@@ -16,7 +16,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Icon } from "../components/Icon";
+import { Icon, type IconName } from "../components/Icon";
 import { OptimizationPanel } from "../components/OptimizationPanel";
 import { WorkloadSimulator } from "../components/WorkloadSimulator";
 import { InlineHint } from "../help/Contextual";
@@ -26,10 +26,13 @@ import {
   type BackupArtifact,
   type BackupsCreateResult,
   type CapturePairingResult,
+  type DbStatus,
+  type HealthResult,
   isDesktop,
   RESET_LOCAL_DATA_CONFIRMATION_PHRASE,
   RESTORE_BACKUP_CONFIRMATION_PHRASE,
   type RendererSettings,
+  type SettingValue,
   type ThemePreference,
 } from "../lib/appApi";
 import { SETTINGS_CHANGED_EVENT } from "../shell/nav";
@@ -643,6 +646,175 @@ function AiAssistancePanel({
         />
       </SettingRow>
     </SectionPanel>
+  );
+}
+
+/** A small "OK" status chip matching the kit's `.set-ok` (mirrors the backup-result chip). */
+function OkChip({ testid, icon, children }: { testid: string; icon: IconName; children: string }) {
+  return (
+    <span
+      data-testid={testid}
+      className="inline-flex items-center gap-1.5 rounded-md bg-ok-soft px-2.5 py-1 text-ok text-xs"
+    >
+      <Icon name={icon} size={13} />
+      {children}
+    </span>
+  );
+}
+
+/** A neutral mono token pill matching the kit's `.set-token`. */
+function Token({ testid, children }: { testid: string; children: string }) {
+  return (
+    <span
+      data-testid={testid}
+      className="inline-flex items-center rounded-md border border-border bg-surface px-2 py-0.5 font-mono text-text-2 text-xs whitespace-nowrap"
+    >
+      {children}
+    </span>
+  );
+}
+
+/** The settings key the System panel reads/writes to demonstrate persistence (T007). */
+const PERSIST_KEY = "desktop.lastCheck";
+
+/**
+ * The "System" section (T007). Folds the desktop diagnostics into the native Settings
+ * vocabulary: a real consumer of the typed `window.appApi` bridge that proves the renderer
+ * reaches trusted local capabilities ONLY through the bridge (never SQLite/Node/fs directly):
+ *   - `app.health()` + `db.getStatus()` report the shell + SQLite are up and migrated,
+ *   - a setting can be written and read back, and (per the Definition of Done) survives a full
+ *     app restart — the E2E relaunches Electron and re-reads it.
+ *
+ * Pure UI — it only awaits IPC-backed promises from the typed client; no domain logic here.
+ */
+function SystemPanel() {
+  const [health, setHealth] = useState<HealthResult | null>(null);
+  const [status, setStatus] = useState<DbStatus | null>(null);
+  const [persisted, setPersisted] = useState<SettingValue | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  // Guards the async bridge reads/writes against setState-after-unmount when the user
+  // navigates away mid-call (mirrors the `mounted` ref convention used by `Settings()`).
+  const mounted = useRef(true);
+
+  const refresh = useCallback(async () => {
+    if (!isDesktop()) return;
+    try {
+      const [h, s, g] = await Promise.all([
+        appApi.health(),
+        appApi.dbStatus(),
+        appApi.getSettings({ key: PERSIST_KEY }),
+      ]);
+      if (!mounted.current) return;
+      setHealth(h);
+      setStatus(s);
+      setPersisted(g.settings[PERSIST_KEY]);
+      setError(null);
+    } catch (e) {
+      if (!mounted.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    void refresh();
+    return () => {
+      mounted.current = false;
+    };
+  }, [refresh]);
+
+  const writeSetting = useCallback(async () => {
+    try {
+      const value = `checked-${new Date().toISOString()}`;
+      await appApi.updateSetting({ key: PERSIST_KEY, value });
+      await refresh();
+    } catch (e) {
+      if (!mounted.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, [refresh]);
+
+  // A failed load surfaces the error row AND flips the Local-database chip to "Unavailable"
+  // (instead of a perpetual "Checking…"), keeping the chip coherent with the error row.
+  const loading = !error && (health === null || status === null);
+  const healthy = error === null && health?.status === "ok" && status?.open === true;
+
+  return (
+    <section className="mb-6" data-testid="desktop-status" data-desktop="true">
+      <div className="mb-1.5 font-medium text-text-2 text-xs uppercase tracking-wide">System</div>
+      <div className="rounded-lg border border-border bg-surface-2 px-4">
+        <SettingRow
+          label="Local database"
+          hint="On-device SQLite store backing this vault — fully local."
+        >
+          {loading ? (
+            <Token testid="health-status">Checking…</Token>
+          ) : healthy ? (
+            <OkChip testid="health-status" icon="checkCircle">
+              Healthy
+            </OkChip>
+          ) : (
+            <span
+              data-testid="health-status"
+              className="inline-flex items-center gap-1.5 rounded-md bg-surface px-2.5 py-1 text-danger text-xs"
+            >
+              Unavailable
+            </span>
+          )}
+        </SettingRow>
+
+        <SettingRow label="Schema" hint="Migrations applied to the local store.">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Token testid="db-applied-migrations">
+              {status ? `${status.appliedMigrations} migrations` : "…"}
+            </Token>
+            {status?.migrated ? (
+              <OkChip testid="db-migrated" icon="check">
+                Up to date
+              </OkChip>
+            ) : null}
+          </div>
+        </SettingRow>
+
+        <SettingRow label="Connection" hint="Journal mode, foreign keys, and write-lock timeout.">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Token testid="db-journal-mode">{status?.journalMode ?? "…"}</Token>
+            <Token testid="db-foreign-keys">
+              {status ? (status.foreignKeys ? "FK on" : "FK off") : "…"}
+            </Token>
+            <Token testid="db-busy-timeout">{status ? `${status.busyTimeoutMs} ms` : "…"}</Token>
+          </div>
+        </SettingRow>
+
+        <SettingRow
+          label="Persistence check"
+          hint="Write a timestamped value and read it back to confirm writes survive a restart."
+        >
+          <div className="flex items-center gap-2 flex-wrap">
+            <span data-testid="persisted-value" className="font-mono text-text-3 text-xs">
+              {persisted === undefined ? "(unset)" : String(persisted)}
+            </span>
+            <button
+              type="button"
+              data-testid="persist-button"
+              onClick={() => void writeSetting()}
+              className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-1.5 font-medium text-sm text-text-2 hover:border-border-strong"
+            >
+              <Icon name="edit" size={14} />
+              Write check
+            </button>
+          </div>
+        </SettingRow>
+
+        {error ? (
+          <SettingRow label="System check failed" hint="See the error below.">
+            <span data-testid="desktop-status-error" className="text-danger text-sm">
+              {error}
+            </span>
+          </SettingRow>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -1738,6 +1910,8 @@ export function Settings() {
           ) : null}
         </div>
       </section>
+
+      <SystemPanel />
 
       {error ? (
         <p data-testid="settings-error" className="mt-2 text-danger text-sm">

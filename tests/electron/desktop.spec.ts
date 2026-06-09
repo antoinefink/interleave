@@ -253,7 +253,7 @@ test("the Settings screen renders the desktop status panel from the bridge", asy
   const panel = page.getByTestId("desktop-status");
   await expect(panel).toBeVisible();
   await expect(panel).toHaveAttribute("data-desktop", "true");
-  await expect(page.getByTestId("health-status")).toHaveText("ok");
+  await expect(page.getByTestId("health-status")).toHaveText("Healthy");
   await expect(page.getByTestId("db-journal-mode")).toHaveText("wal");
 
   // The write button persists through the bridge and reflects back.

@@ -23,6 +23,10 @@ const h = vi.hoisted(() => ({
   downloadAiModel: vi.fn(),
   setRetentionBandEnabled: vi.fn(),
   setRetentionBand: vi.fn(),
+  health: vi.fn(),
+  dbStatus: vi.fn(),
+  getSettings: vi.fn(),
+  updateSetting: vi.fn(),
 }));
 
 vi.mock("../components/OptimizationPanel", () => ({
@@ -59,6 +63,10 @@ vi.mock("../lib/appApi", async () => {
       downloadAiModel: h.downloadAiModel,
       setRetentionBandEnabled: h.setRetentionBandEnabled,
       setRetentionBand: h.setRetentionBand,
+      health: h.health,
+      dbStatus: h.dbStatus,
+      getSettings: h.getSettings,
+      updateSetting: h.updateSetting,
     },
   };
 });
@@ -178,6 +186,23 @@ beforeEach(() => {
     modelDownloaded: false,
     managedProxyEnabled: false,
   });
+  h.health.mockResolvedValue({
+    status: "ok",
+    appVersion: "0.2.0",
+    dbOpen: true,
+    migrated: true,
+    time: "t",
+  });
+  h.dbStatus.mockResolvedValue({
+    open: true,
+    migrated: true,
+    journalMode: "wal",
+    foreignKeys: 1,
+    busyTimeoutMs: 5000,
+    appliedMigrations: 12,
+  });
+  h.getSettings.mockResolvedValue({ settings: { "desktop.lastCheck": "checked-before" } });
+  h.updateSetting.mockResolvedValue({ key: "desktop.lastCheck", value: "checked-x" });
 });
 
 afterEach(() => {
@@ -663,5 +688,105 @@ describe("Settings", () => {
     await waitFor(() =>
       expect(h.updateAppSettings).toHaveBeenCalledWith({ patch: { aiApiKey: "ai-key" } }),
     );
+  });
+});
+
+describe("System section", () => {
+  it("renders the diagnostics from the typed bridge", async () => {
+    const { getByTestId, findByTestId } = render(<Settings />);
+
+    await waitFor(() => expect(getByTestId("health-status")).toHaveTextContent("Healthy"));
+    expect(getByTestId("desktop-status")).toHaveAttribute("data-desktop", "true");
+    expect(getByTestId("db-applied-migrations")).toHaveTextContent("12 migrations");
+    expect(getByTestId("db-migrated")).toHaveTextContent("Up to date");
+    expect(getByTestId("db-journal-mode")).toHaveTextContent("wal");
+    expect(getByTestId("db-foreign-keys")).toHaveTextContent("FK on");
+    expect(getByTestId("db-busy-timeout")).toHaveTextContent("5000 ms");
+    expect(await findByTestId("persisted-value")).toHaveTextContent("checked-before");
+    expect(h.getSettings).toHaveBeenCalledWith({ key: "desktop.lastCheck" });
+  });
+
+  it("writes a persisted check and reads it back over the bridge", async () => {
+    vi.spyOn(Date.prototype, "toISOString").mockReturnValue("2026-06-03T13:00:00.000Z");
+    h.getSettings
+      .mockResolvedValueOnce({ settings: { "desktop.lastCheck": "checked-before" } })
+      .mockResolvedValueOnce({
+        settings: { "desktop.lastCheck": "checked-2026-06-03T13:00:00.000Z" },
+      });
+    const { getByTestId, findByTestId } = render(<Settings />);
+    await waitFor(() => expect(getByTestId("persisted-value")).toHaveTextContent("checked-before"));
+
+    fireEvent.click(await findByTestId("persist-button"));
+
+    await waitFor(() =>
+      expect(h.updateSetting).toHaveBeenCalledWith({
+        key: "desktop.lastCheck",
+        value: "checked-2026-06-03T13:00:00.000Z",
+      }),
+    );
+    await waitFor(() =>
+      expect(getByTestId("persisted-value")).toHaveTextContent("checked-2026-06-03T13:00:00.000Z"),
+    );
+  });
+
+  it("shows the loading state while the bridge reads are in flight", async () => {
+    // dbStatus never resolves -> status stays null -> the Local-database chip reads "Checking…".
+    h.dbStatus.mockReturnValue(new Promise(() => {}));
+    const { getByTestId } = render(<Settings />);
+
+    await waitFor(() => expect(getByTestId("health-status")).toHaveTextContent("Checking…"));
+  });
+
+  it("shows 'Unavailable' when the database reports it is not open", async () => {
+    h.dbStatus.mockResolvedValue({
+      open: false,
+      migrated: true,
+      journalMode: "wal",
+      foreignKeys: 1,
+      busyTimeoutMs: 5000,
+      appliedMigrations: 12,
+    });
+    const { getByTestId } = render(<Settings />);
+
+    await waitFor(() => expect(getByTestId("health-status")).toHaveTextContent("Unavailable"));
+  });
+
+  it("renders 'FK off' when foreign keys are disabled", async () => {
+    h.dbStatus.mockResolvedValue({
+      open: true,
+      migrated: true,
+      journalMode: "wal",
+      foreignKeys: 0,
+      busyTimeoutMs: 5000,
+      appliedMigrations: 12,
+    });
+    const { getByTestId } = render(<Settings />);
+
+    await waitFor(() => expect(getByTestId("db-foreign-keys")).toHaveTextContent("FK off"));
+  });
+
+  it("omits the 'Up to date' chip when the store is not yet migrated", async () => {
+    h.dbStatus.mockResolvedValue({
+      open: true,
+      migrated: false,
+      journalMode: "wal",
+      foreignKeys: 1,
+      busyTimeoutMs: 5000,
+      appliedMigrations: 0,
+    });
+    const { getByTestId, queryByTestId } = render(<Settings />);
+
+    await waitFor(() =>
+      expect(getByTestId("db-applied-migrations")).toHaveTextContent("0 migrations"),
+    );
+    expect(queryByTestId("db-migrated")).toBeNull();
+  });
+
+  it("surfaces a bridge failure in the error row and flips the chip to 'Unavailable'", async () => {
+    h.dbStatus.mockRejectedValue(new Error("db unavailable"));
+    const { getByTestId, findByTestId } = render(<Settings />);
+
+    expect(await findByTestId("desktop-status-error")).toHaveTextContent("db unavailable");
+    expect(getByTestId("health-status")).toHaveTextContent("Unavailable");
   });
 });

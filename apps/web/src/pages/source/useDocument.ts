@@ -9,7 +9,7 @@
  *
  * It degrades gracefully outside the Electron shell (browser / Vite-only): when
  * `isDesktop()` is false the status is `"no-desktop"` and no IPC is attempted,
- * mirroring `DesktopStatusPanel`'s guard. All domain/editor logic (the schema,
+ * mirroring the Settings panel's `isDesktop` guard. All domain/editor logic (the schema,
  * `toPlainText`) lives in `@interleave/editor`; this hook only orchestrates UI
  * state + IPC.
  */
