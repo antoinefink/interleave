@@ -4,7 +4,9 @@ import path from "node:path";
 import { MIGRATIONS_DIR } from "@interleave/db";
 import { seedDemoCollection } from "@interleave/testing";
 import Database from "better-sqlite3";
+import { strToU8, unzipSync, zipSync } from "fflate";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as backupManifest from "./backup-manifest";
 import { resolveSchemaVersion } from "./backup-manifest";
 import { BackupRestoreService } from "./backup-restore-service";
 import { BackupService } from "./backup-service";
@@ -65,6 +67,23 @@ function rowCount(dbPath: string, table: string): number {
 function expectNoStaleSidecar(filePath: string, staleContent: string): void {
   if (!fs.existsSync(filePath)) return;
   expect(fs.readFileSync(filePath, "utf8")).not.toBe(staleContent);
+}
+
+/** Read a backup `.zip` produced by BackupService into a mutable fflate entry map. */
+function readZipEntries(zipPath: string): Record<string, Uint8Array> {
+  return unzipSync(new Uint8Array(fs.readFileSync(zipPath)));
+}
+
+/** Write an fflate entry map back out as a `.zip` at `zipPath`. */
+function writeZip(zipPath: string, entries: Record<string, Uint8Array>): void {
+  fs.writeFileSync(zipPath, Buffer.from(zipSync(entries)));
+}
+
+/** Count leftover restore temp dirs (extract + stage) under `dataDir`. */
+function listRestoreTempDirs(dir: string): string[] {
+  return fs
+    .readdirSync(dir)
+    .filter((name) => name.startsWith(".restore-extract-") || name.startsWith(".restore-stage-"));
 }
 
 describe("BackupRestoreService", () => {
@@ -318,5 +337,165 @@ describe("BackupRestoreService", () => {
     expect(fs.readFileSync(snapshotPath, "utf8")).toBe('{"version":"current"}');
     expect(svc.isOpen).toBe(true);
     expect(svc.localDataRestartRequired).toBe(false);
+  });
+
+  describe("restoreBackupFromArchive", () => {
+    it("restores from a portable backup zip, swapping DB + assets and clearing WAL/SHM", async () => {
+      const { paths, backup, restore } = openSeeded();
+      const result = await backup.createBackup(new Date("2026-06-07T10:00:00.000Z"));
+      const backedUpElements = rowCount(
+        path.join(paths.backupsDir, result.timestamp, "app.sqlite"),
+        "elements",
+      );
+
+      svc.importManualSource({ title: "After backup", body: "not in backup", priority: "C" });
+      fs.writeFileSync(
+        path.join(paths.assetsDir, "sources", "seed-source", "snapshot.json"),
+        '{"version":"current"}',
+      );
+      const extraAsset = path.join(paths.assetsDir, "sources", "current-only", "snapshot.json");
+      fs.mkdirSync(path.dirname(extraAsset), { recursive: true });
+      fs.writeFileSync(extraAsset, "{}");
+      svc.close();
+      const staleWal = "stale wal";
+      const staleShm = "stale shm";
+      fs.writeFileSync(`${paths.dbPath}-wal`, staleWal);
+      fs.writeFileSync(`${paths.dbPath}-shm`, staleShm);
+
+      const restored = await restore.restoreBackupFromArchive(result.path);
+
+      expect(restored.restored).toBe(true);
+      expect(restored.restartRequired).toBe(true);
+      // The display label is the renderer-safe archive filename, not an app timestamp.
+      expect(restored.timestamp).toBe(`${result.timestamp}.zip`);
+      expect(restored.counts.elements).toBe(backedUpElements);
+      expect(rowCount(paths.dbPath, "elements")).toBe(backedUpElements);
+      expect(
+        fs.readFileSync(
+          path.join(paths.assetsDir, "sources", "seed-source", "snapshot.json"),
+          "utf8",
+        ),
+      ).toBe('{"version":"backup"}');
+      expect(fs.existsSync(extraAsset)).toBe(false);
+      expectNoStaleSidecar(`${paths.dbPath}-wal`, staleWal);
+      expectNoStaleSidecar(`${paths.dbPath}-shm`, staleShm);
+      expect(svc.isOpen).toBe(true);
+      expect(svc.isMigrated).toBe(true);
+      expect(svc.localDataRestartRequired).toBe(true);
+      expect(listRestoreTempDirs(dataDir)).toEqual([]);
+    });
+
+    it("rejects a tampered archive before touching current data", async () => {
+      const { paths, backup, restore } = openSeeded();
+      const result = await backup.createBackup(new Date("2026-06-07T10:00:00.000Z"));
+      const currentOnly = svc.importManualSource({
+        title: "Current only",
+        body: "must survive failed restore",
+        priority: "B",
+      });
+      const currentCount = rowCount(paths.dbPath, "elements");
+      const snapshotPath = path.join(paths.assetsDir, "sources", "seed-source", "snapshot.json");
+
+      // Tamper one entry's bytes so its on-disk SHA-256 no longer matches the manifest.
+      const entries = readZipEntries(result.path);
+      entries["assets/sources/seed-source/snapshot.json"] = strToU8('{"version":"tamper"}');
+      const tamperedZip = path.join(dataDir, "tampered.zip");
+      writeZip(tamperedZip, entries);
+
+      await expect(restore.restoreBackupFromArchive(tamperedZip)).rejects.toThrow(/hash mismatch/);
+
+      expect(rowCount(paths.dbPath, "elements")).toBe(currentCount);
+      expect(svc.getInspectorData(currentOnly.id).data?.element.title).toBe("Current only");
+      expect(fs.readFileSync(snapshotPath, "utf8")).toBe('{"version":"backup"}');
+      expect(svc.isOpen).toBe(true);
+      expect(svc.localDataRestartRequired).toBe(false);
+      expect(listRestoreTempDirs(dataDir)).toEqual([]);
+    });
+
+    it("rejects an archive missing a manifested file before touching current data", async () => {
+      const { paths, backup, restore } = openSeeded();
+      const result = await backup.createBackup(new Date("2026-06-07T10:00:00.000Z"));
+      const currentCount = rowCount(paths.dbPath, "elements");
+
+      const entries = readZipEntries(result.path);
+      delete entries["assets/sources/seed-source/snapshot.json"];
+      const brokenZip = path.join(dataDir, "missing-file.zip");
+      writeZip(brokenZip, entries);
+
+      await expect(restore.restoreBackupFromArchive(brokenZip)).rejects.toThrow();
+
+      expect(rowCount(paths.dbPath, "elements")).toBe(currentCount);
+      expect(svc.isOpen).toBe(true);
+      expect(svc.localDataRestartRequired).toBe(false);
+      expect(listRestoreTempDirs(dataDir)).toEqual([]);
+    });
+
+    it("rejects an archive whose schema is newer than installed before install", async () => {
+      const { paths, backup, restore } = openSeeded();
+      // The archive itself is intact and current-schema; we simulate it being
+      // newer-than-installed by reporting an OLDER installed schema (as if a
+      // future app produced this backup). This exercises the same
+      // schema-not-newer guard in validateManifestForRestore both restore paths
+      // share, before any install code runs.
+      const result = await backup.createBackup(new Date("2026-06-07T10:00:00.000Z"));
+      const currentCount = rowCount(paths.dbPath, "elements");
+      const olderSchema = resolveSchemaVersion(MIGRATIONS_DIR, 1);
+      vi.spyOn(backupManifest, "latestSchemaVersion").mockReturnValue(olderSchema);
+
+      await expect(restore.restoreBackupFromArchive(result.path)).rejects.toThrow(/newer than/);
+
+      expect(rowCount(paths.dbPath, "elements")).toBe(currentCount);
+      expect(svc.isOpen).toBe(true);
+      expect(svc.localDataRestartRequired).toBe(false);
+      expect(listRestoreTempDirs(dataDir)).toEqual([]);
+    });
+
+    it("rejects a zip-slip archive before any install and leaves data intact", async () => {
+      const { paths, restore } = openSeeded();
+      const currentOnly = svc.importManualSource({
+        title: "Current only",
+        body: "must survive failed restore",
+        priority: "B",
+      });
+      const currentCount = rowCount(paths.dbPath, "elements");
+
+      const zipSlipZip = path.join(dataDir, "zip-slip.zip");
+      writeZip(zipSlipZip, {
+        "manifest.json": strToU8("{}"),
+        "../escape.txt": strToU8("pwned"),
+      });
+
+      await expect(restore.restoreBackupFromArchive(zipSlipZip)).rejects.toThrow(
+        /unsafe archive entry/,
+      );
+
+      expect(fs.existsSync(path.join(dataDir, "..", "escape.txt"))).toBe(false);
+      expect(rowCount(paths.dbPath, "elements")).toBe(currentCount);
+      expect(svc.getInspectorData(currentOnly.id).data?.element.title).toBe("Current only");
+      expect(svc.isOpen).toBe(true);
+      expect(svc.localDataRestartRequired).toBe(false);
+      expect(listRestoreTempDirs(dataDir)).toEqual([]);
+    });
+
+    it("removes both temp dirs after a failed restore (staging failure)", async () => {
+      const { backup, restore } = openSeeded();
+      const result = await backup.createBackup(new Date("2026-06-07T10:00:00.000Z"));
+      const copyFile = fs.copyFileSync;
+      const copySpy = vi.spyOn(fs, "copyFileSync").mockImplementation((from, to) => {
+        if (String(from).endsWith("app.sqlite") && String(to).includes(".restore-stage-")) {
+          throw new Error("stage copy failed");
+        }
+        return copyFile(from, to);
+      });
+
+      await expect(restore.restoreBackupFromArchive(result.path)).rejects.toThrow(
+        "stage copy failed",
+      );
+
+      copySpy.mockRestore();
+      expect(listRestoreTempDirs(dataDir)).toEqual([]);
+      expect(svc.isOpen).toBe(true);
+      expect(svc.localDataRestartRequired).toBe(false);
+    });
   });
 });

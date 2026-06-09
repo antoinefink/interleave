@@ -3,6 +3,7 @@ import path from "node:path";
 import { migrateDatabase, openDatabase } from "@interleave/db";
 import Database from "better-sqlite3";
 import { listBackupArtifacts, parseBackupTimestamp } from "./automatic-backup-service";
+import { extractBackupArchive } from "./backup-archive";
 import {
   BACKUP_FORMAT_VERSION,
   type BackupCounts,
@@ -121,6 +122,59 @@ export class BackupRestoreService {
     });
   }
 
+  /**
+   * Restore from an arbitrary backup `.zip` the user picked on disk (moved from
+   * another machine, recovered from external storage, or an old archive the
+   * retention policy already pruned). Mirrors {@link restoreBackup} exactly, but
+   * first extracts the UNTRUSTED archive into a `dataDir`-local temp directory
+   * (zip-slip-guarded by {@link extractBackupArchive}) shaped like
+   * `backups/<timestamp>/`, then converges on the SAME verify → stage →
+   * install-with-rollback pipeline so the two restore paths cannot drift. Any
+   * preflight failure (bad zip, hash/size mismatch, extra/missing file, newer
+   * schema, zip-slip) rejects before the install begins, leaving the current
+   * store untouched. Both temp dirs are removed on success AND failure.
+   */
+  restoreBackupFromArchive(zipPath: string): Promise<RestoreBackupResult> {
+    return BackupService.runSerialized(async () => {
+      const extractDir = fs.mkdtempSync(path.join(this.deps.paths.dataDir, ".restore-extract-"));
+      try {
+        extractBackupArchive(zipPath, extractDir);
+        const verified = this.verifyBackupDir(extractDir);
+        const stageDir = fs.mkdtempSync(path.join(this.deps.paths.dataDir, ".restore-stage-"));
+        try {
+          copyBackupToStage(verified.backupDir, verified.manifest, stageDir);
+          this.deps.dbService.beginLocalDataReplacement();
+          try {
+            await this.deps.beforeReplaceLocalData?.();
+            this.installStageWithRollback(stageDir);
+            this.deps.dbService.completeLocalDataReplacement();
+          } catch (error) {
+            if (error instanceof LocalDataReplacementUnrecoverableError) {
+              this.deps.dbService.completeLocalDataReplacement();
+            } else {
+              this.deps.dbService.abortLocalDataReplacement();
+            }
+            throw error;
+          }
+        } finally {
+          fs.rmSync(stageDir, { recursive: true, force: true });
+        }
+        return {
+          restored: true,
+          // The archive is not app-managed, so there is no app timestamp. Carry
+          // the chosen filename as a renderer-safe DISPLAY LABEL only (never a
+          // path or app-managed identifier).
+          timestamp: path.basename(zipPath),
+          schemaVersion: verified.manifest.schemaVersion,
+          counts: verified.manifest.counts,
+          restartRequired: true,
+        };
+      } finally {
+        fs.rmSync(extractDir, { recursive: true, force: true });
+      }
+    });
+  }
+
   resetLocalData(): Promise<ResetLocalDataResult> {
     return BackupService.runSerialized(async () => {
       const stageDir = fs.mkdtempSync(path.join(this.deps.paths.dataDir, ".reset-stage-"));
@@ -152,11 +206,26 @@ export class BackupRestoreService {
 
   verifyBackup(timestamp: string): VerifiedBackup {
     const backupDir = resolveBackupDir(this.deps.paths.backupsDir, timestamp);
+    const { manifest } = this.verifyBackupDir(backupDir);
+    return { timestamp, backupDir, manifest };
+  }
+
+  /**
+   * Verify an ALREADY-RESOLVED backup directory (no timestamp resolution). Runs
+   * the full restore contract: read `manifest.json` → validate its shape /
+   * format / asset-root / schema-not-newer → verify every manifest file's size +
+   * SHA-256 (and no extra/missing files) → SQLite `integrity_check` +
+   * `foreign_key_check` + schema match. Shared by both restore paths — the
+   * timestamp restore (via {@link verifyBackup}) and the file restore (via
+   * {@link restoreBackupFromArchive}, which extracts an untrusted `.zip` into a
+   * directory shaped exactly like `backups/<timestamp>/`) — so they cannot drift.
+   */
+  private verifyBackupDir(backupDir: string): { backupDir: string; manifest: BackupManifest } {
     const manifest = readManifest(path.join(backupDir, "manifest.json"));
     validateManifestForRestore(manifest, this.deps.migrationsDir);
     verifyManifestFiles(backupDir, manifest);
     verifySqliteFile(path.join(backupDir, "app.sqlite"), manifest, this.deps);
-    return { timestamp, backupDir, manifest };
+    return { backupDir, manifest };
   }
 
   private installStageWithRollback(stageDir: string): void {
