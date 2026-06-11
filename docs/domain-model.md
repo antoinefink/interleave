@@ -25,6 +25,7 @@ pending      accepted, awaiting first processing
 active       currently in rotation
 scheduled    has a future due date
 done         exhausted/archived (value extracted)
+parked       deliberately saved for later, visible in inventory but not scheduled
 dismissed    intentionally set aside (not deleted)
 suspended    temporarily out of scheduling (e.g. a leech card)
 deleted      soft-deleted (recoverable via trash)

@@ -133,6 +133,10 @@ function installAppApi(overrides: Partial<AppApi> = {}): AppApi {
         request,
       })),
     },
+    library: {
+      browse: vi.fn(async (request?: unknown) => ({ items: [], counts: {}, request })),
+      parkedAction: vi.fn(async (request: unknown) => ({ item: null, request })),
+    },
     backups: {
       create: vi.fn(async () => ({
         timestamp: "2026-06-07T12-30-00-000Z",
@@ -219,6 +223,12 @@ describe("renderer appApi wrapper", () => {
 
     await appApi.createSynthesisNote({ title: "New note" });
     expect(bridge.synthesis.create).toHaveBeenCalledWith({ title: "New note" });
+
+    await appApi.libraryParkedAction({ id: "src-1", action: { kind: "queueSoon" } });
+    expect(bridge.library.parkedAction).toHaveBeenCalledWith({
+      id: "src-1",
+      action: { kind: "queueSoon" },
+    });
   });
 
   it("forwards review activity requests to the analytics bridge surface", async () => {

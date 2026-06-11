@@ -72,6 +72,7 @@ import {
   JobsListRequestSchema,
   type JobsListResult,
   LibraryBrowseRequestSchema,
+  LibraryParkedActionRequestSchema,
   LineageGetRequestSchema,
   MaintenanceBulkArchiveRequestSchema,
   MaintenanceBulkPostponeRequestSchema,
@@ -292,6 +293,7 @@ describe("IPC channels", () => {
         "semantic:related",
         "semantic:contradictions",
         "library:browse",
+        "library:parkedAction",
         "readPoint:get",
         "readPoint:set",
         "trash:list",
@@ -2428,16 +2430,36 @@ describe("Library browse request schema (Library route)", () => {
         types: ["source", "topic", "synthesis_note", "task"],
         conceptId: "el_c",
         priorityLabel: "A",
-        statuses: ["active", "inbox"],
+        statuses: ["active", "inbox", "parked"],
         limit: 100,
       }),
     ).toEqual({
       types: ["source", "topic", "synthesis_note", "task"],
       conceptId: "el_c",
       priorityLabel: "A",
-      statuses: ["active", "inbox"],
+      statuses: ["active", "inbox", "parked"],
       limit: 100,
     });
+  });
+
+  it("accepts the parked-source action request and rejects unknown actions", () => {
+    expect(
+      LibraryParkedActionRequestSchema.parse({
+        id: "el_1",
+        action: { kind: "moveToInbox" },
+      }),
+    ).toEqual({ id: "el_1", action: { kind: "moveToInbox" } });
+    expect(
+      LibraryParkedActionRequestSchema.parse({ id: "el_1", action: { kind: "queueSoon" } }).action
+        .kind,
+    ).toBe("queueSoon");
+    expect(
+      LibraryParkedActionRequestSchema.parse({ id: "el_1", action: { kind: "dismiss" } }).action
+        .kind,
+    ).toBe("dismiss");
+    expect(() =>
+      LibraryParkedActionRequestSchema.parse({ id: "el_1", action: { kind: "archive" } }),
+    ).toThrow();
   });
 
   it("covers the non-FTS browsable types that search rejects (topic/synthesis_note/task)", () => {

@@ -42,7 +42,15 @@ The inbox action that accepts a source into active reading, gives it an attentio
 
 The inbox action that accepts a source into the Due queue by scheduling it for immediate attention without opening the local reader.
 
-Queue soon is distinct from Read now because it does not imply the user started reading, and distinct from Save for later because it creates due work instead of passive storage.
+Queue soon is distinct from Read now because it does not imply the user started reading, and distinct from Save for later because it creates due work instead of parking the source.
+
+### Save for later
+
+The inbox action that parks a source: it records a deliberate deferral without creating due work and without treating the source as abandoned.
+
+### Parked source
+
+A source the user deliberately set aside for later, visible in inventory but excluded from Inbox, Due queue, and daily-work routing until the user restores or schedules it.
 
 ### Source reader
 

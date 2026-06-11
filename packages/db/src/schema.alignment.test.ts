@@ -85,7 +85,7 @@ describe("Drizzle ⇄ @interleave/core alignment", () => {
     // The schema CHECK constraints are built from these very tuples; pinning the
     // arrays here makes any future divergence a failing test, not a silent bug.
     expect(ELEMENT_TYPES.length).toBe(8);
-    expect(ELEMENT_STATUSES.length).toBe(8);
+    expect(ELEMENT_STATUSES.length).toBe(9);
     expect(DISTILLATION_STAGES.length).toBe(9);
     expect(CARD_KINDS).toEqual(["qa", "cloze", "image_occlusion"]);
     expect(ASSET_KINDS).toContain("source_pdf");

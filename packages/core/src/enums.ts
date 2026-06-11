@@ -41,6 +41,7 @@ export const ELEMENT_STATUSES = [
   "active",
   "scheduled",
   "done",
+  "parked",
   "dismissed",
   "suspended",
   "deleted",

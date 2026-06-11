@@ -15,7 +15,7 @@
  * wiring; no SQLite/IPC — the renderer is a pure UI consumer here.
  */
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConceptNode, LibraryItem } from "../lib/appApi";
 
@@ -56,6 +56,7 @@ const h = vi.hoisted(() => {
     sourceTitle: "On the Measure of Intelligence",
     sourceLocationLabel: null,
     dueAt: null,
+    parkedAt: null,
     scheduler: attentionScheduler,
     due: "soon",
     dueLabel: "No return scheduled",
@@ -76,6 +77,7 @@ const h = vi.hoisted(() => {
     sourceTitle: null,
     sourceLocationLabel: null,
     dueAt: null,
+    parkedAt: null,
     scheduler: attentionScheduler,
     due: "soon",
     dueLabel: "No return scheduled",
@@ -83,6 +85,17 @@ const h = vi.hoisted(() => {
     notInQueueReason: "Not in queue: no return scheduled",
     linkedElementId: null,
     linkedElementType: null,
+  };
+  const parkedRow: LibraryItem = {
+    ...sourceRow,
+    id: "src-parked-1",
+    title: "Parked reading",
+    status: "parked",
+    dueAt: null,
+    parkedAt: "2026-06-09T10:00:00.000Z",
+    dueLabel: "Parked",
+    queueEligible: false,
+    notInQueueReason: "Not in queue: status is Parked",
   };
   const cardRow: LibraryItem = {
     id: "card-1",
@@ -96,6 +109,7 @@ const h = vi.hoisted(() => {
     sourceTitle: "On the Measure of Intelligence",
     sourceLocationLabel: "Definition · ¶1",
     dueAt: "2026-06-01T00:00:00.000Z",
+    parkedAt: null,
     scheduler: fsrsScheduler,
     due: "today",
     dueLabel: "Due today",
@@ -116,6 +130,7 @@ const h = vi.hoisted(() => {
     sourceTitle: "On the Measure of Intelligence",
     sourceLocationLabel: "Definition · ¶1",
     dueAt: "2026-06-02T00:00:00.000Z",
+    parkedAt: null,
     scheduler: attentionScheduler,
     due: "soon",
     dueLabel: "in 1d",
@@ -142,11 +157,12 @@ const h = vi.hoisted(() => {
     // are both members of "Intelligence" (concept-1), so its chip drill-down is 2.
     byConcept: { "concept-1": 2 },
     byPriority: { A: 3, B: 0, C: 0, D: 0 },
-    byStatus: { active: 2, scheduled: 1, inbox: 0, pending: 0, done: 0, suspended: 0 },
+    byStatus: { active: 2, scheduled: 1, inbox: 0, pending: 0, done: 0, parked: 0, suspended: 0 },
   };
   return {
     sourceRow,
     topicRow,
+    parkedRow,
     cardRow,
     taskRow,
     concept,
@@ -155,6 +171,7 @@ const h = vi.hoisted(() => {
     routeSearch: {} as Record<string, unknown>,
     selectSpy: vi.fn(),
     libraryBrowse: vi.fn(),
+    libraryParkedAction: vi.fn(),
     listConcepts: vi.fn(),
   };
 });
@@ -175,6 +192,7 @@ vi.mock("../lib/appApi", async () => {
     isDesktop: () => true,
     appApi: {
       libraryBrowse: h.libraryBrowse,
+      libraryParkedAction: h.libraryParkedAction,
       listConcepts: h.listConcepts,
     },
   };
@@ -182,12 +200,32 @@ vi.mock("../lib/appApi", async () => {
 
 import { BrowseScreen } from "./BrowseScreen";
 
+function parkedCounts(count: number) {
+  return {
+    ...h.counts,
+    all: count,
+    byType: { ...h.counts.byType, source: count },
+    byStatus: {
+      active: 0,
+      scheduled: 0,
+      inbox: 0,
+      pending: 0,
+      done: 0,
+      parked: count,
+      suspended: 0,
+    },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   h.routeSearch = {};
   h.libraryBrowse.mockResolvedValue({
     items: [h.sourceRow, h.topicRow, h.cardRow],
     counts: h.counts,
+  });
+  h.libraryParkedAction.mockResolvedValue({
+    item: { ...h.parkedRow, status: "inbox", parkedAt: null },
   });
   h.listConcepts.mockResolvedValue({ concepts: [h.concept] });
 });
@@ -293,6 +331,97 @@ describe("BrowseScreen", () => {
         expect.objectContaining({ statuses: ["active"] }),
       ),
     );
+  });
+
+  it.each([
+    ["library-unpark-inbox", "moveToInbox"],
+    ["library-unpark-schedule", "queueSoon"],
+    ["library-unpark-dismiss", "dismiss"],
+  ] as const)("sends %s parked action and refreshes counts", async (testId, kind) => {
+    h.libraryBrowse
+      .mockResolvedValueOnce({ items: [h.sourceRow, h.topicRow, h.cardRow], counts: h.counts })
+      .mockResolvedValueOnce({ items: [h.parkedRow], counts: parkedCounts(1) })
+      .mockResolvedValueOnce({ items: [], counts: parkedCounts(0) });
+    render(<BrowseScreen />);
+    await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByTestId("library-filter-status-parked"));
+    await waitFor(() =>
+      expect(h.libraryBrowse).toHaveBeenCalledWith(
+        expect.objectContaining({ statuses: ["parked"] }),
+      ),
+    );
+    const sourceGroup = await screen.findByTestId("library-group-source");
+    fireEvent.click(within(sourceGroup).getByTestId("library-result"));
+
+    const detail = await screen.findByTestId("library-detail");
+    expect(within(detail).getByTestId("library-detail-parked-date").textContent).toContain(
+      "Parked",
+    );
+    fireEvent.click(within(detail).getByTestId(testId));
+    await waitFor(() =>
+      expect(h.libraryParkedAction).toHaveBeenCalledWith({
+        id: "src-parked-1",
+        action: { kind },
+      }),
+    );
+    await waitFor(() => expect(h.libraryBrowse).toHaveBeenLastCalledWith({ statuses: ["parked"] }));
+    expect(screen.getByTestId("library-count").textContent).toContain("0 elements");
+    expect(screen.queryByTestId("library-detail")).toBeNull();
+    expect(h.selectSpy).toHaveBeenLastCalledWith(null);
+  });
+
+  it("renders parked action errors without removing the selected row", async () => {
+    h.libraryBrowse
+      .mockResolvedValueOnce({ items: [h.sourceRow, h.topicRow, h.cardRow], counts: h.counts })
+      .mockResolvedValueOnce({ items: [h.parkedRow], counts: parkedCounts(1) });
+    h.libraryParkedAction.mockRejectedValueOnce(new Error("Unable to move parked source"));
+
+    render(<BrowseScreen />);
+    await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId("library-filter-status-parked"));
+    await screen.findByTestId("library-group-source");
+    fireEvent.click(screen.getByTestId("library-result"));
+    fireEvent.click(
+      within(await screen.findByTestId("library-detail")).getByTestId("library-unpark-inbox"),
+    );
+
+    expect(await screen.findByTestId("library-error")).toHaveTextContent(
+      "Unable to move parked source",
+    );
+    expect(screen.getAllByText("Parked reading").length).toBeGreaterThan(0);
+  });
+
+  it("disables all parked action buttons while one action is pending", async () => {
+    let resolveAction!: (value: { item: LibraryItem }) => void;
+    h.libraryBrowse
+      .mockResolvedValueOnce({ items: [h.sourceRow, h.topicRow, h.cardRow], counts: h.counts })
+      .mockResolvedValueOnce({ items: [h.parkedRow], counts: parkedCounts(1) })
+      .mockResolvedValueOnce({ items: [], counts: parkedCounts(0) });
+    h.libraryParkedAction.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveAction = resolve;
+      }),
+    );
+
+    render(<BrowseScreen />);
+    await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalled());
+    fireEvent.click(screen.getByTestId("library-filter-status-parked"));
+    await screen.findByTestId("library-group-source");
+    fireEvent.click(screen.getByTestId("library-result"));
+
+    const detail = await screen.findByTestId("library-detail");
+    fireEvent.click(within(detail).getByTestId("library-unpark-schedule"));
+    await waitFor(() => {
+      expect(within(detail).getByTestId("library-unpark-inbox")).toBeDisabled();
+      expect(within(detail).getByTestId("library-unpark-schedule")).toBeDisabled();
+      expect(within(detail).getByTestId("library-unpark-dismiss")).toBeDisabled();
+    });
+
+    await act(async () => {
+      resolveAction({ item: { ...h.parkedRow, status: "scheduled", parkedAt: null } });
+    });
+    await waitFor(() => expect(screen.queryByTestId("library-detail")).toBeNull());
   });
 
   it("re-calls libraryBrowse with a concept filter when a Concept facet is toggled", async () => {

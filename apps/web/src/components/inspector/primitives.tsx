@@ -66,6 +66,7 @@ const STATUS_BADGE: Record<string, { cls: string; label: string }> = {
   active: { cls: "badge--due", label: "Active" },
   scheduled: { cls: "badge--soft", label: "Scheduled" },
   done: { cls: "badge--done", label: "Done" },
+  parked: { cls: "badge--parked", label: "Parked" },
   dismissed: { cls: "badge--dismissed", label: "Dismissed" },
   suspended: { cls: "badge--suspended", label: "Suspended" },
   deleted: { cls: "badge--trashed", label: "Trashed" },

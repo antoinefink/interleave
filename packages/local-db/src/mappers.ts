@@ -38,6 +38,7 @@ export function rowToElement(row: ElementRow): Element {
     stage: row.stage as Element["stage"],
     priority: row.priority,
     dueAt: row.dueAt,
+    parkedAt: row.parkedAt ?? null,
     title: row.title,
     parentId: (row.parentId as ElementId | null) ?? null,
     sourceId: (row.sourceId as ElementId | null) ?? null,

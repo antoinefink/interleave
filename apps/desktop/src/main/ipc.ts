@@ -79,6 +79,7 @@ import {
   JobsListRequestSchema,
   type JobsListResult,
   LibraryBrowseRequestSchema,
+  LibraryParkedActionRequestSchema,
   LineageGetRequestSchema,
   MaintenanceBrokenSourcesRequestSchema,
   MaintenanceBulkArchiveRequestSchema,
@@ -1294,6 +1295,11 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.libraryBrowse, (_event, rawRequest: unknown) => {
     const request = LibraryBrowseRequestSchema.parse(rawRequest ?? {});
     return dbService.libraryBrowse(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.libraryParkedAction, (_event, rawRequest: unknown) => {
+    const request = LibraryParkedActionRequestSchema.parse(rawRequest);
+    return dbService.libraryParkedAction(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.readPointGet, (_event, rawRequest: unknown) => {

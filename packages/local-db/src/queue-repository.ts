@@ -12,7 +12,8 @@
  *
  * Soft-deleted elements are excluded from every query, and the two DUE reads
  * additionally exclude rows whose lifecycle status has taken them out of the queue
- * (`done` / `dismissed` / `suspended` / `deleted`) — see {@link QUEUE_EXCLUDED_STATUSES}
+ * (`done` / `parked` / `dismissed` / `suspended` / `deleted`) — see
+ * {@link QUEUE_EXCLUDED_STATUSES}
  * — plus RETIRED cards (T082, the `cards.is_retired` flag, via a `cards` join).
  */
 
@@ -40,7 +41,7 @@ import { rowToElement, rowToReviewState } from "./mappers";
 
 /**
  * Lifecycle statuses that take a row OUT of the due queue, regardless of its
- * `due_at`. A `done`/`dismissed`/`suspended`/`deleted` row is no longer due —
+ * `due_at`. A `done`/`parked`/`dismissed`/`suspended`/`deleted` row is no longer due —
  * excluding them here is what lets a queue action (T030) actually remove the row
  * from the list: `markDone`/`dismiss` flip the status (leaving `due_at` in the
  * past), so without this filter the row would still satisfy `due_at <= asOf` and
@@ -49,6 +50,7 @@ import { rowToElement, rowToReviewState } from "./mappers";
  */
 export const QUEUE_EXCLUDED_STATUSES: readonly ElementStatus[] = [
   "done",
+  "parked",
   "dismissed",
   "suspended",
   "deleted",

@@ -46,6 +46,10 @@
   background: var(--ok-soft);
   color: var(--ok);
 }
+.badge--parked {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
 .badge--new {
   background: var(--accent-soft);
   color: var(--accent-text);

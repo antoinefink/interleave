@@ -177,6 +177,7 @@ export const IPC_CHANNELS = {
   // Contradiction detection (T089) — DERIVED, HEURISTIC, SUGGESTIVE possible-conflict flags.
   semanticContradictions: "semantic:contradictions",
   libraryBrowse: "library:browse",
+  libraryParkedAction: "library:parkedAction",
   readPointGet: "readPoint:get",
   readPointSet: "readPoint:set",
   trashList: "trash:list",

@@ -7,7 +7,8 @@
  *    `dueCards` report for the SAME clock (the projection is grounded in the real reads,
  *    not a parallel guess);
  *  - the snapshot reads the live tables, excludes suspended/done/dismissed/deleted, and
- *    the budget is the `dailyReviewBudget` setting;
+ *    parked/suspended/done/dismissed/deleted rows, and the budget is the
+ *    `dailyReviewBudget` setting;
  *  - `simulate` is read-only — it appends no `operation_log` row and changes no due date;
  *  - a retention lever raises near-window load over seeded data without mutating it.
  */
@@ -111,6 +112,29 @@ describe("WorkloadService — baseline grounding", () => {
     expect(after).toBe(before - 1);
     // And it agrees with the queue read after suspension.
     expect(after).toBe(queue.dueCards(NOW).length);
+  });
+
+  it("excludes parked cards and attention items from the snapshot baseline", () => {
+    const cardId = makeCardWithReviews(3, { gapDays: 1, rating: "again", title: "due-card" });
+    const attentionId = repos.elements.create({
+      type: "extract",
+      status: "scheduled",
+      stage: "raw_extract",
+      priority: 0.6,
+      title: "Due attention",
+      dueAt: NOW,
+    }).id;
+
+    const before = service.buildSnapshot(NOW);
+    expect(before.cards.map((card) => card.id)).toContain(cardId);
+    expect(before.attention.map((item) => item.id)).toContain(attentionId);
+
+    repos.elements.update(cardId, { status: "parked", parkedAt: NOW, dueAt: null });
+    repos.elements.update(attentionId, { status: "parked", parkedAt: NOW });
+
+    const after = service.buildSnapshot(NOW);
+    expect(after.cards.map((card) => card.id)).not.toContain(cardId);
+    expect(after.attention.map((item) => item.id)).not.toContain(attentionId);
   });
 
   it("the snapshot budget is the dailyReviewBudget setting", () => {

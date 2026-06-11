@@ -39,6 +39,7 @@ describe("persisted enum vocabularies", () => {
       "active",
       "scheduled",
       "done",
+      "parked",
       "dismissed",
       "suspended",
       "deleted",

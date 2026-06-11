@@ -139,7 +139,7 @@ export const tasks = sqliteTable(
     // (...)` (see migration 0025 + the migration-level test).
     uniqueIndex("tasks_open_link_type_uq")
       .on(table.linkedElementId, table.taskType)
-      .where(sql`status NOT IN ('done', 'dismissed', 'deleted')`),
+      .where(sql`status NOT IN ('done', 'parked', 'dismissed', 'deleted')`),
   ],
 );
 

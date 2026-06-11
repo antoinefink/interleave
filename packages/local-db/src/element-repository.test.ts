@@ -59,7 +59,16 @@ describe("ElementRepository direct reads", () => {
   it("records exact pre-images and batch ids in update/reschedule/delete op payloads", () => {
     const el = createTopic("Original");
 
-    elements.update(el.id, { title: "Updated", status: "scheduled" }, { batchId: "batch-1" });
+    elements.update(
+      el.id,
+      {
+        title: "Updated",
+        status: "parked",
+        parkedAt: "2026-06-09T00:00:00.000Z",
+        dueAt: null,
+      },
+      { batchId: "batch-1" },
+    );
     elements.rescheduleWithin(handle.db, el.id, "2026-06-10T00:00:00.000Z", "scheduled", {
       postpone: true,
       batchId: "batch-2",
@@ -73,13 +82,18 @@ describe("ElementRepository direct reads", () => {
 
     expect(update?.payload).toMatchObject({
       prev: { title: "Original", status: "active" },
-      patch: { title: "Updated", status: "scheduled" },
+      patch: {
+        title: "Updated",
+        status: "parked",
+        dueAt: null,
+        parkedAt: "2026-06-09T00:00:00.000Z",
+      },
       batchId: "batch-1",
     });
     expect(reschedule?.payload).toMatchObject({
       dueAt: "2026-06-10T00:00:00.000Z",
       prevDueAt: null,
-      prevStatus: "scheduled",
+      prevStatus: "parked",
       postpone: true,
       batchId: "batch-2",
     });

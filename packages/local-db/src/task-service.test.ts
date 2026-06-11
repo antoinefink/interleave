@@ -12,7 +12,8 @@
  *  - `generateVerificationTasks` creates a task for an EXPIRED card and is IDEMPOTENT (a
  *    second run creates none — the in-tx open-task re-check + the partial unique index);
  *    a direct duplicate-open-task insert is rejected by the index; a `done` task does NOT
- *    block a fresh open one; a non-expired card generates nothing;
+ *    block a fresh open one; a `parked` task also does not block generation; a
+ *    non-expired card generates nothing;
  *  - `listOpenTasks` / `listDueTasks` resolve correctly; soft-delete works.
  */
 
@@ -317,7 +318,7 @@ describe("generateVerificationTasks", () => {
     ).toThrow();
   });
 
-  it("a done/dismissed task does NOT block a fresh open one of the same kind", () => {
+  it("a done/parked/dismissed task does NOT block a fresh open one of the same kind", () => {
     const cardId = seedCard();
     new CardEditService(handle.db).setLifetime(cardId, { validUntil: "2020-01-01" });
     const first = svc.generateVerificationTasks("2026-06-01T00:00:00.000Z");
@@ -328,5 +329,18 @@ describe("generateVerificationTasks", () => {
     const second = svc.generateVerificationTasks("2026-06-01T00:00:00.000Z");
     expect(second.created).toBe(1);
     expect(svc.listOpenTasks({ linkedElementId: cardId }).length).toBe(1);
+
+    const parkedTaskId = second.tasks[0]?.id as ElementId;
+    handle.db.update(elements).set({ status: "parked" }).where(eq(elements.id, parkedTaskId)).run();
+    handle.db
+      .update(tasks)
+      .set({ status: "parked" })
+      .where(eq(tasks.elementId, parkedTaskId))
+      .run();
+    const third = svc.generateVerificationTasks("2026-06-01T00:00:00.000Z");
+    expect(third.created).toBe(1);
+    expect(svc.listOpenTasks({ linkedElementId: cardId }).map((task) => task.id)).toEqual([
+      third.tasks[0]?.id,
+    ]);
   });
 });

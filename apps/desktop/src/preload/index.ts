@@ -71,6 +71,7 @@ import type {
   JobSummary,
   JobsListRequest,
   LibraryBrowseRequest,
+  LibraryParkedActionRequest,
   LineageGetRequest,
   MaintenanceBulkArchiveRequest,
   MaintenanceBulkPostponeRequest,
@@ -434,6 +435,8 @@ const appApi: AppApi = {
   library: {
     browse: (request?: LibraryBrowseRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.libraryBrowse, request ?? {}),
+    parkedAction: (request: LibraryParkedActionRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.libraryParkedAction, request),
   },
   readPoints: {
     get: (request: ReadPointGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.readPointGet, request),

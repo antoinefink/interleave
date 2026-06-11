@@ -152,6 +152,24 @@ describe("DailyWorkQuery", () => {
     expect(summary.recommendedAction).toBe("clear");
   });
 
+  it("excludes parked due, inbox, and unscheduled source work", () => {
+    const cardId = createDueCard();
+    const attentionId = createDueAttention();
+    const inboxId = createInboxSource();
+    const activeId = createActiveUnscheduledSource("Parked active source");
+    for (const id of [cardId, attentionId, inboxId, activeId]) {
+      elementsRepo.update(id, { status: "parked", parkedAt: NOW });
+    }
+
+    const summary = query.summary(NOW);
+
+    expect(summary.dueQueueItems).toBe(0);
+    expect(summary.inboxSources).toBe(0);
+    expect(summary.activeUnscheduledSources).toBe(0);
+    expect(summary.resumeSource).toBeNull();
+    expect(summary.recommendedAction).toBe("clear");
+  });
+
   it("prefers the most recently updated active unscheduled source when unresolved work ties", () => {
     const oldId = createActiveUnscheduledSource("Old source");
     const newId = createActiveUnscheduledSource("New source");

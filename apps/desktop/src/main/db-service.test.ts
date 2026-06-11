@@ -480,6 +480,62 @@ describe("DbService", () => {
     svc.close();
   });
 
+  it("save-for-later triage parks an inbox source instead of dismissing it", () => {
+    const first = new DbService();
+    first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const { id } = first.importManualSource({
+      title: "Park this source",
+      body: "Not now, but do not dismiss it.",
+      priority: "A",
+    });
+    const before = new Date().toISOString();
+    const result = first.triageInboxItem({
+      id,
+      action: { kind: "keepForLater" },
+    });
+    const after = new Date().toISOString();
+
+    expect(result.deleted).toBe(false);
+    expect(result.item?.status).toBe("parked");
+    expect(first.listInbox().items.map((item) => item.id)).not.toContain(id);
+    expect(first.listQueue({ asOf: after }).items.map((item) => item.id)).not.toContain(id);
+
+    const element = first.repos.elements.findById(id as never);
+    expect(element?.status).toBe("parked");
+    expect(element?.dueAt).toBeNull();
+    expect(element?.parkedAt && element.parkedAt >= before).toBe(true);
+    expect(element?.parkedAt && element.parkedAt <= after).toBe(true);
+    expect(first.libraryBrowse({ statuses: ["parked"] }).items.map((item) => item.id)).toContain(
+      id,
+    );
+
+    const op = first.raw.sqlite
+      .prepare(
+        "SELECT op_type, payload FROM operation_log WHERE element_id = ? ORDER BY rowid DESC LIMIT 1",
+      )
+      .get(id) as { op_type: string; payload: string };
+    expect(op.op_type).toBe("update_element");
+    expect(JSON.parse(op.payload)).toMatchObject({
+      action: "keepForLater",
+      patch: { status: "parked", dueAt: null },
+      prev: { status: "inbox", dueAt: null, parkedAt: null },
+    });
+    first.close();
+
+    const second = new DbService();
+    second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const row = second.libraryBrowse({ statuses: ["parked"] }).items.find((item) => item.id === id);
+    expect(row).toMatchObject({
+      id,
+      status: "parked",
+      queueEligible: false,
+      notInQueueReason: "Not in queue: status is Parked",
+    });
+    expect(row?.parkedAt).toBe(element?.parkedAt);
+    second.close();
+  });
+
   it("persists derived provenance across a close + reopen (T014 restart analogue)", () => {
     const first = new DbService();
     first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
@@ -2835,6 +2891,152 @@ describe("DbService — review session (T037)", () => {
     svc.repos.concepts.assignConcept(sourceRow?.id as never, concept.id);
     const byConcept = svc.libraryBrowse({ conceptId: concept.id }).items;
     expect(byConcept.map((r) => r.id)).toEqual([sourceRow?.id]);
+  });
+
+  it("library.parkedAction moves parked sources to inbox, queue-soon, or dismissed", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    function park(title: string): { id: string; parkedAt: string } {
+      const { id } = svc.importManualSource({ title, priority: "A" });
+      svc.triageInboxItem({ id, action: { kind: "keepForLater" } });
+      const parkedAt = svc.repos.elements.findById(id as never)?.parkedAt;
+      expect(parkedAt).not.toBeNull();
+      return { id, parkedAt: parkedAt as string };
+    }
+
+    const inbox = park("Parked inbox return");
+    const queued = park("Parked queue return");
+    const dismissed = park("Parked dismiss return");
+    const beforeQueue = new Date().toISOString();
+
+    const inboxResult = svc.libraryParkedAction({
+      id: inbox.id,
+      action: { kind: "moveToInbox" },
+    });
+    const queueResult = svc.libraryParkedAction({
+      id: queued.id,
+      action: { kind: "queueSoon" },
+    });
+    const dismissedResult = svc.libraryParkedAction({
+      id: dismissed.id,
+      action: { kind: "dismiss" },
+    });
+    const afterQueue = new Date().toISOString();
+
+    expect(inboxResult.item).toMatchObject({ id: inbox.id, status: "inbox", parkedAt: null });
+    expect(svc.listInbox().items.map((item) => item.id)).toContain(inbox.id);
+
+    expect(queueResult.item).toMatchObject({ id: queued.id, status: "scheduled", parkedAt: null });
+    const queuedElement = svc.repos.elements.findById(queued.id as never);
+    expect(queuedElement?.dueAt && queuedElement.dueAt >= beforeQueue).toBe(true);
+    expect(queuedElement?.dueAt && queuedElement.dueAt <= afterQueue).toBe(true);
+    expect(svc.listQueue({ asOf: afterQueue }).items.map((item) => item.id)).toContain(queued.id);
+    const reviewStateCount = svc.raw.sqlite
+      .prepare("SELECT COUNT(*) AS n FROM review_states WHERE element_id = ?")
+      .get(queued.id) as { n: number };
+    expect(reviewStateCount.n).toBe(0);
+
+    expect(dismissedResult.item).toMatchObject({
+      id: dismissed.id,
+      status: "dismissed",
+      parkedAt: null,
+    });
+    expect(svc.listInbox().items.map((item) => item.id)).not.toContain(dismissed.id);
+    expect(svc.listQueue({ asOf: afterQueue }).items.map((item) => item.id)).not.toContain(
+      dismissed.id,
+    );
+
+    const queueOp = svc.raw.sqlite
+      .prepare(
+        "SELECT op_type, payload FROM operation_log WHERE element_id = ? ORDER BY rowid DESC LIMIT 1",
+      )
+      .get(queued.id) as { op_type: string; payload: string };
+    expect(queueOp.op_type).toBe("update_element");
+    expect(JSON.parse(queueOp.payload)).toMatchObject({
+      action: "queueSoonFromParked",
+      patch: { status: "scheduled", parkedAt: null },
+      prev: { status: "parked", dueAt: null, parkedAt: queued.parkedAt },
+    });
+
+    svc.close();
+  });
+
+  it.each([
+    ["moveToInbox", "inbox", "moveParkedToInbox"],
+    ["queueSoon", "scheduled", "queueSoonFromParked"],
+    ["dismiss", "dismissed", "dismissParked"],
+  ] as const)("library.parkedAction logs and undoes %s", (kind, nextStatus, opAction) => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { id } = svc.importManualSource({ title: `Parked ${kind}`, priority: "A" });
+    svc.triageInboxItem({ id, action: { kind: "keepForLater" } });
+    const parkedAt = svc.repos.elements.findById(id as ElementId)?.parkedAt;
+    expect(parkedAt).not.toBeNull();
+
+    svc.libraryParkedAction({ id, action: { kind } });
+
+    const changed = svc.repos.elements.findById(id as ElementId);
+    expect(changed).toMatchObject({ status: nextStatus, parkedAt: null });
+    const op = svc.raw.sqlite
+      .prepare(
+        "SELECT op_type, payload FROM operation_log WHERE element_id = ? ORDER BY rowid DESC LIMIT 1",
+      )
+      .get(id) as { op_type: string; payload: string };
+    expect(op.op_type).toBe("update_element");
+    expect(JSON.parse(op.payload)).toMatchObject({
+      action: opAction,
+      patch: { status: nextStatus, parkedAt: null },
+      prev: { status: "parked", dueAt: null, parkedAt },
+    });
+
+    const undo = svc.undoLastOperation();
+    expect(undo.undone).toBe(true);
+    expect(svc.repos.elements.findById(id as ElementId)).toMatchObject({
+      status: "parked",
+      dueAt: null,
+      parkedAt,
+    });
+
+    svc.close();
+  });
+
+  it("library.parkedAction rejects missing, non-source, deleted, and non-parked rows", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    expect(() =>
+      svc.libraryParkedAction({ id: "missing-source", action: { kind: "moveToInbox" } }),
+    ).toThrow("Parked source is no longer available.");
+
+    const inbox = svc.importManualSource({ title: "Inbox source", priority: "A" });
+    expect(() =>
+      svc.libraryParkedAction({ id: inbox.id, action: { kind: "moveToInbox" } }),
+    ).toThrow("Parked source is no longer available.");
+
+    const deleted = svc.importManualSource({ title: "Deleted parked source", priority: "A" });
+    svc.triageInboxItem({ id: deleted.id, action: { kind: "keepForLater" } });
+    svc.repos.elements.softDelete(deleted.id as ElementId);
+    expect(() =>
+      svc.libraryParkedAction({ id: deleted.id, action: { kind: "moveToInbox" } }),
+    ).toThrow("Parked source is no longer available.");
+
+    const card = svc.repos.review.createCard({
+      kind: "qa",
+      title: "Parked card",
+      prompt: "Q",
+      answer: "A",
+      priority: 0.5,
+    });
+    svc.repos.elements.update(card.element.id, {
+      status: "parked",
+      parkedAt: "2026-06-11T00:00:00.000Z" as IsoTimestamp,
+    });
+    expect(() =>
+      svc.libraryParkedAction({ id: card.element.id, action: { kind: "moveToInbox" } }),
+    ).toThrow("Parked source is no longer available.");
+
+    svc.close();
   });
 
   it("library.browse carries DRILL-DOWN byConcept counts that match the filtered list end-to-end", () => {

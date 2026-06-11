@@ -74,6 +74,12 @@ describe("preload bridge", () => {
       year: 2026,
     });
 
+    await api().library.parkedAction({ id: "src-1", action: { kind: "queueSoon" } });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.libraryParkedAction, {
+      id: "src-1",
+      action: { kind: "queueSoon" },
+    });
+
     await api().backups.restore({
       timestamp: "2026-06-07T12-30-00-000Z",
       confirm: true,

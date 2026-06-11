@@ -42,6 +42,8 @@ export const elements = sqliteTable(
     priority: real("priority").notNull(),
     /** ISO-8601 UTC timestamp for when this element next wants attention. */
     dueAt: text("due_at"),
+    /** ISO-8601 UTC timestamp for when the user deliberately parked the element. */
+    parkedAt: text("parked_at"),
     title: text("title").notNull(),
     /** Origin element this was derived from; `null` for top-level sources. */
     parentId: text("parent_id").references((): AnySQLiteColumn => elements.id, {

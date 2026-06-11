@@ -3248,6 +3248,7 @@ export interface LibraryItem {
   readonly sourceTitle: string | null;
   readonly sourceLocationLabel: string | null;
   readonly dueAt: string | null;
+  readonly parkedAt: string | null;
   /** The load-bearing FSRS-vs-attention scheduler signals for the detail chip. */
   readonly scheduler: SchedulerSignals;
   readonly due: QueueDueState;
@@ -3279,6 +3280,20 @@ export interface LibraryBrowseCounts {
 export interface LibraryBrowseResult {
   readonly items: readonly LibraryItem[];
   readonly counts: LibraryBrowseCounts;
+}
+
+export type LibraryParkedAction =
+  | { readonly kind: "moveToInbox" }
+  | { readonly kind: "queueSoon" }
+  | { readonly kind: "dismiss" };
+
+export interface LibraryParkedActionRequest {
+  readonly id: string;
+  readonly action: LibraryParkedAction;
+}
+
+export interface LibraryParkedActionResult {
+  readonly item: LibraryItem | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -3826,6 +3841,7 @@ export interface AppApi {
   };
   readonly library: {
     browse(request?: LibraryBrowseRequest): Promise<LibraryBrowseResult>;
+    parkedAction(request: LibraryParkedActionRequest): Promise<LibraryParkedActionResult>;
   };
   readonly readPoints: {
     get(request: ReadPointGetRequest): Promise<ReadPointGetResult>;
@@ -4789,6 +4805,10 @@ export const appApi = {
    */
   libraryBrowse(request?: LibraryBrowseRequest): Promise<LibraryBrowseResult> {
     return requireAppApi().library.browse(request);
+  },
+  /** Move a parked source back into the inbox, queue it now, or dismiss it. */
+  libraryParkedAction(request: LibraryParkedActionRequest): Promise<LibraryParkedActionResult> {
+    return requireAppApi().library.parkedAction(request);
   },
   /** Load an element's read-point (resume position), or `null` (T017). */
   getReadPoint(request: ReadPointGetRequest): Promise<ReadPointGetResult> {

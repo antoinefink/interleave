@@ -253,6 +253,7 @@ function formatReturnDate(dueAt: string): string {
 function statusLabel(status: ElementStatus): string {
   if (status === "done") return "Done";
   if (status === "dismissed") return "Dismissed";
+  if (status === "parked") return "Parked";
   if (status === "suspended") return "Suspended";
   if (status === "inbox") return "Inbox";
   if (status === "deleted") return "Deleted";

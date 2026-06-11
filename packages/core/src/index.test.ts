@@ -40,6 +40,7 @@ describe("@interleave/core surface", () => {
       "active",
       "scheduled",
       "done",
+      "parked",
       "dismissed",
       "suspended",
       "deleted",

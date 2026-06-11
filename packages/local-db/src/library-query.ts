@@ -58,6 +58,7 @@ export const LIBRARY_STATUSES: readonly ElementStatus[] = [
   "inbox",
   "pending",
   "done",
+  "parked",
   "suspended",
 ] as const;
 

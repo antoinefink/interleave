@@ -191,6 +191,31 @@ describe("UndoService.undoLast", () => {
     expect(elements.findById(id)?.dueAt).toBe(originalDue);
   });
 
+  it("undoes queue-soon-from-parked with the parked timestamp restored", () => {
+    const elements = new ElementRepository(handle.db);
+    const undo = new UndoService(handle.db);
+    const id = createActiveElement(handle);
+    const parkedAt = "2026-06-09T10:00:00.000Z" as IsoTimestamp;
+    const queuedAt = "2026-06-10T10:00:00.000Z" as IsoTimestamp;
+
+    elements.update(id, { status: "parked", dueAt: null, parkedAt });
+    elements.update(id, { status: "scheduled", dueAt: queuedAt, parkedAt: null });
+    expect(elements.findById(id)).toMatchObject({
+      status: "scheduled",
+      dueAt: queuedAt,
+      parkedAt: null,
+    });
+
+    const result = undo.undoLast();
+    expect(result.undone).toBe(true);
+    expect(result.opType).toBe("update_element");
+    expect(elements.findById(id)).toMatchObject({
+      status: "parked",
+      dueAt: null,
+      parkedAt,
+    });
+  });
+
   it("undoes a whole BULK postpone batch in one call", () => {
     const repos = createRepositories(handle.db);
     const qa = new QueueActionService(handle.db);

@@ -14,6 +14,7 @@ describe("element schema", () => {
       "stage",
       "priority",
       "dueAt",
+      "parkedAt",
       "title",
       "parentId",
       "sourceId",

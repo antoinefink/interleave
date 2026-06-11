@@ -2355,7 +2355,7 @@ export interface InboxGetResult {
  * main side rejects an unknown action at the boundary:
  *  - `accept`      → status `active` + attention `due_at` (leaves the inbox)
  *  - `queueSoon`   → status `scheduled` + due now (leaves the inbox)
- *  - `keepForLater`→ status `dismissed` (set aside, leaves the inbox)
+ *  - `keepForLater`→ status `parked` + `parkedAt` (set aside, leaves the inbox)
  *  - `setPriority` → numeric priority from the A/B/C/D label (status unchanged)
  *  - `delete`      → soft-delete (`deletedAt` + status `deleted`)
  */
@@ -4925,6 +4925,8 @@ export interface LibraryItem {
   readonly sourceLocationLabel: string | null;
   /** Next-attention/review time (ISO), for the detail; `null` when none. */
   readonly dueAt: string | null;
+  /** When the item was deliberately parked from the inbox, or `null`. */
+  readonly parkedAt: string | null;
   /** The load-bearing FSRS-vs-attention scheduler signals for the detail chip. */
   readonly scheduler: SchedulerSignals;
   /** How due the element is now (overdue / today / soon), for the detail badge. */
@@ -4966,6 +4968,25 @@ export interface LibraryBrowseCounts {
 export interface LibraryBrowseResult {
   readonly items: readonly LibraryItem[];
   readonly counts: LibraryBrowseCounts;
+}
+
+/**
+ * Commands for returning a parked source to work. All branches are ordinary
+ * `update_element` mutations so Undo restores the full preimage (`status`,
+ * `dueAt`, and `parkedAt`) without a parked-specific op type.
+ */
+export const LibraryParkedActionRequestSchema = z.object({
+  id: ElementIdSchema,
+  action: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("moveToInbox") }),
+    z.object({ kind: z.literal("queueSoon") }),
+    z.object({ kind: z.literal("dismiss") }),
+  ]),
+});
+export type LibraryParkedActionRequest = z.infer<typeof LibraryParkedActionRequestSchema>;
+
+export interface LibraryParkedActionResult {
+  readonly item: LibraryItem | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -6216,6 +6237,11 @@ export interface AppApi {
      * Read-only (appends no op).
      */
     browse(request?: LibraryBrowseRequest): Promise<LibraryBrowseResult>;
+    /**
+     * Move a parked source back into the inbox, queue it now, or dismiss it.
+     * Mutating; appends one `update_element` op.
+     */
+    parkedAction(request: LibraryParkedActionRequest): Promise<LibraryParkedActionResult>;
   };
   readonly readPoints: {
     /** Load an element's read-point (resume position), or `null` (T017). */

@@ -28,8 +28,9 @@
 # T101 — "Save for later" becomes parked, not dismissed
 
 - **Milestone:** M21 — Honest exits & the value model
-- **Status:** `[ ]` not started
+- **Status:** `[x]` done
 - **Depends on:** T012, T044
+- **Commit:** `feat: T101 parked save-for-later state`
 - **Roadmap line:** the inbox "Save for later" verb writes a distinct parked state; parked items
   are visible/filterable in the library with their parked date, still excluded from
   inbox/queue/daily-work, distinguishable from dismissed in data and UI, op-logged and undoable.
@@ -54,18 +55,18 @@ can finally distinguish deferred-with-intent from abandoned.
 
 ## Deliverables
 
-- [ ] Schema/enum: a distinct parked representation — either a new element status (preferred;
+- [x] Schema/enum: a distinct parked representation — either a new element status (preferred;
       update enum + CHECK constraint via Drizzle migration) or a status-adjacent marker if a
       migration is deemed too invasive (document the choice). Record `parkedAt`.
-- [ ] `keepForLater` (and any other Save-for-later entry point — grep all call sites) writes the
+- [x] `keepForLater` (and any other Save-for-later entry point — grep all call sites) writes the
       parked state; Abandon/dismiss paths untouched.
-- [ ] Library/Collection Explorer: parked filter + parked-date display; inbox/queue/daily-work
+- [x] Library/Collection Explorer: parked filter + parked-date display; inbox/queue/daily-work
       provably still exclude parked items (tests).
-- [ ] Un-park verbs: re-queue (schedule), move back to inbox (undecided), or dismiss — each
+- [x] Un-park verbs: re-queue (schedule), move back to inbox (undecided), or dismiss — each
       op-logged with undo preimages.
-- [ ] Migration note in the spec + code comment: pre-existing `dismissed` rows are conflated
+- [x] Migration note in the spec + code comment: pre-existing `dismissed` rows are conflated
       (saved vs abandoned) and are NOT retroactively reclassified; only new saves get the state.
-- [ ] Tests: repository/service unit tests; Playwright e2e — park from inbox, find in library,
+- [x] Tests: repository/service unit tests; Playwright e2e — park from inbox, find in library,
       un-park, survives restart.
 
 ## Done when
@@ -83,6 +84,18 @@ can finally distinguish deferred-with-intent from abandoned.
 - Decide and document whether DoneIntentMenu's "Return later" intent should also use parked
   semantics for sources exiting the reader (likely yes — but keep that as a follow-up note for
   T102/T110 rather than scope-creeping this task).
+
+## Completion notes
+
+- Implemented `status = "parked"` plus nullable `elements.parked_at` via migration `0030`.
+  Existing `dismissed` rows stay dismissed with `parked_at = NULL`; only new Save-for-later
+  actions are parked.
+- `keepForLater` now parks and clears `due_at`; Library exposes a Parked facet, parked-date
+  display, and actions to move to Inbox, queue soon, or dismiss.
+- Parked rows are excluded from Inbox, Queue, Daily Work, and Workload baselines while remaining
+  countable separately from dismissed rows.
+- Verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and
+  `pnpm e2e tests/electron/parked-save-for-later.spec.ts`.
 
 ---
 

@@ -8,13 +8,14 @@
  * DB service composes), asserting the load-bearing invariants:
  *
  *  - creating a source lands it in `inbox` (status + `raw_source` stage);
- *  - `list` returns only live inbox sources (not active/dismissed/deleted ones);
+ *  - `list` returns only live inbox sources (not active/parked/dismissed/deleted ones);
  *  - accept flips status to `active` and writes an `update_element` op;
  *  - `setPriority` stores the right numeric value (label → number);
  *  - delete soft-deletes (`deletedAt` set, status `deleted`) + writes
  *    `soft_delete_element`, and the item drops out of `list`.
  */
 
+import type { IsoTimestamp } from "@interleave/core";
 import { priorityFromLabel } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -164,11 +165,18 @@ describe("InboxQuery (T012)", () => {
     expect(inbox.list().map((i) => i.id)).not.toContain(element.id);
   });
 
-  it("keepForLater flips status to dismissed and leaves the inbox", () => {
+  it("keepForLater flips status to parked and leaves the inbox", () => {
     const elements = new ElementRepository(handle.db);
     const { element } = importInbox("To keep");
-    elements.update(element.id, { status: "dismissed" });
-    expect(elements.findById(element.id)?.status).toBe("dismissed");
+    elements.update(element.id, {
+      status: "parked",
+      dueAt: null,
+      parkedAt: "2026-06-09T10:00:00.000Z" as IsoTimestamp,
+    });
+    expect(elements.findById(element.id)).toMatchObject({
+      status: "parked",
+      parkedAt: "2026-06-09T10:00:00.000Z",
+    });
     expect(inbox.list().map((i) => i.id)).not.toContain(element.id);
   });
 

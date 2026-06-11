@@ -58,10 +58,10 @@ const DAY_MS = 86_400_000;
 /**
  * Lifecycle statuses that take a row OUT of the due queue (mirrors
  * `QueueRepository.QUEUE_EXCLUDED_STATUSES`), so the snapshot's baseline matches the
- * queue's due reads exactly — a `done`/`dismissed`/`suspended`/`deleted` row is not
+ * queue's due reads exactly — a `done`/`parked`/`dismissed`/`suspended`/`deleted` row is not
  * "due", so it must not appear in the projection's baseline either.
  */
-const QUEUE_EXCLUDED_STATUSES = ["done", "dismissed", "suspended", "deleted"] as const;
+const QUEUE_EXCLUDED_STATUSES = ["done", "parked", "dismissed", "suspended", "deleted"] as const;
 
 /**
  * Approximate retrievability `R(t) = (1 + FACTOR · t / S)^DECAY` (days since last review),

@@ -43,6 +43,8 @@ export interface Element {
   priority: Priority;
   /** When this element next wants attention/review; `null` if unscheduled. */
   dueAt: IsoTimestamp | null;
+  /** When this element was deliberately parked for later; `null` unless status is `parked`. */
+  parkedAt: IsoTimestamp | null;
   title: string;
   /** Origin element this was derived from; `null` for top-level sources. */
   parentId: ElementId | null;

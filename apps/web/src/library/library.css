@@ -372,6 +372,11 @@
   line-height: 1.45;
   color: var(--text-3);
 }
+.lib-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
 
 /* empty state */
 .lib-empty {

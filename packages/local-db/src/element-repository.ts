@@ -71,6 +71,7 @@ export interface UpdateElementInput {
   readonly priority?: Priority;
   readonly title?: string;
   readonly dueAt?: IsoTimestamp | null;
+  readonly parkedAt?: IsoTimestamp | null;
 }
 
 /**
@@ -114,6 +115,7 @@ export class ElementRepository {
       stage: input.stage,
       priority: input.priority,
       dueAt: input.dueAt ?? null,
+      parkedAt: null,
       title: input.title,
       parentId: input.parentId ?? null,
       sourceId: input.sourceId ?? null,
@@ -129,6 +131,7 @@ export class ElementRepository {
         stage: element.stage,
         priority: element.priority,
         dueAt: element.dueAt,
+        parkedAt: element.parkedAt,
         title: element.title,
         parentId: element.parentId,
         sourceId: element.sourceId,
@@ -236,6 +239,7 @@ export class ElementRepository {
     if (patch.priority !== undefined) prev.priority = before.priority;
     if (patch.title !== undefined) prev.title = before.title;
     if (patch.dueAt !== undefined) prev.dueAt = before.dueAt;
+    if (patch.parkedAt !== undefined) prev.parkedAt = before.parkedAt;
 
     const updatedAt = nowIso();
     const set: Record<string, unknown> = { updatedAt };
@@ -244,6 +248,7 @@ export class ElementRepository {
     if (patch.priority !== undefined) set.priority = patch.priority;
     if (patch.title !== undefined) set.title = patch.title;
     if (patch.dueAt !== undefined) set.dueAt = patch.dueAt;
+    if (patch.parkedAt !== undefined) set.parkedAt = patch.parkedAt;
 
     tx.update(elements).set(set).where(eq(elements.id, id)).run();
     const row = tx.select().from(elements).where(eq(elements.id, id)).get();

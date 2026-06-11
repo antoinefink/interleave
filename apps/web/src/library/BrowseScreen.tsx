@@ -26,6 +26,7 @@ import {
   ConceptTag,
   Prio,
   SchedulerChip,
+  Status,
   TypeIcon,
   typeLabel,
 } from "../components/inspector/primitives";
@@ -71,6 +72,7 @@ const STATUSES: readonly { value: string; label: string }[] = [
   { value: "inbox", label: "Inbox" },
   { value: "pending", label: "Pending" },
   { value: "done", label: "Done" },
+  { value: "parked", label: "Parked" },
   { value: "suspended", label: "Suspended" },
 ];
 
@@ -93,6 +95,14 @@ function DueBadge({ item }: { item: LibraryItem }) {
       {item.dueLabel}
     </span>
   );
+}
+
+function formatShortDate(iso: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(iso));
 }
 
 export function BrowseScreen() {
@@ -130,6 +140,17 @@ export function BrowseScreen() {
   const [selId, setSelId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [parkedActionId, setParkedActionId] = useState<string | null>(null);
+
+  const browseRequest = useMemo<LibraryBrowseRequest>(
+    () => ({
+      ...(typeFilter ? { types: [typeFilter] } : {}),
+      ...(conceptFilter ? { conceptId: conceptFilter } : {}),
+      ...(priorityFilter ? { priorityLabel: priorityFilter } : {}),
+      ...(statusFilter ? { statuses: [statusFilter] } : {}),
+    }),
+    [typeFilter, conceptFilter, priorityFilter, statusFilter],
+  );
 
   // Load the concept list once (filterbar + map).
   useEffect(() => {
@@ -146,14 +167,8 @@ export function BrowseScreen() {
     if (!isDesktop()) return;
     let cancelled = false;
     setLoading(true);
-    const request: LibraryBrowseRequest = {
-      ...(typeFilter ? { types: [typeFilter] } : {}),
-      ...(conceptFilter ? { conceptId: conceptFilter } : {}),
-      ...(priorityFilter ? { priorityLabel: priorityFilter } : {}),
-      ...(statusFilter ? { statuses: [statusFilter] } : {}),
-    };
     void appApi
-      .libraryBrowse(request)
+      .libraryBrowse(browseRequest)
       .then((res) => {
         if (cancelled) return;
         setItems(res.items);
@@ -169,7 +184,7 @@ export function BrowseScreen() {
     return () => {
       cancelled = true;
     };
-  }, [typeFilter, conceptFilter, priorityFilter, statusFilter]);
+  }, [browseRequest]);
 
   // The optional inline title narrowing happens entirely client-side over the
   // already-fetched browse payload (case-insensitive substring on the title).
@@ -234,6 +249,29 @@ export function BrowseScreen() {
       }
     },
     [navigate, select],
+  );
+
+  const runParkedAction = useCallback(
+    async (item: LibraryItem, action: "moveToInbox" | "queueSoon" | "dismiss") => {
+      setParkedActionId(`${item.id}:${action}`);
+      setError(null);
+      try {
+        const result = await appApi.libraryParkedAction({ id: item.id, action: { kind: action } });
+        const updatedItem = result.item;
+        const res = await appApi.libraryBrowse(browseRequest);
+        setItems(res.items);
+        setCounts(res.counts);
+        if (!updatedItem || (statusFilter && updatedItem.status !== statusFilter)) {
+          setSelId(null);
+          select(null);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setParkedActionId(null);
+      }
+    },
+    [browseRequest, statusFilter, select],
   );
 
   if (!desktop) {
@@ -501,7 +539,11 @@ export function BrowseScreen() {
                                 {r.sourceLocationLabel ? (
                                   <span>{r.sourceLocationLabel}</span>
                                 ) : null}
-                                <span>{r.dueLabel}</span>
+                                <span>
+                                  {r.status === "parked" && r.parkedAt
+                                    ? `Parked ${formatShortDate(r.parkedAt)}`
+                                    : r.dueLabel}
+                                </span>
                               </div>
                             </div>
                             <Prio priority={r.priority} />
@@ -526,11 +568,17 @@ export function BrowseScreen() {
                 <div className="lib-detail__row">
                   <Prio priority={selected.priority} />
                   {selected.concept ? <ConceptTag name={selected.concept} /> : null}
+                  <Status status={selected.status} />
                   {/* The load-bearing scheduler split + due status, matching the
                       kit's detail panel (Prio / ConceptTag / SchedulerChip / Status). */}
                   <SchedulerChip scheduler={selected.scheduler} />
                   {selected.dueAt ? <DueBadge item={selected} /> : null}
                 </div>
+                {selected.status === "parked" && selected.parkedAt ? (
+                  <div className="lib-detail__reason" data-testid="library-detail-parked-date">
+                    Parked {formatShortDate(selected.parkedAt)}
+                  </div>
+                ) : null}
                 {selected.notInQueueReason ? (
                   <div className="lib-detail__reason" data-testid="library-detail-queue-reason">
                     {selected.notInQueueReason}
@@ -563,6 +611,40 @@ export function BrowseScreen() {
                     No source
                   </div>
                 )}
+                {selected.status === "parked" && selected.type === "source" ? (
+                  <div className="lib-actions" data-testid="library-parked-actions">
+                    <button
+                      type="button"
+                      className="lib-btn"
+                      data-testid="library-unpark-inbox"
+                      disabled={parkedActionId !== null}
+                      onClick={() => void runParkedAction(selected, "moveToInbox")}
+                    >
+                      <Icon name="inbox" size={14} />
+                      Move to inbox
+                    </button>
+                    <button
+                      type="button"
+                      className="lib-btn"
+                      data-testid="library-unpark-schedule"
+                      disabled={parkedActionId !== null}
+                      onClick={() => void runParkedAction(selected, "queueSoon")}
+                    >
+                      <Icon name="clock" size={14} />
+                      Queue soon
+                    </button>
+                    <button
+                      type="button"
+                      className="lib-btn"
+                      data-testid="library-unpark-dismiss"
+                      disabled={parkedActionId !== null}
+                      onClick={() => void runParkedAction(selected, "dismiss")}
+                    >
+                      <Icon name="x" size={14} />
+                      Dismiss
+                    </button>
+                  </div>
+                ) : null}
                 <button
                   type="button"
                   className="lib-btn"

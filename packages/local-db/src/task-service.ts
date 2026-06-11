@@ -68,7 +68,7 @@ import type { DbClient } from "./types";
  * `tasks_open_link_type_uq` partial-index predicate so the in-tx re-check and the DB
  * constraint agree.
  */
-const CLOSED_TASK_STATUSES = ["done", "dismissed", "deleted"] as const;
+const CLOSED_TASK_STATUSES = ["done", "parked", "dismissed", "deleted"] as const;
 
 /** The distillation stage a verification `task` element sits in. */
 export const TASK_STAGE = "rough_topic" as const;

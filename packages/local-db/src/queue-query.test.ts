@@ -163,7 +163,7 @@ describe("QueueQuery", () => {
     expect(source?.schedulerSignals.kind).toBe("attention");
   });
 
-  it("excludes dismissed and done sources even when they still have due_at", () => {
+  it("excludes dismissed, done, and parked sources even when they still have due_at", () => {
     const { sourceId } = buildDueSet();
     const dismissed = repos.sources.create({
       title: "Dismissed source",
@@ -177,12 +177,25 @@ describe("QueueQuery", () => {
       status: "done",
     }).element.id;
     repos.elements.reschedule(done, iso("2026-05-29T08:00:00.000Z"));
+    const parked = repos.sources.create({
+      title: "Parked source",
+      priority: PRIORITY_LABEL_VALUE.A,
+      status: "parked",
+    }).element.id;
+    repos.elements.reschedule(parked, iso("2026-05-29T08:00:00.000Z"));
 
     const ids = queue.list({ asOf: NOW }).items.map((item) => item.id);
+    const parkedSummary = queue.summaryFor(parked, NOW);
 
     expect(ids).toContain(sourceId);
     expect(ids).not.toContain(dismissed);
     expect(ids).not.toContain(done);
+    expect(ids).not.toContain(parked);
+    expect(parkedSummary).toMatchObject({
+      queueEligible: false,
+      dueLabel: "Parked",
+      notInQueueReason: "Not in queue: status is Parked",
+    });
   });
 
   it("carries linkedElementId + linkedElementType on a due verification task row (the queue jump)", () => {

@@ -20,6 +20,7 @@ function element(overrides: Partial<Element> & { id: ElementId; type: Element["t
     stage: stage ?? (type === "source" ? "raw_source" : "raw_extract"),
     priority: 0.5,
     dueAt: null,
+    parkedAt: null,
     title: "Untitled",
     parentId: null,
     sourceId: null,

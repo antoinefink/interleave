@@ -21,6 +21,7 @@ import path from "node:path";
 import type {
   BlockId,
   CardKind,
+  Element,
   ElementId,
   ElementStatus,
   IsoTimestamp,
@@ -228,6 +229,8 @@ import type {
   LibraryBrowseRequest,
   LibraryBrowseResult,
   LibraryItem,
+  LibraryParkedActionRequest,
+  LibraryParkedActionResult,
   LineageGetResult,
   LocationSummary,
   OptimizationApplyRequest,
@@ -2668,7 +2671,7 @@ export class DbService {
    * transaction:
    *  - `accept`       → `reschedule_element` (status `active`, attention `due_at`)
    *  - `queueSoon`    → `reschedule_element` (status `scheduled`, due now)
-   *  - `keepForLater` → `update_element` (status `dismissed`)
+   *  - `keepForLater` → `update_element` (status `parked`, clears `due_at`, sets `parked_at`)
    *  - `setPriority`  → `update_element` (numeric priority from the label)
    *  - `delete`       → `soft_delete_element` (`deletedAt` + status `deleted`)
    */
@@ -2696,7 +2699,16 @@ export class DbService {
           break;
         }
         case "keepForLater": {
-          this.repos.elements.updateWithin(tx, id, { status: "dismissed" });
+          this.repos.elements.updateWithin(
+            tx,
+            id,
+            {
+              status: "parked",
+              dueAt: null,
+              parkedAt: nowIso(),
+            },
+            { extras: { action: "keepForLater" } },
+          );
           break;
         }
         case "setPriority": {
@@ -4860,58 +4872,114 @@ export class DbService {
     };
     const { items: elements, counts } = this.libraryQuery.browse(filters);
 
-    const items: LibraryItem[] = [];
-    for (const element of elements) {
-      // The owning-source provenance + location for the row's refblock (shared
-      // T043 resolver — a source references itself; extract/card reference their
-      // owning source + location anchor).
-      const { sourceTitle, sourceLocationLabel } = this.refMetaForElement(element.id);
-
-      // The load-bearing scheduler chip + due badge — reuse the SAME builders the
-      // inspector + queue use so the chip/due read identically across surfaces. Both
-      // are best-effort: a row that vanished mid-read degrades to a calm attention
-      // "Scheduled" default rather than dropping out of the browse.
-      const inspectorData = this.inspectorQuery.get(element.id);
-      const summary = this.queueQuery.summaryFor(element.id);
-      const linked =
-        element.type === "task"
-          ? (this.repos.tasks.findTask(element.id)?.linkedElement ?? null)
-          : null;
-      const scheduler = inspectorData?.scheduler ?? {
-        kind: "attention" as const,
-        retrievability: null,
-        stability: null,
-        difficulty: null,
-        reps: null,
-        lapses: null,
-        fsrsState: null,
-        stage: element.stage,
-        postponed: 0,
-        lastProcessedAt: element.updatedAt ?? null,
-      };
-
-      items.push({
-        id: element.id,
-        type: element.type as LibraryItem["type"],
-        title: element.title,
-        priority: element.priority,
-        priorityLabel: priorityToLabel(element.priority),
-        status: element.status,
-        stage: element.stage,
-        concept: this.conceptForElement(element.id),
-        sourceTitle,
-        sourceLocationLabel,
-        dueAt: summary?.dueAt ?? element.dueAt ?? null,
-        scheduler,
-        due: summary?.due ?? "soon",
-        dueLabel: summary?.dueLabel ?? "No return scheduled",
-        queueEligible: summary?.queueEligible ?? false,
-        notInQueueReason: summary?.notInQueueReason ?? "Not in queue: summary unavailable",
-        linkedElementId: linked?.id ?? null,
-        linkedElementType: linked?.type ?? null,
-      });
-    }
+    const items = elements.map((element) => this.libraryItemFor(element));
     return { items, counts };
+  }
+
+  /**
+   * Move a parked source back into a concrete work lane. Every branch is a single
+   * `update_element`, keeping undo exact and preserving lineage.
+   */
+  libraryParkedAction(request: LibraryParkedActionRequest): LibraryParkedActionResult {
+    const id = request.id as ElementId;
+    const now = nowIso();
+
+    this.require().db.transaction((tx) => {
+      const current = tx.select().from(elements).where(eq(elements.id, id)).get();
+      if (
+        !current ||
+        current.deletedAt ||
+        current.type !== "source" ||
+        current.status !== "parked"
+      ) {
+        throw new Error("Parked source is no longer available.");
+      }
+
+      switch (request.action.kind) {
+        case "moveToInbox": {
+          this.repos.elements.updateWithin(
+            tx,
+            id,
+            { status: "inbox", dueAt: null, parkedAt: null },
+            { extras: { action: "moveParkedToInbox" } },
+          );
+          break;
+        }
+        case "queueSoon": {
+          this.repos.elements.updateWithin(
+            tx,
+            id,
+            { status: "scheduled", dueAt: now, parkedAt: null },
+            { extras: { action: "queueSoonFromParked" } },
+          );
+          break;
+        }
+        case "dismiss": {
+          this.repos.elements.updateWithin(
+            tx,
+            id,
+            { status: "dismissed", dueAt: null, parkedAt: null },
+            { extras: { action: "dismissParked" } },
+          );
+          break;
+        }
+      }
+    });
+
+    const element = this.repos.elements.findById(id);
+    return { item: element && !element.deletedAt ? this.libraryItemFor(element) : null };
+  }
+
+  private libraryItemFor(element: Element): LibraryItem {
+    // The owning-source provenance + location for the row's refblock (shared
+    // T043 resolver — a source references itself; extract/card reference their
+    // owning source + location anchor).
+    const { sourceTitle, sourceLocationLabel } = this.refMetaForElement(element.id);
+
+    // The load-bearing scheduler chip + due badge — reuse the SAME builders the
+    // inspector + queue use so the chip/due read identically across surfaces. Both
+    // are best-effort: a row that vanished mid-read degrades to a calm attention
+    // "Scheduled" default rather than dropping out of the browse.
+    const inspectorData = this.inspectorQuery.get(element.id);
+    const summary = this.queueQuery.summaryFor(element.id);
+    const linked =
+      element.type === "task"
+        ? (this.repos.tasks.findTask(element.id)?.linkedElement ?? null)
+        : null;
+    const scheduler = inspectorData?.scheduler ?? {
+      kind: "attention" as const,
+      retrievability: null,
+      stability: null,
+      difficulty: null,
+      reps: null,
+      lapses: null,
+      fsrsState: null,
+      stage: element.stage,
+      postponed: 0,
+      lastProcessedAt: element.updatedAt ?? null,
+    };
+
+    return {
+      id: element.id,
+      type: element.type as LibraryItem["type"],
+      title: element.title,
+      priority: element.priority,
+      priorityLabel: priorityToLabel(element.priority),
+      status: element.status,
+      stage: element.stage,
+      concept: this.conceptForElement(element.id),
+      sourceTitle,
+      sourceLocationLabel,
+      dueAt: summary?.dueAt ?? element.dueAt ?? null,
+      parkedAt: element.parkedAt,
+      scheduler,
+      due: summary?.due ?? "soon",
+      dueLabel: summary?.dueLabel ?? "No return scheduled",
+      queueEligible: summary?.queueEligible ?? false,
+      notInQueueReason: summary?.notInQueueReason ?? "Not in queue: summary unavailable",
+      linkedElementId: linked?.id ?? null,
+      linkedElementType: linked?.type ?? null,
+    };
   }
 
   /**
