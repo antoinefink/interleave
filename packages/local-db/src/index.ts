@@ -315,6 +315,11 @@ export {
 } from "./related-service";
 export { type RetentionCardResult, RetentionService } from "./retention-service";
 export {
+  type DismissRetirementSuggestionResult,
+  RetirementSuggestionRepository,
+  type VisibleSourceRetirementSuggestion,
+} from "./retirement-suggestion-repository";
+export {
   type ReviewModeCount,
   type ReviewModeDeck,
   ReviewModeService,
@@ -472,6 +477,8 @@ export interface Repositories {
    * one `batchId`, revalidated before write.
    */
   readonly parkedResurfacing: import("./parked-resurfacing-service").ParkedResurfacingService;
+  /** Dismissible source retirement nudges (T103) — visible signal + op-logged dismissal. */
+  readonly retirementSuggestions: import("./retirement-suggestion-repository").RetirementSuggestionRepository;
   /** The on-device semantic-search vector store (T087) — `sqlite-vec` KNN, NO op-log. */
   readonly embeddings: import("./embedding-repository").EmbeddingRepository;
   /** The FTS+vec fusion layer (T087) — fuses keyword + semantic hits, FTS-only degrade. */
@@ -526,6 +533,7 @@ import { ParkedResurfacingQuery } from "./parked-resurfacing-query";
 import { ParkedResurfacingService } from "./parked-resurfacing-service";
 import { QueueRepository } from "./queue-repository";
 import { RelatedService } from "./related-service";
+import { RetirementSuggestionRepository } from "./retirement-suggestion-repository";
 import { ReviewRepository } from "./review-repository";
 import { SchedulerConsistencyQuery } from "./scheduler-consistency-query";
 import { SearchRepository } from "./search-repository";
@@ -592,6 +600,7 @@ export function createRepositories(
     schedulerConsistency: new SchedulerConsistencyQuery(db),
     parkedResurfacingQuery: new ParkedResurfacingQuery(db),
     parkedResurfacing: new ParkedResurfacingService(db),
+    retirementSuggestions: new RetirementSuggestionRepository(db),
     embeddings,
     semanticSearch: new SemanticSearchRepository(search, embeddings),
     tasks: new TaskService(db),

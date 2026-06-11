@@ -40,6 +40,8 @@ import {
   scheduleNextWeek,
   scheduleTomorrow,
   sourceIntervalDays,
+  sourceRetirementSignalHash,
+  sourceRetirementSuggestion,
 } from "./attention-scheduler";
 import { addDays, MS_PER_DAY } from "./date-util";
 
@@ -312,6 +314,49 @@ describe("nextDueAt (heuristic + action override)", () => {
     expect(ancient.intervalDays).toBe(base.intervalDays);
     expect(recent.dueAt).toBe(base.dueAt);
     expect(ancient.dueAt).toBe(base.dueAt);
+  });
+});
+
+describe("sourceRetirementSuggestion", () => {
+  const deadSource = {
+    sourceId: "src_1",
+    totalBlocks: 4,
+    terminalBlocks: 4,
+    ignoredBlocks: 3,
+    unresolvedBlocks: 0,
+    unresolvedRatio: 0,
+    terminalRatio: 1,
+    ignoredRatio: 0.75,
+    extractedOutputCount: 0,
+  };
+
+  it("returns the low-yield abandon suggestion for mostly ignored no-output sources", () => {
+    expect(sourceRetirementSuggestion(deadSource)).toEqual({
+      kind: "abandon",
+      reason: "mostly_ignored_no_output",
+      reasonLabel: "Mostly ignored blocks, no extracts yet",
+      signalHash: "v1|src_1|abandon|thresholds:terminal>=0.9,ignored>=0.5,output=0|4|4|3|0|0",
+      terminalRatio: 1,
+      ignoredRatio: 0.75,
+      totalBlocks: 4,
+      terminalBlocks: 4,
+      ignoredBlocks: 3,
+      unresolvedBlocks: 0,
+      extractedOutputCount: 0,
+    });
+  });
+
+  it("does not suggest retirement below threshold or when output exists", () => {
+    expect(sourceRetirementSuggestion({ ...deadSource, terminalRatio: 0.89 })).toBeNull();
+    expect(sourceRetirementSuggestion({ ...deadSource, ignoredRatio: 0.49 })).toBeNull();
+    expect(sourceRetirementSuggestion({ ...deadSource, extractedOutputCount: 1 })).toBeNull();
+  });
+
+  it("uses a versioned integer-count hash rather than ratio precision", () => {
+    const baseHash = sourceRetirementSignalHash(deadSource);
+    expect(sourceRetirementSignalHash({ ...deadSource, ignoredRatio: 0.75000001 })).toBe(baseHash);
+    expect(sourceRetirementSignalHash({ ...deadSource, ignoredBlocks: 4 })).not.toBe(baseHash);
+    expect(sourceRetirementSignalHash({ ...deadSource, sourceId: "src_2" })).not.toBe(baseHash);
   });
 });
 

@@ -48,6 +48,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "clean_extract",
       postponed: 0,
+      retirementSuggestion: null,
     },
     sourceTitle: "On the Measure of Intelligence",
     author: "François Chollet",
@@ -81,6 +82,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "active_card",
       postponed: 0,
+      retirementSuggestion: null,
     },
   });
   const extractA = mk({
@@ -2114,6 +2116,7 @@ describe("ProcessQueue", () => {
         lapses: null,
         stage: "rough_topic",
         postponed: 0,
+        retirementSuggestion: null,
       },
       sourceTitle: null,
       author: null,

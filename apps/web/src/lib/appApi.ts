@@ -207,6 +207,8 @@ export interface SchedulerSignals {
    * on the queue/review adapter signals that don't carry yield.
    */
   readonly yield?: SourceYieldSignals | null;
+  /** Dismissible source-retirement suggestion for "done with no yield" sources (T103). */
+  readonly retirementSuggestion?: SourceRetirementSuggestion | null;
 }
 
 /** The per-source yield summary the inspector "yield" chip shows (T083). */
@@ -215,6 +217,21 @@ export interface SourceYieldSignals {
   readonly readPct: number;
   readonly extractsCreated: number;
   readonly cardsCreated: number;
+}
+
+/** A scheduler-derived suggestion that a source has reached an honest exit point (T103). */
+export interface SourceRetirementSuggestion {
+  readonly kind: "abandon";
+  readonly reason: string;
+  readonly reasonLabel: string;
+  readonly signalHash: string;
+  readonly terminalRatio: number;
+  readonly ignoredRatio: number;
+  readonly totalBlocks: number;
+  readonly terminalBlocks: number;
+  readonly ignoredBlocks: number;
+  readonly unresolvedBlocks: number;
+  readonly extractedOutputCount: number;
 }
 
 export interface LineageItem {
@@ -310,6 +327,17 @@ export interface SourcesUpdateReliabilityRequest {
 /** The source's refreshed provenance after a reliability edit (T091). */
 export interface SourcesUpdateReliabilityResult {
   readonly provenance: SourceProvenance;
+}
+
+export interface SourcesDismissRetirementSuggestionRequest {
+  readonly sourceElementId: string;
+  readonly signalHash: string;
+}
+
+export interface SourcesDismissRetirementSuggestionResult {
+  readonly dismissed: boolean;
+  readonly stale: boolean;
+  readonly suggestion: SourceRetirementSuggestion | null;
 }
 
 export interface LocationSummary {
@@ -445,6 +473,8 @@ export interface QueueSchedulerSignals {
   readonly stage: string;
   /** How many times an attention element has been postponed. */
   readonly postponed: number;
+  /** Dismissible source-retirement suggestion for "done with no yield" sources (T103). */
+  readonly retirementSuggestion: SourceRetirementSuggestion | null;
 }
 
 /** How "due" a row is relative to `asOf`. */
@@ -3721,6 +3751,9 @@ export interface AppApi {
     updateReliability(
       request: SourcesUpdateReliabilityRequest,
     ): Promise<SourcesUpdateReliabilityResult>;
+    dismissRetirementSuggestion(
+      request: SourcesDismissRetirementSuggestionRequest,
+    ): Promise<SourcesDismissRetirementSuggestionResult>;
     importUrl(request: SourcesImportUrlRequest): Promise<SourcesImportUrlResult>;
     importPdf(request: SourcesImportPdfRequest): Promise<SourcesImportPdfResult>;
     getPdfData(request: SourcesGetPdfDataRequest): Promise<SourcesGetPdfDataResult>;
@@ -4139,6 +4172,12 @@ export const appApi = {
     request: SourcesUpdateReliabilityRequest,
   ): Promise<SourcesUpdateReliabilityResult> {
     return requireAppApi().sources.updateReliability(request);
+  },
+  /** Hide the current source-retirement suggestion until its signal changes (T103). */
+  dismissSourceRetirementSuggestion(
+    request: SourcesDismissRetirementSuggestionRequest,
+  ): Promise<SourcesDismissRetirementSuggestionResult> {
+    return requireAppApi().sources.dismissRetirementSuggestion(request);
   },
   /** Fetch + clean + snapshot a live URL into an inbox source (T060). */
   importUrlSource(request: SourcesImportUrlRequest): Promise<SourcesImportUrlResult> {

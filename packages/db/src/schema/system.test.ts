@@ -1,6 +1,6 @@
 import { getTableColumns, getTableName } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { assets, operationLog, settings } from "./system";
+import { assets, operationLog, retirementSuggestionDismissals, settings } from "./system";
 
 describe("system schema", () => {
   it("keeps asset vault metadata out of SQLite blob storage", () => {
@@ -36,5 +36,14 @@ describe("system schema", () => {
     ]);
     expect(getTableName(settings)).toBe("settings");
     expect(Object.keys(getTableColumns(settings))).toEqual(["key", "value"]);
+  });
+
+  it("pins retirement-suggestion dismissal memory", () => {
+    expect(getTableName(retirementSuggestionDismissals)).toBe("retirement_suggestion_dismissals");
+    expect(Object.keys(getTableColumns(retirementSuggestionDismissals))).toEqual([
+      "sourceElementId",
+      "signalHash",
+      "dismissedAt",
+    ]);
   });
 });

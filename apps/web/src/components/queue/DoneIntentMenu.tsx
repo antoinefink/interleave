@@ -15,8 +15,10 @@
  * closes on outside-click / Escape, and focuses the default choice on open. It adds a
  * `getSummary` callback so the FAST PATH (0 unresolved → mark done with no popover) lives in
  * one place rather than being re-derived at each site, and a `triggerSignal` so a keyboard
- * shortcut (`d`) can run the exact same click logic. An internal in-flight guard drops a
- * double-submit regardless of the host's busy model.
+ * shortcut (`d`) can run the exact same click logic. `forceOpenSignal` is the proactive-review
+ * path: it opens the surface even for a zero-unresolved source, labels a suggested choice, and
+ * never resolves without an explicit click. An internal in-flight guard drops a double-submit
+ * regardless of the host's busy model.
  *
  * The server gate stays authoritative: "Finished" routes through the host's `onResolved`, which
  * calls `markDone` with the `confirmUnresolvedBlocks` override — this component never decides
@@ -72,6 +74,8 @@ export function DoneIntentMenu({
   busy = false,
   resumeLabel = null,
   triggerSignal,
+  forceOpenSignal,
+  suggestedIntent = null,
   triggerClassName = "doneintent__trigger",
   triggerIcon = "check",
   triggerLabel,
@@ -93,6 +97,13 @@ export function DoneIntentMenu({
   resumeLabel?: string | null;
   /** Increment/change to run the trigger logic from an external shortcut (the `d` key). */
   triggerSignal?: number;
+  /**
+   * Increment/change to force the popover open from a proactive review nudge. Unlike the
+   * normal trigger path, this never fast-path resolves `finished`.
+   */
+  forceOpenSignal?: number;
+  /** Visually and accessibly marks one choice as suggested without changing focus/defaults. */
+  suggestedIntent?: DoneIntent | null;
   triggerClassName?: string;
   triggerIcon?: IconName;
   /** Optional visible label; omit for a compact icon-only trigger. */
@@ -109,13 +120,29 @@ export function DoneIntentMenu({
   const submittingRef = useRef(false);
   const fetchingRef = useRef(false);
   const mountedRef = useRef(true);
+  const busyRef = useRef(busy);
   const triggerSignalRef = useRef(triggerSignal);
+  const forceOpenSignalRef = useRef(forceOpenSignal);
+  const suggestedIntentRef = useRef(suggestedIntent);
+  const forceOpenRequestRef = useRef(0);
 
   useEffect(() => {
     return () => {
       mountedRef.current = false;
+      forceOpenRequestRef.current += 1;
     };
   }, []);
+
+  useEffect(() => {
+    busyRef.current = busy;
+    if (busy) forceOpenRequestRef.current += 1;
+  }, [busy]);
+
+  useEffect(() => {
+    if (suggestedIntentRef.current === suggestedIntent) return;
+    suggestedIntentRef.current = suggestedIntent;
+    forceOpenRequestRef.current += 1;
+  }, [suggestedIntent]);
 
   const handleTrigger = useCallback(async () => {
     // Re-press toggles the popover closed (matches the `d`/click cancel affordance).
@@ -144,12 +171,36 @@ export function DoneIntentMenu({
     }
   }, [open, busy, getSummary, onResolved]);
 
+  const handleForceOpen = useCallback(async () => {
+    const requestId = forceOpenRequestRef.current + 1;
+    forceOpenRequestRef.current = requestId;
+    if (busy || fetchingRef.current || submittingRef.current) return;
+    fetchingRef.current = true;
+    try {
+      const s = await getSummary();
+      if (!mountedRef.current) return;
+      if (forceOpenRequestRef.current !== requestId || busyRef.current) return;
+      if (!s) return;
+      setSummary(s);
+      setOpen(true);
+    } finally {
+      fetchingRef.current = false;
+    }
+  }, [busy, getSummary]);
+
   // External trigger (keyboard `d`): run the SAME click logic (fetch → fast-path or open).
   useEffect(() => {
     if (triggerSignal === undefined || triggerSignalRef.current === triggerSignal) return;
     triggerSignalRef.current = triggerSignal;
     void handleTrigger();
   }, [triggerSignal, handleTrigger]);
+
+  // Proactive review trigger: fetch and open, but never auto-resolve finished.
+  useEffect(() => {
+    if (forceOpenSignal === undefined || forceOpenSignalRef.current === forceOpenSignal) return;
+    forceOpenSignalRef.current = forceOpenSignal;
+    void handleForceOpen();
+  }, [forceOpenSignal, handleForceOpen]);
 
   // Release the in-flight guards once the host's action has settled (`busy` back to
   // false). The fast path resolves WITHOUT opening the popover, so the guard can't rely
@@ -256,7 +307,12 @@ export function DoneIntentMenu({
               >
                 <Icon name={c.icon} size={15} />
                 <span className="doneintent__choice-text">
-                  <span className="doneintent__choice-label">{c.label}</span>
+                  <span className="doneintent__choice-title">
+                    <span className="doneintent__choice-label">{c.label}</span>
+                    {suggestedIntent === c.intent ? (
+                      <span className="doneintent__choice-badge">Suggested</span>
+                    ) : null}
+                  </span>
                   <span className="doneintent__choice-hint">{c.hint}</span>
                 </span>
               </button>

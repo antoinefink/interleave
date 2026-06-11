@@ -22,6 +22,8 @@ import type { BlockId, ElementId, IsoTimestamp } from "@interleave/core";
 import { PRIORITY_LABEL_VALUE } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BlockProcessingService } from "./block-processing-service";
+import { DocumentRepository } from "./document-repository";
 import { createRepositories, type Repositories } from "./index";
 import { QueueQuery } from "./queue-query";
 import { createInMemoryDb } from "./test-db";
@@ -161,6 +163,40 @@ describe("QueueQuery", () => {
     expect(source?.status).toBe("active");
     expect(source?.scheduler).toBe("attention");
     expect(source?.schedulerSignals.kind).toBe("attention");
+  });
+
+  it("decorates visible source rows with a source retirement suggestion", () => {
+    const { element } = repos.sources.createWithDocument({
+      title: "Low-yield source",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "active",
+      stage: "raw_source",
+      body: "First.\n\nSecond.\n\nThird.\n\nFourth.",
+    });
+    repos.elements.reschedule(element.id, iso("2026-05-29T08:00:00.000Z"));
+    const blocks = new DocumentRepository(handle.db)
+      .listBlocks(element.id)
+      .map((block) => block.stableBlockId);
+    const blockProcessing = new BlockProcessingService(handle.db);
+    for (const block of blocks.slice(0, 3)) {
+      blockProcessing.markBlockIgnored({
+        sourceElementId: element.id,
+        stableBlockId: block as BlockId,
+      });
+    }
+    blockProcessing.markBlockProcessed({
+      sourceElementId: element.id,
+      stableBlockId: blocks[3] as BlockId,
+    });
+
+    const row = queue
+      .list({ asOf: NOW, filters: { types: ["source"] } })
+      .items.find((item) => item.id === element.id);
+
+    expect(row?.schedulerSignals.retirementSuggestion).toMatchObject({
+      kind: "abandon",
+      signalHash: expect.stringContaining(`v1|${element.id}|abandon|`),
+    });
   });
 
   it("excludes dismissed, done, and parked sources even when they still have due_at", () => {

@@ -68,6 +68,7 @@ function fakeDbService() {
     applyCatchUp: vi.fn(),
     previewVacation: vi.fn(),
     applyVacation: vi.fn(),
+    dismissRetirementSuggestion: vi.fn(() => ({ dismissed: true, stale: false, suggestion: null })),
     getDailyWorkSummary: vi.fn(() => ({
       asOf: "2026-06-08T09:00:00.000Z",
       dueQueueItems: 0,
@@ -223,6 +224,11 @@ describe("registerIpcHandlers", () => {
       },
       { channel: IPC_CHANNELS.sourcesImportManual, payload: {}, service: "importManualSource" },
       {
+        channel: IPC_CHANNELS.sourcesDismissRetirementSuggestion,
+        payload: { sourceElementId: "src_1", signalHash: "" },
+        service: "dismissRetirementSuggestion",
+      },
+      {
         channel: IPC_CHANNELS.extractionsCreate,
         payload: { sourceElementId: "el_1", selectedText: "", blockIds: [] },
         service: "createExtraction",
@@ -266,6 +272,7 @@ describe("registerIpcHandlers", () => {
       "previewVacation",
       "applyVacation",
       "importManualSource",
+      "dismissRetirementSuggestion",
       "createExtraction",
       "updateCard",
       "reviewGrade",
@@ -365,6 +372,15 @@ describe("registerIpcHandlers", () => {
 
     electron.handlers.get(IPC_CHANNELS.sourcesImportManual)?.({}, { title: "From test" });
     expect(db.importManualSource).toHaveBeenCalledWith({ title: "From test" });
+
+    electron.handlers.get(IPC_CHANNELS.sourcesDismissRetirementSuggestion)?.(
+      {},
+      { sourceElementId: "src_1", signalHash: "hash-1" },
+    );
+    expect(db.dismissRetirementSuggestion).toHaveBeenCalledWith({
+      sourceElementId: "src_1",
+      signalHash: "hash-1",
+    });
 
     electron.handlers.get(IPC_CHANNELS.extractionsCreate)?.(
       {},

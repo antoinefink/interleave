@@ -1,5 +1,5 @@
 import type { SourceBlockProcessingState } from "@interleave/core";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SourceBlockProcessingSummaryPayload } from "../../lib/appApi";
 import { DoneIntentMenu } from "./DoneIntentMenu";
@@ -58,6 +58,53 @@ describe("DoneIntentMenu", () => {
     await waitFor(() => expect(onResolved).toHaveBeenCalledWith("finished"));
     expect(onResolved).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId("done-intent-pop")).toBeNull();
+  });
+
+  it("forced open: 0 unresolved opens the popover without resolving", async () => {
+    const onResolved = vi.fn();
+    const getSummary = vi.fn().mockResolvedValue(summary({ canMarkDoneWithoutConfirmation: true }));
+    const { rerender } = render(
+      <DoneIntentMenu getSummary={getSummary} onResolved={onResolved} forceOpenSignal={0} />,
+    );
+
+    rerender(
+      <DoneIntentMenu getSummary={getSummary} onResolved={onResolved} forceOpenSignal={1} />,
+    );
+
+    expect(await screen.findByTestId("done-intent-pop")).not.toBeNull();
+    expect(onResolved).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByTestId("done-intent-later")),
+    );
+  });
+
+  it("labels suggested Abandon without making it the initial focus", async () => {
+    const getSummary = vi.fn().mockResolvedValue(UNRESOLVED);
+    const { rerender } = render(
+      <DoneIntentMenu
+        getSummary={getSummary}
+        onResolved={vi.fn()}
+        forceOpenSignal={0}
+        suggestedIntent="abandon"
+      />,
+    );
+
+    rerender(
+      <DoneIntentMenu
+        getSummary={getSummary}
+        onResolved={vi.fn()}
+        forceOpenSignal={1}
+        suggestedIntent="abandon"
+      />,
+    );
+
+    await screen.findByTestId("done-intent-pop");
+    const abandon = screen.getByRole("button", { name: /Abandon\s+Suggested/i });
+    expect(abandon).toBe(screen.getByTestId("done-intent-abandon"));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByTestId("done-intent-later")),
+    );
+    expect(document.activeElement).not.toBe(abandon);
   });
 
   it("opens a non-modal popover with focus on Return later, the breakdown, and the resume line", async () => {
@@ -152,6 +199,69 @@ describe("DoneIntentMenu", () => {
     rerender(<DoneIntentMenu getSummary={getSummary} onResolved={vi.fn()} triggerSignal={1} />);
     await screen.findByTestId("done-intent-pop");
     expect(getSummary).toHaveBeenCalledTimes(1);
+  });
+
+  it("guards repeated forced-open activation while the summary read is in flight", async () => {
+    let resolveSummary: (value: SourceBlockProcessingSummaryPayload) => void = () => {};
+    const getSummary = vi.fn(
+      () =>
+        new Promise<SourceBlockProcessingSummaryPayload>((resolve) => {
+          resolveSummary = resolve;
+        }),
+    );
+    const { rerender } = render(
+      <DoneIntentMenu getSummary={getSummary} onResolved={vi.fn()} forceOpenSignal={0} />,
+    );
+
+    rerender(<DoneIntentMenu getSummary={getSummary} onResolved={vi.fn()} forceOpenSignal={1} />);
+    rerender(<DoneIntentMenu getSummary={getSummary} onResolved={vi.fn()} forceOpenSignal={1} />);
+
+    expect(getSummary).toHaveBeenCalledTimes(1);
+    resolveSummary(UNRESOLVED);
+    await screen.findByTestId("done-intent-pop");
+  });
+
+  it("ignores a stale forced-open summary read after the host becomes busy", async () => {
+    let resolveSummary: (value: SourceBlockProcessingSummaryPayload) => void = () => {};
+    const getSummary = vi.fn(
+      () =>
+        new Promise<SourceBlockProcessingSummaryPayload>((resolve) => {
+          resolveSummary = resolve;
+        }),
+    );
+    const onResolved = vi.fn();
+    const { rerender } = render(
+      <DoneIntentMenu
+        getSummary={getSummary}
+        onResolved={onResolved}
+        forceOpenSignal={0}
+        suggestedIntent="abandon"
+      />,
+    );
+
+    rerender(
+      <DoneIntentMenu
+        getSummary={getSummary}
+        onResolved={onResolved}
+        forceOpenSignal={1}
+        suggestedIntent="abandon"
+      />,
+    );
+    await waitFor(() => expect(getSummary).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <DoneIntentMenu
+        getSummary={getSummary}
+        onResolved={onResolved}
+        forceOpenSignal={1}
+        suggestedIntent="abandon"
+        busy
+      />,
+    );
+    await act(async () => resolveSummary(UNRESOLVED));
+
+    expect(screen.queryByTestId("done-intent-pop")).toBeNull();
+    expect(onResolved).not.toHaveBeenCalled();
   });
 
   it("releases the in-flight guard after the host settles so a fast-path retry works", async () => {

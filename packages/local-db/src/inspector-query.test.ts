@@ -19,7 +19,9 @@
 import type { BlockId } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BlockProcessingService } from "./block-processing-service";
 import { CardEditService } from "./card-edit-service";
+import { DocumentRepository } from "./document-repository";
 import { createRepositories, type Repositories } from "./index";
 import { InspectorQuery, schedulerKindForType } from "./inspector-query";
 import { createInMemoryDb } from "./test-db";
@@ -229,6 +231,35 @@ describe("InspectorQuery.get — attention scheduler", () => {
     expect(data.scheduler.yield?.extractsCreated).toBe(1);
     expect(data.scheduler.yield?.cardsCreated).toBe(1);
     expect(data.scheduler.yield?.readPct).toBe(0);
+  });
+
+  it("surfaces a source retirement suggestion on source inspector scheduler signals", () => {
+    const { element } = repos.sources.createWithDocument({
+      title: "Low-yield source",
+      priority: 0.5,
+      status: "active",
+      stage: "raw_source",
+      body: "First.\n\nSecond.\n\nThird.\n\nFourth.",
+    });
+    const blocks = new DocumentRepository(handle.db)
+      .listBlocks(element.id)
+      .map((block) => block.stableBlockId);
+    const blockProcessing = new BlockProcessingService(handle.db);
+    for (const block of blocks.slice(0, 3)) {
+      blockProcessing.markBlockIgnored({
+        sourceElementId: element.id,
+        stableBlockId: block as BlockId,
+      });
+    }
+    blockProcessing.markBlockProcessed({
+      sourceElementId: element.id,
+      stableBlockId: blocks[3] as BlockId,
+    });
+
+    expect(inspector.get(element.id)?.scheduler.retirementSuggestion).toMatchObject({
+      kind: "abandon",
+      signalHash: expect.stringContaining(`v1|${element.id}|abandon|`),
+    });
   });
 
   it("shows the extract's tag, parent source, and FSRS-free attention chip", () => {

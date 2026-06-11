@@ -118,6 +118,7 @@ import type {
   SettingsUpdateManyRequest,
   SettingsUpdateRequest,
   SourcesAcceptOcrRequest,
+  SourcesDismissRetirementSuggestionRequest,
   SourcesExtractClipRequest,
   SourcesExtractRegionRequest,
   SourcesGetMediaDataRequest,
@@ -207,6 +208,8 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.sourcesImportManual, request),
     updateReliability: (request: SourcesUpdateReliabilityRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.sourcesUpdateReliability, request),
+    dismissRetirementSuggestion: (request: SourcesDismissRetirementSuggestionRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.sourcesDismissRetirementSuggestion, request),
     importUrl: (request: SourcesImportUrlRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.sourcesImportUrl, request),
     importPdf: (request: SourcesImportPdfRequest) =>

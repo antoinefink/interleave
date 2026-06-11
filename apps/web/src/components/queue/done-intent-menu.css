@@ -130,9 +130,26 @@
   flex-direction: column;
   min-width: 0;
 }
+.doneintent__choice-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
 .doneintent__choice-label {
   font-size: var(--t-sm);
   font-weight: 500;
+  line-height: 1.2;
+}
+.doneintent__choice-badge {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: var(--r-full);
+  border: 1px solid var(--accent-soft-bd);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: var(--t-2xs);
+  font-weight: 600;
   line-height: 1.2;
 }
 .doneintent__choice-hint {

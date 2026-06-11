@@ -132,6 +132,7 @@ import {
   SettingsUpdateManyRequestSchema,
   SettingsUpdateRequestSchema,
   SourcesAcceptOcrRequestSchema,
+  SourcesDismissRetirementSuggestionRequestSchema,
   SourcesExtractClipRequestSchemaRefined,
   SourcesExtractRegionRequestSchema,
   SourcesGetMediaDataRequestSchema,
@@ -353,6 +354,11 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.sourcesUpdateReliability, (_event, rawRequest: unknown) => {
     const request = SourcesUpdateReliabilityRequestSchema.parse(rawRequest);
     return dbService.updateSourceReliability(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.sourcesDismissRetirementSuggestion, (_event, rawRequest: unknown) => {
+    const request = SourcesDismissRetirementSuggestionRequestSchema.parse(rawRequest);
+    return dbService.dismissRetirementSuggestion(request);
   });
 
   // URL import (T060/T058) — the renderer enqueues a `url_import` job; the

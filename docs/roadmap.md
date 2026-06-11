@@ -387,8 +387,9 @@ Detailed specs: [`tasks/M21-honest-exits.md`](./tasks/M21-honest-exits.md)
   Done when: the inbox "Save for later" verb writes a distinct parked state — today `keepForLater` writes `status: "dismissed"`, the same terminal status as Abandon, unreachable by any routing — and parked items are visible/filterable in the library with their parked date, still excluded from inbox/queue/daily-work, distinguishable from dismissed in data and UI, op-logged and undoable.
 - [x] **T102 — Parked resurfacing sweep** · _deps: T101_
   Done when: parked items resurface on a schedule (default ~90 days) in a calm review surface offering keep-parked / schedule / let-go per item, with bulk apply and single-batch undo — "later" provably means later, not never.
-- [ ] **T103 — Proactive Done: surface `retirementSuggestion`** · _deps: T028, T083_
+- [x] **T103 — Proactive Done: surface `retirementSuggestion`** · _deps: T028, T083_
   Done when: the scheduler's already-computed `retirementSuggestion` (threaded through `SchedulerService`, currently consumed by nothing in `apps/web`) surfaces as a calm nudge on queue rows and in the reader — one tap into the existing DoneIntentMenu with Finished/Abandon prefilled — server-authoritative, dismissible, and dismissals remembered.
+  Completed in the T103 final commit. Verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm e2e tests/electron/done-intent.spec.ts`.
 - [ ] **T104 — Value model v2: honorable non-card fates** · _deps: T024, T084, T095_
   Done when: extracts can terminate as reference / synthesized / done-without-card (distinct states, not delete), `synthesis_note` lineage counts as productive output in source-yield, and the stagnation detector, T084 suggestions, and analytics all respect the new fates — synthesis-driven reading stops being scored as failure. Prerequisite for every yield-keyed behavior (T112, T121).
 

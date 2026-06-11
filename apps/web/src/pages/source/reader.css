@@ -434,6 +434,53 @@ mark.extracted {
   background: var(--surface-2);
   border-color: var(--text-3);
 }
+
+.reader-retirement {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.reader-retirement__review,
+.reader-retirement__dismiss {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  border: 1px solid var(--accent-soft-bd);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  cursor: pointer;
+  transition:
+    background var(--fast) var(--ease),
+    border-color var(--fast) var(--ease);
+}
+
+.reader-retirement__review {
+  gap: var(--s-2);
+  padding: 0 var(--s-4);
+  border-radius: var(--r-md) var(--r-sm) var(--r-sm) var(--r-md);
+  font-family: var(--font-ui);
+  font-size: var(--t-sm);
+  font-weight: 600;
+}
+
+.reader-retirement__dismiss {
+  width: 30px;
+  border-radius: var(--r-sm) var(--r-md) var(--r-md) var(--r-sm);
+}
+
+.reader-retirement__review:hover,
+.reader-retirement__dismiss:hover {
+  background: color-mix(in oklch, var(--accent-soft) 72%, var(--accent) 28%);
+  border-color: var(--accent);
+}
+
+.reader-retirement__review:disabled,
+.reader-retirement__dismiss:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
 .reader-btn:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);

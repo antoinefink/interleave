@@ -39,12 +39,18 @@ export {
   type ScheduleChoice,
   type ScheduleDecision,
   type SchedulerAction,
+  type SourceProcessingSignals,
+  type SourceRetirementSuggestion,
+  type SourceRetirementSuggestionInput,
+  type SourceRetirementSuggestionKind,
   scheduleForChoice,
   scheduleManual,
   scheduleNextMonth,
   scheduleNextWeek,
   scheduleTomorrow,
   sourceIntervalDays,
+  sourceRetirementSignalHash,
+  sourceRetirementSuggestion,
 } from "./attention-scheduler";
 export {
   type AutoPostponeInput,

@@ -43,6 +43,7 @@ describe("local-db repository factory", () => {
       "schedulerConsistency",
       "parkedResurfacingQuery",
       "parkedResurfacing",
+      "retirementSuggestions",
       "embeddings",
       "semanticSearch",
       "tasks",

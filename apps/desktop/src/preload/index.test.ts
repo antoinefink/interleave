@@ -60,6 +60,15 @@ describe("preload bridge", () => {
       priority: "B",
     });
 
+    await api().sources.dismissRetirementSuggestion({
+      sourceElementId: "src-1",
+      signalHash: "hash-1",
+    });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(
+      IPC_CHANNELS.sourcesDismissRetirementSuggestion,
+      { sourceElementId: "src-1", signalHash: "hash-1" },
+    );
+
     await api().cards.delete({ cardId: "card-1" });
     expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.cardsDelete, {
       cardId: "card-1",

@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   select: vi.fn(),
   getInspectorData: vi.fn(),
   actOnQueueItem: vi.fn(),
+  dismissSourceRetirementSuggestion: vi.fn(),
   scheduleQueueItem: vi.fn(),
   setElementPriority: vi.fn(),
   createExtraction: vi.fn(),
@@ -154,6 +155,7 @@ vi.mock("../../lib/appApi", async () => {
     appApi: {
       getInspectorData: h.getInspectorData,
       actOnQueueItem: h.actOnQueueItem,
+      dismissSourceRetirementSuggestion: h.dismissSourceRetirementSuggestion,
       scheduleQueueItem: h.scheduleQueueItem,
       setElementPriority: h.setElementPriority,
       createExtraction: h.createExtraction,
@@ -282,6 +284,7 @@ const inspectorData = {
     dueAt: "2026-06-10T00:00:00.000Z",
     lastProcessedAt: "2026-06-01T00:00:00.000Z",
     intervalDays: 7,
+    retirementSuggestion: null,
   },
 };
 
@@ -338,6 +341,7 @@ beforeEach(() => {
   h.select.mockReset();
   h.getInspectorData.mockReset();
   h.actOnQueueItem.mockReset();
+  h.dismissSourceRetirementSuggestion.mockReset();
   h.scheduleQueueItem.mockReset();
   h.setElementPriority.mockReset();
   h.createExtraction.mockReset();
@@ -408,6 +412,11 @@ beforeEach(() => {
   h.selectionState.dismiss.mockReset();
   h.getInspectorData.mockResolvedValue({ data: inspectorData });
   h.actOnQueueItem.mockResolvedValue({});
+  h.dismissSourceRetirementSuggestion.mockResolvedValue({
+    dismissed: true,
+    stale: false,
+    suggestion: null,
+  });
   h.scheduleQueueItem.mockResolvedValue({
     item: null,
     dueAt: "2026-06-09T00:00:00.000Z",
@@ -648,6 +657,59 @@ describe("SourceReader", () => {
     expect(h.actOnQueueItem).not.toHaveBeenCalled();
     expect(confirm).not.toHaveBeenCalled();
     confirm.mockRestore();
+  });
+
+  it("surfaces a proactive done nudge from the source retirement suggestion", async () => {
+    const initialInspector = {
+      data: {
+        ...inspectorData,
+        scheduler: {
+          ...inspectorData.scheduler,
+          retirementSuggestion: {
+            kind: "abandon" as const,
+            reason: "mostly_ignored_no_output",
+            reasonLabel: "Mostly ignored blocks, no extracts yet",
+            signalHash: "hash-retire-reader",
+            terminalRatio: 1,
+            ignoredRatio: 0.75,
+            totalBlocks: 4,
+            terminalBlocks: 4,
+            ignoredBlocks: 3,
+            unresolvedBlocks: 0,
+            extractedOutputCount: 0,
+          },
+        },
+      },
+    };
+    h.getInspectorData.mockResolvedValue({
+      data: {
+        ...inspectorData,
+        scheduler: {
+          ...inspectorData.scheduler,
+          retirementSuggestion: null,
+        },
+      },
+    });
+    h.getInspectorData.mockResolvedValueOnce(initialInspector);
+    const { getByTestId, queryByTestId, findByTestId } = render(<SourceReader />);
+    await findByTestId("mock-source-editor");
+
+    fireEvent.click(getByTestId("reader-retirement-review"));
+
+    await findByTestId("done-intent-pop");
+    expect(getByTestId("done-intent-abandon")).toHaveTextContent("Suggested");
+    expect(h.actOnQueueItem).not.toHaveBeenCalled();
+
+    fireEvent.click(getByTestId("reader-retirement-dismiss"));
+    await waitFor(() =>
+      expect(h.dismissSourceRetirementSuggestion).toHaveBeenCalledWith({
+        sourceElementId: "src-1",
+        signalHash: "hash-retire-reader",
+      }),
+    );
+    await waitFor(() => expect(h.getInspectorData).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(queryByTestId("reader-retirement-suggestion")).toBeNull());
+    expect(getByTestId("reader-flash")).toHaveTextContent("Suggestion dismissed");
   });
 
   it("Finished marks the source done with the confirm override and navigates to /queue", async () => {

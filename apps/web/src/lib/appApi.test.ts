@@ -48,6 +48,7 @@ function installAppApi(overrides: Partial<AppApi> = {}): AppApi {
     },
     sources: {
       importManual: vi.fn(async (request: unknown) => request),
+      dismissRetirementSuggestion: vi.fn(async (request: unknown) => request),
       importUrl: vi.fn(async (request: unknown) => request),
       getRegionImage: vi.fn(async (request: unknown) => request),
     },
@@ -257,6 +258,15 @@ describe("renderer appApi wrapper", () => {
 
     await appApi.listQueue({ types: ["card"] });
     expect(bridge.queue.list).toHaveBeenCalledWith({ types: ["card"] });
+
+    await appApi.dismissSourceRetirementSuggestion({
+      sourceElementId: "src-1",
+      signalHash: "hash-1",
+    });
+    expect(bridge.sources.dismissRetirementSuggestion).toHaveBeenCalledWith({
+      sourceElementId: "src-1",
+      signalHash: "hash-1",
+    });
 
     await appApi.getDailyWorkSummary({ asOf: "2026-06-08T09:00:00.000Z" });
     expect(bridge.dailyWork.summary).toHaveBeenCalledWith({

@@ -33,6 +33,7 @@ import type {
   SourceType,
 } from "@interleave/core";
 import { deriveExpiryStatus, priorityToLabel } from "@interleave/core";
+import type { SourceRetirementSuggestion } from "@interleave/scheduler";
 import { cardRowToLifetime } from "./card-edit-service";
 import type { Repositories } from "./index";
 import { resolveSourceRef } from "./source-ref-query";
@@ -71,6 +72,8 @@ export interface SchedulerSignals {
    * items (extracts/topics/tasks) and for cards (the FSRS branch). Read-only.
    */
   readonly yield: SourceYieldSignals | null;
+  /** Source-only proactive Done/Abandon suggestion (T103); null for other elements. */
+  readonly retirementSuggestion: SourceRetirementSuggestion | null;
 }
 
 /** The per-source yield summary the inspector chip shows (T083). */
@@ -354,6 +357,7 @@ export class InspectorQuery {
         lastProcessedAt: state?.lastReviewedAt ?? null,
         // Yield is a SOURCE concern; a card's panel shows FSRS stats instead.
         yield: null,
+        retirementSuggestion: null,
       };
       if (state) {
         reviewSummary = {
@@ -398,6 +402,10 @@ export class InspectorQuery {
         postponed: this.countPostpones(id),
         lastProcessedAt: element.updatedAt,
         yield: sourceYield,
+        retirementSuggestion:
+          element.type === "source"
+            ? this.repos.retirementSuggestions.visibleForSource(element.id)
+            : null,
       };
     }
 

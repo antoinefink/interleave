@@ -194,7 +194,10 @@ export function SourceReader() {
   const [inspector, setInspector] = useState<InspectorData | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [exitActionBusy, setExitActionBusy] = useState(false);
+  const [retirementReviewSignal, setRetirementReviewSignal] = useState(0);
   const exitActionBusyRef = useRef(false);
+  const mountedRef = useRef(true);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // PDF reading mode (T064): the active page N of M, shown in the rail.
   const [pdfPage, setPdfPage] = useState<{ page: number; total: number }>({ page: 1, total: 0 });
   // The live Tiptap editor instance (for read-point capture/jump + decoration).
@@ -251,6 +254,16 @@ export function SourceReader() {
     if (instance === null) jumpedRef.current = false;
   }, []);
 
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+      if (flashTimerRef.current) {
+        clearTimeout(flashTimerRef.current);
+        flashTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // Reset the jump latch whenever the document reloads.
   // biome-ignore lint/correctness/useExhaustiveDependencies: re-arm on (re)load
   useEffect(() => {
@@ -258,8 +271,14 @@ export function SourceReader() {
   }, [editorKey]);
 
   const toast = useCallback((message: string) => {
+    if (!mountedRef.current) return;
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
     setFlash(message);
-    setTimeout(() => setFlash(null), 1600);
+    flashTimerRef.current = setTimeout(() => {
+      if (!mountedRef.current) return;
+      setFlash(null);
+      flashTimerRef.current = null;
+    }, 1600);
   }, []);
 
   const withExitAction = useCallback(
@@ -271,7 +290,7 @@ export function SourceReader() {
         await action();
       } finally {
         exitActionBusyRef.current = false;
-        setExitActionBusy(false);
+        if (mountedRef.current) setExitActionBusy(false);
       }
     },
     [desktop],
@@ -527,7 +546,7 @@ export function SourceReader() {
     requestInspectorRefresh();
     try {
       const res = await appApi.getInspectorData({ id });
-      setInspector(res.data);
+      if (mountedRef.current) setInspector(res.data);
     } catch {
       /* best effort; the shell inspector will still refresh independently */
     }
@@ -592,6 +611,29 @@ export function SourceReader() {
     },
     [id, navigate, refreshSourceInspector, toast, withExitAction],
   );
+
+  const onDismissRetirementSuggestion = useCallback(async () => {
+    const suggestion = inspector?.scheduler.retirementSuggestion;
+    if (!suggestion) return;
+    await withExitAction(async () => {
+      try {
+        const result = await appApi.dismissSourceRetirementSuggestion({
+          sourceElementId: id,
+          signalHash: suggestion.signalHash,
+        });
+        await refreshSourceInspector();
+        toast(result.stale ? "Source changed; refreshed suggestion" : "Suggestion dismissed");
+      } catch {
+        toast("Could not dismiss suggestion");
+      }
+    });
+  }, [
+    id,
+    inspector?.scheduler.retirementSuggestion,
+    refreshSourceInspector,
+    toast,
+    withExitAction,
+  ]);
 
   const onLowerPriority = useCallback(async () => {
     await withExitAction(async () => {
@@ -684,8 +726,32 @@ export function SourceReader() {
   const doneResumeLabel = rp.readPoint
     ? resumeLabel(Math.min(progress.index + 1, progress.total), progress.total)
     : null;
+  const retirementSuggestion = inspector?.scheduler.retirementSuggestion ?? null;
   const sourceWorkflowActions = (
     <>
+      {retirementSuggestion ? (
+        <span className="reader-retirement" data-testid="reader-retirement-suggestion">
+          <button
+            type="button"
+            className="reader-retirement__review"
+            disabled={exitActionBusy}
+            data-testid="reader-retirement-review"
+            onClick={() => setRetirementReviewSignal((value) => value + 1)}
+          >
+            <Icon name="warning" size={13} /> Done?
+          </button>
+          <button
+            type="button"
+            className="reader-retirement__dismiss"
+            disabled={exitActionBusy}
+            aria-label="Dismiss done suggestion"
+            data-testid="reader-retirement-dismiss"
+            onClick={() => void onDismissRetirementSuggestion()}
+          >
+            <Icon name="x" size={12} />
+          </button>
+        </span>
+      ) : null}
       <ScheduleMenu
         disabled={exitActionBusy}
         onSchedule={(choice) => void onScheduleReturn(choice)}
@@ -707,6 +773,8 @@ export function SourceReader() {
         triggerTestId="reader-mark-done"
         tooltipLabel="Mark source done"
         triggerAriaLabel="Mark source done"
+        forceOpenSignal={retirementReviewSignal}
+        suggestedIntent={retirementSuggestion?.kind ?? null}
       />
       <button
         type="button"
@@ -985,7 +1053,10 @@ export function SourceReader() {
                 processingFilter={processingFilter}
                 hideIgnored={hideIgnored}
                 revision={processedRevision}
-                onToggled={(result) => toast(result === "marked" ? "Marked processed" : "Restored")}
+                onToggled={(result) => {
+                  void refreshSourceInspector();
+                  toast(result === "marked" ? "Marked processed" : "Restored");
+                }}
                 onToggleFailed={() => toast("Could not update processed mark")}
               />
             </>

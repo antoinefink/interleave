@@ -36,7 +36,11 @@ import type {
   SiblingGroupId,
 } from "@interleave/core";
 import { priorityToLabel } from "@interleave/core";
-import { type SessionMode, scoreQueueItems } from "@interleave/scheduler";
+import {
+  type SessionMode,
+  type SourceRetirementSuggestion,
+  scoreQueueItems,
+} from "@interleave/scheduler";
 import type { Repositories } from "./index";
 import { isQueueActionableStatus } from "./queue-repository";
 
@@ -72,6 +76,8 @@ export interface QueueSchedulerSignals {
   readonly stage: string;
   /** How many times an attention element has been postponed. */
   readonly postponed: number;
+  /** Source-only proactive Done/Abandon suggestion (T103); null for other rows. */
+  readonly retirementSuggestion: SourceRetirementSuggestion | null;
 }
 
 /** How "due" a row is relative to `asOf`. */
@@ -597,6 +603,7 @@ export class QueueQuery {
         lapses: state?.lapses ?? null,
         stage: element.stage,
         postponed: 0,
+        retirementSuggestion: null,
       },
       sourceTitle: ctx ? ctx.sourceTitle : null,
       author: ctx ? ctx.author : null,
@@ -660,6 +667,10 @@ export class QueueQuery {
         lapses: null,
         stage: element.stage,
         postponed: batch ? 0 : this.countPostpones(element.id),
+        retirementSuggestion:
+          !batch && element.type === "source"
+            ? this.repos.retirementSuggestions.visibleForSource(element.id)
+            : null,
       },
       sourceTitle: ctx ? ctx.sourceTitle : null,
       author: ctx ? ctx.author : null,
@@ -707,6 +718,10 @@ export class QueueQuery {
       schedulerSignals: {
         ...row.schedulerSignals,
         postponed: this.countPostpones(row.id as ElementId),
+        retirementSuggestion:
+          element.type === "source"
+            ? this.repos.retirementSuggestions.visibleForSource(element.id)
+            : null,
       },
     };
   }

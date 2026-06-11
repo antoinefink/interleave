@@ -120,6 +120,70 @@ async function scheduleDueNow(page: Page, id: string): Promise<void> {
   );
 }
 
+async function createRetirementCandidate(page: Page): Promise<string> {
+  return page.evaluate(async () => {
+    const api = window.appApi as unknown as {
+      sources: {
+        importManual(req: {
+          title: string;
+          body: string;
+          priority: "A" | "B" | "C" | "D";
+        }): Promise<{ id: string }>;
+      };
+      inbox: {
+        triage(req: { id: string; action: { kind: "accept" } }): Promise<unknown>;
+      };
+      queue: {
+        schedule(req: { id: string; choice: { kind: "manual"; date: string } }): Promise<unknown>;
+      };
+      blockProcessing: {
+        list(req: { sourceElementId: string }): Promise<{ blocks: { stableBlockId: string }[] }>;
+        markIgnored(req: { sourceElementId: string; stableBlockId: string }): Promise<unknown>;
+        markProcessed(req: { sourceElementId: string; stableBlockId: string }): Promise<unknown>;
+      };
+      inspector: {
+        get(req: { id: string }): Promise<{
+          data: {
+            scheduler: { retirementSuggestion: { signalHash: string } | null };
+          } | null;
+        }>;
+      };
+    };
+    const { id } = await api.sources.importManual({
+      title: "Retirement suggestion candidate",
+      body: [
+        "Introductory paragraph with no useful extract.",
+        "Second paragraph that can be safely ignored.",
+        "Third paragraph already checked without output.",
+        "Fourth paragraph already checked without output.",
+      ].join("\n\n"),
+      priority: "C",
+    });
+    await api.inbox.triage({ id, action: { kind: "accept" } });
+    const { blocks } = await api.blockProcessing.list({ sourceElementId: id });
+    if (blocks.length !== 4) throw new Error(`expected 4 blocks, got ${blocks.length}`);
+    for (const block of blocks.slice(0, 2)) {
+      await api.blockProcessing.markIgnored({
+        sourceElementId: id,
+        stableBlockId: block.stableBlockId,
+      });
+    }
+    for (const block of blocks.slice(2)) {
+      await api.blockProcessing.markProcessed({
+        sourceElementId: id,
+        stableBlockId: block.stableBlockId,
+      });
+    }
+    const suggestion = (await api.inspector.get({ id })).data?.scheduler.retirementSuggestion;
+    if (!suggestion) throw new Error("expected retirement suggestion");
+    await api.queue.schedule({
+      id,
+      choice: { kind: "manual", date: "2027-05-30T12:00:00.000Z" },
+    });
+    return id;
+  });
+}
+
 async function openReader(page: Page, id: string): Promise<void> {
   await page.goto(`${baseUrl}/source/${id}`);
   await page.waitForLoadState("domcontentloaded");
@@ -215,6 +279,77 @@ test("Return later reschedules the source and its read-point survives a restart"
   const restored = await inspect(page, id);
   expect(restored?.status === "done" || restored?.status === "dismissed").toBe(false);
   expect(restored?.dueAt).not.toBeNull();
+  await app.close();
+});
+
+test("proactive retirement suggestion opens Abandon and can be dismissed", async () => {
+  const dir = makeDataDir();
+  let app = await launchApp(dir, { seedOnEmpty: true });
+  let page = await app.firstWindow();
+  await captureBaseUrl(page);
+
+  const id = await createRetirementCandidate(page);
+
+  await openReader(page, id);
+  await expect(page.getByTestId("reader-retirement-suggestion")).toBeVisible();
+  await page.getByTestId("reader-retirement-review").click();
+  await expect(page.getByTestId("done-intent-pop")).toBeVisible();
+  await expect(page.getByTestId("done-intent-abandon")).toContainText("Suggested");
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("done-intent-pop")).toHaveCount(0);
+
+  await page.goto(`${baseUrl}/queue?asOf=${encodeURIComponent(AS_OF)}`);
+  await page.waitForLoadState("domcontentloaded");
+  const row = page.locator(`[data-testid="queue-item"][data-element-id="${id}"]`);
+  await expect(row).toBeVisible();
+  await expect(row.getByTestId("queue-retirement-suggestion")).toBeVisible();
+  await row.getByTestId("queue-retirement-review").click();
+  await expect(page.getByTestId("done-intent-abandon")).toContainText("Suggested");
+  await page.keyboard.press("Escape");
+
+  await row.getByTestId("queue-retirement-dismiss").click();
+  await expect(row.getByTestId("queue-retirement-suggestion")).toHaveCount(0);
+  await page.reload();
+  await expect(row.getByTestId("queue-retirement-suggestion")).toHaveCount(0);
+
+  const suggestionAfterDismiss = await page.evaluate(async (sourceId) => {
+    const api = window.appApi as unknown as {
+      inspector: {
+        get(req: { id: string }): Promise<{
+          data: {
+            scheduler: { retirementSuggestion: { signalHash: string } | null };
+          } | null;
+        }>;
+      };
+    };
+    return (await api.inspector.get({ id: sourceId })).data?.scheduler.retirementSuggestion ?? null;
+  }, id);
+  expect(suggestionAfterDismiss).toBeNull();
+
+  await app.close();
+
+  app = await launchApp(dir);
+  page = await app.firstWindow();
+  await captureBaseUrl(page);
+  await page.goto(`${baseUrl}/queue?asOf=${encodeURIComponent(AS_OF)}`);
+  await page.waitForLoadState("domcontentloaded");
+  const restartedRow = page.locator(`[data-testid="queue-item"][data-element-id="${id}"]`);
+  await expect(restartedRow).toBeVisible();
+  await expect(restartedRow.getByTestId("queue-retirement-suggestion")).toHaveCount(0);
+  const suggestionAfterRestart = await page.evaluate(async (sourceId) => {
+    const api = window.appApi as unknown as {
+      inspector: {
+        get(req: { id: string }): Promise<{
+          data: {
+            scheduler: { retirementSuggestion: { signalHash: string } | null };
+          } | null;
+        }>;
+      };
+    };
+    return (await api.inspector.get({ id: sourceId })).data?.scheduler.retirementSuggestion ?? null;
+  }, id);
+  expect(suggestionAfterRestart).toBeNull();
+
   await app.close();
 });
 

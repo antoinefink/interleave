@@ -84,9 +84,24 @@ export const settings = sqliteTable("settings", {
   value: text("value").notNull(),
 });
 
+export const retirementSuggestionDismissals = sqliteTable(
+  "retirement_suggestion_dismissals",
+  {
+    sourceElementId: text("source_element_id")
+      .primaryKey()
+      .references(() => elements.id, { onDelete: "cascade" }),
+    signalHash: text("signal_hash").notNull(),
+    dismissedAt: text("dismissed_at").notNull(),
+  },
+  (table) => [index("retirement_suggestion_dismissals_hash_idx").on(table.signalHash)],
+);
+
 export type AssetRow = typeof assets.$inferSelect;
 export type NewAssetRow = typeof assets.$inferInsert;
 export type OperationLogRow = typeof operationLog.$inferSelect;
 export type NewOperationLogRow = typeof operationLog.$inferInsert;
 export type SettingRow = typeof settings.$inferSelect;
 export type NewSettingRow = typeof settings.$inferInsert;
+export type RetirementSuggestionDismissalRow = typeof retirementSuggestionDismissals.$inferSelect;
+export type NewRetirementSuggestionDismissalRow =
+  typeof retirementSuggestionDismissals.$inferInsert;

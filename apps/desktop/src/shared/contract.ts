@@ -332,6 +332,8 @@ export interface SchedulerSignals {
    * adapter signals that don't carry yield.
    */
   readonly yield?: SourceYieldSignals | null;
+  /** Dismissible source-retirement suggestion for "done with no yield" sources (T103). */
+  readonly retirementSuggestion?: SourceRetirementSuggestion | null;
 }
 
 /** The per-source yield summary the inspector "yield" chip shows (T083). */
@@ -342,6 +344,21 @@ export interface SourceYieldSignals {
   readonly extractsCreated: number;
   /** Live `card` descendants created from the source. */
   readonly cardsCreated: number;
+}
+
+/** A scheduler-derived suggestion that a source has reached an honest exit point (T103). */
+export interface SourceRetirementSuggestion {
+  readonly kind: "abandon";
+  readonly reason: string;
+  readonly reasonLabel: string;
+  readonly signalHash: string;
+  readonly terminalRatio: number;
+  readonly ignoredRatio: number;
+  readonly totalBlocks: number;
+  readonly terminalBlocks: number;
+  readonly ignoredBlocks: number;
+  readonly unresolvedBlocks: number;
+  readonly extractedOutputCount: number;
 }
 
 /** A parent/child/source row in the inspector's lineage sections. */
@@ -610,6 +627,8 @@ export interface QueueSchedulerSignals {
   readonly stage: string;
   /** How many times an attention element has been postponed. */
   readonly postponed: number;
+  /** Dismissible source-retirement suggestion for "done with no yield" sources (T103). */
+  readonly retirementSuggestion: SourceRetirementSuggestion | null;
 }
 
 /** How "due" a row is relative to `asOf`. */
@@ -1176,6 +1195,20 @@ export interface SourcesUpdateReliabilityResult {
    * other inspector edits return the updated row).
    */
   readonly provenance: SourceProvenance;
+}
+
+export const SourcesDismissRetirementSuggestionRequestSchema = z.object({
+  sourceElementId: ElementIdSchema,
+  signalHash: z.string().trim().min(1).max(512),
+});
+export type SourcesDismissRetirementSuggestionRequest = z.infer<
+  typeof SourcesDismissRetirementSuggestionRequestSchema
+>;
+
+export interface SourcesDismissRetirementSuggestionResult {
+  readonly dismissed: boolean;
+  readonly stale: boolean;
+  readonly suggestion: SourceRetirementSuggestion | null;
 }
 
 /** A flat, list-row summary for one inbox source. */
@@ -5848,6 +5881,10 @@ export interface AppApi {
     acceptOcr(request: SourcesAcceptOcrRequest): Promise<SourcesAcceptOcrResult>;
     /** Dismiss a page's OCR suggestion (T066) — sets `dismissed`. */
     dismissOcr(request: SourcesAcceptOcrRequest): Promise<{ dismissed: boolean }>;
+    /** Hide the current source-retirement suggestion until its signal changes (T103). */
+    dismissRetirementSuggestion(
+      request: SourcesDismissRetirementSuggestionRequest,
+    ): Promise<SourcesDismissRetirementSuggestionResult>;
     /**
      * Receive a narrow main → renderer source-open request. The paired browser
      * extension can ask main to focus a captured source; the renderer receives only

@@ -301,6 +301,8 @@ import type {
   SettingValue,
   SourcesAcceptOcrRequest,
   SourcesAcceptOcrResult,
+  SourcesDismissRetirementSuggestionRequest,
+  SourcesDismissRetirementSuggestionResult,
   SourcesExtractClipRequest,
   SourcesExtractClipResult,
   SourcesExtractRegionRequest,
@@ -1444,6 +1446,15 @@ export class DbService {
       );
     }
     return { provenance: data.provenance };
+  }
+
+  dismissRetirementSuggestion(
+    request: SourcesDismissRetirementSuggestionRequest,
+  ): SourcesDismissRetirementSuggestionResult {
+    return this.repos.retirementSuggestions.dismiss(
+      request.sourceElementId as ElementId,
+      request.signalHash,
+    );
   }
 
   /**

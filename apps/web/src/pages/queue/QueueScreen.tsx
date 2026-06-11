@@ -130,6 +130,7 @@ function QueueItem({
   onSelect,
   onOpen,
   onAction,
+  onDismissRetirementSuggestion,
   onResolveDone,
   onSchedule,
 }: {
@@ -140,6 +141,7 @@ function QueueItem({
   onSelect: (item: QueueItemSummary) => void;
   onOpen: (item: QueueItemSummary) => void;
   onAction: (item: QueueItemSummary, kind: RowActionKind) => void;
+  onDismissRetirementSuggestion: (item: QueueItemSummary) => void;
   /**
    * Resolve a source's "Done" intent (Finished / Return later / Abandon) chosen in the
    * {@link DoneIntentMenu}. Source rows route their `markDone` action through this rather than
@@ -168,7 +170,10 @@ function QueueItem({
     stage: item.schedulerSignals.stage,
     postponed: item.schedulerSignals.postponed,
     lastProcessedAt: null,
+    retirementSuggestion: item.schedulerSignals.retirementSuggestion,
   };
+  const retirementSuggestion = item.schedulerSignals.retirementSuggestion;
+  const [retirementReviewSignal, setRetirementReviewSignal] = useState(0);
   // Stable per-row callbacks for the source Done intent surface (mirrors the useCallback
   // wiring at the other two call sites), so DoneIntentMenu's handleTrigger isn't
   // reconstructed on every parent render.
@@ -257,6 +262,8 @@ function QueueItem({
               triggerTestId={`queue-action-${a.kind}`}
               tooltipLabel={a.label}
               triggerAriaLabel={a.label}
+              forceOpenSignal={retirementReviewSignal}
+              suggestedIntent={retirementSuggestion?.kind ?? null}
             />
           ) : (
             // Styled (portaled) tooltip in place of the slow native `title`; the
@@ -277,6 +284,35 @@ function QueueItem({
             </Tooltip>
           ),
         )}
+        {retirementSuggestion ? (
+          <span className="qitem__retirement" data-testid="queue-retirement-suggestion">
+            <Tooltip label="Review done suggestion" disabled={busy}>
+              <button
+                type="button"
+                disabled={busy}
+                aria-label="Review done suggestion"
+                data-testid="queue-retirement-review"
+                className="qitem__retirement-btn"
+                onClick={() => setRetirementReviewSignal((value) => value + 1)}
+              >
+                <Icon name="warning" size={13} />
+                <span>Done?</span>
+              </button>
+            </Tooltip>
+            <Tooltip label="Dismiss suggestion" disabled={busy}>
+              <button
+                type="button"
+                disabled={busy}
+                aria-label="Dismiss done suggestion"
+                data-testid="queue-retirement-dismiss"
+                className="qitem__retirement-icon"
+                onClick={() => onDismissRetirementSuggestion(item)}
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </Tooltip>
+          </span>
+        ) : null}
       </span>
     </div>
   );
@@ -488,6 +524,31 @@ export function QueueScreen() {
           });
         }
         await refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [busyId, refresh],
+  );
+
+  const onDismissRetirementSuggestion = useCallback(
+    async (item: QueueItemSummary) => {
+      const suggestion = item.schedulerSignals.retirementSuggestion;
+      if (!isDesktop() || busyId || !suggestion) return;
+      setBusyId(item.id);
+      try {
+        const result = await appApi.dismissSourceRetirementSuggestion({
+          sourceElementId: item.id,
+          signalHash: suggestion.signalHash,
+        });
+        await refresh();
+        if (result.stale) {
+          setError("Source changed; refreshed the done suggestion.");
+        } else {
+          setError(null);
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -775,6 +836,7 @@ export function QueueScreen() {
                     onSelect={onSelect}
                     onOpen={onOpen}
                     onAction={onAction}
+                    onDismissRetirementSuggestion={onDismissRetirementSuggestion}
                     onResolveDone={onResolveDone}
                     onSchedule={onSchedule}
                   />
@@ -793,6 +855,7 @@ export function QueueScreen() {
                 onSelect={onSelect}
                 onOpen={onOpen}
                 onAction={onAction}
+                onDismissRetirementSuggestion={onDismissRetirementSuggestion}
                 onResolveDone={onResolveDone}
                 onSchedule={onSchedule}
               />

@@ -32,6 +32,7 @@ export const IPC_CHANNELS = {
   sourcesImportManual: "sources:importManual",
   /** T091: edit a source's reliability metadata (type/tier/confidence/notes). */
   sourcesUpdateReliability: "sources:updateReliability",
+  sourcesDismissRetirementSuggestion: "sources:dismissRetirementSuggestion",
   sourcesImportUrl: "sources:importUrl",
   sourcesImportPdf: "sources:importPdf",
   sourcesGetPdfData: "sources:getPdfData",

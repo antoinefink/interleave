@@ -165,7 +165,7 @@ that Polar-style tools leave open (material drifting out silently).
 # T103 — Proactive Done: surface `retirementSuggestion`
 
 - **Milestone:** M21 — Honest exits & the value model
-- **Status:** `[ ]` not started
+- **Status:** `[x]` complete
 - **Depends on:** T028, T083
 - **Roadmap line:** the scheduler's already-computed `retirementSuggestion` surfaces as a calm
   nudge on queue rows and in the reader — one tap into the existing DoneIntentMenu with
@@ -197,17 +197,15 @@ last hop.
 
 ## Deliverables
 
-- [ ] Thread `retirementSuggestion` (and a "looks finished" sibling — high processed-ratio with
-      output — if cheap; otherwise note as follow-up) into queue-row data and the reader header
-      via existing typed read paths.
-- [ ] Nudge UI: a quiet affordance on queue rows + reader ("Looks done — review?") opening the
-      DoneIntentMenu with the suggested intent preselected and the honest per-state breakdown
-      visible.
-- [ ] Dismissal memory: per-source dismissed-at marker so a dismissed nudge does not reappear
-      until the underlying signal changes materially (state-hash, not timer).
-- [ ] Tests: scheduler-service unit (flag reaches the read model), renderer unit
-      (nudge → menu preselection), e2e — a dead-source fixture shows the nudge, completing
-      through it writes the same ops as a manual Done.
+- [x] Thread `retirementSuggestion` into queue-row data and the reader header via existing typed
+      read paths. The "looks finished" sibling was deferred because T103's existing scheduler
+      signal is the load-bearing scope; productive-output scoring belongs with T104.
+- [x] Nudge UI: quiet queue-row and reader affordances open the shared DoneIntentMenu with
+      Abandon marked as suggested while keeping Return later as the safe focused action.
+- [x] Dismissal memory: per-source dismissal is keyed by the current retirement signal hash, is
+      persisted in SQLite, and is rechecked server-side before writes.
+- [x] Tests: scheduler helper/hash, repository dismissal/oplog, queue and inspector read models,
+      IPC/preload/web API, renderer nudges, async stale guards, and Electron restart persistence.
 
 ## Done when
 
@@ -215,6 +213,20 @@ last hop.
   routes through the existing DoneIntentMenu (same ops, same gate); dismissing it is remembered;
   sources below thresholds never show it.
 - Standard gates pass.
+
+## Completion
+
+- Commit: T103 final implementation commit.
+- Verification:
+  - `pnpm lint`
+  - `pnpm typecheck`
+  - `pnpm test`
+  - `pnpm e2e tests/electron/done-intent.spec.ts`
+- Downstream notes:
+  - Dismissal is intentionally advisory state logged as `update_element`; it is not a separate
+    undoable source lifecycle action.
+  - Future yield-keyed "looks finished with output" behavior should wait for T104's value-model
+    expansion rather than extending the T103 abandon-only heuristic.
 
 ## Notes / risks
 

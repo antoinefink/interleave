@@ -116,6 +116,7 @@ import {
   SettingsUpdateManyRequestSchema,
   SettingsUpdateRequestSchema,
   SourcesAcceptOcrRequestSchema,
+  SourcesDismissRetirementSuggestionRequestSchema,
   SourcesExtractClipRequestSchemaRefined,
   SourcesExtractRegionRequestSchema,
   SourcesGetMediaDataRequestSchema,
@@ -187,6 +188,7 @@ describe("IPC channels", () => {
         "lineage:get",
         "sources:importManual",
         "sources:updateReliability",
+        "sources:dismissRetirementSuggestion",
         "sources:importUrl",
         "sources:importPdf",
         "sources:getPdfData",
@@ -1041,6 +1043,27 @@ describe("OCR schemas (T066)", () => {
       words: [{ text: "CARDS", confidence: 80, bbox: { x0: 0, y0: 0, x1: 1, y1: 1 } }],
     };
     expect(JSON.parse(JSON.stringify(data))).toEqual(data);
+  });
+});
+
+describe("Source retirement suggestion schemas (T103)", () => {
+  it("SourcesDismissRetirementSuggestionRequestSchema validates source id plus signal hash", () => {
+    expect(
+      SourcesDismissRetirementSuggestionRequestSchema.parse({
+        sourceElementId: "src_1",
+        signalHash: "v1|src_1|abandon|thresholds:terminal>=0.9,ignored>=0.5,output=0|4|4|3|0|0",
+      }),
+    ).toEqual({
+      sourceElementId: "src_1",
+      signalHash: "v1|src_1|abandon|thresholds:terminal>=0.9,ignored>=0.5,output=0|4|4|3|0|0",
+    });
+
+    expect(() =>
+      SourcesDismissRetirementSuggestionRequestSchema.parse({
+        sourceElementId: "src_1",
+        signalHash: "",
+      }),
+    ).toThrow();
   });
 });
 

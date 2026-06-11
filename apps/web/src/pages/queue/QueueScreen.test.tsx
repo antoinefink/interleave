@@ -36,6 +36,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "active_card",
       postponed: 0,
+      retirementSuggestion: null,
     },
     sourceTitle: "On the Measure of Intelligence",
     author: "François Chollet",
@@ -68,6 +69,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "clean_extract",
       postponed: 1,
+      retirementSuggestion: null,
     },
     sourceTitle: "On the Measure of Intelligence",
     author: "François Chollet",
@@ -100,6 +102,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "raw_source",
       postponed: 0,
+      retirementSuggestion: null,
     },
     sourceTitle: "The Bitter Lesson",
     author: "Rich Sutton",
@@ -132,6 +135,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "rough_topic",
       postponed: 0,
+      retirementSuggestion: null,
     },
     sourceTitle: null,
     author: null,
@@ -166,6 +170,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "rough_topic",
       postponed: 0,
+      retirementSuggestion: null,
     },
     sourceTitle: null,
     author: null,
@@ -227,6 +232,7 @@ const h = vi.hoisted(() => {
         unresolvedBlocks: 0,
       },
     }),
+    dismissSourceRetirementSuggestion: vi.fn(),
     undoLast: vi.fn().mockResolvedValue({
       undone: true,
       opType: "reschedule_element",
@@ -255,6 +261,7 @@ vi.mock("../../lib/appApi", async () => {
       getDailyWorkSummary: h.getDailyWorkSummary,
       actOnQueueItem: h.actOnQueueItem,
       getBlockProcessingSummary: h.getBlockProcessingSummary,
+      dismissSourceRetirementSuggestion: h.dismissSourceRetirementSuggestion,
       undoLast: h.undoLast,
       undoQueueAction: h.undoQueueAction,
     },
@@ -283,6 +290,11 @@ beforeEach(() => {
       canMarkDoneWithoutConfirmation: true,
       unresolvedBlocks: 0,
     },
+  });
+  h.dismissSourceRetirementSuggestion.mockResolvedValue({
+    dismissed: true,
+    stale: false,
+    suggestion: null,
   });
 });
 
@@ -814,6 +826,100 @@ describe("QueueScreen", () => {
     await screen.findByTestId("done-intent-pop");
     expect(confirm).not.toHaveBeenCalled();
     expect(h.actOnQueueItem).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a proactive done nudge for source retirement suggestions", async () => {
+    const retirementSuggestion = {
+      kind: "abandon" as const,
+      reason: "mostly_ignored_no_output",
+      reasonLabel: "Mostly ignored blocks, no extracts yet",
+      signalHash: "hash-retire-1",
+      terminalRatio: 1,
+      ignoredRatio: 0.75,
+      totalBlocks: 4,
+      terminalBlocks: 4,
+      ignoredBlocks: 3,
+      unresolvedBlocks: 0,
+      extractedOutputCount: 0,
+    };
+    h.getBlockProcessingSummary.mockResolvedValue({
+      summary: {
+        canMarkDoneWithoutConfirmation: true,
+        unresolvedBlocks: 0,
+        stateCounts: { unread: 0, read: 0, needs_later: 0, stale_after_edit: 0 },
+      },
+    });
+    h.listQueue.mockResolvedValue({
+      ...h.result,
+      items: [
+        {
+          ...h.sourceRow,
+          schedulerSignals: { ...h.sourceRow.schedulerSignals, retirementSuggestion },
+        },
+      ],
+    });
+
+    render(<QueueScreen />);
+    const row = await screen.findByTestId("queue-item");
+
+    fireEvent.click(row.querySelector('[data-testid="queue-retirement-review"]') as HTMLElement);
+
+    await screen.findByTestId("done-intent-pop");
+    expect(screen.getByTestId("done-intent-abandon")).toHaveTextContent("Suggested");
+    expect(h.actOnQueueItem).not.toHaveBeenCalled();
+
+    fireEvent.click(row.querySelector('[data-testid="queue-retirement-dismiss"]') as HTMLElement);
+    await waitFor(() =>
+      expect(h.dismissSourceRetirementSuggestion).toHaveBeenCalledWith({
+        sourceElementId: "source-1",
+        signalHash: "hash-retire-1",
+      }),
+    );
+  });
+
+  it("keeps the stale retirement-dismissal message after refreshing the queue", async () => {
+    const retirementSuggestion = {
+      kind: "abandon" as const,
+      reason: "mostly_ignored_no_output",
+      reasonLabel: "Mostly ignored blocks, no extracts yet",
+      signalHash: "hash-stale-retire",
+      terminalRatio: 1,
+      ignoredRatio: 0.75,
+      totalBlocks: 4,
+      terminalBlocks: 4,
+      ignoredBlocks: 3,
+      unresolvedBlocks: 0,
+      extractedOutputCount: 0,
+    };
+    h.dismissSourceRetirementSuggestion.mockResolvedValue({
+      dismissed: false,
+      stale: true,
+      suggestion: null,
+    });
+    h.listQueue
+      .mockResolvedValueOnce({
+        ...h.result,
+        items: [
+          {
+            ...h.sourceRow,
+            schedulerSignals: { ...h.sourceRow.schedulerSignals, retirementSuggestion },
+          },
+        ],
+      })
+      .mockResolvedValue({
+        ...h.result,
+        items: [{ ...h.sourceRow }],
+      });
+
+    render(<QueueScreen />);
+    const row = await screen.findByTestId("queue-item");
+    fireEvent.click(row.querySelector('[data-testid="queue-retirement-dismiss"]') as HTMLElement);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("queue-error")).toHaveTextContent(
+        "Source changed; refreshed the done suggestion.",
+      ),
+    );
   });
 
   it("Finished routes the unresolved source to markDone with the confirm override and shows an Undo snackbar", async () => {

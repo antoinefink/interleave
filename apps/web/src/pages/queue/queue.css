@@ -446,6 +446,53 @@
   cursor: default;
 }
 
+.qitem__retirement {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  padding-left: 6px;
+  border-left: 1px solid var(--border-faint);
+}
+
+.qitem__retirement-btn,
+.qitem__retirement-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--accent-soft-bd);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  cursor: pointer;
+  transition: all var(--fast) var(--ease);
+}
+
+.qitem__retirement-btn {
+  gap: 5px;
+  padding: 0 8px;
+  font-family: var(--font-ui);
+  font-size: var(--t-xs);
+  font-weight: 600;
+}
+
+.qitem__retirement-icon {
+  width: 26px;
+}
+
+.qitem__retirement-btn:hover,
+.qitem__retirement-icon:hover {
+  border-color: var(--accent);
+  background: color-mix(in oklch, var(--accent-soft) 72%, var(--accent) 28%);
+}
+
+.qitem__retirement-btn:disabled,
+.qitem__retirement-icon:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* ---------- Undo snackbar (ported from the kit) ---------- */
 .snackbar {
   position: fixed;

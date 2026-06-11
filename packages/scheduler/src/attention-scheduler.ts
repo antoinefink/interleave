@@ -125,12 +125,7 @@ export interface Schedulable {
    * Source-only block-processing signals. They are ignored for topics/extracts/cards.
    * These counters come from durable source-block outcomes, not visual marks.
    */
-  readonly sourceProcessing?: {
-    readonly unresolvedRatio: number;
-    readonly terminalRatio: number;
-    readonly ignoredRatio: number;
-    readonly extractedOutputCount: number;
-  } | null;
+  readonly sourceProcessing?: SourceProcessingSignals | null;
 }
 
 /** The result of a scheduling decision: the new due time + the interval chosen. */
@@ -141,6 +136,78 @@ export interface ScheduleDecision {
   readonly intervalDays: number;
   /** Low-yield source signal: mostly processed/ignored with no extracted output. */
   readonly retirementSuggestion?: boolean;
+}
+
+export interface SourceProcessingSignals {
+  readonly unresolvedRatio: number;
+  readonly terminalRatio: number;
+  readonly ignoredRatio: number;
+  readonly extractedOutputCount: number;
+}
+
+export interface SourceRetirementSuggestionInput extends SourceProcessingSignals {
+  readonly sourceId?: string | null;
+  readonly totalBlocks: number;
+  readonly terminalBlocks: number;
+  readonly ignoredBlocks: number;
+  readonly unresolvedBlocks: number;
+}
+
+export type SourceRetirementSuggestionKind = "abandon";
+
+export interface SourceRetirementSuggestion {
+  readonly kind: SourceRetirementSuggestionKind;
+  readonly reason: string;
+  readonly reasonLabel: string;
+  readonly signalHash: string;
+  readonly terminalRatio: number;
+  readonly ignoredRatio: number;
+  readonly totalBlocks: number;
+  readonly terminalBlocks: number;
+  readonly ignoredBlocks: number;
+  readonly unresolvedBlocks: number;
+  readonly extractedOutputCount: number;
+}
+
+const RETIREMENT_SIGNAL_VERSION = "v1";
+const RETIREMENT_THRESHOLD_SIGNATURE = "thresholds:terminal>=0.9,ignored>=0.5,output=0";
+
+export function sourceRetirementSignalHash(
+  input: SourceRetirementSuggestionInput,
+  kind: SourceRetirementSuggestionKind = "abandon",
+): string {
+  return [
+    RETIREMENT_SIGNAL_VERSION,
+    input.sourceId ?? "unknown-source",
+    kind,
+    RETIREMENT_THRESHOLD_SIGNATURE,
+    Math.max(0, Math.floor(input.totalBlocks)),
+    Math.max(0, Math.floor(input.terminalBlocks)),
+    Math.max(0, Math.floor(input.ignoredBlocks)),
+    Math.max(0, Math.floor(input.unresolvedBlocks)),
+    Math.max(0, Math.floor(input.extractedOutputCount)),
+  ].join("|");
+}
+
+export function sourceRetirementSuggestion(
+  input: SourceRetirementSuggestionInput,
+): SourceRetirementSuggestion | null {
+  if (input.terminalRatio >= 0.9 && input.extractedOutputCount === 0 && input.ignoredRatio >= 0.5) {
+    return {
+      kind: "abandon",
+      reason: "mostly_ignored_no_output",
+      reasonLabel: "Mostly ignored blocks, no extracts yet",
+      signalHash: sourceRetirementSignalHash(input, "abandon"),
+      terminalRatio: input.terminalRatio,
+      ignoredRatio: input.ignoredRatio,
+      totalBlocks: input.totalBlocks,
+      terminalBlocks: input.terminalBlocks,
+      ignoredBlocks: input.ignoredBlocks,
+      unresolvedBlocks: input.unresolvedBlocks,
+      extractedOutputCount: input.extractedOutputCount,
+    };
+  }
+  return null;
 }
 
 /**
@@ -288,9 +355,13 @@ function adjustForSourceProcessing(
     return { intervalDays: Math.max(1, Math.floor(intervalDays / 2)) };
   }
   if (
-    signals.terminalRatio >= 0.9 &&
-    signals.extractedOutputCount === 0 &&
-    signals.ignoredRatio >= 0.5
+    sourceRetirementSuggestion({
+      ...signals,
+      totalBlocks: 0,
+      terminalBlocks: 0,
+      ignoredBlocks: 0,
+      unresolvedBlocks: 0,
+    })
   ) {
     return {
       intervalDays: Math.min(POSTPONE_CEILING_DAYS, intervalDays * 2),
