@@ -19,6 +19,7 @@
 import type { BlockId, ElementId, ElementStatus, Priority } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
 import { elements, operationLog, reviewStates } from "@interleave/db";
+import { postponeIntervalForPriority } from "@interleave/scheduler";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BlockProcessingService } from "./block-processing-service";
@@ -227,6 +228,55 @@ describe("SchedulerService.rescheduleForAction", () => {
     const lastPayload = rescheduleOps(handle, sourceId).at(-1)?.payload;
     expect(lastPayload?.postpone).toBe(true);
     expect(lastPayload?.postponeCount).toBe(2);
+  });
+
+  it("caps non-task chronic postpone intervals at threshold minus one while task intervals keep growing", () => {
+    new SettingsRepository(handle.db).updateAppSettings({ chronicPostponeThreshold: 3 });
+    const elementsRepo = new ElementRepository(handle.db);
+    const topic = elementsRepo.create({
+      type: "topic",
+      title: "Chronic topic",
+      priority: 0.625,
+      status: "scheduled",
+      stage: "rough_topic",
+    });
+    const task = elementsRepo.create({
+      type: "task",
+      title: "Chronic task",
+      priority: 0.625,
+      status: "scheduled",
+      stage: "rough_topic",
+    });
+    const service = new SchedulerService(handle.db);
+    const now = "2026-05-30T12:00:00.000Z";
+
+    const topicIntervals = [
+      service.rescheduleForAction(topic.id, "postpone", now).intervalDays,
+      service.rescheduleForAction(topic.id, "postpone", now).intervalDays,
+      service.rescheduleForAction(topic.id, "postpone", now).intervalDays,
+      service.rescheduleForAction(topic.id, "postpone", now).intervalDays,
+    ];
+    const taskIntervals = [
+      service.rescheduleForAction(task.id, "postpone", now).intervalDays,
+      service.rescheduleForAction(task.id, "postpone", now).intervalDays,
+      service.rescheduleForAction(task.id, "postpone", now).intervalDays,
+      service.rescheduleForAction(task.id, "postpone", now).intervalDays,
+    ];
+
+    expect(topicIntervals).toEqual([
+      postponeIntervalForPriority(0.625, 0),
+      postponeIntervalForPriority(0.625, 1),
+      postponeIntervalForPriority(0.625, 2),
+      postponeIntervalForPriority(0.625, 2),
+    ]);
+    expect(taskIntervals).toEqual([
+      postponeIntervalForPriority(0.625, 0),
+      postponeIntervalForPriority(0.625, 1),
+      postponeIntervalForPriority(0.625, 2),
+      postponeIntervalForPriority(0.625, 3),
+    ]);
+    expect(service.countPostpones(topic.id)).toBe(4);
+    expect(service.countPostpones(task.id)).toBe(4);
   });
 
   it("rejects a card — cards schedule on FSRS, never the attention heuristic", () => {

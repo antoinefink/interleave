@@ -31,6 +31,8 @@ const h = vi.hoisted(() => ({
   bulkPostpone: vi.fn(),
   parkedResurfacing: vi.fn(),
   parkedResurfacingApply: vi.fn(),
+  chronicPostpones: vi.fn(),
+  chronicPostponesApply: vi.fn(),
   undoLast: vi.fn(),
 }));
 
@@ -58,6 +60,8 @@ vi.mock("../lib/appApi", async () => {
         bulkPostpone: h.bulkPostpone,
         parkedResurfacing: h.parkedResurfacing,
         parkedResurfacingApply: h.parkedResurfacingApply,
+        chronicPostpones: h.chronicPostpones,
+        chronicPostponesApply: h.chronicPostponesApply,
       },
       undoLast: h.undoLast,
     },
@@ -71,6 +75,7 @@ const FULL_REPORT = {
   cardsWithoutSourcesCount: 1,
   schedulerConsistencyCount: 0,
   parkedResurfacingCount: 1,
+  chronicPostponeCount: 1,
   orphanFileCount: 3,
   orphanBytes: 4096,
   lowValueCount: 2,
@@ -159,6 +164,28 @@ beforeEach(() => {
     asOf: "2026-06-11T12:00:00.000Z",
   });
   h.parkedResurfacingApply.mockResolvedValue({ applied: 1, skipped: [], batchId: "b5" });
+  h.chronicPostpones.mockResolvedValue({
+    rows: [
+      {
+        element: {
+          id: "chronic1",
+          type: "source",
+          title: "Always later",
+          priority: 0.5,
+          priorityLabel: "B",
+          status: "scheduled",
+          dueAt: "2026-08-01T00:00:00.000Z",
+          createdAt: "",
+        },
+        scheduler: "attention",
+        postponeCount: 6,
+      },
+    ],
+    totalDue: 1,
+    threshold: 5,
+    limit: 50,
+  });
+  h.chronicPostponesApply.mockResolvedValue({ applied: 1, skipped: [], batchId: "b6" });
   h.undoLast.mockResolvedValue({
     undone: true,
     count: 1,
@@ -177,6 +204,7 @@ describe("MaintenanceScreen", () => {
     expect(screen.getByTestId("metric-sourceless-value").textContent).toContain("1");
     expect(screen.getByTestId("metric-lowvalue-value").textContent).toContain("2");
     expect(screen.getByTestId("metric-parked-value").textContent).toContain("1");
+    expect(screen.getByTestId("metric-chronic-value").textContent).toContain("1");
     expect(screen.getByTestId("metric-parked-toggle")).toHaveAttribute("aria-expanded", "false");
     // Integrity is NOT auto-run — the Run check button is shown, no status yet.
     expect(screen.getByTestId("integrity-run")).toBeInTheDocument();
@@ -273,6 +301,70 @@ describe("MaintenanceScreen", () => {
 
     await waitFor(() => expect(screen.getByTestId("maintenance-snackbar")).toBeInTheDocument());
     expect(screen.getByTestId("maintenance-snackbar").textContent).toContain("1 skipped");
+  });
+
+  it("applies only explicitly selected chronic-postpone decisions", async () => {
+    render(<MaintenanceScreen />);
+    await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("metric-chronic-toggle"));
+    await waitFor(() => expect(screen.getByTestId("chronic-panel")).toBeInTheDocument());
+
+    expect(screen.getByTestId("chronic-apply")).toBeDisabled();
+    expect(screen.getByTestId("chronic-decision-keep")).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(screen.getByTestId("chronic-decision-demote"));
+    expect(screen.getByTestId("chronic-decision-demote")).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByTestId("chronic-apply"));
+
+    await waitFor(() =>
+      expect(h.chronicPostponesApply).toHaveBeenCalledWith({
+        decisions: [{ id: "chronic1", kind: "demote" }],
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("maintenance-snackbar-undo")).toBeInTheDocument(),
+    );
+  });
+
+  it("shows chronic skipped reasons and keeps Undo only for applied mutations", async () => {
+    h.chronicPostponesApply.mockResolvedValueOnce({
+      applied: 1,
+      skipped: [{ id: "chronic-stale", reason: "below-threshold" }],
+      batchId: "b6",
+    });
+    render(<MaintenanceScreen />);
+    await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("metric-chronic-toggle"));
+    await waitFor(() => expect(screen.getByTestId("chronic-panel")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("chronic-decision-demote"));
+    fireEvent.click(screen.getByTestId("chronic-apply"));
+
+    await waitFor(() => expect(screen.getByTestId("maintenance-snackbar")).toBeInTheDocument());
+    expect(screen.getByTestId("maintenance-snackbar").textContent).toContain(
+      "1 skipped: below threshold",
+    );
+    expect(screen.getByTestId("maintenance-snackbar-undo")).toBeInTheDocument();
+  });
+
+  it("does not offer Undo when chronic apply only skips stale rows", async () => {
+    h.chronicPostponesApply.mockResolvedValueOnce({
+      applied: 0,
+      skipped: [{ id: "chronic-stale", reason: "retired-card" }],
+      batchId: null,
+    });
+    render(<MaintenanceScreen />);
+    await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("metric-chronic-toggle"));
+    await waitFor(() => expect(screen.getByTestId("chronic-panel")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("chronic-decision-keep"));
+    fireEvent.click(screen.getByTestId("chronic-apply"));
+
+    await waitFor(() => expect(screen.getByTestId("maintenance-snackbar")).toBeInTheDocument());
+    expect(screen.getByTestId("maintenance-snackbar").textContent).toContain(
+      "1 skipped: retired card",
+    );
+    expect(screen.queryByTestId("maintenance-snackbar-undo")).not.toBeInTheDocument();
   });
 
   it("orphan-media cleanup is confirm-gated, then composes the GC", async () => {

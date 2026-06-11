@@ -30,6 +30,7 @@ import {
   reviewStates,
   sourceLocations,
 } from "@interleave/db";
+import { postponeIntervalForPriority } from "@interleave/scheduler";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DocumentRepository } from "./document-repository";
@@ -43,6 +44,7 @@ import {
   trimExtractText,
 } from "./extract-service";
 import { ExtractionService } from "./extraction-service";
+import { SettingsRepository } from "./settings-repository";
 import { SourceRepository } from "./source-repository";
 import { SynthesisService } from "./synthesis-service";
 import { createInMemoryDb } from "./test-db";
@@ -272,6 +274,26 @@ describe("ExtractService.postpone", () => {
     const lastPayload = JSON.parse(rescheduleOps.at(-1)?.payload ?? "{}");
     expect(lastPayload.postpone).toBe(true);
     expect(lastPayload.postponeCount).toBe(2);
+  });
+
+  it("caps chronic postpone interval growth at threshold minus one while preserving the real count", () => {
+    new SettingsRepository(handle.db).updateAppSettings({ chronicPostponeThreshold: 3 });
+    const { extractId } = seedExtract(handle, 0.625);
+    const service = new ExtractService(handle.db);
+
+    const intervals = Array.from({ length: 4 }, () => {
+      const before = Date.now();
+      const result = service.postpone(extractId);
+      return Math.round((Date.parse(result.element.dueAt as string) - before) / 86_400_000);
+    });
+
+    expect(intervals).toEqual([
+      postponeIntervalForPriority(0.625, 0),
+      postponeIntervalForPriority(0.625, 1),
+      postponeIntervalForPriority(0.625, 2),
+      postponeIntervalForPriority(0.625, 2),
+    ]);
+    expect(service.countPostpones(extractId)).toBe(4);
   });
 });
 

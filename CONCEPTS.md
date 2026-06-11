@@ -58,6 +58,12 @@ The maintenance process that periodically brings old Parked sources back to the 
 
 Resurfacing is not queue eligibility: it is a review prompt for deferred intent, and the user's decision owns any durable status change.
 
+### Chronic-postpone reckoning
+
+The maintenance process that surfaces work that has been postponed repeatedly and asks for an explicit keep, demote, done, or delete decision before further silent recession.
+
+Reckoning uses effective postpone debt, not lifetime history: a keep-style decision starts a new counting window while preserving the old postpones as audit evidence. While an item is in reckoning, attention scheduling should stop pushing it farther away until the user makes a decision.
+
 ### Source reader
 
 The local reading surface for processing a source inside the app, distinct from opening the source's external canonical URL.

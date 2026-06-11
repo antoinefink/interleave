@@ -50,6 +50,7 @@ import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
 import { nowIso } from "./ids";
 import { OperationLogRepository } from "./operation-log-repository";
+import { SettingsRepository } from "./settings-repository";
 import type { DbClient } from "./types";
 
 // The extract stage chain + interval math is the attention scheduler's concern and
@@ -114,10 +115,12 @@ export interface RewriteExtractInput {
 export class ExtractService {
   private readonly elements: ElementRepository;
   private readonly documents: DocumentRepository;
+  private readonly settings: SettingsRepository;
 
   constructor(private readonly db: InterleaveDatabase) {
     this.elements = new ElementRepository(db);
     this.documents = new DocumentRepository(db);
+    this.settings = new SettingsRepository(db);
   }
 
   /** Load an extract element by id, throwing when it is missing or not an extract. */
@@ -210,11 +213,16 @@ export class ExtractService {
     const element = this.requireExtract(id);
     this.assertNotFated(element, "postpone");
     const priorCount = this.countPostpones(id);
+    const threshold = this.settings.getAppSettings().chronicPostponeThreshold;
+    const schedulerCount = priorCount >= threshold ? Math.max(0, threshold - 1) : priorCount;
     return this.db.transaction((tx) => {
       // The interval GROWS with the running postpone count (stagnation recedes):
       // the first postpone (priorCount 0) is the base window; each further postpone
       // pushes further out, per `@interleave/scheduler`. Single source of truth.
-      const dueAt = addDays(nowIso(), postponeIntervalForPriority(element.priority, priorCount));
+      const dueAt = addDays(
+        nowIso(),
+        postponeIntervalForPriority(element.priority, schedulerCount),
+      );
       const rescheduled = this.elements.rescheduleWithin(tx, id, dueAt, "scheduled", {
         postpone: true,
         postponeCount: priorCount + 1,

@@ -35,6 +35,12 @@ interface RawOpRow {
   createdAt: string;
 }
 
+function payloadObject(payload: unknown): Record<string, unknown> | null {
+  return typeof payload === "object" && payload !== null
+    ? (payload as Record<string, unknown>)
+    : null;
+}
+
 /** Parse a raw `operation_log` row into an {@link OperationLogEntry}. */
 function rowToEntry(row: RawOpRow): OperationLogEntry {
   return {
@@ -103,21 +109,40 @@ export class OperationLogRepository {
 
   /**
    * Count how many times an element has been postponed, by scanning its
-   * `reschedule_element` ops for the `postpone === true` marker. This is the ONE
+   * `reschedule_element` ops for the `postpone === true` marker and folding T106
+   * chronic-postpone reset markers. This is the ONE
    * canonical, schema-churn-free postpone counter — the attention scheduler, the
    * queue read, the inspector readout, and the extract service all call THIS so the
    * marker shape lives in exactly one place (and the four call sites cannot drift).
    * The postpone count itself stays in the op payload (no schema column).
+   *
+   * T106 adds marker-only `update_element` rows:
+   * - `{ chronicPostponeReset: true }` sets the effective count back to 0 after a
+   *   user reckoning decision.
+   * - `{ chronicPostponeResetUndo: true, restoredEffectivePostponeCount: N }`
+   *   restores the pre-reset effective count when undo reverses that marker.
    */
   countPostpones(elementId: string): number {
-    return this.listForElement(elementId).filter((op) => {
-      if (op.opType !== "reschedule_element") return false;
-      const payload = op.payload;
-      return (
-        typeof payload === "object" &&
-        payload !== null &&
-        (payload as { postpone?: unknown }).postpone === true
-      );
-    }).length;
+    let count = 0;
+    for (const op of this.listForElement(elementId).reverse()) {
+      const payload = payloadObject(op.payload);
+      if (op.opType === "reschedule_element" && payload?.postpone === true) {
+        count += 1;
+        continue;
+      }
+      if (op.opType !== "update_element") continue;
+      if (payload?.chronicPostponeReset === true) {
+        count = 0;
+        continue;
+      }
+      if (payload?.chronicPostponeResetUndo === true) {
+        const restored = payload.restoredEffectivePostponeCount;
+        count =
+          typeof restored === "number" && Number.isFinite(restored) && restored >= 0
+            ? Math.floor(restored)
+            : count;
+      }
+    }
+    return count;
   }
 }

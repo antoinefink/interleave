@@ -97,7 +97,7 @@ is quietly losing my library", and priority inflation becomes measurable instead
 # T106 — Chronic-postpone reckoning
 
 - **Milestone:** M22 — Receipts
-- **Status:** `[ ]` not started
+- **Status:** `[x]` completed in this commit
 - **Depends on:** T105
 - **Roadmap line:** items postponed ≥N times surface in a decision surface forcing keep /
   demote / done / delete per item — no further silent recession past the threshold — batched,
@@ -119,13 +119,13 @@ decision point.
 
 ## Deliverables
 
-- [ ] Chronic detection: `postponeCount >= N` (setting, default ~5) → item enters the reckoning
+- [x] Chronic detection: `postponeCount >= N` (setting, default ~5) → item enters the reckoning
       list; while listed, automatic recession growth pauses (document the rule in-scheduler).
-- [ ] Reckoning surface (maintenance section now; T110 hosts it weekly): per-item
+- [x] Reckoning surface (maintenance section now; T110 hosts it weekly): per-item
       keep (resets count, returns to normal scheduling) / demote (band down) / done / delete —
       multi-select, one `batchId`, single undo, op-logged.
-- [ ] Drift diagnostic: new cases (recession paused while listed; count reset on keep).
-- [ ] Tests: unit (threshold entry, recession pause, verb effects incl. undo symmetry); e2e —
+- [x] Drift diagnostic: new cases (recession paused while listed; count reset on keep).
+- [x] Tests: unit (threshold entry, recession pause, verb effects incl. undo symmetry); e2e —
       fixture with a 6×-postponed item, walk all four verbs.
 
 ## Done when
@@ -133,6 +133,20 @@ decision point.
 - A ≥N-postponed item appears in the reckoning list and stops receding; each verb works and is
   undoable in batch; the drift diagnostic covers the new states.
 - Standard gates pass.
+
+## Completion notes
+
+- Effective postpone counts fold `operation_log` postpones, chronic reset markers, and reset-undo
+  markers without adding a mutable counter column.
+- Maintenance now exposes a typed chronic-postpone report and one-batch keep / demote / done /
+  delete apply command through desktop IPC and the renderer panel.
+- Non-task attention postpones pause interval growth at the threshold while still logging future
+  postpone markers; extract stagnation and scheduler consistency use the effective reset-aware
+  count.
+- Verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and
+  `pnpm e2e tests/electron/maintenance.spec.ts`.
+- Learning captured in
+  `docs/solutions/architecture-patterns/chronic-postpone-reckoning-from-operation-log-reset-markers.md`.
 
 ## Notes / risks
 

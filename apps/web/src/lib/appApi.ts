@@ -87,6 +87,8 @@ export interface AppSettings {
   readonly balanceWarnings: boolean;
   /** How long deliberately parked sources wait before the maintenance resurfacing sweep (T102). */
   readonly parkedResurfaceAfterDays: number;
+  /** Effective postpone count that forces an item into the Maintenance reckoning list (T106). */
+  readonly chronicPostponeThreshold: number;
   /** How lopsided imports-vs-processing must be before the balance warning fires (T046). */
   readonly importBalanceFactor: number;
   readonly keyboardLayout: KeyboardLayout;
@@ -1415,6 +1417,7 @@ export interface MaintenanceReportResult {
   readonly cardsWithoutSourcesCount: number;
   readonly schedulerConsistencyCount: number;
   readonly parkedResurfacingCount: number;
+  readonly chronicPostponeCount: number;
   readonly orphanFileCount: number;
   readonly orphanBytes: number;
   readonly lowValueCount: number;
@@ -1450,7 +1453,9 @@ export type SchedulerConsistencyReason =
   | "terminal-element-due"
   | "terminal-card-review-due"
   | "retired-card-review-due"
-  | "scheduled-attention-missing-due";
+  | "scheduled-attention-missing-due"
+  | "chronic-postpone-paused"
+  | "chronic-postpone-reset";
 
 export interface SchedulerConsistencyRowSummary {
   readonly element: MaintenanceRef & { readonly status: string };
@@ -1570,6 +1575,56 @@ export interface MaintenanceParkedResurfacingApplyResult {
   readonly skipped: readonly {
     readonly id: string;
     readonly reason: "missing" | "deleted" | "not-source" | "not-parked" | "not-due";
+  }[];
+  readonly batchId: string | null;
+}
+
+export interface ChronicPostponeRowSummary {
+  readonly element: MaintenanceRef & {
+    readonly type: "source" | "topic" | "extract" | "synthesis_note" | "card";
+    readonly priorityLabel: string;
+    readonly status: string;
+    readonly dueAt: string | null;
+  };
+  readonly scheduler: "attention" | "fsrs";
+  readonly postponeCount: number;
+}
+
+export interface MaintenanceChronicPostponesRequest {
+  readonly limit?: number;
+}
+
+export interface MaintenanceChronicPostponesResult {
+  readonly rows: readonly ChronicPostponeRowSummary[];
+  readonly totalDue: number;
+  readonly threshold: number;
+  readonly limit: number | null;
+}
+
+export type ChronicPostponeDecisionKind = "keep" | "demote" | "done" | "delete";
+
+export interface ChronicPostponeDecisionInput {
+  readonly id: string;
+  readonly kind: ChronicPostponeDecisionKind;
+}
+
+export interface MaintenanceChronicPostponesApplyRequest {
+  readonly decisions: readonly ChronicPostponeDecisionInput[];
+}
+
+export interface MaintenanceChronicPostponesApplyResult {
+  readonly applied: number;
+  readonly skipped: readonly {
+    readonly id: string;
+    readonly reason:
+      | "missing"
+      | "deleted"
+      | "unsupported-type"
+      | "not-actionable"
+      | "retired-card"
+      | "below-threshold"
+      | "already-lowest"
+      | "source-unresolved-blocks";
   }[];
   readonly batchId: string | null;
 }
@@ -4111,6 +4166,14 @@ export interface AppApi {
     parkedResurfacingApply(
       request: MaintenanceParkedResurfacingApplyRequest,
     ): Promise<MaintenanceParkedResurfacingApplyResult>;
+    /** Items whose effective postpone count crossed the chronic threshold. */
+    chronicPostpones(
+      request?: MaintenanceChronicPostponesRequest,
+    ): Promise<MaintenanceChronicPostponesResult>;
+    /** Apply keep/demote/done/delete decisions for chronic-postpone rows as one batch. */
+    chronicPostponesApply(
+      request: MaintenanceChronicPostponesApplyRequest,
+    ): Promise<MaintenanceChronicPostponesApplyResult>;
   };
   readonly menu: {
     /** Subscribe to the native Help → "Keyboard shortcuts" menu item (T048). */
@@ -5225,6 +5288,7 @@ export const appApi = {
           cardsWithoutSourcesCount: 0,
           schedulerConsistencyCount: 0,
           parkedResurfacingCount: 0,
+          chronicPostponeCount: 0,
           orphanFileCount: 0,
           orphanBytes: 0,
           lowValueCount: 0,
@@ -5259,6 +5323,8 @@ export const appApi = {
           asOf: new Date(0).toISOString(),
         }),
       parkedResurfacingApply: () => Promise.resolve({ applied: 0, skipped: [], batchId: null }),
+      chronicPostpones: () => Promise.resolve({ rows: [], totalDue: 0, threshold: 5, limit: null }),
+      chronicPostponesApply: () => Promise.resolve({ applied: 0, skipped: [], batchId: null }),
     };
   },
   /**

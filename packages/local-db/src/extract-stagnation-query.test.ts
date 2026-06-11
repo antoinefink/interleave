@@ -30,6 +30,7 @@ import { ElementRepository } from "./element-repository";
 import { ExtractService } from "./extract-service";
 import { ExtractStagnationQuery } from "./extract-stagnation-query";
 import { ExtractionService } from "./extraction-service";
+import { OperationLogRepository } from "./operation-log-repository";
 import { SourceRepository } from "./source-repository";
 import { SynthesisService } from "./synthesis-service";
 import { createInMemoryDb } from "./test-db";
@@ -227,6 +228,28 @@ describe("ExtractStagnationQuery.listStagnantExtracts", () => {
 
     const query = new ExtractStagnationQuery(handle.db);
     const summary = query.listStagnantExtracts(farFutureAsOf());
+    expect(summary.stagnantCount).toBe(0);
+  });
+
+  it("uses the effective postpone count after a chronic keep reset", () => {
+    const sourceId = seedSource(handle);
+    const extractId = seedExtract(handle, sourceId, 1);
+    postponeN(handle, extractId, STAGNATION_POSTPONE_THRESHOLD);
+    handle.db.transaction((tx) => {
+      new OperationLogRepository(tx).append(tx, {
+        opType: "update_element",
+        elementId: extractId,
+        payload: {
+          id: extractId,
+          action: "chronicPostpone:keep",
+          chronicPostponeReset: true,
+          prevEffectivePostponeCount: STAGNATION_POSTPONE_THRESHOLD,
+        },
+      });
+    });
+
+    const summary = new ExtractStagnationQuery(handle.db).listStagnantExtracts(farFutureAsOf());
+
     expect(summary.stagnantCount).toBe(0);
   });
 

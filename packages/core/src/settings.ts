@@ -60,6 +60,9 @@ export type ThemePreference = (typeof THEMES)[number];
  * - `parkedResurfaceAfterDays` — how long a deliberately parked source waits before
  *   it appears in the parked resurfacing sweep (T102). The sweep asks; it never
  *   auto-schedules parked material.
+ * - `chronicPostponeThreshold` — how many effective postpones put an item into the
+ *   chronic-postpone reckoning list (T106). The count is folded from operation-log
+ *   postpone/reset markers, not stored as a mutable column.
  * - `importBalanceFactor` — how lopsided imports-vs-processing must be before the
  *   balance warning fires (T046): imports must exceed processed output by this
  *   multiple. Higher = less sensitive. Read by the pure `judgeBalance` rule.
@@ -80,6 +83,7 @@ export interface AppSettings {
   readonly trashRetentionDays: number;
   readonly balanceWarnings: boolean;
   readonly parkedResurfaceAfterDays: number;
+  readonly chronicPostponeThreshold: number;
   readonly importBalanceFactor: number;
   readonly keyboardLayout: KeyboardLayout;
   readonly theme: ThemePreference;
@@ -256,6 +260,7 @@ export const SETTINGS_KEYS = {
   trashRetentionDays: "trash.retentionDays",
   balanceWarnings: "balance.warnings",
   parkedResurfaceAfterDays: "parked.resurfaceAfterDays",
+  chronicPostponeThreshold: "scheduler.chronicPostponeThreshold",
   importBalanceFactor: "balance.importFactor",
   keyboardLayout: "ui.keyboardLayout",
   theme: "ui.theme",
@@ -328,6 +333,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   trashRetentionDays: 30,
   balanceWarnings: true,
   parkedResurfaceAfterDays: 90,
+  chronicPostponeThreshold: 5,
   importBalanceFactor: DEFAULT_IMPORT_BALANCE_FACTOR,
   keyboardLayout: "qwerty",
   theme: "dark",
@@ -404,6 +410,10 @@ export const TRASH_RETENTION_DAYS_MAX = 365;
 /** Inclusive bounds for parked-source resurfacing sweeps (T102). */
 export const PARKED_RESURFACE_AFTER_DAYS_MIN = 1;
 export const PARKED_RESURFACE_AFTER_DAYS_MAX = 3650;
+
+/** Inclusive bounds for chronic-postpone reckoning threshold (T106). */
+export const CHRONIC_POSTPONE_THRESHOLD_MIN = 2;
+export const CHRONIC_POSTPONE_THRESHOLD_MAX = 50;
 
 /**
  * Inclusive bounds for the import-balance factor (T046). Re-exported from
@@ -503,6 +513,12 @@ export function coerceSettingValue<K extends keyof AppSettings>(
       return (
         isFiniteNumber(raw) && raw > 0
           ? clampInt(raw, PARKED_RESURFACE_AFTER_DAYS_MIN, PARKED_RESURFACE_AFTER_DAYS_MAX)
+          : fallback
+      ) as AppSettings[K];
+    case "chronicPostponeThreshold":
+      return (
+        isFiniteNumber(raw) && raw > 0
+          ? clampInt(raw, CHRONIC_POSTPONE_THRESHOLD_MIN, CHRONIC_POSTPONE_THRESHOLD_MAX)
           : fallback
       ) as AppSettings[K];
     case "importBalanceFactor":
@@ -610,6 +626,10 @@ export function appSettingsFromStored(stored: Readonly<Record<string, unknown>>)
     parkedResurfaceAfterDays: coerceSettingValue(
       "parkedResurfaceAfterDays",
       stored[SETTINGS_KEYS.parkedResurfaceAfterDays],
+    ),
+    chronicPostponeThreshold: coerceSettingValue(
+      "chronicPostponeThreshold",
+      stored[SETTINGS_KEYS.chronicPostponeThreshold],
     ),
     importBalanceFactor: coerceSettingValue(
       "importBalanceFactor",

@@ -926,6 +926,11 @@ export interface MaintenanceCollection {
   readonly parkedResurfacingKeepSource: ElementId;
   readonly parkedResurfacingQueueSource: ElementId;
   readonly parkedResurfacingLetGoSource: ElementId;
+  /** Chronic-postpone rows for the T106 reckoning panel's four decision verbs. */
+  readonly chronicPostponeKeepSource: ElementId;
+  readonly chronicPostponeDemoteSource: ElementId;
+  readonly chronicPostponeDoneSource: ElementId;
+  readonly chronicPostponeDeleteSource: ElementId;
 }
 
 /** Options for {@link seedMaintenanceCollection}. */
@@ -1038,6 +1043,62 @@ export function seedMaintenanceCollection(
     });
   }
 
+  // 6) Chronic-postpone rows — scheduled, queue-actionable, and carrying enough
+  //    postpone markers to cross the default threshold. One row is future-due to
+  //    prove reckoning is about behavior, not queue due eligibility.
+  const chronicKeep = repos.sources.create({
+    title: "Chronic postpone keep source",
+    priority: PRIORITY_LABEL_VALUE.B,
+    status: "scheduled",
+    reasonAdded: "Repeatedly postponed but intentionally kept.",
+  });
+  const chronicDemote = repos.sources.create({
+    title: "Chronic postpone demote source",
+    priority: PRIORITY_LABEL_VALUE.B,
+    status: "scheduled",
+    reasonAdded: "Repeatedly postponed and ready to demote.",
+  });
+  const chronicDone = repos.sources.create({
+    title: "Chronic postpone done source",
+    priority: PRIORITY_LABEL_VALUE.C,
+    status: "scheduled",
+    reasonAdded: "Repeatedly postponed and now finished.",
+  });
+  const chronicDelete = repos.sources.create({
+    title: "Chronic postpone delete source",
+    priority: PRIORITY_LABEL_VALUE.C,
+    status: "scheduled",
+    reasonAdded: "Repeatedly postponed and ready to delete.",
+  });
+  const futureDue = "2026-12-01T00:00:00.000Z" as IsoTimestamp;
+  db.update(elements)
+    .set({ dueAt: futureDue })
+    .where(eq(elements.id, chronicKeep.element.id))
+    .run();
+  for (const id of [
+    chronicKeep.element.id,
+    chronicDemote.element.id,
+    chronicDone.element.id,
+    chronicDelete.element.id,
+  ]) {
+    for (let i = 0; i < 6; i += 1) {
+      db.transaction((tx) => {
+        repos.operationLog.append(tx, {
+          opType: "reschedule_element",
+          elementId: id,
+          payload: {
+            id,
+            dueAt: futureDue,
+            prevDueAt: null,
+            postpone: true,
+            postponeCount: i + 1,
+            action: "maintenanceSeed:chronicPostpone",
+          },
+        });
+      });
+    }
+  }
+
   return {
     duplicateSourceKeeper: keeper.element.id,
     duplicateSourceRedundant: redundant.element.id,
@@ -1048,5 +1109,9 @@ export function seedMaintenanceCollection(
     parkedResurfacingKeepSource: parkedKeep.element.id,
     parkedResurfacingQueueSource: parkedQueue.element.id,
     parkedResurfacingLetGoSource: parkedLetGo.element.id,
+    chronicPostponeKeepSource: chronicKeep.element.id,
+    chronicPostponeDemoteSource: chronicDemote.element.id,
+    chronicPostponeDoneSource: chronicDone.element.id,
+    chronicPostponeDeleteSource: chronicDelete.element.id,
   };
 }

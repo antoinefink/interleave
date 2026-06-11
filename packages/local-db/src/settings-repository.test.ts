@@ -62,7 +62,14 @@ describe("SettingsRepository", () => {
     expect(updated.dailyReviewBudget).toBe(DAILY_REVIEW_BUDGET_MAX);
     expect(updated.defaultSourcePriority).toBe(PRIORITY_LABEL_VALUE.A);
     expect(updated.theme).toBe("dark");
+    expect(updated.chronicPostponeThreshold).toBe(DEFAULT_APP_SETTINGS.chronicPostponeThreshold);
     expect(settings.get(SETTINGS_KEYS.dailyReviewBudget)).toBe(DAILY_REVIEW_BUDGET_MAX);
     expect(settings.get("unknown")).toBeNull();
+  });
+
+  it("persists the coerced chronic postpone threshold", () => {
+    const updated = settings.updateAppSettings({ chronicPostponeThreshold: 999 });
+    expect(updated.chronicPostponeThreshold).toBe(50);
+    expect(settings.get(SETTINGS_KEYS.chronicPostponeThreshold)).toBe(50);
   });
 });

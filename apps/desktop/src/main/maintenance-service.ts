@@ -37,6 +37,9 @@
 import type { ElementId } from "@interleave/core";
 import type {
   BulkArchiveMode,
+  ChronicPostponeApplyResult,
+  ChronicPostponeDecision,
+  ChronicPostponeListResult,
   DuplicateReport,
   LineageGapRow,
   LowValueRow,
@@ -99,6 +102,8 @@ export interface MaintenanceReport {
   readonly schedulerConsistencyCount: number;
   /** Saved-for-later sources old enough to ask about again (T102). */
   readonly parkedResurfacingCount: number;
+  /** Items whose effective postpone count reached the chronic reckoning threshold (T106). */
+  readonly chronicPostponeCount: number;
   readonly orphanFileCount: number;
   readonly orphanBytes: number;
   readonly lowValueCount: number;
@@ -143,12 +148,16 @@ export class MaintenanceService {
       asOf,
       resurfaceAfterDays: repos.settings.getAppSettings().parkedResurfaceAfterDays,
     });
+    const chronicPostponeCount = repos.chronicPostpone.countDue({
+      threshold: repos.settings.getAppSettings().chronicPostponeThreshold,
+    });
     const orphans = await this.dbService.findVaultOrphans();
     return {
       duplicateCount: dup.totalDuplicates,
       cardsWithoutSourcesCount: sourceless.length,
       schedulerConsistencyCount,
       parkedResurfacingCount,
+      chronicPostponeCount,
       orphanFileCount: orphans.orphans.length,
       orphanBytes: orphans.totalBytes,
       lowValueCount: lowValue.length,
@@ -187,6 +196,15 @@ export class MaintenanceService {
     return repos.parkedResurfacingQuery.listDue({
       asOf: nowIso(),
       resurfaceAfterDays: repos.settings.getAppSettings().parkedResurfaceAfterDays,
+      ...(limit !== undefined ? { limit } : {}),
+    });
+  }
+
+  /** Items whose effective postpone count reached the chronic reckoning threshold. */
+  chronicPostpones(limit?: number): ChronicPostponeListResult {
+    const repos = this.dbService.repos;
+    return repos.chronicPostpone.listDue({
+      threshold: repos.settings.getAppSettings().chronicPostponeThreshold,
       ...(limit !== undefined ? { limit } : {}),
     });
   }
@@ -326,6 +344,17 @@ export class MaintenanceService {
       decisions: input.decisions,
       asOf: nowIso(),
       resurfaceAfterDays: repos.settings.getAppSettings().parkedResurfaceAfterDays,
+    });
+  }
+
+  /** Apply chronic-postpone reckoning decisions as one undoable batch. */
+  chronicPostponesApply(input: {
+    decisions: readonly ChronicPostponeDecision[];
+  }): ChronicPostponeApplyResult {
+    const repos = this.dbService.repos;
+    return repos.chronicPostponeService.apply({
+      decisions: input.decisions,
+      threshold: repos.settings.getAppSettings().chronicPostponeThreshold,
     });
   }
 

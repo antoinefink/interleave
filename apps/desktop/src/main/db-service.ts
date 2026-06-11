@@ -1582,6 +1582,13 @@ export class DbService {
     return this.maintenanceService.parkedResurfacing(request?.limit);
   }
 
+  /** Items whose effective postpone count reached the chronic reckoning threshold. */
+  getMaintenanceChronicPostpones(request?: {
+    limit?: number | undefined;
+  }): ReturnType<MaintenanceService["chronicPostpones"]> {
+    return this.maintenanceService.chronicPostpones(request?.limit);
+  }
+
   /** The DB + vault integrity DEEP check (on-demand). Read-only. */
   async getMaintenanceIntegrity(request?: {
     deep?: boolean | undefined;
@@ -1644,6 +1651,21 @@ export class DbService {
     }[];
   }): ReturnType<MaintenanceService["parkedResurfacingApply"]> {
     return this.maintenanceService.parkedResurfacingApply({
+      decisions: request.decisions.map((decision) => ({
+        id: decision.id as ElementId,
+        kind: decision.kind,
+      })),
+    });
+  }
+
+  /** Chronic-postpone decisions — one undoable batch with stale-row skips. */
+  maintenanceChronicPostponesApply(request: {
+    decisions: readonly {
+      readonly id: string;
+      readonly kind: "keep" | "demote" | "done" | "delete";
+    }[];
+  }): ReturnType<MaintenanceService["chronicPostponesApply"]> {
+    return this.maintenanceService.chronicPostponesApply({
       decisions: request.decisions.map((decision) => ({
         id: decision.id as ElementId,
         kind: decision.kind,

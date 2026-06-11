@@ -79,6 +79,8 @@ import {
   MaintenanceBulkArchiveRequestSchema,
   MaintenanceBulkPostponeRequestSchema,
   MaintenanceBulkTrashRequestSchema,
+  MaintenanceChronicPostponesApplyRequestSchema,
+  MaintenanceChronicPostponesRequestSchema,
   MaintenanceDedupeRequestSchema,
   MaintenanceIntegrityRequestSchema,
   MaintenanceLowValueRequestSchema,
@@ -341,6 +343,8 @@ describe("IPC channels", () => {
         "maintenance:bulkPostpone",
         "maintenance:parkedResurfacing",
         "maintenance:parkedResurfacing:apply",
+        "maintenance:chronicPostpones",
+        "maintenance:chronicPostpones:apply",
         "menu:showShortcuts",
         "menu:createBackup",
       ].sort(),
@@ -1704,8 +1708,16 @@ describe("SettingsUpdateRequestSchema", () => {
 
 describe("SettingsPatchSchema (T011)", () => {
   it("accepts a valid partial patch", () => {
-    const parsed = SettingsPatchSchema.parse({ dailyReviewBudget: 60, theme: "system" });
-    expect(parsed).toEqual({ dailyReviewBudget: 60, theme: "system" });
+    const parsed = SettingsPatchSchema.parse({
+      dailyReviewBudget: 60,
+      theme: "system",
+      chronicPostponeThreshold: 6,
+    });
+    expect(parsed).toEqual({
+      dailyReviewBudget: 60,
+      theme: "system",
+      chronicPostponeThreshold: 6,
+    });
   });
 
   it("accepts an empty patch", () => {
@@ -1730,6 +1742,8 @@ describe("SettingsPatchSchema (T011)", () => {
   it("rejects a non-integer budget / topic interval", () => {
     expect(() => SettingsPatchSchema.parse({ dailyReviewBudget: 60.5 })).toThrow();
     expect(() => SettingsPatchSchema.parse({ defaultTopicIntervalDays: 0 })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ chronicPostponeThreshold: 1 })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ chronicPostponeThreshold: 501 })).toThrow();
   });
 
   it("accepts a boolean burySiblings, rejects a non-boolean (T039)", () => {
@@ -3228,6 +3242,42 @@ describe("Maintenance schemas (T099)", () => {
     expect(
       MaintenanceParkedResurfacingApplyRequestSchema.safeParse({
         decisions: [{ id: "e1", kind: "archive" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("chronic postpone drilldown accepts only a bounded optional limit", () => {
+    expect(MaintenanceChronicPostponesRequestSchema.parse(undefined)).toBeUndefined();
+    expect(MaintenanceChronicPostponesRequestSchema.parse({ limit: 50 })?.limit).toBe(50);
+    expect(MaintenanceChronicPostponesRequestSchema.safeParse({ limit: 0 }).success).toBe(false);
+    expect(MaintenanceChronicPostponesRequestSchema.safeParse({ limit: 501 }).success).toBe(false);
+  });
+
+  it("chronic postpone apply requires decisions from the bounded enum", () => {
+    expect(
+      MaintenanceChronicPostponesApplyRequestSchema.parse({
+        decisions: [
+          { id: "e1", kind: "keep" },
+          { id: "e2", kind: "demote" },
+          { id: "e3", kind: "done" },
+          { id: "e4", kind: "delete" },
+        ],
+      }).decisions.map((decision) => decision.kind),
+    ).toEqual(["keep", "demote", "done", "delete"]);
+    expect(MaintenanceChronicPostponesApplyRequestSchema.safeParse({ decisions: [] }).success).toBe(
+      false,
+    );
+    expect(
+      MaintenanceChronicPostponesApplyRequestSchema.safeParse({
+        decisions: [{ id: "e1", kind: "archive" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      MaintenanceChronicPostponesApplyRequestSchema.safeParse({
+        decisions: Array.from({ length: 501 }, (_, index) => ({
+          id: `e${index}`,
+          kind: "keep",
+        })),
       }).success,
     ).toBe(false);
   });

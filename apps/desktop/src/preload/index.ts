@@ -78,6 +78,8 @@ import type {
   MaintenanceBulkArchiveRequest,
   MaintenanceBulkPostponeRequest,
   MaintenanceBulkTrashRequest,
+  MaintenanceChronicPostponesApplyRequest,
+  MaintenanceChronicPostponesRequest,
   MaintenanceDedupeRequest,
   MaintenanceIntegrityRequest,
   MaintenanceLowValueRequest,
@@ -551,6 +553,10 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.maintenanceParkedResurfacing, request),
     parkedResurfacingApply: (request: MaintenanceParkedResurfacingApplyRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.maintenanceParkedResurfacingApply, request),
+    chronicPostpones: (request?: MaintenanceChronicPostponesRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.maintenanceChronicPostpones, request),
+    chronicPostponesApply: (request: MaintenanceChronicPostponesApplyRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.maintenanceChronicPostponesApply, request),
   },
   menu: {
     // Receive-only subscription (T048): the native Help → "Keyboard shortcuts"

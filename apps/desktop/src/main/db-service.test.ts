@@ -735,6 +735,7 @@ describe("DbService", () => {
       balanceWarnings: true,
       importBalanceFactor: 1.5,
       parkedResurfaceAfterDays: 90,
+      chronicPostponeThreshold: 5,
       keyboardLayout: "dvorak",
       theme: "light",
       displayName: "",
@@ -4521,6 +4522,19 @@ describe("DbService maintenance reads (T099)", () => {
 
     const schedulerConsistency = svc.getMaintenanceSchedulerConsistency();
     expect(Array.isArray(schedulerConsistency.rows)).toBe(true);
+
+    const chronic = svc.getMaintenanceChronicPostpones({ limit: 50 });
+    expect(Array.isArray(chronic.rows)).toBe(true);
+    expect(typeof chronic.threshold).toBe("number");
+
+    const chronicApply = svc.maintenanceChronicPostponesApply({
+      decisions: [{ id: "missing-chronic-row", kind: "keep" }],
+    });
+    expect(chronicApply).toMatchObject({
+      applied: 0,
+      skipped: [{ id: "missing-chronic-row", reason: "missing" }],
+      batchId: null,
+    });
 
     const integrity = await svc.getMaintenanceIntegrity();
     expect(integrity.db.ok).toBe(true);

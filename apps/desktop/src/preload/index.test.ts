@@ -127,6 +127,19 @@ describe("preload bridge", () => {
       { decisions: [{ id: "src-1", kind: "queueNow" }] },
     );
 
+    await api().maintenance.chronicPostpones({ limit: 50 });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.maintenanceChronicPostpones, {
+      limit: 50,
+    });
+
+    await api().maintenance.chronicPostponesApply({
+      decisions: [{ id: "src-1", kind: "demote" }],
+    });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(
+      IPC_CHANNELS.maintenanceChronicPostponesApply,
+      { decisions: [{ id: "src-1", kind: "demote" }] },
+    );
+
     await api().backups.restore({
       timestamp: "2026-06-07T12-30-00-000Z",
       confirm: true,

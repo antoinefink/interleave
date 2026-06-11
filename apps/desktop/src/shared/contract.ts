@@ -26,6 +26,8 @@ import {
   type AiSuggestionKind,
   type AppSettings,
   CARD_KINDS,
+  CHRONIC_POSTPONE_THRESHOLD_MAX,
+  CHRONIC_POSTPONE_THRESHOLD_MIN,
   CONFIDENCE_LEVELS,
   type ConfidenceLevel,
   DAILY_REVIEW_BUDGET_MAX,
@@ -231,6 +233,11 @@ export const SettingsPatchSchema = z
       .int()
       .min(PARKED_RESURFACE_AFTER_DAYS_MIN)
       .max(PARKED_RESURFACE_AFTER_DAYS_MAX),
+    chronicPostponeThreshold: z
+      .number()
+      .int()
+      .min(CHRONIC_POSTPONE_THRESHOLD_MIN)
+      .max(CHRONIC_POSTPONE_THRESHOLD_MAX),
     importBalanceFactor: z.number().min(IMPORT_BALANCE_FACTOR_MIN).max(IMPORT_BALANCE_FACTOR_MAX),
     keyboardLayout: z.enum(KEYBOARD_LAYOUTS),
     theme: z.enum(THEMES),
@@ -2154,6 +2161,7 @@ export interface MaintenanceReportResult {
   readonly cardsWithoutSourcesCount: number;
   readonly schedulerConsistencyCount: number;
   readonly parkedResurfacingCount: number;
+  readonly chronicPostponeCount: number;
   readonly orphanFileCount: number;
   readonly orphanBytes: number;
   readonly lowValueCount: number;
@@ -2202,7 +2210,9 @@ export type SchedulerConsistencyReason =
   | "terminal-element-due"
   | "terminal-card-review-due"
   | "retired-card-review-due"
-  | "scheduled-attention-missing-due";
+  | "scheduled-attention-missing-due"
+  | "chronic-postpone-paused"
+  | "chronic-postpone-reset";
 
 export interface SchedulerConsistencyRowSummary {
   readonly element: MaintenanceRefSummary & { readonly status: string };
@@ -2354,6 +2364,61 @@ export interface MaintenanceParkedResurfacingApplyResult {
   readonly skipped: readonly {
     readonly id: string;
     readonly reason: "missing" | "deleted" | "not-source" | "not-parked" | "not-due";
+  }[];
+  readonly batchId: string | null;
+}
+
+export interface ChronicPostponeRowSummary {
+  readonly element: MaintenanceRefSummary & {
+    readonly type: "source" | "topic" | "extract" | "synthesis_note" | "card";
+    readonly priorityLabel: string;
+    readonly status: string;
+    readonly dueAt: string | null;
+  };
+  readonly scheduler: "attention" | "fsrs";
+  readonly postponeCount: number;
+}
+
+/** `maintenance.chronicPostpones({ limit? })` — items past the postpone threshold. */
+export const MaintenanceChronicPostponesRequestSchema = z
+  .object({ limit: z.number().int().positive().max(500).optional() })
+  .optional();
+export type MaintenanceChronicPostponesRequest = z.infer<
+  typeof MaintenanceChronicPostponesRequestSchema
+>;
+export interface MaintenanceChronicPostponesResult {
+  readonly rows: readonly ChronicPostponeRowSummary[];
+  readonly totalDue: number;
+  readonly threshold: number;
+  readonly limit: number | null;
+}
+
+export const ChronicPostponeDecisionSchema = z.object({
+  id: ElementIdSchema,
+  kind: z.enum(["keep", "demote", "done", "delete"]),
+});
+export type ChronicPostponeDecisionInput = z.infer<typeof ChronicPostponeDecisionSchema>;
+
+/** `maintenance.chronicPostponesApply({ decisions })` — one undoable reckoning batch. */
+export const MaintenanceChronicPostponesApplyRequestSchema = z.object({
+  decisions: z.array(ChronicPostponeDecisionSchema).min(1).max(500),
+});
+export type MaintenanceChronicPostponesApplyRequest = z.infer<
+  typeof MaintenanceChronicPostponesApplyRequestSchema
+>;
+export interface MaintenanceChronicPostponesApplyResult {
+  readonly applied: number;
+  readonly skipped: readonly {
+    readonly id: string;
+    readonly reason:
+      | "missing"
+      | "deleted"
+      | "unsupported-type"
+      | "not-actionable"
+      | "retired-card"
+      | "below-threshold"
+      | "already-lowest"
+      | "source-unresolved-blocks";
   }[];
   readonly batchId: string | null;
 }
@@ -6674,6 +6739,14 @@ export interface AppApi {
     parkedResurfacingApply(
       request: MaintenanceParkedResurfacingApplyRequest,
     ): Promise<MaintenanceParkedResurfacingApplyResult>;
+    /** Items whose effective postpone count crossed the chronic threshold. */
+    chronicPostpones(
+      request?: MaintenanceChronicPostponesRequest,
+    ): Promise<MaintenanceChronicPostponesResult>;
+    /** Apply keep/demote/done/delete decisions for chronic-postpone rows as one batch. */
+    chronicPostponesApply(
+      request: MaintenanceChronicPostponesApplyRequest,
+    ): Promise<MaintenanceChronicPostponesApplyResult>;
   };
   readonly menu: {
     /**

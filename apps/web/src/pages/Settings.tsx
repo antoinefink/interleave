@@ -74,6 +74,7 @@ const FALLBACK_SETTINGS: RendererSettings = {
   trashRetentionDays: 30,
   balanceWarnings: true,
   parkedResurfaceAfterDays: 90,
+  chronicPostponeThreshold: 5,
   importBalanceFactor: 1.5,
   keyboardLayout: "qwerty",
   theme: "dark",

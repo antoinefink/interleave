@@ -242,6 +242,17 @@ function installAppApi(overrides: Partial<AppApi> = {}): AppApi {
         skipped: [],
         batchId: "batch-1",
       })),
+      chronicPostpones: vi.fn(async () => ({
+        rows: [],
+        totalDue: 1,
+        threshold: 5,
+        limit: 50,
+      })),
+      chronicPostponesApply: vi.fn(async () => ({
+        applied: 1,
+        skipped: [],
+        batchId: "batch-2",
+      })),
     },
     ...overrides,
   } as unknown as AppApi;
@@ -323,6 +334,16 @@ describe("renderer appApi wrapper", () => {
     });
     expect(bridge.maintenance.parkedResurfacingApply).toHaveBeenCalledWith({
       decisions: [{ id: "src-1", kind: "queueNow" }],
+    });
+
+    await appApi.maintenance.chronicPostpones({ limit: 50 });
+    expect(bridge.maintenance.chronicPostpones).toHaveBeenCalledWith({ limit: 50 });
+
+    await appApi.maintenance.chronicPostponesApply({
+      decisions: [{ id: "src-1", kind: "demote" }],
+    });
+    expect(bridge.maintenance.chronicPostponesApply).toHaveBeenCalledWith({
+      decisions: [{ id: "src-1", kind: "demote" }],
     });
   });
 

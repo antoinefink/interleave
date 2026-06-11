@@ -8,15 +8,26 @@
  */
 
 import { type ElementStatus, type IsoTimestamp, priorityToLabel } from "@interleave/core";
-import { cards, elements, type InterleaveDatabase, reviewStates } from "@interleave/db";
+import {
+  cards,
+  elements,
+  type InterleaveDatabase,
+  operationLog,
+  reviewStates,
+} from "@interleave/db";
 import { and, eq, inArray, isNotNull, isNull, ne } from "drizzle-orm";
+import { CHRONIC_POSTPONE_TYPES, ChronicPostponeQuery } from "./chronic-postpone-query";
+import { OperationLogRepository } from "./operation-log-repository";
 import { QUEUE_EXCLUDED_STATUSES } from "./queue-repository";
+import { SettingsRepository } from "./settings-repository";
 
 export type SchedulerConsistencyReason =
   | "terminal-element-due"
   | "terminal-card-review-due"
   | "retired-card-review-due"
-  | "scheduled-attention-missing-due";
+  | "scheduled-attention-missing-due"
+  | "chronic-postpone-paused"
+  | "chronic-postpone-reset";
 
 export interface SchedulerConsistencyRow {
   readonly element: {
@@ -47,6 +58,8 @@ export class SchedulerConsistencyQuery {
     for (const row of this.terminalCardReviewDue()) push(row);
     for (const row of this.retiredCardReviewDue()) push(row);
     for (const row of this.scheduledAttentionMissingDue()) push(row);
+    for (const row of this.chronicPostponePaused()) push(row);
+    for (const row of this.chronicPostponeReset()) push(row);
     return [...rows.values()];
   }
 
@@ -168,6 +181,72 @@ export class SchedulerConsistencyQuery {
         reviewDueAt: null,
       }));
   }
+
+  private chronicPostponePaused(): SchedulerConsistencyRow[] {
+    const threshold = new SettingsRepository(this.db).getAppSettings().chronicPostponeThreshold;
+    return new ChronicPostponeQuery(this.db).listDue({ threshold }).rows.map((row) => ({
+      element: {
+        id: row.element.id,
+        type: row.element.type,
+        title: row.element.title,
+        priority: row.element.priority,
+        priorityLabel: row.element.priorityLabel,
+        status: row.element.status,
+        createdAt: row.element.createdAt,
+      },
+      reason: "chronic-postpone-paused" as const,
+      elementDueAt: row.element.dueAt,
+      reviewDueAt: null,
+    }));
+  }
+
+  private chronicPostponeReset(): SchedulerConsistencyRow[] {
+    const operationLogRepository = new OperationLogRepository(this.db);
+    return this.db
+      .select({
+        id: elements.id,
+        type: elements.type,
+        title: elements.title,
+        priority: elements.priority,
+        status: elements.status,
+        createdAt: elements.createdAt,
+        dueAt: elements.dueAt,
+      })
+      .from(elements)
+      .where(
+        and(
+          isNull(elements.deletedAt),
+          inArray(elements.type, CHRONIC_POSTPONE_TYPES as readonly string[]),
+        ),
+      )
+      .all()
+      .filter(
+        (row) => rawPostponeCount(this.db, row.id) > operationLogRepository.countPostpones(row.id),
+      )
+      .map((r) => ({
+        element: ref(r),
+        reason: "chronic-postpone-reset" as const,
+        elementDueAt: r.dueAt as IsoTimestamp | null,
+        reviewDueAt: null,
+      }));
+  }
+}
+
+function rawPostponeCount(db: InterleaveDatabase, elementId: string): number {
+  return db
+    .select({ payload: operationLog.payload, opType: operationLog.opType })
+    .from(operationLog)
+    .where(eq(operationLog.elementId, elementId))
+    .all()
+    .filter((row) => {
+      if (row.opType !== "reschedule_element") return false;
+      const payload = JSON.parse(row.payload) as unknown;
+      return (
+        typeof payload === "object" &&
+        payload !== null &&
+        (payload as { postpone?: unknown }).postpone === true
+      );
+    }).length;
 }
 
 function ref(row: {

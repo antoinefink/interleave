@@ -102,6 +102,13 @@ export class SchedulerService {
     return this.operationLog.countPostpones(id);
   }
 
+  private postponeCountForScheduling(element: Element): number {
+    const count = this.countPostpones(element.id);
+    if (element.type === "task") return count;
+    const threshold = this.settings.getAppSettings().chronicPostponeThreshold;
+    return count >= threshold ? Math.max(0, threshold - 1) : count;
+  }
+
   /**
    * Build the pure scheduler's {@link Schedulable} descriptor from an element +
    * the data it needs off the op log/settings. `lastSeenAt` derives from the
@@ -129,7 +136,7 @@ export class SchedulerService {
       stage: element.stage,
       priority: element.priority,
       lastSeenAt: element.updatedAt,
-      postponeCount: this.countPostpones(element.id),
+      postponeCount: this.postponeCountForScheduling(element),
       ...(lastAction ? { lastAction } : {}),
       defaultTopicIntervalDays,
       sourceProcessing: blockSummary

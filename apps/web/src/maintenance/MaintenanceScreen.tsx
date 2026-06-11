@@ -25,6 +25,8 @@ import { AutoVirtualList } from "../components/VirtualList";
 import {
   appApi,
   type BrokenSourceRowSummary,
+  type ChronicPostponeDecisionKind,
+  type ChronicPostponeRowSummary,
   type DuplicateReportResult,
   isDesktop,
   type LineageGapRowSummary,
@@ -47,6 +49,29 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
+function formatChronicSkipReason(reason: string | undefined): string {
+  switch (reason) {
+    case "below-threshold":
+      return "below threshold";
+    case "already-lowest":
+      return "already lowest priority";
+    case "source-unresolved-blocks":
+      return "source has open blocks";
+    case "retired-card":
+      return "retired card";
+    case "not-actionable":
+      return "not actionable";
+    case "unsupported-type":
+      return "unsupported type";
+    case "deleted":
+      return "deleted";
+    case "missing":
+      return "missing";
+    default:
+      return "stale row";
+  }
+}
+
 /** Which report card is expanded (one at a time). */
 type ExpandedReport =
   | "duplicates"
@@ -54,6 +79,7 @@ type ExpandedReport =
   | "sourceless"
   | "lowValue"
   | "parked"
+  | "chronic"
   | "orphan"
   | null;
 
@@ -64,6 +90,7 @@ export function MaintenanceScreen() {
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<ExpandedReport>(null);
   const [snack, setSnack] = useState<string | null>(null);
+  const [snackUndoable, setSnackUndoable] = useState(false);
   const [busy, setBusy] = useState(false);
 
   // Drill-down payloads, loaded lazily when a card expands.
@@ -72,6 +99,7 @@ export function MaintenanceScreen() {
   const [sourceless, setSourceless] = useState<readonly LineageGapRowSummary[] | null>(null);
   const [lowValue, setLowValue] = useState<readonly LowValueRowSummary[] | null>(null);
   const [parked, setParked] = useState<readonly ParkedResurfacingRowSummary[] | null>(null);
+  const [chronic, setChronic] = useState<readonly ChronicPostponeRowSummary[] | null>(null);
 
   // The on-demand deep integrity check.
   const [integrity, setIntegrity] = useState<MaintenanceIntegrityResult | null>(null);
@@ -107,6 +135,8 @@ export function MaintenanceScreen() {
       else if (which === "lowValue") setLowValue((await appApi.maintenance.lowValue()).rows);
       else if (which === "parked")
         setParked((await appApi.maintenance.parkedResurfacing({ limit: 50 })).rows);
+      else if (which === "chronic")
+        setChronic((await appApi.maintenance.chronicPostpones({ limit: 50 })).rows);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -140,8 +170,10 @@ export function MaintenanceScreen() {
         const res = await fn();
         if (res.affected > 0) {
           setSnack(`${label} (${res.affected})`);
+          setSnackUndoable(true);
         } else {
           setSnack("Nothing to clean up");
+          setSnackUndoable(false);
         }
         await loadReport();
         if (expanded) await reloadExpanded(expanded);
@@ -157,6 +189,7 @@ export function MaintenanceScreen() {
   /** The Snackbar "Undo" reverses the LAST op/batch via the shared command-level undo. */
   const onUndo = useCallback(() => {
     setSnack(null);
+    setSnackUndoable(false);
     void appApi
       .undoLast()
       .then(() => window.dispatchEvent(new CustomEvent(UNDO_EVENT)))
@@ -186,8 +219,43 @@ export function MaintenanceScreen() {
         if (res.applied > 0) {
           const skipped = res.skipped.length > 0 ? ` · ${res.skipped.length} skipped` : "";
           setSnack(`Updated parked sources (${res.applied})${skipped}`);
+          setSnackUndoable(true);
         } else {
           setSnack("Nothing to clean up");
+          setSnackUndoable(false);
+        }
+        await loadReport();
+        if (expanded) await reloadExpanded(expanded);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [expanded, loadReport, reloadExpanded],
+  );
+
+  const runChronicPostpones = useCallback(
+    async (
+      decisions: readonly { readonly id: string; readonly kind: ChronicPostponeDecisionKind }[],
+    ) => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await appApi.maintenance.chronicPostponesApply({ decisions });
+        const skippedReason =
+          res.skipped.length > 0 ? `: ${formatChronicSkipReason(res.skipped[0]?.reason)}` : "";
+        if (res.applied > 0) {
+          const skipped =
+            res.skipped.length > 0 ? ` · ${res.skipped.length} skipped${skippedReason}` : "";
+          setSnack(`Updated chronic postpones (${res.applied})${skipped}`);
+          setSnackUndoable(true);
+        } else if (res.skipped.length > 0) {
+          setSnack(`No changes applied · ${res.skipped.length} skipped${skippedReason}`);
+          setSnackUndoable(false);
+        } else {
+          setSnack("Nothing to clean up");
+          setSnackUndoable(false);
         }
         await loadReport();
         if (expanded) await reloadExpanded(expanded);
@@ -403,6 +471,23 @@ export function MaintenanceScreen() {
             />
           </MetricCard>
 
+          {/* Chronic-postpone reckoning */}
+          <MetricCard
+            icon="hourglass"
+            title="Chronic postpones"
+            value={report.chronicPostponeCount}
+            unit="need a decision"
+            testId="metric-chronic"
+            expanded={expanded === "chronic"}
+            onToggle={() => void toggle("chronic")}
+          >
+            <ChronicPanel
+              rows={chronic}
+              busy={busy}
+              onApply={(decisions) => void runChronicPostpones(decisions)}
+            />
+          </MetricCard>
+
           {/* Integrity (on-demand) */}
           <IntegrityCard
             running={integrityRunning}
@@ -414,8 +499,11 @@ export function MaintenanceScreen() {
 
       <Snackbar
         message={snack}
-        onUndo={snack && snack !== "Nothing to clean up" ? onUndo : undefined}
-        onClose={() => setSnack(null)}
+        onUndo={snack && snackUndoable ? onUndo : undefined}
+        onClose={() => {
+          setSnack(null);
+          setSnackUndoable(false);
+        }}
         testId="maintenance-snackbar"
       />
     </div>
@@ -863,6 +951,150 @@ function ParkedPanel({
         >
           <Icon name="check" size={13} />
           Apply {rows.length} decisions
+        </button>
+      </div>
+      <AutoVirtualList
+        items={rows}
+        itemKey={(row) => row.element.id}
+        estimateSize={44}
+        height={420}
+        className="mt-dup-list mt-dup-list--virtual"
+        role="list"
+        rowRole="listitem"
+        renderInline={() => <ul className="mt-dup-list">{rows.map(renderInlineRow)}</ul>}
+        renderItem={renderVirtualRow}
+      />
+    </div>
+  );
+}
+
+function ChronicPanel({
+  rows,
+  busy,
+  onApply,
+}: {
+  rows: readonly ChronicPostponeRowSummary[] | null;
+  busy: boolean;
+  onApply: (
+    decisions: readonly { readonly id: string; readonly kind: ChronicPostponeDecisionKind }[],
+  ) => void;
+}) {
+  const [decisions, setDecisions] = useState<Record<string, ChronicPostponeDecisionKind>>({});
+
+  useEffect(() => {
+    if (!rows) return;
+    setDecisions((prev) => {
+      const activeIds = new Set(rows.map((row) => row.element.id));
+      const next: Record<string, ChronicPostponeDecisionKind> = {};
+      for (const [id, decision] of Object.entries(prev)) {
+        if (activeIds.has(id)) next[id] = decision;
+      }
+      return next;
+    });
+  }, [rows]);
+
+  if (!rows) return <p className="mt-muted">Loading…</p>;
+  if (rows.length === 0) return <EmptyRow message="No chronically postponed items." />;
+
+  const selected = rows
+    .map((row) => {
+      const kind = decisions[row.element.id];
+      return kind ? { id: row.element.id, kind } : null;
+    })
+    .filter(
+      (decision): decision is { readonly id: string; readonly kind: ChronicPostponeDecisionKind } =>
+        Boolean(decision),
+    );
+
+  const setDecision = (id: string, kind: ChronicPostponeDecisionKind) =>
+    setDecisions((prev) => ({ ...prev, [id]: kind }));
+
+  const renderRowContent = (row: ChronicPostponeRowSummary) => {
+    const current = decisions[row.element.id] ?? null;
+    return (
+      <>
+        <span className="badge badge--soft">{row.element.priorityLabel}</span>
+        <span className="mt-dup-title" title={row.element.title}>
+          {row.element.title}
+        </span>
+        <span className="mt-muted">
+          {row.element.type} · {row.scheduler} · {row.postponeCount}x
+        </span>
+        <fieldset className="mt-segment">
+          <legend className="sr-only">Decision for {row.element.title}</legend>
+          <button
+            type="button"
+            className="mt-segment__btn"
+            data-active={current === "keep"}
+            data-testid="chronic-decision-keep"
+            aria-pressed={current === "keep"}
+            disabled={busy}
+            onClick={() => setDecision(row.element.id, "keep")}
+          >
+            Keep
+          </button>
+          <button
+            type="button"
+            className="mt-segment__btn"
+            data-active={current === "demote"}
+            data-testid="chronic-decision-demote"
+            aria-pressed={current === "demote"}
+            disabled={busy}
+            onClick={() => setDecision(row.element.id, "demote")}
+          >
+            Demote
+          </button>
+          <button
+            type="button"
+            className="mt-segment__btn"
+            data-active={current === "done"}
+            data-testid="chronic-decision-done"
+            aria-pressed={current === "done"}
+            disabled={busy}
+            onClick={() => setDecision(row.element.id, "done")}
+          >
+            Done
+          </button>
+          <button
+            type="button"
+            className="mt-segment__btn"
+            data-active={current === "delete"}
+            data-testid="chronic-decision-delete"
+            aria-pressed={current === "delete"}
+            disabled={busy}
+            onClick={() => setDecision(row.element.id, "delete")}
+          >
+            Delete
+          </button>
+        </fieldset>
+      </>
+    );
+  };
+
+  const renderInlineRow = (row: ChronicPostponeRowSummary) => (
+    <li key={row.element.id} data-testid="chronic-row" data-element-id={row.element.id}>
+      {renderRowContent(row)}
+    </li>
+  );
+
+  const renderVirtualRow = (row: ChronicPostponeRowSummary) => (
+    <div data-maintenance-row="true" data-testid="chronic-row" data-element-id={row.element.id}>
+      {renderRowContent(row)}
+    </div>
+  );
+
+  return (
+    <div data-testid="chronic-panel">
+      <div className="mt-bulkbar">
+        <button
+          type="button"
+          className="rv-repair__btn"
+          data-testid="chronic-apply"
+          disabled={busy || selected.length === 0}
+          onClick={() => onApply(selected)}
+        >
+          <Icon name="check" size={13} />
+          Apply {selected.length} decisions
         </button>
       </div>
       <AutoVirtualList

@@ -400,8 +400,9 @@ Detailed specs: [`tasks/M22-receipts.md`](./tasks/M22-receipts.md)
 - [x] **T105 — Priority-integrity read model** · _deps: T045, T077_
   Done when: a typed read model reports, per priority band and per topic: due attention serviced vs deferred over a window, cumulative postpone debt, and band-share inflation (warning when one band dominates the collection) — computed from `review_logs` and `reschedule_element`/auto-postpone operation-log facts, no parallel tables, surfaced in analytics.
   Completed in `feat: T105 priority-integrity read model`. Verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm e2e -- tests/electron/analytics.spec.ts tests/electron/queue.spec.ts`. Learning captured in [`docs/solutions/architecture-patterns/priority-integrity-read-model.md`](./solutions/architecture-patterns/priority-integrity-read-model.md).
-- [ ] **T106 — Chronic-postpone reckoning** · _deps: T105_
+- [x] **T106 — Chronic-postpone reckoning** · _deps: T105_
   Done when: items postponed ≥N times surface in a decision surface forcing an explicit keep / demote / done / delete per item — no further silent recession past the threshold without one decision — batched, undoable, op-logged, with new drift-diagnostic cases.
+  Completed in this commit. Verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm e2e tests/electron/maintenance.spec.ts`. Learning captured in [`docs/solutions/architecture-patterns/chronic-postpone-reckoning-from-operation-log-reset-markers.md`](./solutions/architecture-patterns/chronic-postpone-reckoning-from-operation-log-reset-markers.md). Downstream: T110 can compose the chronic reckoning panel into the weekly ledger; T107 remains the next available M22 task.
 - [ ] **T107 — Fallow: deliberate topic rest** · _deps: T105_
   Done when: a topic can be rested to a chosen return date — distinct from postpone (no recession growth, excluded from missed-priority accounting) and from abandon (it provably returns) — visible on the topic, reversible, op-logged.
 - [ ] **T108 — Topic knowledge-state read model** · _deps: T079, T083, T104_

@@ -92,6 +92,23 @@ export {
   type CreateCardResult,
 } from "./card-service";
 export {
+  CHRONIC_POSTPONE_TYPES,
+  type ChronicPostponeElementRef,
+  type ChronicPostponeListOptions,
+  type ChronicPostponeListResult,
+  ChronicPostponeQuery,
+  type ChronicPostponeRow,
+} from "./chronic-postpone-query";
+export {
+  type ChronicPostponeApplyOptions,
+  type ChronicPostponeApplyResult,
+  type ChronicPostponeDecision,
+  type ChronicPostponeDecisionKind,
+  ChronicPostponeService,
+  type ChronicPostponeSkippedDecision,
+  type ChronicPostponeSkipReason,
+} from "./chronic-postpone-service";
+export {
   type ConceptNode,
   ConceptRepository,
   type ConceptSummary,
@@ -493,6 +510,10 @@ export interface Repositories {
   readonly parkedResurfacing: import("./parked-resurfacing-service").ParkedResurfacingService;
   /** Priority-fidelity read model (T105): serviced/deferred/debt by band/topic. Read-only. */
   readonly priorityIntegrity: import("./priority-integrity-query").PriorityIntegrityQuery;
+  /** Chronic-postpone reckoning list (T106). Read-only, folded from operation-log markers. */
+  readonly chronicPostpone: import("./chronic-postpone-query").ChronicPostponeQuery;
+  /** Undoable chronic-postpone keep/demote/done/delete batches (T106). */
+  readonly chronicPostponeService: import("./chronic-postpone-service").ChronicPostponeService;
   /** Dismissible source retirement nudges (T103) — visible signal + op-logged dismissal. */
   readonly retirementSuggestions: import("./retirement-suggestion-repository").RetirementSuggestionRepository;
   /** The on-device semantic-search vector store (T087) — `sqlite-vec` KNN, NO op-log. */
@@ -534,6 +555,8 @@ import { AnalyticsService } from "./analytics-query";
 import { AssetRepository } from "./asset-repository";
 import { BlockProcessingRepository } from "./block-processing-repository";
 import { BulkActionService } from "./bulk-action-service";
+import { ChronicPostponeQuery } from "./chronic-postpone-query";
+import { ChronicPostponeService } from "./chronic-postpone-service";
 import { ConceptRepository } from "./concept-repository";
 import { DedupReportQuery } from "./dedup-report-query";
 import { DocumentRepository } from "./document-repository";
@@ -618,6 +641,8 @@ export function createRepositories(
     parkedResurfacingQuery: new ParkedResurfacingQuery(db),
     parkedResurfacing: new ParkedResurfacingService(db),
     priorityIntegrity: new PriorityIntegrityQuery(db),
+    chronicPostpone: new ChronicPostponeQuery(db),
+    chronicPostponeService: new ChronicPostponeService(db),
     retirementSuggestions: new RetirementSuggestionRepository(db),
     embeddings,
     semanticSearch: new SemanticSearchRepository(search, embeddings),

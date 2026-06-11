@@ -49,6 +49,7 @@ async function report(page: Page) {
           duplicateCount: number;
           cardsWithoutSourcesCount: number;
           parkedResurfacingCount: number;
+          chronicPostponeCount: number;
           orphanFileCount: number;
           lowValueCount: number;
         }>;
@@ -98,6 +99,7 @@ test("the seeded collection surfaces non-zero report counts + an orphan file", a
   expect(r.duplicateCount).toBe(1); // one removable copy in the duplicate pair
   expect(r.cardsWithoutSourcesCount).toBeGreaterThanOrEqual(1);
   expect(r.parkedResurfacingCount).toBeGreaterThanOrEqual(1);
+  expect(r.chronicPostponeCount).toBe(4);
   expect(r.orphanFileCount).toBeGreaterThanOrEqual(1);
   expect(r.lowValueCount).toBeGreaterThanOrEqual(1);
 
@@ -106,6 +108,7 @@ test("the seeded collection surfaces non-zero report counts + an orphan file", a
   await expect(page.getByTestId("route-maintenance")).toBeVisible();
   await expect(page.getByTestId("metric-duplicates-value")).toHaveText("1");
   await expect(page.getByTestId("metric-parked-value")).toHaveText("3");
+  await expect(page.getByTestId("metric-chronic-value")).toHaveText("4");
 
   await app.close();
 });
@@ -212,6 +215,132 @@ test("parked resurfacing applies keep, queue, and let-go as one undoable batch",
   expect(undo.undone).toBe(true);
   expect(undo.count).toBe(3);
   await expect.poll(async () => (await report(page)).parkedResurfacingCount).toBe(3);
+
+  await app.close();
+});
+
+test("chronic postpones apply four decisions durably, then undo as one batch", async () => {
+  let app = await launch();
+  let page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+
+  await page.getByTestId("nav-maintenance").click();
+  await expect(page.getByTestId("route-maintenance")).toBeVisible();
+  await page.getByTestId("metric-chronic-toggle").click();
+  await expect(page.getByTestId("chronic-panel")).toBeVisible();
+
+  const keepRow = page.getByTestId("chronic-row").filter({ hasText: "Chronic postpone keep" });
+  const demoteRow = page.getByTestId("chronic-row").filter({ hasText: "Chronic postpone demote" });
+  const doneRow = page.getByTestId("chronic-row").filter({ hasText: "Chronic postpone done" });
+  const deleteRow = page.getByTestId("chronic-row").filter({ hasText: "Chronic postpone delete" });
+  await expect(keepRow).toBeVisible();
+  await expect(demoteRow).toBeVisible();
+  await expect(doneRow).toBeVisible();
+  await expect(deleteRow).toBeVisible();
+
+  await expect(page.getByTestId("chronic-apply")).toBeDisabled();
+  await keepRow.getByTestId("chronic-decision-keep").click();
+  await demoteRow.getByTestId("chronic-decision-demote").click();
+  await doneRow.getByTestId("chronic-decision-done").click();
+  await deleteRow.getByTestId("chronic-decision-delete").click();
+  await page.getByTestId("chronic-apply").click();
+  await expect(page.getByTestId("maintenance-snackbar-undo")).toBeVisible();
+  await expect.poll(async () => (await report(page)).chronicPostponeCount).toBe(0);
+
+  const afterApply = await page.evaluate(async () => {
+    const api = window.appApi as unknown as {
+      library: {
+        browse(req: {
+          statuses: string[];
+        }): Promise<{ items: { title: string; status: string; priorityLabel?: string }[] }>;
+      };
+      trash: { list(): Promise<{ items: { title: string }[] }> };
+    };
+    const [scheduled, done, trash] = await Promise.all([
+      api.library.browse({ statuses: ["scheduled"] }),
+      api.library.browse({ statuses: ["done"] }),
+      api.trash.list(),
+    ]);
+    return { scheduled, done, trash };
+  });
+  expect(
+    afterApply.scheduled.items.some(
+      (item) => item.title === "Chronic postpone keep source" && item.status === "scheduled",
+    ),
+  ).toBe(true);
+  expect(
+    afterApply.scheduled.items.some(
+      (item) =>
+        item.title === "Chronic postpone demote source" &&
+        item.status === "scheduled" &&
+        item.priorityLabel === "C",
+    ),
+  ).toBe(true);
+  expect(
+    afterApply.done.items.some(
+      (item) => item.title === "Chronic postpone done source" && item.status === "done",
+    ),
+  ).toBe(true);
+  expect(
+    afterApply.trash.items.some((item) => item.title === "Chronic postpone delete source"),
+  ).toBe(true);
+
+  await app.close();
+
+  app = await launch();
+  page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+  await expect.poll(async () => (await report(page)).chronicPostponeCount).toBe(0);
+
+  const undo = await page.evaluate(async () => {
+    const api = window.appApi as unknown as {
+      undo: { last(): Promise<{ undone: boolean; count: number }> };
+    };
+    return api.undo.last();
+  });
+  expect(undo.undone).toBe(true);
+  expect(undo.count).toBe(5);
+  await expect.poll(async () => (await report(page)).chronicPostponeCount).toBe(4);
+  const afterUndo = await page.evaluate(async () => {
+    const api = window.appApi as unknown as {
+      library: {
+        browse(req: {
+          statuses: string[];
+        }): Promise<{ items: { title: string; status: string; priorityLabel?: string }[] }>;
+      };
+      trash: { list(): Promise<{ items: { title: string }[] }> };
+    };
+    const [scheduled, done, trash] = await Promise.all([
+      api.library.browse({ statuses: ["scheduled"] }),
+      api.library.browse({ statuses: ["done"] }),
+      api.trash.list(),
+    ]);
+    return { scheduled, done, trash };
+  });
+  expect(
+    afterUndo.scheduled.items.some(
+      (item) => item.title === "Chronic postpone keep source" && item.status === "scheduled",
+    ),
+  ).toBe(true);
+  expect(
+    afterUndo.scheduled.items.some(
+      (item) =>
+        item.title === "Chronic postpone demote source" &&
+        item.status === "scheduled" &&
+        item.priorityLabel === "B",
+    ),
+  ).toBe(true);
+  expect(
+    afterUndo.scheduled.items.some(
+      (item) => item.title === "Chronic postpone done source" && item.status === "scheduled",
+    ),
+  ).toBe(true);
+  expect(
+    afterUndo.trash.items.some((item) => item.title === "Chronic postpone delete source"),
+  ).toBe(false);
+  expect(afterUndo.done.items.some((item) => item.title === "Chronic postpone done source")).toBe(
+    false,
+  );
 
   await app.close();
 });

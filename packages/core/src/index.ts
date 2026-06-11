@@ -268,6 +268,8 @@ export {
   AI_API_KEY_MAX,
   AI_LOCAL_MODEL_ID_MAX,
   appSettingsFromStored,
+  CHRONIC_POSTPONE_THRESHOLD_MAX,
+  CHRONIC_POSTPONE_THRESHOLD_MIN,
   coerceAiProviderKind,
   coerceFsrsParams,
   coerceRetentionByBand,

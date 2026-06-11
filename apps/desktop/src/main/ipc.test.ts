@@ -93,6 +93,18 @@ function fakeDbService() {
       },
       request,
     })),
+    getMaintenanceChronicPostpones: vi.fn((request?: unknown) => ({
+      rows: [],
+      totalDue: 0,
+      threshold: 5,
+      limit: request && typeof request === "object" ? (request as { limit?: number }).limit : null,
+    })),
+    maintenanceChronicPostponesApply: vi.fn((request?: unknown) => ({
+      applied: 1,
+      skipped: [],
+      batchId: "batch-1",
+      request,
+    })),
     importManualSource: vi.fn(),
     search: vi.fn(),
     listInbox: vi.fn(() => ({ items: [] })),
@@ -209,6 +221,50 @@ describe("registerIpcHandlers", () => {
 
     expect(() => handler?.({}, { asOf: "not-a-date" })).toThrow();
     expect(db.getPriorityIntegrity).not.toHaveBeenCalled();
+  });
+
+  it("validates and forwards chronic postpone maintenance requests", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+
+    expect(
+      electron.handlers.get(IPC_CHANNELS.maintenanceChronicPostpones)?.({}, { limit: 50 }),
+    ).toMatchObject({ threshold: 5, limit: 50 });
+    expect(db.getMaintenanceChronicPostpones).toHaveBeenCalledWith({ limit: 50 });
+
+    const applyRequest = { decisions: [{ id: "el_1", kind: "demote" }] };
+    expect(
+      electron.handlers.get(IPC_CHANNELS.maintenanceChronicPostponesApply)?.({}, applyRequest),
+    ).toMatchObject({ applied: 1, batchId: "batch-1" });
+    expect(db.maintenanceChronicPostponesApply).toHaveBeenCalledWith(applyRequest);
+  });
+
+  it("rejects malformed chronic postpone requests before invoking the database service", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+
+    expect(() =>
+      electron.handlers.get(IPC_CHANNELS.maintenanceChronicPostpones)?.({}, { limit: 0 }),
+    ).toThrow();
+    expect(() =>
+      electron.handlers.get(IPC_CHANNELS.maintenanceChronicPostponesApply)?.(
+        {},
+        { decisions: [{ id: "el_1", kind: "archive" }] },
+      ),
+    ).toThrow();
+    expect(() =>
+      electron.handlers.get(IPC_CHANNELS.maintenanceChronicPostponesApply)?.(
+        {},
+        {
+          decisions: Array.from({ length: 501 }, (_, index) => ({
+            id: `el_${index}`,
+            kind: "keep",
+          })),
+        },
+      ),
+    ).toThrow();
+    expect(db.getMaintenanceChronicPostpones).not.toHaveBeenCalled();
+    expect(db.maintenanceChronicPostponesApply).not.toHaveBeenCalled();
   });
 
   it("rejects direct synthesized extract fate before invoking the database service", () => {

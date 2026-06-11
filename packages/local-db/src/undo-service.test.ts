@@ -377,6 +377,52 @@ describe("UndoService.undoLast", () => {
     expect(new OperationLogRepository(handle.db).count()).toBe(opsBefore);
   });
 
+  it("undoes a chronic-postpone reset marker by appending a reset-undo marker", () => {
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+    const undo = new UndoService(handle.db);
+    const id = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.625,
+      title: "Chronic source",
+    }).id;
+
+    for (let i = 0; i < 5; i++) {
+      handle.db.transaction((tx) => {
+        log.append(tx, {
+          opType: "reschedule_element",
+          payload: { postpone: true, postponeCount: i + 1 },
+          elementId: id,
+        });
+      });
+    }
+    handle.db.transaction((tx) => {
+      log.append(tx, {
+        opType: "update_element",
+        payload: {
+          id,
+          action: "chronicPostpone:keep",
+          chronicPostponeReset: true,
+          prevEffectivePostponeCount: 5,
+        },
+        elementId: id,
+      });
+    });
+    expect(log.countPostpones(id)).toBe(0);
+
+    const result = undo.undoLast();
+
+    expect(result.undone).toBe(true);
+    expect(result.opType).toBe("update_element");
+    expect(log.countPostpones(id)).toBe(5);
+    expect(log.listAll(1)[0]?.payload).toMatchObject({
+      chronicPostponeResetUndo: true,
+      restoredEffectivePostponeCount: 5,
+    });
+  });
+
   // ── A card postpone-defer (T030) advances BOTH stores; undo must restore BOTH so
   // the card returns to the FSRS due queue.
 

@@ -104,4 +104,60 @@ describe("OperationLogRepository.countPostpones (T028 — the shared helper)", (
     expect(log.countPostpones(a.id)).toBe(1);
     expect(log.countPostpones(b.id)).toBe(0);
   });
+
+  it("folds chronic reset and reset-undo markers into the effective count", () => {
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+    const el = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.5,
+      title: "Folded count",
+    });
+
+    for (let i = 0; i < 5; i++) {
+      handle.db.transaction((tx) => {
+        log.append(tx, {
+          opType: "reschedule_element",
+          payload: { postpone: true, postponeCount: i + 1 },
+          elementId: el.id,
+        });
+      });
+    }
+    expect(log.countPostpones(el.id)).toBe(5);
+
+    handle.db.transaction((tx) => {
+      log.append(tx, {
+        opType: "update_element",
+        payload: {
+          chronicPostponeReset: true,
+          prevEffectivePostponeCount: 5,
+        },
+        elementId: el.id,
+      });
+    });
+    expect(log.countPostpones(el.id)).toBe(0);
+
+    handle.db.transaction((tx) => {
+      log.append(tx, {
+        opType: "reschedule_element",
+        payload: { postpone: true, postponeCount: 1 },
+        elementId: el.id,
+      });
+    });
+    expect(log.countPostpones(el.id)).toBe(1);
+
+    handle.db.transaction((tx) => {
+      log.append(tx, {
+        opType: "update_element",
+        payload: {
+          chronicPostponeResetUndo: true,
+          restoredEffectivePostponeCount: 5,
+        },
+        elementId: el.id,
+      });
+    });
+    expect(log.countPostpones(el.id)).toBe(5);
+  });
 });

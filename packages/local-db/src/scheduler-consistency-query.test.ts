@@ -21,6 +21,18 @@ afterEach(() => {
   handle.sqlite.close();
 });
 
+function appendPostpones(id: string, times: number): void {
+  for (let i = 0; i < times; i += 1) {
+    handle.db.transaction((tx) => {
+      repos.operationLog.append(tx, {
+        opType: "reschedule_element",
+        elementId: id as never,
+        payload: { id, postpone: true, postponeCount: i + 1 },
+      });
+    });
+  }
+}
+
 describe("SchedulerConsistencyQuery", () => {
   it("surfaces terminal elements that still carry an element due date", () => {
     const source = repos.sources.create({
@@ -86,5 +98,45 @@ describe("SchedulerConsistencyQuery", () => {
 
     const row = query.list()[0];
     expect(row?.reason).toBe("scheduled-attention-missing-due");
+  });
+
+  it("surfaces chronic-postpone rows whose recession is paused pending a decision", () => {
+    const source = repos.sources.create({
+      title: "Paused by chronic postpones",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "scheduled",
+      stage: "raw_source",
+    });
+    appendPostpones(source.element.id, 5);
+
+    const row = query.list().find((r) => r.reason === "chronic-postpone-paused");
+
+    expect(row?.element.id).toBe(source.element.id);
+  });
+
+  it("surfaces rows whose chronic postpone count was explicitly reset", () => {
+    const source = repos.sources.create({
+      title: "Reset chronic source",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "scheduled",
+      stage: "raw_source",
+    });
+    appendPostpones(source.element.id, 5);
+    handle.db.transaction((tx) => {
+      repos.operationLog.append(tx, {
+        opType: "update_element",
+        elementId: source.element.id,
+        payload: {
+          id: source.element.id,
+          chronicPostponeReset: true,
+          prevEffectivePostponeCount: 5,
+        },
+      });
+    });
+
+    const reasons = query.list().map((r) => r.reason);
+
+    expect(reasons).toContain("chronic-postpone-reset");
+    expect(reasons).not.toContain("chronic-postpone-paused");
   });
 });

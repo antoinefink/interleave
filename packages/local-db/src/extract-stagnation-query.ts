@@ -55,6 +55,7 @@ import {
   type StagnationSuggestion,
 } from "@interleave/scheduler";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { OperationLogRepository } from "./operation-log-repository";
 
 /** Default cap so a broad scan can't return an unbounded list (like `LibraryQuery`). */
 export const DEFAULT_EXTRACT_STAGNATION_LIMIT = 200;
@@ -149,7 +150,11 @@ function isPostponeMarker(op: OperationLogEntry): boolean {
  * {@link Repositories}); the main process exposes it over validated IPC.
  */
 export class ExtractStagnationQuery {
-  constructor(private readonly db: InterleaveDatabase) {}
+  private readonly operationLog: OperationLogRepository;
+
+  constructor(private readonly db: InterleaveDatabase) {
+    this.operationLog = new OperationLogRepository(db);
+  }
 
   /**
    * Compute the full {@link ExtractStagnationSummary} for `asOf`. Read-only. See the
@@ -257,7 +262,7 @@ export class ExtractStagnationQuery {
       if (!op.elementId) continue;
       const s = ensure(op.elementId);
       if (isPostponeMarker(op)) {
-        s.postponeCount += 1;
+        s.postponeCount = this.operationLog.countPostpones(op.elementId);
       } else if (s.lastStageAdvanceAt === null && stageAdvanceTimestamp(op)) {
         // Newest-first: the first stage-advance op encountered is the latest advance.
         s.lastStageAdvanceAt = op.createdAt;

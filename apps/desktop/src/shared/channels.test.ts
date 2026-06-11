@@ -24,6 +24,10 @@ describe("IPC_CHANNELS", () => {
     expect(IPC_CHANNELS.maintenanceParkedResurfacingApply).toBe(
       "maintenance:parkedResurfacing:apply",
     );
+    expect(IPC_CHANNELS.maintenanceChronicPostpones).toBe("maintenance:chronicPostpones");
+    expect(IPC_CHANNELS.maintenanceChronicPostponesApply).toBe(
+      "maintenance:chronicPostpones:apply",
+    );
     expect(IPC_CHANNELS.menuShowShortcuts).toBe("menu:showShortcuts");
     expect(IPC_CHANNELS.menuCreateBackup).toBe("menu:createBackup");
     expect(values).not.toContain("db:query");

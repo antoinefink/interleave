@@ -40,6 +40,7 @@ import type { ElementId, ElementStatus, IsoTimestamp, OperationType } from "@int
 import { type InterleaveDatabase, operationLog, reviewStates } from "@interleave/db";
 import { desc, eq, sql } from "drizzle-orm";
 import { ElementRepository } from "./element-repository";
+import { OperationLogRepository } from "./operation-log-repository";
 
 /** The op types the global command-level undo can invert (the MVP scope). */
 const UNDOABLE_OP_TYPES: ReadonlySet<OperationType> = new Set<OperationType>([
@@ -178,6 +179,12 @@ export class UndoService {
   private isInvertible(op: ParsedOp): boolean {
     if (!op.elementId) return false;
     if (op.opType === "update_element") {
+      if (
+        op.payload.chronicPostponeReset === true ||
+        op.payload.chronicPostponeResetUndo === true
+      ) {
+        return true;
+      }
       if (op.payload.reviewPromote === true) return false;
       const prev = op.payload.prev;
       return typeof prev === "object" && prev !== null && Object.keys(prev).length > 0;
@@ -222,6 +229,20 @@ export class UndoService {
         return `Moved "${deleted.title}" to trash`;
       }
       case "update_element": {
+        if (op.payload.chronicPostponeReset === true) {
+          const restored = op.payload.prevEffectivePostponeCount;
+          const restoredEffectivePostponeCount =
+            typeof restored === "number" && Number.isFinite(restored) && restored >= 0
+              ? Math.floor(restored)
+              : 0;
+          this.appendChronicPostponeResetUndo(id, restoredEffectivePostponeCount);
+          return `Restored postpone count`;
+        }
+        if (op.payload.chronicPostponeResetUndo === true) {
+          const current = new OperationLogRepository(this.db).countPostpones(id);
+          this.appendChronicPostponeReset(id, current);
+          return `Reset postpone count`;
+        }
         // The first-grade draft-card promote rides with a (non-invertible) review —
         // skip it so ⌘Z never partially undoes a review (see {@link isInvertible}).
         if (op.payload.reviewPromote === true) return null;
@@ -306,6 +327,39 @@ export class UndoService {
     const prior = prev?.status;
     if (typeof prior === "string" && prior !== "deleted") return prior as ElementStatus;
     return "active";
+  }
+
+  private appendChronicPostponeReset(id: ElementId, prevEffectivePostponeCount: number): void {
+    this.db.transaction((tx) => {
+      new OperationLogRepository(tx).append(tx, {
+        opType: "update_element",
+        elementId: id,
+        payload: {
+          id,
+          action: "chronicPostpone:redoReset",
+          chronicPostponeReset: true,
+          prevEffectivePostponeCount,
+        },
+      });
+    });
+  }
+
+  private appendChronicPostponeResetUndo(
+    id: ElementId,
+    restoredEffectivePostponeCount: number,
+  ): void {
+    this.db.transaction((tx) => {
+      new OperationLogRepository(tx).append(tx, {
+        opType: "update_element",
+        elementId: id,
+        payload: {
+          id,
+          action: "chronicPostpone:undoReset",
+          chronicPostponeResetUndo: true,
+          restoredEffectivePostponeCount,
+        },
+      });
+    });
   }
 
   private parse(row: RawOpRow): ParsedOp {

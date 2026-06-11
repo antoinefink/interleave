@@ -9,6 +9,8 @@
 import { describe, expect, it } from "vitest";
 import {
   appSettingsFromStored,
+  CHRONIC_POSTPONE_THRESHOLD_MAX,
+  CHRONIC_POSTPONE_THRESHOLD_MIN,
   coerceAiProviderKind,
   coerceSettingsPatch,
   coerceSettingValue,
@@ -43,6 +45,7 @@ describe("AppSettings defaults", () => {
       trashRetentionDays: "trash.retentionDays",
       balanceWarnings: "balance.warnings",
       parkedResurfaceAfterDays: "parked.resurfaceAfterDays",
+      chronicPostponeThreshold: "scheduler.chronicPostponeThreshold",
       importBalanceFactor: "balance.importFactor",
       keyboardLayout: "ui.keyboardLayout",
       theme: "ui.theme",
@@ -167,6 +170,21 @@ describe("coerceSettingValue", () => {
     );
   });
 
+  it("clamps + rounds chronic postpone threshold into range (T106)", () => {
+    expect(coerceSettingValue("chronicPostponeThreshold", 5)).toBe(5);
+    expect(coerceSettingValue("chronicPostponeThreshold", 4.6)).toBe(5);
+    expect(coerceSettingValue("chronicPostponeThreshold", 1)).toBe(CHRONIC_POSTPONE_THRESHOLD_MIN);
+    expect(coerceSettingValue("chronicPostponeThreshold", 999)).toBe(
+      CHRONIC_POSTPONE_THRESHOLD_MAX,
+    );
+    expect(coerceSettingValue("chronicPostponeThreshold", 0)).toBe(
+      DEFAULT_APP_SETTINGS.chronicPostponeThreshold,
+    );
+    expect(coerceSettingValue("chronicPostponeThreshold", "nope")).toBe(
+      DEFAULT_APP_SETTINGS.chronicPostponeThreshold,
+    );
+  });
+
   it("coerces the per-band retention map: clamp present bands, drop unknown labels (T079)", () => {
     // In-bounds bands kept; out-of-range clamped; unknown labels + non-numbers dropped.
     expect(
@@ -213,6 +231,7 @@ describe("stored ↔ model round-trip", () => {
       [SETTINGS_KEYS.trashRetentionDays]: 14,
       [SETTINGS_KEYS.balanceWarnings]: false,
       [SETTINGS_KEYS.parkedResurfaceAfterDays]: 120,
+      [SETTINGS_KEYS.chronicPostponeThreshold]: 6,
       [SETTINGS_KEYS.importBalanceFactor]: 2.5,
       [SETTINGS_KEYS.keyboardLayout]: "dvorak",
       [SETTINGS_KEYS.theme]: "system",
@@ -227,6 +246,7 @@ describe("stored ↔ model round-trip", () => {
       trashRetentionDays: 14,
       balanceWarnings: false,
       parkedResurfaceAfterDays: 120,
+      chronicPostponeThreshold: 6,
       importBalanceFactor: 2.5,
       keyboardLayout: "dvorak",
       theme: "system",
@@ -254,11 +274,13 @@ describe("stored ↔ model round-trip", () => {
     const stored = settingsPatchToStored({
       dailyReviewBudget: 100,
       parkedResurfaceAfterDays: 120,
+      chronicPostponeThreshold: 6,
       theme: "system",
     });
     expect(stored).toEqual({
       [SETTINGS_KEYS.dailyReviewBudget]: 100,
       [SETTINGS_KEYS.parkedResurfaceAfterDays]: 120,
+      [SETTINGS_KEYS.chronicPostponeThreshold]: 6,
       [SETTINGS_KEYS.theme]: "system",
     });
   });
@@ -273,6 +295,7 @@ describe("stored ↔ model round-trip", () => {
       trashRetentionDays: 7,
       balanceWarnings: false,
       parkedResurfaceAfterDays: 45,
+      chronicPostponeThreshold: 7,
       importBalanceFactor: 2,
       keyboardLayout: "vim" as const,
       theme: "system" as const,
