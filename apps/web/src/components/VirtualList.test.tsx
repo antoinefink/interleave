@@ -91,4 +91,22 @@ describe("VirtualList", () => {
     expect(screen.getByTestId("vlist-empty")).toBeInTheDocument();
     expect(screen.queryAllByTestId("vrow").length).toBe(0);
   });
+
+  it("can expose list semantics for virtualized rows", () => {
+    const items = makeRows(100);
+    render(
+      <VirtualList
+        items={items}
+        itemKey={(it) => it.id}
+        estimateSize={ROW}
+        height={VIEWPORT}
+        role="list"
+        rowRole="listitem"
+        renderItem={(it) => <span>{it.label}</span>}
+      />,
+    );
+
+    expect(screen.getByRole("list")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem").length).toBeGreaterThan(0);
+  });
 });

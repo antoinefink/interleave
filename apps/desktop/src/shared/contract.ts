@@ -50,6 +50,8 @@ import {
   MAX_REVIEW_MODE_DECK,
   MEDIA_REF_FACES,
   type MediaRef,
+  PARKED_RESURFACE_AFTER_DAYS_MAX,
+  PARKED_RESURFACE_AFTER_DAYS_MIN,
   RELIABILITY_TIERS,
   REVIEW_RATINGS,
   type ReliabilityTier,
@@ -220,6 +222,11 @@ export const SettingsPatchSchema = z
     burySiblings: z.boolean(),
     trashRetentionDays: z.number().int().positive(),
     balanceWarnings: z.boolean(),
+    parkedResurfaceAfterDays: z
+      .number()
+      .int()
+      .min(PARKED_RESURFACE_AFTER_DAYS_MIN)
+      .max(PARKED_RESURFACE_AFTER_DAYS_MAX),
     importBalanceFactor: z.number().min(IMPORT_BALANCE_FACTOR_MIN).max(IMPORT_BALANCE_FACTOR_MAX),
     keyboardLayout: z.enum(KEYBOARD_LAYOUTS),
     theme: z.enum(THEMES),
@@ -2105,6 +2112,7 @@ export interface MaintenanceReportResult {
   readonly duplicateCount: number;
   readonly cardsWithoutSourcesCount: number;
   readonly schedulerConsistencyCount: number;
+  readonly parkedResurfacingCount: number;
   readonly orphanFileCount: number;
   readonly orphanBytes: number;
   readonly lowValueCount: number;
@@ -2263,6 +2271,51 @@ export const MaintenanceBulkPostponeRequestSchema = z.object({
 });
 export type MaintenanceBulkPostponeRequest = z.infer<typeof MaintenanceBulkPostponeRequestSchema>;
 export type MaintenanceBulkPostponeResult = MaintenanceBatchResultSummary;
+
+export interface ParkedResurfacingRowSummary {
+  readonly element: MaintenanceRefSummary & {
+    readonly type: "source";
+    readonly priorityLabel: string;
+  };
+  readonly parkedAt: string;
+  readonly ageDays: number;
+}
+
+/** `maintenance.parkedResurfacing({ limit? })` — due saved-for-later sources. */
+export const MaintenanceParkedResurfacingRequestSchema = z
+  .object({ limit: z.number().int().positive().max(500).optional() })
+  .optional();
+export type MaintenanceParkedResurfacingRequest = z.infer<
+  typeof MaintenanceParkedResurfacingRequestSchema
+>;
+export interface MaintenanceParkedResurfacingResult {
+  readonly rows: readonly ParkedResurfacingRowSummary[];
+  readonly totalDue: number;
+  readonly limit: number | null;
+  readonly asOf: string;
+}
+
+export const ParkedResurfacingDecisionSchema = z.object({
+  id: ElementIdSchema,
+  kind: z.enum(["keepParked", "queueNow", "letGo"]),
+});
+export type ParkedResurfacingDecisionInput = z.infer<typeof ParkedResurfacingDecisionSchema>;
+
+/** `maintenance.parkedResurfacingApply({ decisions })` — one undoable batch. */
+export const MaintenanceParkedResurfacingApplyRequestSchema = z.object({
+  decisions: z.array(ParkedResurfacingDecisionSchema).min(1),
+});
+export type MaintenanceParkedResurfacingApplyRequest = z.infer<
+  typeof MaintenanceParkedResurfacingApplyRequestSchema
+>;
+export interface MaintenanceParkedResurfacingApplyResult {
+  readonly applied: number;
+  readonly skipped: readonly {
+    readonly id: string;
+    readonly reason: "missing" | "deleted" | "not-source" | "not-parked" | "not-due";
+  }[];
+  readonly batchId: string | null;
+}
 
 // ---------------------------------------------------------------------------
 // capture.getPairing() / capture.regenerateToken() / capture.setEnabled()  (T062)
@@ -6428,6 +6481,14 @@ export interface AppApi {
     bulkArchive(request: MaintenanceBulkArchiveRequest): Promise<MaintenanceBulkArchiveResult>;
     /** Bulk postpone (T099) — recede low-priority items; one undoable batch (FSRS/attention). */
     bulkPostpone(request: MaintenanceBulkPostponeRequest): Promise<MaintenanceBulkPostponeResult>;
+    /** Due saved-for-later sources whose parked timestamp crossed the user threshold. */
+    parkedResurfacing(
+      request?: MaintenanceParkedResurfacingRequest,
+    ): Promise<MaintenanceParkedResurfacingResult>;
+    /** Apply keep/queue/let-go decisions for the parked resurfacing sweep as one undoable batch. */
+    parkedResurfacingApply(
+      request: MaintenanceParkedResurfacingApplyRequest,
+    ): Promise<MaintenanceParkedResurfacingApplyResult>;
   };
   readonly menu: {
     /**

@@ -57,6 +57,9 @@ export type ThemePreference = (typeof THEMES)[number];
  * - `balanceWarnings` — when `true` (default), the import/process balance `Banner`
  *   (T046) appears on the inbox + analytics when imports outpace processing.
  *   Turning it off suppresses the advisory banner entirely.
+ * - `parkedResurfaceAfterDays` — how long a deliberately parked source waits before
+ *   it appears in the parked resurfacing sweep (T102). The sweep asks; it never
+ *   auto-schedules parked material.
  * - `importBalanceFactor` — how lopsided imports-vs-processing must be before the
  *   balance warning fires (T046): imports must exceed processed output by this
  *   multiple. Higher = less sensitive. Read by the pure `judgeBalance` rule.
@@ -76,6 +79,7 @@ export interface AppSettings {
   readonly burySiblings: boolean;
   readonly trashRetentionDays: number;
   readonly balanceWarnings: boolean;
+  readonly parkedResurfaceAfterDays: number;
   readonly importBalanceFactor: number;
   readonly keyboardLayout: KeyboardLayout;
   readonly theme: ThemePreference;
@@ -251,6 +255,7 @@ export const SETTINGS_KEYS = {
   burySiblings: "review.burySiblings",
   trashRetentionDays: "trash.retentionDays",
   balanceWarnings: "balance.warnings",
+  parkedResurfaceAfterDays: "parked.resurfaceAfterDays",
   importBalanceFactor: "balance.importFactor",
   keyboardLayout: "ui.keyboardLayout",
   theme: "ui.theme",
@@ -322,6 +327,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   burySiblings: true,
   trashRetentionDays: 30,
   balanceWarnings: true,
+  parkedResurfaceAfterDays: 90,
   importBalanceFactor: DEFAULT_IMPORT_BALANCE_FACTOR,
   keyboardLayout: "qwerty",
   theme: "dark",
@@ -394,6 +400,10 @@ export const DAILY_REVIEW_BUDGET_MAX = 300;
 /** Inclusive bounds for the trash retention (informational for M9). */
 export const TRASH_RETENTION_DAYS_MIN = 1;
 export const TRASH_RETENTION_DAYS_MAX = 365;
+
+/** Inclusive bounds for parked-source resurfacing sweeps (T102). */
+export const PARKED_RESURFACE_AFTER_DAYS_MIN = 1;
+export const PARKED_RESURFACE_AFTER_DAYS_MAX = 3650;
 
 /**
  * Inclusive bounds for the import-balance factor (T046). Re-exported from
@@ -489,6 +499,12 @@ export function coerceSettingValue<K extends keyof AppSettings>(
       return (typeof raw === "boolean" ? raw : fallback) as AppSettings[K];
     case "balanceWarnings":
       return (typeof raw === "boolean" ? raw : fallback) as AppSettings[K];
+    case "parkedResurfaceAfterDays":
+      return (
+        isFiniteNumber(raw) && raw > 0
+          ? clampInt(raw, PARKED_RESURFACE_AFTER_DAYS_MIN, PARKED_RESURFACE_AFTER_DAYS_MAX)
+          : fallback
+      ) as AppSettings[K];
     case "importBalanceFactor":
       return (isFiniteNumber(raw) ? clampFactor(raw) : fallback) as AppSettings[K];
     case "trashRetentionDays":
@@ -591,6 +607,10 @@ export function appSettingsFromStored(stored: Readonly<Record<string, unknown>>)
       stored[SETTINGS_KEYS.trashRetentionDays],
     ),
     balanceWarnings: coerceSettingValue("balanceWarnings", stored[SETTINGS_KEYS.balanceWarnings]),
+    parkedResurfaceAfterDays: coerceSettingValue(
+      "parkedResurfaceAfterDays",
+      stored[SETTINGS_KEYS.parkedResurfaceAfterDays],
+    ),
     importBalanceFactor: coerceSettingValue(
       "importBalanceFactor",
       stored[SETTINGS_KEYS.importBalanceFactor],

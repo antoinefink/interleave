@@ -80,6 +80,20 @@ describe("preload bridge", () => {
       action: { kind: "queueSoon" },
     });
 
+    await api().maintenance.parkedResurfacing({ limit: 50 });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(
+      IPC_CHANNELS.maintenanceParkedResurfacing,
+      { limit: 50 },
+    );
+
+    await api().maintenance.parkedResurfacingApply({
+      decisions: [{ id: "src-1", kind: "queueNow" }],
+    });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(
+      IPC_CHANNELS.maintenanceParkedResurfacingApply,
+      { decisions: [{ id: "src-1", kind: "queueNow" }] },
+    );
+
     await api().backups.restore({
       timestamp: "2026-06-07T12-30-00-000Z",
       confirm: true,

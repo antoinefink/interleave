@@ -726,6 +726,7 @@ describe("DbService", () => {
       trashRetentionDays: 30,
       balanceWarnings: true,
       importBalanceFactor: 1.5,
+      parkedResurfaceAfterDays: 90,
       keyboardLayout: "dvorak",
       theme: "light",
       displayName: "",
@@ -4493,6 +4494,7 @@ describe("DbService maintenance reads (T099)", () => {
     expect(typeof report.duplicateCount).toBe("number");
     expect(typeof report.cardsWithoutSourcesCount).toBe("number");
     expect(typeof report.schedulerConsistencyCount).toBe("number");
+    expect(typeof report.parkedResurfacingCount).toBe("number");
     expect(typeof report.orphanFileCount).toBe("number");
     expect(report.integrity).toBeNull();
 

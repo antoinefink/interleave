@@ -31,6 +31,8 @@ import {
   type LowValueRowSummary,
   type MaintenanceIntegrityResult,
   type MaintenanceReportResult,
+  type ParkedResurfacingDecisionKind,
+  type ParkedResurfacingRowSummary,
 } from "../lib/appApi";
 import { UNDO_EVENT } from "../shell/nav";
 import "../review/review.css";
@@ -46,7 +48,14 @@ function formatBytes(bytes: number): string {
 }
 
 /** Which report card is expanded (one at a time). */
-type ExpandedReport = "duplicates" | "broken" | "sourceless" | "lowValue" | "orphan" | null;
+type ExpandedReport =
+  | "duplicates"
+  | "broken"
+  | "sourceless"
+  | "lowValue"
+  | "parked"
+  | "orphan"
+  | null;
 
 export function MaintenanceScreen() {
   const desktop = isDesktop();
@@ -62,6 +71,7 @@ export function MaintenanceScreen() {
   const [broken, setBroken] = useState<readonly BrokenSourceRowSummary[] | null>(null);
   const [sourceless, setSourceless] = useState<readonly LineageGapRowSummary[] | null>(null);
   const [lowValue, setLowValue] = useState<readonly LowValueRowSummary[] | null>(null);
+  const [parked, setParked] = useState<readonly ParkedResurfacingRowSummary[] | null>(null);
 
   // The on-demand deep integrity check.
   const [integrity, setIntegrity] = useState<MaintenanceIntegrityResult | null>(null);
@@ -95,6 +105,8 @@ export function MaintenanceScreen() {
       else if (which === "sourceless")
         setSourceless((await appApi.maintenance.cardsWithoutSources()).rows);
       else if (which === "lowValue") setLowValue((await appApi.maintenance.lowValue()).rows);
+      else if (which === "parked")
+        setParked((await appApi.maintenance.parkedResurfacing({ limit: 50 })).rows);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -162,6 +174,31 @@ export function MaintenanceScreen() {
       setIntegrityRunning(false);
     }
   }, []);
+
+  const runParkedResurfacing = useCallback(
+    async (
+      decisions: readonly { readonly id: string; readonly kind: ParkedResurfacingDecisionKind }[],
+    ) => {
+      setBusy(true);
+      setError(null);
+      try {
+        const res = await appApi.maintenance.parkedResurfacingApply({ decisions });
+        if (res.applied > 0) {
+          const skipped = res.skipped.length > 0 ? ` · ${res.skipped.length} skipped` : "";
+          setSnack(`Updated parked sources (${res.applied})${skipped}`);
+        } else {
+          setSnack("Nothing to clean up");
+        }
+        await loadReport();
+        if (expanded) await reloadExpanded(expanded);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [expanded, loadReport, reloadExpanded],
+  );
 
   if (!desktop) {
     return (
@@ -349,6 +386,23 @@ export function MaintenanceScreen() {
             />
           </MetricCard>
 
+          {/* Parked resurfacing */}
+          <MetricCard
+            icon="bookmark"
+            title="Parked resurfacing"
+            value={report.parkedResurfacingCount}
+            unit="saved-for-later due"
+            testId="metric-parked"
+            expanded={expanded === "parked"}
+            onToggle={() => void toggle("parked")}
+          >
+            <ParkedPanel
+              rows={parked}
+              busy={busy}
+              onApply={(decisions) => void runParkedResurfacing(decisions)}
+            />
+          </MetricCard>
+
           {/* Integrity (on-demand) */}
           <IntegrityCard
             running={integrityRunning}
@@ -391,6 +445,7 @@ function MetricCard({
   children: React.ReactNode;
 }) {
   const display = value ?? countOf;
+  const bodyId = `${testId}-body`;
   return (
     <div className="mt-card" data-testid={testId} data-expanded={expanded}>
       <button
@@ -398,6 +453,8 @@ function MetricCard({
         className="mt-card__head"
         onClick={onToggle}
         data-testid={`${testId}-toggle`}
+        aria-expanded={expanded}
+        aria-controls={bodyId}
       >
         <span className="mt-card__icon">
           <Icon name={icon} size={16} />
@@ -409,7 +466,11 @@ function MetricCard({
         <span className="mt-card__unit">{unit}</span>
         <Icon name={expanded ? "chevronDown" : "chevronRight"} size={14} />
       </button>
-      {expanded ? <div className="mt-card__body">{children}</div> : null}
+      {expanded ? (
+        <div className="mt-card__body" id={bodyId}>
+          {children}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -688,6 +749,132 @@ function LowValuePanel({
         className="mt-dup-list mt-dup-list--virtual"
         renderInline={() => <ul className="mt-dup-list">{rows.map(renderLowValueRow)}</ul>}
         renderItem={renderLowValueRow}
+      />
+    </div>
+  );
+}
+
+function ParkedPanel({
+  rows,
+  busy,
+  onApply,
+}: {
+  rows: readonly ParkedResurfacingRowSummary[] | null;
+  busy: boolean;
+  onApply: (
+    decisions: readonly { readonly id: string; readonly kind: ParkedResurfacingDecisionKind }[],
+  ) => void;
+}) {
+  const [decisions, setDecisions] = useState<Record<string, ParkedResurfacingDecisionKind>>({});
+
+  useEffect(() => {
+    if (!rows) return;
+    setDecisions((prev) => {
+      const next: Record<string, ParkedResurfacingDecisionKind> = {};
+      for (const row of rows) next[row.element.id] = prev[row.element.id] ?? "keepParked";
+      return next;
+    });
+  }, [rows]);
+
+  if (!rows) return <p className="mt-muted">Loading…</p>;
+  if (rows.length === 0) return <EmptyRow message="No parked sources are due to resurface." />;
+
+  const apply = () => {
+    onApply(
+      rows.map((row) => ({
+        id: row.element.id,
+        kind: decisions[row.element.id] ?? "keepParked",
+      })),
+    );
+  };
+
+  const renderRowContent = (row: ParkedResurfacingRowSummary) => {
+    const current = decisions[row.element.id] ?? "keepParked";
+    return (
+      <>
+        <span className="badge badge--soft">{row.element.priorityLabel}</span>
+        <span className="mt-dup-title" title={row.element.title}>
+          {row.element.title}
+        </span>
+        <span className="mt-muted">{row.ageDays}d parked</span>
+        <fieldset className="mt-segment">
+          <legend className="sr-only">Decision for {row.element.title}</legend>
+          <button
+            type="button"
+            className="mt-segment__btn"
+            data-active={current === "keepParked"}
+            data-testid="parked-decision-keep"
+            aria-pressed={current === "keepParked"}
+            disabled={busy}
+            onClick={() => setDecisions((prev) => ({ ...prev, [row.element.id]: "keepParked" }))}
+          >
+            Keep
+          </button>
+          <button
+            type="button"
+            className="mt-segment__btn"
+            data-active={current === "queueNow"}
+            data-testid="parked-decision-queue"
+            aria-pressed={current === "queueNow"}
+            disabled={busy}
+            onClick={() => setDecisions((prev) => ({ ...prev, [row.element.id]: "queueNow" }))}
+          >
+            Queue
+          </button>
+          <button
+            type="button"
+            className="mt-segment__btn"
+            data-active={current === "letGo"}
+            data-testid="parked-decision-letgo"
+            aria-pressed={current === "letGo"}
+            disabled={busy}
+            onClick={() => setDecisions((prev) => ({ ...prev, [row.element.id]: "letGo" }))}
+          >
+            Let go
+          </button>
+        </fieldset>
+      </>
+    );
+  };
+
+  const renderInlineRow = (row: ParkedResurfacingRowSummary) => (
+    <li key={row.element.id} data-testid="parked-row" data-element-id={row.element.id}>
+      {renderRowContent(row)}
+    </li>
+  );
+
+  const renderVirtualRow = (row: ParkedResurfacingRowSummary) => {
+    return (
+      <div data-maintenance-row="true" data-testid="parked-row" data-element-id={row.element.id}>
+        {renderRowContent(row)}
+      </div>
+    );
+  };
+
+  return (
+    <div data-testid="parked-panel">
+      <div className="mt-bulkbar">
+        <button
+          type="button"
+          className="rv-repair__btn"
+          data-testid="parked-apply"
+          disabled={busy}
+          onClick={apply}
+        >
+          <Icon name="check" size={13} />
+          Apply {rows.length} decisions
+        </button>
+      </div>
+      <AutoVirtualList
+        items={rows}
+        itemKey={(row) => row.element.id}
+        estimateSize={44}
+        height={420}
+        className="mt-dup-list mt-dup-list--virtual"
+        role="list"
+        rowRole="listitem"
+        renderInline={() => <ul className="mt-dup-list">{rows.map(renderInlineRow)}</ul>}
+        renderItem={renderVirtualRow}
       />
     </div>
   );

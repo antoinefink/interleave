@@ -73,6 +73,7 @@ const FALLBACK_SETTINGS: RendererSettings = {
   burySiblings: true,
   trashRetentionDays: 30,
   balanceWarnings: true,
+  parkedResurfaceAfterDays: 90,
   importBalanceFactor: 1.5,
   keyboardLayout: "qwerty",
   theme: "dark",
@@ -1339,6 +1340,25 @@ export function Settings() {
             onChange={(value) => void patch({ defaultTopicIntervalDays: value })}
             options={TOPIC_INTERVAL_OPTIONS.map((d) => ({ value: d, label: `${d}d` }))}
           />
+        </SettingRow>
+
+        <SettingRow
+          label="Parked resurfacing"
+          hint="Days before saved-for-later sources return to the maintenance sweep."
+        >
+          <div className="flex items-center gap-2.5">
+            <input
+              type="number"
+              min={1}
+              max={3650}
+              step={1}
+              value={s.parkedResurfaceAfterDays}
+              data-testid="setting-parked-resurface"
+              onChange={(e) => void patch({ parkedResurfaceAfterDays: Number(e.target.value) })}
+              className="w-24 rounded-md border border-border bg-surface px-2 py-1 text-right font-mono font-semibold text-sm text-text"
+            />
+            <span className="text-sm text-text-3">days</span>
+          </div>
         </SettingRow>
 
         <SettingRow

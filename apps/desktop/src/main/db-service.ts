@@ -1556,6 +1556,13 @@ export class DbService {
     return this.maintenanceService.schedulerConsistency(request?.limit);
   }
 
+  /** Due saved-for-later sources for the parked resurfacing sweep. */
+  getMaintenanceParkedResurfacing(request?: {
+    limit?: number | undefined;
+  }): ReturnType<MaintenanceService["parkedResurfacing"]> {
+    return this.maintenanceService.parkedResurfacing(request?.limit);
+  }
+
   /** The DB + vault integrity DEEP check (on-demand). Read-only. */
   async getMaintenanceIntegrity(request?: {
     deep?: boolean | undefined;
@@ -1607,6 +1614,21 @@ export class DbService {
     return this.maintenanceService.bulkPostpone({
       ids: request.ids as ElementId[],
       ...(request.asOf ? { asOf: request.asOf } : {}),
+    });
+  }
+
+  /** Parked resurfacing decisions — one undoable update batch with stale-row skips. */
+  maintenanceParkedResurfacingApply(request: {
+    decisions: readonly {
+      readonly id: string;
+      readonly kind: "keepParked" | "queueNow" | "letGo";
+    }[];
+  }): ReturnType<MaintenanceService["parkedResurfacingApply"]> {
+    return this.maintenanceService.parkedResurfacingApply({
+      decisions: request.decisions.map((decision) => ({
+        id: decision.id as ElementId,
+        kind: decision.kind,
+      })),
     });
   }
 

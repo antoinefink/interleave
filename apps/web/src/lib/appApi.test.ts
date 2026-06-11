@@ -177,6 +177,48 @@ function installAppApi(overrides: Partial<AppApi> = {}): AppApi {
         reloadRequired: true,
       })),
     },
+    maintenance: {
+      report: vi.fn(async () => ({
+        duplicateCount: 0,
+        cardsWithoutSourcesCount: 0,
+        schedulerConsistencyCount: 0,
+        parkedResurfacingCount: 1,
+        orphanFileCount: 0,
+        orphanBytes: 0,
+        lowValueCount: 0,
+        integrity: null,
+      })),
+      duplicates: vi.fn(async () => ({
+        sourceClusters: [],
+        cardClusters: [],
+        extractClusters: [],
+        totalDuplicates: 0,
+      })),
+      cardsWithoutSources: vi.fn(async () => ({ rows: [] })),
+      brokenSources: vi.fn(async () => ({ rows: [] })),
+      schedulerConsistency: vi.fn(async () => ({ rows: [] })),
+      lowValue: vi.fn(async () => ({ rows: [] })),
+      integrity: vi.fn(async () => ({
+        db: { ok: true, integrityCheck: ["ok"], foreignKeyViolations: 0, mode: "quick_check" },
+        vault: { ok: 0, mismatched: [], missing: [], extraFiles: [] },
+      })),
+      dedupe: vi.fn(async () => ({ affected: 0, batchId: "" })),
+      orphanMedia: vi.fn(async () => ({ removed: 0, freedBytes: 0, vectorsPruned: 0 })),
+      bulkTrash: vi.fn(async () => ({ affected: 0, batchId: "" })),
+      bulkArchive: vi.fn(async () => ({ affected: 0, batchId: "" })),
+      bulkPostpone: vi.fn(async () => ({ affected: 0, batchId: "" })),
+      parkedResurfacing: vi.fn(async () => ({
+        rows: [],
+        totalDue: 1,
+        limit: 50,
+        asOf: "2026-06-11T12:00:00.000Z",
+      })),
+      parkedResurfacingApply: vi.fn(async () => ({
+        applied: 1,
+        skipped: [],
+        batchId: "batch-1",
+      })),
+    },
     ...overrides,
   } as unknown as AppApi;
   window.appApi = fake;
@@ -228,6 +270,20 @@ describe("renderer appApi wrapper", () => {
     expect(bridge.library.parkedAction).toHaveBeenCalledWith({
       id: "src-1",
       action: { kind: "queueSoon" },
+    });
+  });
+
+  it("forwards parked resurfacing maintenance methods", async () => {
+    const bridge = installAppApi();
+
+    await appApi.maintenance.parkedResurfacing({ limit: 50 });
+    expect(bridge.maintenance.parkedResurfacing).toHaveBeenCalledWith({ limit: 50 });
+
+    await appApi.maintenance.parkedResurfacingApply({
+      decisions: [{ id: "src-1", kind: "queueNow" }],
+    });
+    expect(bridge.maintenance.parkedResurfacingApply).toHaveBeenCalledWith({
+      decisions: [{ id: "src-1", kind: "queueNow" }],
     });
   });
 

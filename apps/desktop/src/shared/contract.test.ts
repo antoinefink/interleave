@@ -81,6 +81,8 @@ import {
   MaintenanceIntegrityRequestSchema,
   MaintenanceLowValueRequestSchema,
   MaintenanceOrphanMediaRequestSchema,
+  MaintenanceParkedResurfacingApplyRequestSchema,
+  MaintenanceParkedResurfacingRequestSchema,
   MaintenanceReportRequestSchema,
   MediaRefSchema,
   PickImportFileRequestSchema,
@@ -329,6 +331,8 @@ describe("IPC channels", () => {
         "maintenance:bulkTrash",
         "maintenance:bulkArchive",
         "maintenance:bulkPostpone",
+        "maintenance:parkedResurfacing",
+        "maintenance:parkedResurfacing:apply",
         "menu:showShortcuts",
         "menu:createBackup",
       ].sort(),
@@ -3115,5 +3119,32 @@ describe("Maintenance schemas (T099)", () => {
         asOf: "  2026-06-01T00:00:00.000Z  ",
       }).asOf,
     ).toBe("2026-06-01T00:00:00.000Z");
+  });
+
+  it("parked resurfacing drilldown accepts only a bounded optional limit", () => {
+    expect(MaintenanceParkedResurfacingRequestSchema.parse(undefined)).toBeUndefined();
+    expect(MaintenanceParkedResurfacingRequestSchema.parse({ limit: 50 })?.limit).toBe(50);
+    expect(MaintenanceParkedResurfacingRequestSchema.safeParse({ limit: 0 }).success).toBe(false);
+    expect(MaintenanceParkedResurfacingRequestSchema.safeParse({ limit: 501 }).success).toBe(false);
+  });
+
+  it("parked resurfacing apply requires decisions from the bounded enum", () => {
+    expect(
+      MaintenanceParkedResurfacingApplyRequestSchema.parse({
+        decisions: [
+          { id: "e1", kind: "keepParked" },
+          { id: "e2", kind: "queueNow" },
+          { id: "e3", kind: "letGo" },
+        ],
+      }).decisions.map((decision) => decision.kind),
+    ).toEqual(["keepParked", "queueNow", "letGo"]);
+    expect(
+      MaintenanceParkedResurfacingApplyRequestSchema.safeParse({ decisions: [] }).success,
+    ).toBe(false);
+    expect(
+      MaintenanceParkedResurfacingApplyRequestSchema.safeParse({
+        decisions: [{ id: "e1", kind: "archive" }],
+      }).success,
+    ).toBe(false);
   });
 });

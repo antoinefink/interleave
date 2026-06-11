@@ -13,8 +13,9 @@
  *   3. run ORPHAN-MEDIA cleanup (confirm) → the orphan file is gone + `vault.findOrphans`
  *      returns empty;
  *   4. run BULK low-priority archive → the stale item recedes as one undoable batch;
- *   5. run the INTEGRITY check → DB ok, the vault reports the broken snapshot missing;
- *   6. RESTART the app → the trash + reclaimed space + archived state persist, and a
+ *   5. run PARKED resurfacing → queue an old saved-for-later source, then undo it;
+ *   6. run the INTEGRITY check → DB ok, the vault reports the broken snapshot missing;
+ *   7. RESTART the app → the trash + reclaimed space + archived state persist, and a
  *      re-opened Maintenance view shows the updated counts.
  *
  * Everything is asserted through the bridge + the rendered hub; the only direct fs use
@@ -47,6 +48,7 @@ async function report(page: Page) {
         report(): Promise<{
           duplicateCount: number;
           cardsWithoutSourcesCount: number;
+          parkedResurfacingCount: number;
           orphanFileCount: number;
           lowValueCount: number;
         }>;
@@ -95,6 +97,7 @@ test("the seeded collection surfaces non-zero report counts + an orphan file", a
   const r = await report(page);
   expect(r.duplicateCount).toBe(1); // one removable copy in the duplicate pair
   expect(r.cardsWithoutSourcesCount).toBeGreaterThanOrEqual(1);
+  expect(r.parkedResurfacingCount).toBeGreaterThanOrEqual(1);
   expect(r.orphanFileCount).toBeGreaterThanOrEqual(1);
   expect(r.lowValueCount).toBeGreaterThanOrEqual(1);
 
@@ -102,6 +105,113 @@ test("the seeded collection surfaces non-zero report counts + an orphan file", a
   await page.getByTestId("nav-maintenance").click();
   await expect(page.getByTestId("route-maintenance")).toBeVisible();
   await expect(page.getByTestId("metric-duplicates-value")).toHaveText("1");
+  await expect(page.getByTestId("metric-parked-value")).toHaveText("3");
+
+  await app.close();
+});
+
+test("parked resurfacing applies keep, queue, and let-go as one undoable batch", async () => {
+  let app = await launch();
+  let page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+
+  await page.getByTestId("nav-maintenance").click();
+  await expect(page.getByTestId("route-maintenance")).toBeVisible();
+  await page.getByTestId("metric-parked-toggle").click();
+  await expect(page.getByTestId("parked-panel")).toBeVisible();
+
+  const keepRow = page.getByTestId("parked-row").filter({ hasText: "Parked resurfacing keep" });
+  const queueRow = page.getByTestId("parked-row").filter({ hasText: "Parked resurfacing queue" });
+  const letGoRow = page.getByTestId("parked-row").filter({ hasText: "Parked resurfacing let-go" });
+  await expect(keepRow).toBeVisible();
+  await expect(queueRow).toBeVisible();
+  await expect(letGoRow).toBeVisible();
+
+  await keepRow.getByTestId("parked-decision-keep").click();
+  await queueRow.getByTestId("parked-decision-queue").click();
+  await letGoRow.getByTestId("parked-decision-letgo").click();
+  await page.getByTestId("parked-apply").click();
+  await expect(page.getByTestId("maintenance-snackbar-undo")).toBeVisible();
+
+  const afterApply = await page.evaluate(async () => {
+    const api = window.appApi as unknown as {
+      library: {
+        browse(req: {
+          statuses: string[];
+        }): Promise<{ items: { title: string; status: string }[] }>;
+      };
+    };
+    const [parked, scheduled, dismissed] = await Promise.all([
+      api.library.browse({ statuses: ["parked"] }),
+      api.library.browse({ statuses: ["scheduled"] }),
+      api.library.browse({ statuses: ["dismissed"] }),
+    ]);
+    return { parked, scheduled, dismissed };
+  });
+  expect(
+    afterApply.parked.items.some(
+      (item) => item.title === "Parked resurfacing keep source" && item.status === "parked",
+    ),
+  ).toBe(true);
+  expect(
+    afterApply.scheduled.items.some(
+      (item) => item.title === "Parked resurfacing queue source" && item.status === "scheduled",
+    ),
+  ).toBe(true);
+  expect(
+    afterApply.dismissed.items.some(
+      (item) => item.title === "Parked resurfacing let-go source" && item.status === "dismissed",
+    ),
+  ).toBe(true);
+  await expect.poll(async () => (await report(page)).parkedResurfacingCount).toBe(0);
+
+  await app.close();
+
+  // A fresh launch against the same data dir proves the applied status changes are durable.
+  app = await launch();
+  page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+  const afterRestart = await page.evaluate(async () => {
+    const api = window.appApi as unknown as {
+      library: {
+        browse(req: {
+          statuses: string[];
+        }): Promise<{ items: { title: string; status: string }[] }>;
+      };
+    };
+    const [parked, scheduled, dismissed] = await Promise.all([
+      api.library.browse({ statuses: ["parked"] }),
+      api.library.browse({ statuses: ["scheduled"] }),
+      api.library.browse({ statuses: ["dismissed"] }),
+    ]);
+    return { parked, scheduled, dismissed };
+  });
+  expect(
+    afterRestart.parked.items.some(
+      (item) => item.title === "Parked resurfacing keep source" && item.status === "parked",
+    ),
+  ).toBe(true);
+  expect(
+    afterRestart.scheduled.items.some(
+      (item) => item.title === "Parked resurfacing queue source" && item.status === "scheduled",
+    ),
+  ).toBe(true);
+  expect(
+    afterRestart.dismissed.items.some(
+      (item) => item.title === "Parked resurfacing let-go source" && item.status === "dismissed",
+    ),
+  ).toBe(true);
+  await expect.poll(async () => (await report(page)).parkedResurfacingCount).toBe(0);
+
+  const undo = await page.evaluate(async () => {
+    const api = window.appApi as unknown as {
+      undo: { last(): Promise<{ undone: boolean; count: number }> };
+    };
+    return api.undo.last();
+  });
+  expect(undo.undone).toBe(true);
+  expect(undo.count).toBe(3);
+  await expect.poll(async () => (await report(page)).parkedResurfacingCount).toBe(3);
 
   await app.close();
 });

@@ -922,6 +922,10 @@ export interface MaintenanceCollection {
   readonly brokenSnapshotRelPath: string;
   /** A low-priority (D), stale source — a bulk-archive / postpone candidate. */
   readonly lowValueSource: ElementId;
+  /** Due parked sources old enough for the T102 resurfacing sweep's three verbs. */
+  readonly parkedResurfacingKeepSource: ElementId;
+  readonly parkedResurfacingQueueSource: ElementId;
+  readonly parkedResurfacingLetGoSource: ElementId;
 }
 
 /** Options for {@link seedMaintenanceCollection}. */
@@ -933,10 +937,11 @@ export interface SeedMaintenanceOptions {
 /**
  * Plant the deterministic maintenance fixtures (T099) the unit + e2e tests need: a
  * duplicate source pair (same canonical URL), a hand-authored sourceless card, a
- * broken source (a snapshot asset row whose file the test deletes on disk), and a
- * low-priority stale source. Built THROUGH the repositories (never raw inserts) so the
- * op-log + lineage invariants hold. Correctness-sized — a 100k performance seed is
- * T100's concern. Returns the ids so the e2e asserts by reference.
+ * broken source (a snapshot asset row whose file the test deletes on disk), a
+ * low-priority stale source, and an old parked source for the T102 resurfacing
+ * sweep. Built THROUGH the repositories where possible so the op-log + lineage
+ * invariants hold. Correctness-sized — a 100k performance seed is T100's concern.
+ * Returns the ids so the e2e asserts by reference.
  */
 export function seedMaintenanceCollection(
   repos: Repositories,
@@ -1005,6 +1010,34 @@ export function seedMaintenanceCollection(
   const stale = options.staleBefore ?? ("2026-01-01T00:00:00.000Z" as IsoTimestamp);
   db.update(elements).set({ updatedAt: stale }).where(eq(elements.id, lowValue.element.id)).run();
 
+  // 5) Old saved-for-later sources — parked long before the default 90-day
+  //    threshold, so Maintenance can exercise keep, queue, and let-go in one batch.
+  const parkedKeep = repos.sources.create({
+    title: "Parked resurfacing keep source",
+    priority: PRIORITY_LABEL_VALUE.B,
+    status: "active",
+    reasonAdded: "Saved for later, then forgotten.",
+  });
+  const parkedQueue = repos.sources.create({
+    title: "Parked resurfacing queue source",
+    priority: PRIORITY_LABEL_VALUE.B,
+    status: "active",
+    reasonAdded: "Saved for later, then forgotten.",
+  });
+  const parkedLetGo = repos.sources.create({
+    title: "Parked resurfacing let-go source",
+    priority: PRIORITY_LABEL_VALUE.C,
+    status: "active",
+    reasonAdded: "Saved for later, then forgotten.",
+  });
+  for (const id of [parkedKeep.element.id, parkedQueue.element.id, parkedLetGo.element.id]) {
+    repos.elements.update(id, {
+      status: "parked",
+      dueAt: null,
+      parkedAt: "2026-01-01T00:00:00.000Z" as IsoTimestamp,
+    });
+  }
+
   return {
     duplicateSourceKeeper: keeper.element.id,
     duplicateSourceRedundant: redundant.element.id,
@@ -1012,5 +1045,8 @@ export function seedMaintenanceCollection(
     brokenSource: broken.element.id,
     brokenSnapshotRelPath,
     lowValueSource: lowValue.element.id,
+    parkedResurfacingKeepSource: parkedKeep.element.id,
+    parkedResurfacingQueueSource: parkedQueue.element.id,
+    parkedResurfacingLetGoSource: parkedLetGo.element.id,
   };
 }

@@ -19,6 +19,10 @@ describe("IPC_CHANNELS", () => {
     expect(IPC_CHANNELS.jobsUpdated).toBe("jobs:updated");
     expect(IPC_CHANNELS.analyticsReviewActivity).toBe("analytics:reviewActivity");
     expect(IPC_CHANNELS.backupsOpenFolder).toBe("backups:openFolder");
+    expect(IPC_CHANNELS.maintenanceParkedResurfacing).toBe("maintenance:parkedResurfacing");
+    expect(IPC_CHANNELS.maintenanceParkedResurfacingApply).toBe(
+      "maintenance:parkedResurfacing:apply",
+    );
     expect(IPC_CHANNELS.menuShowShortcuts).toBe("menu:showShortcuts");
     expect(IPC_CHANNELS.menuCreateBackup).toBe("menu:createBackup");
     expect(values).not.toContain("db:query");

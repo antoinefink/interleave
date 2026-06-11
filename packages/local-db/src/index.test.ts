@@ -41,6 +41,8 @@ describe("local-db repository factory", () => {
       "sourceYield",
       "extractStagnation",
       "schedulerConsistency",
+      "parkedResurfacingQuery",
+      "parkedResurfacing",
       "embeddings",
       "semanticSearch",
       "tasks",

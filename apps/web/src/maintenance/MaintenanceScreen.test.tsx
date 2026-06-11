@@ -29,6 +29,8 @@ const h = vi.hoisted(() => ({
   bulkTrash: vi.fn(),
   bulkArchive: vi.fn(),
   bulkPostpone: vi.fn(),
+  parkedResurfacing: vi.fn(),
+  parkedResurfacingApply: vi.fn(),
   undoLast: vi.fn(),
 }));
 
@@ -54,6 +56,8 @@ vi.mock("../lib/appApi", async () => {
         bulkTrash: h.bulkTrash,
         bulkArchive: h.bulkArchive,
         bulkPostpone: h.bulkPostpone,
+        parkedResurfacing: h.parkedResurfacing,
+        parkedResurfacingApply: h.parkedResurfacingApply,
       },
       undoLast: h.undoLast,
     },
@@ -65,6 +69,8 @@ import { MaintenanceScreen } from "./MaintenanceScreen";
 const FULL_REPORT = {
   duplicateCount: 2,
   cardsWithoutSourcesCount: 1,
+  schedulerConsistencyCount: 0,
+  parkedResurfacingCount: 1,
   orphanFileCount: 3,
   orphanBytes: 4096,
   lowValueCount: 2,
@@ -133,6 +139,26 @@ beforeEach(() => {
   h.bulkTrash.mockResolvedValue({ affected: 1, batchId: "b2" });
   h.bulkArchive.mockResolvedValue({ affected: 2, batchId: "b3" });
   h.bulkPostpone.mockResolvedValue({ affected: 2, batchId: "b4" });
+  h.parkedResurfacing.mockResolvedValue({
+    rows: [
+      {
+        element: {
+          id: "parked1",
+          type: "source",
+          title: "Saved article",
+          priority: 0.5,
+          priorityLabel: "B",
+          createdAt: "",
+        },
+        parkedAt: "2026-03-01T00:00:00.000Z",
+        ageDays: 102,
+      },
+    ],
+    totalDue: 1,
+    limit: 50,
+    asOf: "2026-06-11T12:00:00.000Z",
+  });
+  h.parkedResurfacingApply.mockResolvedValue({ applied: 1, skipped: [], batchId: "b5" });
   h.undoLast.mockResolvedValue({
     undone: true,
     count: 1,
@@ -150,6 +176,8 @@ describe("MaintenanceScreen", () => {
     expect(screen.getByTestId("metric-orphan-value").textContent).toContain("3");
     expect(screen.getByTestId("metric-sourceless-value").textContent).toContain("1");
     expect(screen.getByTestId("metric-lowvalue-value").textContent).toContain("2");
+    expect(screen.getByTestId("metric-parked-value").textContent).toContain("1");
+    expect(screen.getByTestId("metric-parked-toggle")).toHaveAttribute("aria-expanded", "false");
     // Integrity is NOT auto-run — the Run check button is shown, no status yet.
     expect(screen.getByTestId("integrity-run")).toBeInTheDocument();
     expect(h.integrity).not.toHaveBeenCalled();
@@ -178,6 +206,73 @@ describe("MaintenanceScreen", () => {
     // The Undo button drives the shared command-level undo.
     fireEvent.click(screen.getByTestId("maintenance-snackbar-undo"));
     await waitFor(() => expect(h.undoLast).toHaveBeenCalled());
+  });
+
+  it("applies parked resurfacing decisions and shows the Undo snackbar", async () => {
+    render(<MaintenanceScreen />);
+    await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("metric-parked-toggle"));
+    expect(screen.getByTestId("metric-parked-toggle")).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => expect(screen.getByTestId("parked-panel")).toBeInTheDocument());
+    expect(screen.getByTestId("parked-decision-keep")).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByTestId("parked-decision-queue"));
+    expect(screen.getByTestId("parked-decision-keep")).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByTestId("parked-decision-queue")).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByTestId("parked-apply"));
+
+    await waitFor(() =>
+      expect(h.parkedResurfacingApply).toHaveBeenCalledWith({
+        decisions: [{ id: "parked1", kind: "queueNow" }],
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("maintenance-snackbar-undo")).toBeInTheDocument(),
+    );
+  });
+
+  it("keeps parked virtualized rows exposed as a semantic list", async () => {
+    h.parkedResurfacing.mockResolvedValueOnce({
+      rows: Array.from({ length: 82 }, (_, index) => ({
+        element: {
+          id: `parked-${index}`,
+          type: "source",
+          title: `Saved article ${index}`,
+          priority: 0.5,
+          priorityLabel: "B",
+          createdAt: "",
+        },
+        parkedAt: "2026-03-01T00:00:00.000Z",
+        ageDays: 102,
+      })),
+      totalDue: 82,
+      limit: 50,
+      asOf: "2026-06-11T12:00:00.000Z",
+    });
+    render(<MaintenanceScreen />);
+    await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("metric-parked-toggle"));
+
+    await waitFor(() => expect(screen.getByRole("list")).toBeInTheDocument());
+    expect(screen.getAllByRole("listitem").length).toBeGreaterThan(0);
+  });
+
+  it("shows skipped parked resurfacing decisions when stale rows are skipped", async () => {
+    h.parkedResurfacingApply.mockResolvedValueOnce({
+      applied: 1,
+      skipped: [{ id: "parked-stale", reason: "not-due" }],
+      batchId: "b5",
+    });
+    render(<MaintenanceScreen />);
+    await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("metric-parked-toggle"));
+    await waitFor(() => expect(screen.getByTestId("parked-panel")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByTestId("parked-decision-queue"));
+    fireEvent.click(screen.getByTestId("parked-apply"));
+
+    await waitFor(() => expect(screen.getByTestId("maintenance-snackbar")).toBeInTheDocument());
+    expect(screen.getByTestId("maintenance-snackbar").textContent).toContain("1 skipped");
   });
 
   it("orphan-media cleanup is confirm-gated, then composes the GC", async () => {

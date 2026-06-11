@@ -85,6 +85,8 @@ export interface AppSettings {
   readonly trashRetentionDays: number;
   /** When `true` (default), show the import/process balance banner (T046). */
   readonly balanceWarnings: boolean;
+  /** How long deliberately parked sources wait before the maintenance resurfacing sweep (T102). */
+  readonly parkedResurfaceAfterDays: number;
   /** How lopsided imports-vs-processing must be before the balance warning fires (T046). */
   readonly importBalanceFactor: number;
   readonly keyboardLayout: KeyboardLayout;
@@ -1380,6 +1382,7 @@ export interface MaintenanceReportResult {
   readonly duplicateCount: number;
   readonly cardsWithoutSourcesCount: number;
   readonly schedulerConsistencyCount: number;
+  readonly parkedResurfacingCount: number;
   readonly orphanFileCount: number;
   readonly orphanBytes: number;
   readonly lowValueCount: number;
@@ -1500,6 +1503,43 @@ export interface MaintenanceBulkArchiveRequest {
 export interface MaintenanceBulkPostponeRequest {
   readonly ids: readonly string[];
   readonly asOf?: string;
+}
+
+export interface ParkedResurfacingRowSummary {
+  readonly element: MaintenanceRef & { readonly type: "source"; readonly priorityLabel: string };
+  readonly parkedAt: string;
+  readonly ageDays: number;
+}
+
+export interface MaintenanceParkedResurfacingRequest {
+  readonly limit?: number;
+}
+
+export interface MaintenanceParkedResurfacingResult {
+  readonly rows: readonly ParkedResurfacingRowSummary[];
+  readonly totalDue: number;
+  readonly limit: number | null;
+  readonly asOf: string;
+}
+
+export type ParkedResurfacingDecisionKind = "keepParked" | "queueNow" | "letGo";
+
+export interface ParkedResurfacingDecisionInput {
+  readonly id: string;
+  readonly kind: ParkedResurfacingDecisionKind;
+}
+
+export interface MaintenanceParkedResurfacingApplyRequest {
+  readonly decisions: readonly ParkedResurfacingDecisionInput[];
+}
+
+export interface MaintenanceParkedResurfacingApplyResult {
+  readonly applied: number;
+  readonly skipped: readonly {
+    readonly id: string;
+    readonly reason: "missing" | "deleted" | "not-source" | "not-parked" | "not-due";
+  }[];
+  readonly batchId: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -3924,6 +3964,14 @@ export interface AppApi {
     bulkArchive(request: MaintenanceBulkArchiveRequest): Promise<MaintenanceBatchResult>;
     /** Bulk postpone (T099) — recede low-priority items; one undoable batch (FSRS/attention). */
     bulkPostpone(request: MaintenanceBulkPostponeRequest): Promise<MaintenanceBatchResult>;
+    /** Due saved-for-later sources whose parked timestamp crossed the user threshold. */
+    parkedResurfacing(
+      request?: MaintenanceParkedResurfacingRequest,
+    ): Promise<MaintenanceParkedResurfacingResult>;
+    /** Apply keep/queue/let-go decisions for the parked resurfacing sweep as one undoable batch. */
+    parkedResurfacingApply(
+      request: MaintenanceParkedResurfacingApplyRequest,
+    ): Promise<MaintenanceParkedResurfacingApplyResult>;
   };
   readonly menu: {
     /** Subscribe to the native Help → "Keyboard shortcuts" menu item (T048). */
@@ -5014,6 +5062,7 @@ export const appApi = {
           duplicateCount: 0,
           cardsWithoutSourcesCount: 0,
           schedulerConsistencyCount: 0,
+          parkedResurfacingCount: 0,
           orphanFileCount: 0,
           orphanBytes: 0,
           lowValueCount: 0,
@@ -5040,6 +5089,14 @@ export const appApi = {
       bulkTrash: emptyBatch,
       bulkArchive: emptyBatch,
       bulkPostpone: emptyBatch,
+      parkedResurfacing: () =>
+        Promise.resolve({
+          rows: [],
+          totalDue: 0,
+          limit: null,
+          asOf: new Date(0).toISOString(),
+        }),
+      parkedResurfacingApply: () => Promise.resolve({ applied: 0, skipped: [], batchId: null }),
     };
   },
   /**

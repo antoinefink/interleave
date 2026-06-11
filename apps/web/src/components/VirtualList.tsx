@@ -26,7 +26,7 @@
  */
 
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useRef } from "react";
+import { type AriaRole, useRef } from "react";
 
 export interface VirtualListProps<T> {
   /** The full (already main-side-limited) row set to window. */
@@ -45,6 +45,10 @@ export interface VirtualListProps<T> {
   readonly className?: string;
   /** `data-testid` for the scroll container. */
   readonly testId?: string;
+  /** Optional ARIA role for the scroll container when it presents semantic rows. */
+  readonly role?: AriaRole;
+  /** Optional ARIA role for each absolute row wrapper. */
+  readonly rowRole?: AriaRole;
   /** Optional class for each absolute row wrapper. */
   readonly rowClassName?: string;
 }
@@ -61,6 +65,8 @@ export function VirtualList<T>({
   overscan = 6,
   className,
   testId,
+  role,
+  rowRole,
   rowClassName,
 }: VirtualListProps<T>) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -95,6 +101,7 @@ export function VirtualList<T>({
       className={className}
       data-testid={testId}
       data-virtualized="true"
+      role={role}
       style={{ height, overflowY: "auto", position: "relative", contain: "strict" }}
     >
       <div
@@ -110,6 +117,7 @@ export function VirtualList<T>({
                 key={itemKey(item, index)}
                 data-index={index}
                 data-virtual-row="true"
+                role={rowRole}
                 className={rowClassName}
                 style={{
                   position: "absolute",
@@ -130,6 +138,7 @@ export function VirtualList<T>({
                   key={itemKey(item, virtualRow.index)}
                   data-index={virtualRow.index}
                   data-virtual-row="true"
+                  role={rowRole}
                   ref={virtualizer.measureElement}
                   className={rowClassName}
                   style={{

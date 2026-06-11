@@ -246,6 +246,8 @@ export const IPC_CHANNELS = {
   maintenanceBulkTrash: "maintenance:bulkTrash",
   maintenanceBulkArchive: "maintenance:bulkArchive",
   maintenanceBulkPostpone: "maintenance:bulkPostpone",
+  maintenanceParkedResurfacing: "maintenance:parkedResurfacing",
+  maintenanceParkedResurfacingApply: "maintenance:parkedResurfacing:apply",
   // One-way main → renderer event (T048): the native Help → "Keyboard shortcuts"
   // menu item asks the renderer to open the in-app cheat sheet. This is a SEND
   // channel (main → renderer), not an `invoke` handler — the preload exposes a

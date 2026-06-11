@@ -287,6 +287,8 @@ export {
   isKeyboardLayout,
   isThemePreference,
   KEYBOARD_LAYOUTS,
+  PARKED_RESURFACE_AFTER_DAYS_MAX,
+  PARKED_RESURFACE_AFTER_DAYS_MIN,
   projectToRendererSettings,
   SETTINGS_KEYS,
   settingsPatchToStored,

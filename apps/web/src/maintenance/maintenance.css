@@ -142,7 +142,8 @@
   flex-direction: column;
   gap: 4px;
 }
-.mt-dup-list li {
+.mt-dup-list li,
+.mt-dup-list [data-maintenance-row="true"] {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -183,6 +184,40 @@
 .mt-row-btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.mt-segment {
+  display: inline-flex;
+  flex: none;
+  overflow: hidden;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.mt-segment__btn {
+  min-width: var(--s-12);
+  padding: var(--s-1) var(--s-3);
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--t-2xs);
+  cursor: pointer;
+}
+.mt-segment__btn:last-child {
+  border-right: 0;
+}
+.mt-segment__btn[data-active="true"] {
+  background: var(--accent-soft);
+  color: var(--text-1);
+  font-weight: 600;
+}
+.mt-segment__btn:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .mt-confirm {

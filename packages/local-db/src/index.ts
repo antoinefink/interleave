@@ -258,6 +258,23 @@ export {
   type WorkloadImpact,
 } from "./optimization-service";
 export {
+  isParkedDueForResurfacing,
+  type ParkedResurfacingListOptions,
+  type ParkedResurfacingListResult,
+  ParkedResurfacingQuery,
+  type ParkedResurfacingRow,
+  parkedResurfacingCutoff,
+} from "./parked-resurfacing-query";
+export {
+  type ParkedResurfacingApplyOptions,
+  type ParkedResurfacingApplyResult,
+  type ParkedResurfacingDecision,
+  type ParkedResurfacingDecisionKind,
+  ParkedResurfacingService,
+  type ParkedResurfacingSkippedDecision,
+  type ParkedResurfacingSkipReason,
+} from "./parked-resurfacing-service";
+export {
   CARD_DEFER_DAYS,
   type QueueActionKind,
   type QueueActionResult,
@@ -448,6 +465,13 @@ export interface Repositories {
   readonly extractStagnation: import("./extract-stagnation-query").ExtractStagnationQuery;
   /** Scheduler drift diagnostics: stale due rows that are hidden from the Queue. */
   readonly schedulerConsistency: import("./scheduler-consistency-query").SchedulerConsistencyQuery;
+  /** Due parked sources that should resurface in Maintenance (T102). Read-only. */
+  readonly parkedResurfacingQuery: import("./parked-resurfacing-query").ParkedResurfacingQuery;
+  /**
+   * The undoable parked resurfacing decision batch (T102) — existing `update_element`,
+   * one `batchId`, revalidated before write.
+   */
+  readonly parkedResurfacing: import("./parked-resurfacing-service").ParkedResurfacingService;
   /** The on-device semantic-search vector store (T087) — `sqlite-vec` KNN, NO op-log. */
   readonly embeddings: import("./embedding-repository").EmbeddingRepository;
   /** The FTS+vec fusion layer (T087) — fuses keyword + semantic hits, FTS-only degrade. */
@@ -498,6 +522,8 @@ import { LineageGapQuery } from "./lineage-gap-query";
 import { OcclusionMasksRepository } from "./occlusion-masks-repository";
 import { OcrPagesRepository } from "./ocr-pages-repository";
 import { OperationLogRepository } from "./operation-log-repository";
+import { ParkedResurfacingQuery } from "./parked-resurfacing-query";
+import { ParkedResurfacingService } from "./parked-resurfacing-service";
 import { QueueRepository } from "./queue-repository";
 import { RelatedService } from "./related-service";
 import { ReviewRepository } from "./review-repository";
@@ -564,6 +590,8 @@ export function createRepositories(
     sourceYield: new SourceYieldQuery(db),
     extractStagnation: new ExtractStagnationQuery(db),
     schedulerConsistency: new SchedulerConsistencyQuery(db),
+    parkedResurfacingQuery: new ParkedResurfacingQuery(db),
+    parkedResurfacing: new ParkedResurfacingService(db),
     embeddings,
     semanticSearch: new SemanticSearchRepository(search, embeddings),
     tasks: new TaskService(db),

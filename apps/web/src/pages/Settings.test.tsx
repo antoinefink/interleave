@@ -95,6 +95,7 @@ const settings = {
   burySiblings: true,
   trashRetentionDays: 30,
   balanceWarnings: true,
+  parkedResurfaceAfterDays: 90,
   importBalanceFactor: 1.5,
   keyboardLayout: "qwerty",
   theme: "dark",
@@ -231,6 +232,14 @@ describe("Settings", () => {
     );
     expect(queryByTestId("settings-saved")).not.toBeInTheDocument();
     expect(getByTestId("setting-budget-value")).toHaveTextContent("75/day");
+
+    fireEvent.change(getByTestId("setting-parked-resurface"), { target: { value: "120" } });
+    await waitFor(() =>
+      expect(h.updateAppSettings).toHaveBeenCalledWith({
+        patch: { parkedResurfaceAfterDays: 120 },
+      }),
+    );
+    expect(getByTestId("setting-parked-resurface")).toHaveValue(120);
   });
 
   it("persists the system theme preference from the theme segmented control", async () => {

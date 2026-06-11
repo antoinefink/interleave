@@ -40,6 +40,9 @@ import type {
   DuplicateReport,
   LineageGapRow,
   LowValueRow,
+  ParkedResurfacingApplyResult,
+  ParkedResurfacingDecision,
+  ParkedResurfacingListResult,
   SchedulerConsistencyRow,
 } from "@interleave/local-db";
 import { nowIso } from "@interleave/local-db";
@@ -94,6 +97,8 @@ export interface MaintenanceReport {
   readonly duplicateCount: number;
   readonly cardsWithoutSourcesCount: number;
   readonly schedulerConsistencyCount: number;
+  /** Saved-for-later sources old enough to ask about again (T102). */
+  readonly parkedResurfacingCount: number;
   readonly orphanFileCount: number;
   readonly orphanBytes: number;
   readonly lowValueCount: number;
@@ -133,11 +138,17 @@ export class MaintenanceService {
     const sourceless = repos.lineageGap.cardsWithoutSources();
     const lowValue = repos.lineageGap.lowValueCandidates();
     const schedulerConsistencyCount = repos.schedulerConsistency.count();
+    const asOf = nowIso();
+    const parkedResurfacingCount = repos.parkedResurfacingQuery.countDue({
+      asOf,
+      resurfaceAfterDays: repos.settings.getAppSettings().parkedResurfaceAfterDays,
+    });
     const orphans = await this.dbService.findVaultOrphans();
     return {
       duplicateCount: dup.totalDuplicates,
       cardsWithoutSourcesCount: sourceless.length,
       schedulerConsistencyCount,
+      parkedResurfacingCount,
       orphanFileCount: orphans.orphans.length,
       orphanBytes: orphans.totalBytes,
       lowValueCount: lowValue.length,
@@ -168,6 +179,16 @@ export class MaintenanceService {
   /** Stale scheduler state that is hidden from Queue but should be inspected. */
   schedulerConsistency(limit?: number): { rows: SchedulerConsistencyRow[] } {
     return { rows: this.dbService.repos.schedulerConsistency.list(limit) };
+  }
+
+  /** Saved-for-later sources old enough to re-ask the user about (read-only). */
+  parkedResurfacing(limit?: number): ParkedResurfacingListResult {
+    const repos = this.dbService.repos;
+    return repos.parkedResurfacingQuery.listDue({
+      asOf: nowIso(),
+      resurfaceAfterDays: repos.settings.getAppSettings().parkedResurfaceAfterDays,
+      ...(limit !== undefined ? { limit } : {}),
+    });
   }
 
   /**
@@ -294,6 +315,18 @@ export class MaintenanceService {
       (input.asOf ?? nowIso()) as never,
     );
     return { affected: res.elements.length, batchId: res.batchId };
+  }
+
+  /** Apply parked resurfacing decisions as one undoable `update_element` batch. */
+  parkedResurfacingApply(input: {
+    decisions: readonly ParkedResurfacingDecision[];
+  }): ParkedResurfacingApplyResult {
+    const repos = this.dbService.repos;
+    return repos.parkedResurfacing.apply({
+      decisions: input.decisions,
+      asOf: nowIso(),
+      resurfaceAfterDays: repos.settings.getAppSettings().parkedResurfaceAfterDays,
+    });
   }
 
   // --- internals -----------------------------------------------------------

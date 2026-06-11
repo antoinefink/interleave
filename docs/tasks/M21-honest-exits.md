@@ -102,7 +102,7 @@ can finally distinguish deferred-with-intent from abandoned.
 # T102 — Parked resurfacing sweep
 
 - **Milestone:** M21 — Honest exits & the value model
-- **Status:** `[ ]` not started
+- **Status:** `[x]` done
 - **Depends on:** T101
 - **Roadmap line:** parked items resurface on a schedule (default ~90 days) in a calm review
   surface offering keep-parked / schedule / let-go per item, with bulk apply and single-batch
@@ -126,20 +126,33 @@ that Polar-style tools leave open (material drifting out silently).
 
 ## Deliverables
 
-- [ ] Read model: parked items past `parkedAt + resurfaceAfter` (setting, default 90d), with
+- [x] Read model: parked items past `parkedAt + resurfaceAfter` (setting, default 90d), with
       age and origin context.
-- [ ] Sweep surface (maintenance section now; T110 will also host it): per-item
+- [x] Sweep surface (maintenance section now; T110 will also host it): per-item
       keep-parked (resets the clock) / schedule (sets priority + enters scheduling) /
       let-go (dismiss), with multi-select bulk apply, one `batchId`, single undo.
-- [ ] A quiet entry-point indicator (badge/count) when items are due for resurfacing — no modal,
+- [x] A quiet entry-point indicator (badge/count) when items are due for resurfacing — no modal,
       no nag.
-- [ ] Tests: unit for the read model boundary math; e2e — park, time-travel past the window
+- [x] Tests: unit for the read model boundary math; e2e — park, time-travel past the window
       (fixture clock), sweep all three verbs, undo restores.
 
 ## Done when
 
 - An item parked 90+ days ago appears in the sweep; each verb does what it says; a bulk sweep is
   one undoable operation; nothing resurfaces before its window.
+
+## Completion notes
+
+- Added `parkedResurfaceAfterDays` to typed app settings (default `90`, clamped `1..3650`) and
+  surfaced it in Settings.
+- Added `ParkedResurfacingQuery` and `ParkedResurfacingService` in `packages/local-db`: due reads
+  are read-only UTC-duration checks; apply revalidates stale ids, writes existing `update_element`
+  ops under one `batchId`, and skips missing/deleted/non-source/non-parked/not-due rows.
+- Extended the trusted maintenance surface with `maintenance.parkedResurfacing`,
+  `maintenance.parkedResurfacingApply`, and `parkedResurfacingCount`.
+- Added a Maintenance card with per-row Keep / Queue / Let go decisions and single batch apply.
+- Coverage: local-db boundary/undo tests, settings/contract/preload/appApi tests,
+  `MaintenanceScreen.test.tsx`, and `tests/electron/maintenance.spec.ts`.
 - Standard gates pass.
 
 ## Notes / risks

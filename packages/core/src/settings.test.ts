@@ -20,6 +20,8 @@ import {
   DESIRED_RETENTION_MIN,
   isKeyboardLayout,
   isThemePreference,
+  PARKED_RESURFACE_AFTER_DAYS_MAX,
+  PARKED_RESURFACE_AFTER_DAYS_MIN,
   projectToRendererSettings,
   SETTINGS_KEYS,
   settingsPatchToStored,
@@ -40,6 +42,7 @@ describe("AppSettings defaults", () => {
       burySiblings: "review.burySiblings",
       trashRetentionDays: "trash.retentionDays",
       balanceWarnings: "balance.warnings",
+      parkedResurfaceAfterDays: "parked.resurfaceAfterDays",
       importBalanceFactor: "balance.importFactor",
       keyboardLayout: "ui.keyboardLayout",
       theme: "ui.theme",
@@ -144,6 +147,26 @@ describe("coerceSettingValue", () => {
     );
   });
 
+  it("clamps + rounds parked resurfacing days into range (T102)", () => {
+    expect(coerceSettingValue("parkedResurfaceAfterDays", 90)).toBe(90);
+    expect(coerceSettingValue("parkedResurfaceAfterDays", 14.6)).toBe(15);
+    expect(coerceSettingValue("parkedResurfaceAfterDays", 0)).toBe(
+      DEFAULT_APP_SETTINGS.parkedResurfaceAfterDays,
+    );
+    expect(coerceSettingValue("parkedResurfaceAfterDays", -2)).toBe(
+      DEFAULT_APP_SETTINGS.parkedResurfaceAfterDays,
+    );
+    expect(coerceSettingValue("parkedResurfaceAfterDays", 99999)).toBe(
+      PARKED_RESURFACE_AFTER_DAYS_MAX,
+    );
+    expect(coerceSettingValue("parkedResurfaceAfterDays", 0.2)).toBe(
+      PARKED_RESURFACE_AFTER_DAYS_MIN,
+    );
+    expect(coerceSettingValue("parkedResurfaceAfterDays", "nope")).toBe(
+      DEFAULT_APP_SETTINGS.parkedResurfaceAfterDays,
+    );
+  });
+
   it("coerces the per-band retention map: clamp present bands, drop unknown labels (T079)", () => {
     // In-bounds bands kept; out-of-range clamped; unknown labels + non-numbers dropped.
     expect(
@@ -189,6 +212,7 @@ describe("stored ↔ model round-trip", () => {
       [SETTINGS_KEYS.burySiblings]: false,
       [SETTINGS_KEYS.trashRetentionDays]: 14,
       [SETTINGS_KEYS.balanceWarnings]: false,
+      [SETTINGS_KEYS.parkedResurfaceAfterDays]: 120,
       [SETTINGS_KEYS.importBalanceFactor]: 2.5,
       [SETTINGS_KEYS.keyboardLayout]: "dvorak",
       [SETTINGS_KEYS.theme]: "system",
@@ -202,6 +226,7 @@ describe("stored ↔ model round-trip", () => {
       burySiblings: false,
       trashRetentionDays: 14,
       balanceWarnings: false,
+      parkedResurfaceAfterDays: 120,
       importBalanceFactor: 2.5,
       keyboardLayout: "dvorak",
       theme: "system",
@@ -226,9 +251,14 @@ describe("stored ↔ model round-trip", () => {
   });
 
   it("a model patch maps back to stable storage keys", () => {
-    const stored = settingsPatchToStored({ dailyReviewBudget: 100, theme: "system" });
+    const stored = settingsPatchToStored({
+      dailyReviewBudget: 100,
+      parkedResurfaceAfterDays: 120,
+      theme: "system",
+    });
     expect(stored).toEqual({
       [SETTINGS_KEYS.dailyReviewBudget]: 100,
+      [SETTINGS_KEYS.parkedResurfaceAfterDays]: 120,
       [SETTINGS_KEYS.theme]: "system",
     });
   });
@@ -242,6 +272,7 @@ describe("stored ↔ model round-trip", () => {
       burySiblings: false,
       trashRetentionDays: 7,
       balanceWarnings: false,
+      parkedResurfaceAfterDays: 45,
       importBalanceFactor: 2,
       keyboardLayout: "vim" as const,
       theme: "system" as const,

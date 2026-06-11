@@ -91,6 +91,8 @@ import {
   MaintenanceIntegrityRequestSchema,
   MaintenanceLowValueRequestSchema,
   MaintenanceOrphanMediaRequestSchema,
+  MaintenanceParkedResurfacingApplyRequestSchema,
+  MaintenanceParkedResurfacingRequestSchema,
   MaintenanceReportRequestSchema,
   MaintenanceSchedulerConsistencyRequestSchema,
   OptimizationApplyRequestSchema,
@@ -1577,6 +1579,16 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.maintenanceBulkPostpone, (_event, rawRequest: unknown) => {
     const request = MaintenanceBulkPostponeRequestSchema.parse(rawRequest);
     return dbService.maintenanceBulkPostpone(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.maintenanceParkedResurfacing, (_event, rawRequest: unknown) => {
+    const request = MaintenanceParkedResurfacingRequestSchema.parse(rawRequest);
+    return dbService.getMaintenanceParkedResurfacing(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.maintenanceParkedResurfacingApply, (_event, rawRequest: unknown) => {
+    const request = MaintenanceParkedResurfacingApplyRequestSchema.parse(rawRequest);
+    return dbService.maintenanceParkedResurfacingApply(request);
   });
 
   // Jobs OBSERVE surface (T058) — read-only. `jobs.list` reads the current queue

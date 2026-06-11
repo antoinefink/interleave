@@ -52,6 +52,12 @@ The inbox action that parks a source: it records a deliberate deferral without c
 
 A source the user deliberately set aside for later, visible in inventory but excluded from Inbox, Due queue, and daily-work routing until the user restores or schedules it.
 
+### Parked resurfacing
+
+The maintenance process that periodically brings old Parked sources back to the user's attention for an explicit keep, queue, or let-go decision without automatically scheduling them.
+
+Resurfacing is not queue eligibility: it is a review prompt for deferred intent, and the user's decision owns any durable status change.
+
 ### Source reader
 
 The local reading surface for processing a source inside the app, distinct from opening the source's external canonical URL.
