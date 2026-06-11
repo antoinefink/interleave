@@ -64,6 +64,12 @@ The maintenance process that surfaces work that has been postponed repeatedly an
 
 Reckoning uses effective postpone debt, not lifetime history: a keep-style decision starts a new counting window while preserving the old postpones as audit evidence. While an item is in reckoning, attention scheduling should stop pushing it farther away until the user makes a decision.
 
+### Topic fallow
+
+A deliberate rest state for a Topic that moves the topic and its eligible attention-scheduled descendants to a chosen return date without treating the work as missed, abandoned, or chronically postponed.
+
+Topic fallow is attention-only. It does not pause descendant card reviews or mutate FSRS review state; cards can continue reviewing while the surrounding topic work rests.
+
 ### Source reader
 
 The local reading surface for processing a source inside the app, distinct from opening the source's external canonical URL.
