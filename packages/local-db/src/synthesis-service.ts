@@ -39,12 +39,19 @@
 
 import type { BlockId, Element, ElementId, ElementRelation, Priority } from "@interleave/core";
 import { DEFAULT_PRIORITY } from "@interleave/core";
-import type { InterleaveDatabase } from "@interleave/db";
+import {
+  elementRelations,
+  elements as elementsTable,
+  type InterleaveDatabase,
+} from "@interleave/db";
 import type { ScheduleChoice } from "@interleave/scheduler";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
+import { ExtractService } from "./extract-service";
 import { SchedulerService } from "./scheduler-service";
 import { SettingsRepository } from "./settings-repository";
+import type { DbClient } from "./types";
 
 /** The distillation stage a synthesis note sits in (the `synthesis` stage). */
 export const SYNTHESIS_STAGE = "synthesis" as const;
@@ -117,12 +124,14 @@ export interface SynthesisLinkResult {
 export class SynthesisService {
   private readonly elements: ElementRepository;
   private readonly documents: DocumentRepository;
+  private readonly extracts: ExtractService;
   private readonly scheduler: SchedulerService;
   private readonly settings: SettingsRepository;
 
   constructor(private readonly db: InterleaveDatabase) {
     this.elements = new ElementRepository(db);
     this.documents = new DocumentRepository(db);
+    this.extracts = new ExtractService(db);
     this.scheduler = new SchedulerService(db);
     this.settings = new SettingsRepository(db);
   }
@@ -183,17 +192,29 @@ export class SynthesisService {
         `SynthesisService.linkElement: target ${targetId} is a ${target.type} — only extracts/cards can be collected`,
       );
     }
-    // Idempotent: a `references` edge note→target already present is a no-op.
-    const existing = this.elements
-      .listRelationsFrom(noteId)
-      .find((r) => r.relationType === "references" && r.toElementId === targetId);
-    if (!existing) {
-      this.elements.addRelation({
+    this.db.transaction((tx) => {
+      // Idempotent: a `references` edge note→target already present is a no-op.
+      const existing = tx
+        .select({ id: elementRelations.id })
+        .from(elementRelations)
+        .where(
+          and(
+            eq(elementRelations.fromElementId, noteId),
+            eq(elementRelations.toElementId, targetId),
+            eq(elementRelations.relationType, "references"),
+          ),
+        )
+        .get();
+      if (existing) return;
+      if (target.type === "extract") {
+        this.extracts.setSynthesizedFateWithin(tx, targetId);
+      }
+      this.elements.addRelationWithin(tx, {
         fromElementId: noteId,
         toElementId: targetId,
         relationType: "references",
       });
-    }
+    });
     return { data: this.requireData(noteId) };
   }
 
@@ -204,12 +225,27 @@ export class SynthesisService {
    */
   unlinkElement(noteId: ElementId, targetId: ElementId): SynthesisLinkResult {
     this.requireSynthesisNote(noteId);
-    const edge = this.elements
-      .listRelationsFrom(noteId)
-      .find((r) => r.relationType === "references" && r.toElementId === targetId);
-    if (edge) {
-      this.elements.removeRelation(edge.id);
-    }
+    const target = this.elements.findById(targetId);
+    this.db.transaction((tx) => {
+      const edge = tx
+        .select({ id: elementRelations.id })
+        .from(elementRelations)
+        .where(
+          and(
+            eq(elementRelations.fromElementId, noteId),
+            eq(elementRelations.toElementId, targetId),
+            eq(elementRelations.relationType, "references"),
+          ),
+        )
+        .get();
+      if (!edge) return;
+      const shouldClearSynthesizedFate =
+        target?.type === "extract" && !this.hasLiveSynthesisReference(tx, targetId, noteId);
+      if (shouldClearSynthesizedFate) {
+        this.extracts.clearSynthesizedFateCacheWithin(tx, targetId);
+      }
+      this.elements.removeRelationWithin(tx, edge.id as ElementRelation["id"]);
+    });
     return { data: this.requireData(noteId) };
   }
 
@@ -252,7 +288,14 @@ export class SynthesisService {
    */
   delete(noteId: ElementId): Element {
     this.requireSynthesisNote(noteId);
-    return this.elements.softDelete(noteId);
+    return this.db.transaction((tx) => {
+      for (const targetId of this.liveExtractTargetsForNoteWithin(tx, noteId)) {
+        if (!this.hasLiveSynthesisReference(tx, targetId, noteId)) {
+          this.extracts.clearSynthesizedFateCacheWithin(tx, targetId);
+        }
+      }
+      return this.elements.softDeleteWithin(tx, noteId);
+    });
   }
 
   /** The full synthesis-note read (element + linked material + due date), or `null`. */
@@ -290,6 +333,47 @@ export class SynthesisService {
     const data = this.get(id);
     if (!data) throw new Error(`SynthesisService: synthesis note ${id} missing after mutation`);
     return data;
+  }
+
+  /** Whether any live synthesis note still references `targetId`. */
+  private hasLiveSynthesisReference(
+    tx: DbClient,
+    targetId: ElementId,
+    excludingNoteId?: ElementId,
+  ): boolean {
+    const conditions = [
+      eq(elementRelations.toElementId, targetId),
+      eq(elementRelations.relationType, "references"),
+      eq(elementsTable.type, "synthesis_note"),
+      isNull(elementsTable.deletedAt),
+    ];
+    if (excludingNoteId) {
+      conditions.push(ne(elementRelations.fromElementId, excludingNoteId));
+    }
+    const row = tx
+      .select({ id: elementRelations.id })
+      .from(elementRelations)
+      .innerJoin(elementsTable, eq(elementRelations.fromElementId, elementsTable.id))
+      .where(and(...conditions))
+      .get();
+    return row != null;
+  }
+
+  /** Live extract targets referenced by a synthesis note, de-duplicated by target id. */
+  private liveExtractTargetsForNoteWithin(tx: DbClient, noteId: ElementId): ElementId[] {
+    const rows = tx
+      .select({ targetId: elementRelations.toElementId })
+      .from(elementRelations)
+      .innerJoin(elementsTable, eq(elementRelations.toElementId, elementsTable.id))
+      .where(
+        and(
+          eq(elementRelations.fromElementId, noteId),
+          eq(elementRelations.relationType, "references"),
+          eq(elementsTable.type, "extract"),
+        ),
+      )
+      .all();
+    return [...new Set(rows.map((row) => row.targetId as ElementId))];
   }
 
   /** Build a {@link SynthesisData} for a known-live synthesis-note element. */

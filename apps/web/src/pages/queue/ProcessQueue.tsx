@@ -63,6 +63,8 @@ import {
   appApi,
   type CardKind,
   type DailyWorkSummaryResult,
+  type DirectExtractFate,
+  type ExtractFate,
   type ExtractStage,
   type InspectorData,
   isDesktop,
@@ -328,6 +330,7 @@ export function ProcessQueue() {
       priority: number;
       title: string;
       dueAt: string | null;
+      extractFate?: ExtractFate | null;
     }) => {
       setOrder((items) =>
         items.map((item) =>
@@ -355,6 +358,7 @@ export function ProcessQueue() {
                 priority: extract.priority,
                 title: extract.title,
                 dueAt: extract.dueAt,
+                extractFate: extract.extractFate ?? prev.element.extractFate,
               },
               scheduler: { ...prev.scheduler, stage: extract.stage },
             }
@@ -844,6 +848,27 @@ export function ProcessQueue() {
     reloadInspector,
     toast,
   ]);
+
+  const setExtractFate = useCallback(
+    async (fate: DirectExtractFate) => {
+      if (current?.type !== "extract" || busy || !isDesktop()) return;
+      clearUndo();
+      setBusy(true);
+      try {
+        const res = await appApi.setExtractFate({ id: current.id, fate });
+        patchCurrentExtract(res.extract);
+        await reloadInspector(current.id);
+        requestInspectorRefresh();
+        toast(fate === "reference" ? "Kept as reference" : "Marked done without card");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        toast("Could not set extract fate");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [current, busy, clearUndo, patchCurrentExtract, reloadInspector, toast],
+  );
 
   const onCardCreatedFromExtract = useCallback(() => {
     clearUndo();
@@ -1388,6 +1413,7 @@ export function ProcessQueue() {
             onExtractEditorReady={onExtractEditorReady}
             onSetExtractStage={setExtractStage}
             onTrimExtract={trimExtract}
+            onSetExtractFate={setExtractFate}
             onOpenExtractBuilder={(tab) => setExtractBuilder({ tab })}
             onCloseExtractBuilder={() => setExtractBuilder(null)}
             onExtractCardCreated={onCardCreatedFromExtract}
@@ -1762,6 +1788,7 @@ function ProcessExtractWorkbench({
   onSelectionAction,
   onSetStage,
   onTrim,
+  onSetFate,
   onOpenBuilder,
   onCloseBuilder,
   onCardCreated,
@@ -1779,6 +1806,7 @@ function ProcessExtractWorkbench({
   onSelectionAction: (action: SelectionToolbarAction) => void;
   onSetStage: (stage?: ExtractStage) => void;
   onTrim: () => void;
+  onSetFate: (fate: DirectExtractFate) => void;
   onOpenBuilder: (tab: CardKind) => void;
   onCloseBuilder: () => void;
   onCardCreated: () => void;
@@ -1790,6 +1818,8 @@ function ProcessExtractWorkbench({
   const sourceTitle = inspector?.source?.title ?? item.sourceTitle;
   const sourceRef = inspector?.sourceRef ?? null;
   const hasSource = inspector?.location != null || inspector?.source != null;
+  const extractFate = inspector?.element.extractFate ?? null;
+  const canCreateCard = extractFate === null;
 
   return (
     <div className="pq-extract" data-testid="process-extract-workbench">
@@ -1887,12 +1917,33 @@ function ProcessExtractWorkbench({
           <Icon name="trim" size={14} />
           Trim
         </button>
+        <button
+          type="button"
+          className="pq-btn"
+          data-testid="process-extract-fate-reference"
+          disabled={busy}
+          onClick={() => onSetFate("reference")}
+        >
+          <Icon name="bookmark" size={14} />
+          Reference
+        </button>
+        <button
+          type="button"
+          className="pq-btn"
+          data-testid="process-extract-fate-done-without-card"
+          disabled={busy}
+          onClick={() => onSetFate("done_without_card")}
+        >
+          <Icon name="checkCircle" size={14} />
+          Done without card
+        </button>
         <span className="pq-extract__toolspacer" />
         <button
           type="button"
           className="pq-btn pq-btn--primary"
           data-testid="process-extract-make-qa"
-          disabled={busy}
+          disabled={busy || !canCreateCard}
+          title={canCreateCard ? undefined : "Reactivate this extract before creating a card"}
           onClick={() => onOpenBuilder("qa")}
         >
           <Icon name="card" size={14} />
@@ -1902,7 +1953,8 @@ function ProcessExtractWorkbench({
           type="button"
           className="pq-btn"
           data-testid="process-extract-make-cloze"
-          disabled={busy}
+          disabled={busy || !canCreateCard}
+          title={canCreateCard ? undefined : "Reactivate this extract before creating a card"}
           onClick={() => onOpenBuilder("cloze")}
         >
           <Icon name="sparkle" size={14} />
@@ -1971,6 +2023,7 @@ function ProcessCard({
   onExtractEditorReady,
   onSetExtractStage,
   onTrimExtract,
+  onSetExtractFate,
   onOpenExtractBuilder,
   onCloseExtractBuilder,
   onExtractCardCreated,
@@ -2015,6 +2068,7 @@ function ProcessCard({
   onExtractEditorReady: (editor: Editor | null) => void;
   onSetExtractStage: (stage?: ExtractStage) => void;
   onTrimExtract: () => void;
+  onSetExtractFate: (fate: DirectExtractFate) => void;
   onOpenExtractBuilder: (tab: CardKind) => void;
   onCloseExtractBuilder: () => void;
   onExtractCardCreated: () => void;
@@ -2240,6 +2294,7 @@ function ProcessCard({
           onSelectionAction={onExtractSelectionAction}
           onSetStage={onSetExtractStage}
           onTrim={onTrimExtract}
+          onSetFate={onSetExtractFate}
           onOpenBuilder={onOpenExtractBuilder}
           onCloseBuilder={onCloseExtractBuilder}
           onCardCreated={onExtractCardCreated}

@@ -33,6 +33,8 @@ function signals(overrides: Partial<ExtractStagnationSignals> = {}): ExtractStag
     dueAt: null,
     postponeCount: STAGNATION_POSTPONE_THRESHOLD,
     childCount: 0,
+    honorableFate: null,
+    synthesizedReferenceCount: 0,
     lastStageAdvanceAt: null,
     ...overrides,
   };
@@ -58,6 +60,22 @@ describe("isStagnant", () => {
     const v = isStagnant(signals({ childCount: 2 }), NOW);
     expect(v.stagnant).toBe(false);
     expect(v.reasons).not.toContain("no-children");
+  });
+
+  it("does NOT flag an extract with an honorable fate", () => {
+    const v = isStagnant(signals({ honorableFate: "reference" }), NOW);
+    expect(v.stagnant).toBe(false);
+    expect(v.reasons).not.toContain("no-progress");
+    expect(v.reasons).not.toContain("no-children");
+    expect(v.suggestion).toBe("keep_as_reference");
+  });
+
+  it("does NOT flag an extract referenced by a live synthesis note", () => {
+    const v = isStagnant(signals({ synthesizedReferenceCount: 1 }), NOW);
+    expect(v.stagnant).toBe(false);
+    expect(v.reasons).not.toContain("no-progress");
+    expect(v.reasons).not.toContain("no-children");
+    expect(v.suggestion).toBe("mark_synthesized");
   });
 
   it("does NOT flag a once-postponed extract (below the postpone threshold)", () => {

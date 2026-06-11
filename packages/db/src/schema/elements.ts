@@ -15,7 +15,12 @@
  * `@interleave/core` tuples so the DB and the domain vocabulary cannot drift.
  */
 
-import { DISTILLATION_STAGES, ELEMENT_STATUSES, ELEMENT_TYPES } from "@interleave/core";
+import {
+  DISTILLATION_STAGES,
+  ELEMENT_STATUSES,
+  ELEMENT_TYPES,
+  EXTRACT_FATES,
+} from "@interleave/core";
 import { sql } from "drizzle-orm";
 import {
   type AnySQLiteColumn,
@@ -44,6 +49,8 @@ export const elements = sqliteTable(
     dueAt: text("due_at"),
     /** ISO-8601 UTC timestamp for when the user deliberately parked the element. */
     parkedAt: text("parked_at"),
+    /** Honorable terminal fate for extract rows that exit without a card. */
+    extractFate: text("extract_fate"),
     title: text("title").notNull(),
     /** Origin element this was derived from; `null` for top-level sources. */
     parentId: text("parent_id").references((): AnySQLiteColumn => elements.id, {
@@ -62,6 +69,10 @@ export const elements = sqliteTable(
     check("elements_type_check", inList(table.type, ELEMENT_TYPES)),
     check("elements_status_check", inList(table.status, ELEMENT_STATUSES)),
     check("elements_stage_check", inList(table.stage, DISTILLATION_STAGES)),
+    check(
+      "elements_extract_fate_check",
+      sql`${table.extractFate} IS NULL OR (${table.type} = 'extract' AND ${inList(table.extractFate, EXTRACT_FATES)})`,
+    ),
     check("elements_priority_range_check", sql`${table.priority} >= 0 AND ${table.priority} <= 1`),
     index("elements_parent_idx").on(table.parentId),
     index("elements_source_idx").on(table.sourceId),

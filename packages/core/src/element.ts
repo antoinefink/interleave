@@ -11,7 +11,13 @@
  * `packages/local-db` reads/writes them behind the Electron/IPC boundary (T008).
  */
 
-import type { DistillationStage, ElementStatus, ElementType, RelationType } from "./enums";
+import type {
+  DistillationStage,
+  ElementStatus,
+  ElementType,
+  ExtractFate,
+  RelationType,
+} from "./enums";
 import type {
   BlockId,
   ElementId,
@@ -45,6 +51,8 @@ export interface Element {
   dueAt: IsoTimestamp | null;
   /** When this element was deliberately parked for later; `null` unless status is `parked`. */
   parkedAt: IsoTimestamp | null;
+  /** Honorable terminal fate for extracts that are done without a card; `null` otherwise. */
+  extractFate: ExtractFate | null;
   title: string;
   /** Origin element this was derived from; `null` for top-level sources. */
   parentId: ElementId | null;

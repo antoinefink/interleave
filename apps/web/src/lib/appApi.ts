@@ -185,6 +185,7 @@ export interface ElementSummary {
   readonly priority: number;
   readonly title: string;
   readonly dueAt: string | null;
+  readonly extractFate: ExtractFate | null;
 }
 
 /** Which scheduler an element is on — the load-bearing FSRS vs attention split. */
@@ -216,6 +217,7 @@ export interface SourceYieldSignals {
   /** How far the source has been read, in `[0, 1]`. */
   readonly readPct: number;
   readonly extractsCreated: number;
+  readonly productiveExtracts: number;
   readonly cardsCreated: number;
 }
 
@@ -2248,6 +2250,10 @@ export type CardsExportAnkiResult = {
 /** The three extract distillation stages the chain walks through (T024). */
 export type ExtractStage = "raw_extract" | "clean_extract" | "atomic_statement";
 
+export type ExtractFate = "reference" | "synthesized" | "done_without_card";
+
+export type DirectExtractFate = Exclude<ExtractFate, "synthesized">;
+
 /** A flat summary of an extract after a review action (mirrors `ExtractSummary`). */
 export interface ExtractActionSummary {
   readonly id: string;
@@ -2258,6 +2264,7 @@ export interface ExtractActionSummary {
   readonly title: string;
   /** The attention `due_at` (ISO-8601) — extracts are attention items, never FSRS. */
   readonly dueAt: string | null;
+  readonly extractFate: ExtractFate | null;
   readonly sourceId: string | null;
   readonly parentId: string | null;
 }
@@ -2303,6 +2310,23 @@ export interface ExtractsMarkDoneRequest {
 }
 
 export interface ExtractsMarkDoneResult {
+  readonly extract: ExtractActionSummary;
+}
+
+export interface ExtractsSetFateRequest {
+  readonly id: string;
+  readonly fate: DirectExtractFate;
+}
+
+export interface ExtractsSetFateResult {
+  readonly extract: ExtractActionSummary;
+}
+
+export interface ExtractsReactivateFateRequest {
+  readonly id: string;
+}
+
+export interface ExtractsReactivateFateResult {
   readonly extract: ExtractActionSummary;
 }
 
@@ -2790,6 +2814,7 @@ export interface SynthesisElementSummary {
   readonly priority: number;
   readonly title: string;
   readonly dueAt: string | null;
+  readonly extractFate: ExtractFate | null;
 }
 
 /** One referenced extract/card collected into a synthesis note. */
@@ -3566,6 +3591,12 @@ export interface SourceYieldRow {
   /** How far the source has been read, in `[0, 1]`. */
   readonly readPct: number;
   readonly extractsCreated: number;
+  readonly productiveExtracts: number;
+  readonly referenceExtracts: number;
+  readonly synthesizedExtracts: number;
+  readonly doneWithoutCardExtracts: number;
+  readonly synthesisReferencedExtracts: number;
+  readonly synthesisNotesCreated: number;
   readonly cardsCreated: number;
   readonly matureCards: number;
   readonly leeches: number;
@@ -3603,7 +3634,13 @@ export interface ExtractStagnationListRequest {
 export type StagnationReason = "postponed-repeatedly" | "no-progress" | "no-children" | "stale";
 
 /** The recommended remediation — each maps to an existing `extracts.*` / extract→card command. */
-export type StagnationSuggestion = "rewrite" | "convert" | "postpone" | "delete";
+export type StagnationSuggestion =
+  | "rewrite"
+  | "convert"
+  | "postpone"
+  | "delete"
+  | "keep_as_reference"
+  | "mark_synthesized";
 
 /** A small extract descriptor embedded in each stagnant row. */
 export interface StagnantExtractRef {
@@ -3612,6 +3649,7 @@ export interface StagnantExtractRef {
   readonly stage: string;
   readonly priority: number;
   readonly dueAt: string | null;
+  readonly extractFate?: ExtractFate | null;
   readonly createdAt: string;
 }
 
@@ -3620,6 +3658,7 @@ export interface StagnantExtractRow {
   readonly extract: StagnantExtractRef;
   readonly postponeCount: number;
   readonly childCount: number;
+  readonly synthesizedReferenceCount?: number;
   readonly daysSinceProgress: number;
   readonly reasons: readonly StagnationReason[];
   readonly suggestion: StagnationSuggestion;
@@ -3846,6 +3885,8 @@ export interface AppApi {
     rewrite(request: ExtractsRewriteRequest): Promise<ExtractsRewriteResult>;
     postpone(request: ExtractsPostponeRequest): Promise<ExtractsPostponeResult>;
     markDone(request: ExtractsMarkDoneRequest): Promise<ExtractsMarkDoneResult>;
+    setFate(request: ExtractsSetFateRequest): Promise<ExtractsSetFateResult>;
+    reactivateFate(request: ExtractsReactivateFateRequest): Promise<ExtractsReactivateFateResult>;
     delete(request: ExtractsDeleteRequest): Promise<ExtractsDeleteResult>;
   };
   readonly review: {
@@ -4564,6 +4605,16 @@ export const appApi = {
   /** Mark an extract done (status `done`); logs `update_element` (T024). */
   markExtractDone(request: ExtractsMarkDoneRequest): Promise<ExtractsMarkDoneResult> {
     return requireAppApi().extracts.markDone(request);
+  },
+  /** Mark an extract as reference / done-without-card; direct synthesized is rejected main-side. */
+  setExtractFate(request: ExtractsSetFateRequest): Promise<ExtractsSetFateResult> {
+    return requireAppApi().extracts.setFate(request);
+  },
+  /** Clear an honorable extract fate and return it to attention work due now. */
+  reactivateExtractFate(
+    request: ExtractsReactivateFateRequest,
+  ): Promise<ExtractsReactivateFateResult> {
+    return requireAppApi().extracts.reactivateFate(request);
   },
   /** Soft-delete an extract; logs `soft_delete_element` (T024). */
   deleteExtract(request: ExtractsDeleteRequest): Promise<ExtractsDeleteResult> {

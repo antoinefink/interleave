@@ -39,6 +39,7 @@ export function rowToElement(row: ElementRow): Element {
     priority: row.priority,
     dueAt: row.dueAt,
     parkedAt: row.parkedAt ?? null,
+    extractFate: row.extractFate as Element["extractFate"],
     title: row.title,
     parentId: (row.parentId as ElementId | null) ?? null,
     sourceId: (row.sourceId as ElementId | null) ?? null,

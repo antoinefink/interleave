@@ -36,6 +36,9 @@ interface YieldRow {
   readPct: number;
   extractsCreated: number;
   cardsCreated: number;
+  productiveExtracts: number;
+  referenceExtracts: number;
+  doneWithoutCardExtracts: number;
   leeches: number;
   yieldBand: string;
   yieldScore: number;
@@ -96,6 +99,34 @@ async function addExtractAndCard(page: Page, sourceId: string): Promise<void> {
       prompt: "What must a measure of intelligence control for?",
       answer: "Prior knowledge and experience.",
     });
+  }, sourceId);
+}
+
+/** Create an extract and terminate it as a durable non-card reference. */
+async function addReferenceExtract(page: Page, sourceId: string): Promise<void> {
+  await page.evaluate(async (sId) => {
+    const api = window.appApi as unknown as {
+      extractions: {
+        create(req: {
+          sourceElementId: string;
+          selectedText: string;
+          blockIds: string[];
+          startOffset?: number;
+          endOffset?: number;
+        }): Promise<{ extract: { id: string } }>;
+      };
+      extracts: {
+        setFate(req: { id: string; fate: "reference" }): Promise<unknown>;
+      };
+    };
+    const res = await api.extractions.create({
+      sourceElementId: sId,
+      selectedText: "Reference-only claims should still count as productive reading output.",
+      blockIds: ["blk_def_p2"],
+      startOffset: 0,
+      endOffset: 67,
+    });
+    await api.extracts.setFate({ id: res.extract.id, fate: "reference" });
   }, sourceId);
 }
 
@@ -179,6 +210,30 @@ test("extracting + creating a card from a source increments its counts and re-ra
   if (!after) throw new Error("no after row");
   expect(after.extractsCreated).toBe(before.extractsCreated + 1);
   expect(after.cardsCreated).toBe(before.cardsCreated + 1);
+
+  await app.close();
+});
+
+test("marking an extract as reference increments non-card productive output", async () => {
+  const app = await launchApp(dataDir, { seedOnEmpty: true });
+  const page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+
+  const sourceId = await demoSourceId(page);
+  const before = (await listYield(page)).rows.find((r) => r.source.id === sourceId);
+  expect(before).toBeTruthy();
+  if (!before) throw new Error("no before row");
+
+  await addReferenceExtract(page, sourceId);
+
+  const after = (await listYield(page)).rows.find((r) => r.source.id === sourceId);
+  expect(after).toBeTruthy();
+  if (!after) throw new Error("no after row");
+  expect(after.extractsCreated).toBe(before.extractsCreated + 1);
+  expect(after.cardsCreated).toBe(before.cardsCreated);
+  expect(after.productiveExtracts).toBe(before.productiveExtracts + 1);
+  expect(after.referenceExtracts).toBe(before.referenceExtracts + 1);
+  expect(after.doneWithoutCardExtracts).toBe(before.doneWithoutCardExtracts);
 
   await app.close();
 });

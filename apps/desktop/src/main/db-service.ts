@@ -24,6 +24,7 @@ import type {
   Element,
   ElementId,
   ElementStatus,
+  ExtractFate,
   IsoTimestamp,
   JobJsonValue,
   MarkType,
@@ -213,8 +214,12 @@ import type {
   ExtractsMarkDoneResult,
   ExtractsPostponeRequest,
   ExtractsPostponeResult,
+  ExtractsReactivateFateRequest,
+  ExtractsReactivateFateResult,
   ExtractsRewriteRequest,
   ExtractsRewriteResult,
+  ExtractsSetFateRequest,
+  ExtractsSetFateResult,
   ExtractsUpdateStageRequest,
   ExtractsUpdateStageResult,
   FactLifetimeSummary,
@@ -1102,6 +1107,7 @@ export class DbService {
         priority: updated.priority,
         title: updated.title,
         dueAt: updated.dueAt,
+        extractFate: updated.extractFate,
         priorityLabel: priorityToLabel(updated.priority),
       },
     };
@@ -3484,6 +3490,7 @@ export class DbService {
             priority: extract.priority,
             title: extract.title,
             dueAt: extract.dueAt,
+            extractFate: extract.extractFate,
           }
         : null,
     };
@@ -4391,6 +4398,7 @@ export class DbService {
     priority: number;
     title: string;
     dueAt: string | null;
+    extractFate: ExtractFate | null;
     sourceId: ElementId | null;
     parentId: ElementId | null;
   }): ExtractActionSummary {
@@ -4402,6 +4410,7 @@ export class DbService {
       priority: element.priority,
       title: element.title,
       dueAt: element.dueAt,
+      extractFate: element.extractFate,
       sourceId: element.sourceId,
       parentId: element.parentId,
     };
@@ -4464,6 +4473,29 @@ export class DbService {
    */
   markExtractDone(request: ExtractsMarkDoneRequest): ExtractsMarkDoneResult {
     const { element } = this.extractService.markDone(request.id as ElementId);
+    return { extract: this.toExtractActionSummary(element) };
+  }
+
+  /**
+   * Mark an extract as honorably terminal without creating a card. Direct commands
+   * may only set user-owned non-card fates; `synthesized` is maintained by
+   * synthesis-note lineage and is rejected here as a defense-in-depth guard after
+   * the Zod boundary schema.
+   */
+  setExtractFate(request: ExtractsSetFateRequest): ExtractsSetFateResult {
+    if ((request.fate as string) === "synthesized") {
+      throw new Error("DbService.setExtractFate: synthesized fate is synthesis-owned");
+    }
+    const { element } = this.extractService.setFate(request.id as ElementId, request.fate);
+    return { extract: this.toExtractActionSummary(element) };
+  }
+
+  /**
+   * Clear an honorable extract fate and return the extract to the attention queue
+   * due now, avoiding the ambiguous `done` + no-fate state.
+   */
+  reactivateExtractFate(request: ExtractsReactivateFateRequest): ExtractsReactivateFateResult {
+    const { element } = this.extractService.reactivateFate(request.id as ElementId);
     return { extract: this.toExtractActionSummary(element) };
   }
 
@@ -5137,6 +5169,7 @@ export class DbService {
         priority: restored.priority,
         title: restored.title,
         dueAt: restored.dueAt,
+        extractFate: restored.extractFate,
       },
     };
   }
@@ -5519,6 +5552,7 @@ function synthesisElementSummary(
     priority: element.priority,
     title: element.title,
     dueAt: element.dueAt,
+    extractFate: element.extractFate,
   };
 }
 

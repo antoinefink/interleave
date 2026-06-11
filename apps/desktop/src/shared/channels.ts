@@ -114,6 +114,8 @@ export const IPC_CHANNELS = {
   extractsRewrite: "extracts:rewrite",
   extractsPostpone: "extracts:postpone",
   extractsMarkDone: "extracts:markDone",
+  extractsSetFate: "extracts:setFate",
+  extractsReactivateFate: "extracts:reactivateFate",
   extractsDelete: "extracts:delete",
   reviewSessionNext: "review:session:next",
   reviewCard: "review:card",

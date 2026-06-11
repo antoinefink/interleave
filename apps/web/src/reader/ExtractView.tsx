@@ -57,6 +57,16 @@ import {
   isDesktop,
   type LineageData,
 } from "../lib/appApi";
+import {
+  canReactivateExtractFate,
+  canSetExtractFate,
+  type DirectExtractFate,
+  EXTRACT_FATE_BRIDGE_HINT,
+  extractFateLabel,
+  extractFateOf,
+  reactivateExtractFate,
+  setExtractFate,
+} from "../lib/extractFateAdapter";
 import { useDocument } from "../pages/source/useDocument";
 import { useHighlights } from "../pages/source/useHighlights";
 import { CardDetailPanel } from "../review/CardDetailPanel";
@@ -307,6 +317,47 @@ export function ExtractView() {
       requestInspectorRefresh();
     } catch {
       toast("Could not mark done");
+    } finally {
+      setBusy(false);
+    }
+  }, [id, busy, toast, reload]);
+
+  const onSetFate = useCallback(
+    async (fate: DirectExtractFate) => {
+      if (!id || busy) return;
+      if (!canSetExtractFate()) {
+        toast(EXTRACT_FATE_BRIDGE_HINT);
+        return;
+      }
+      setBusy(true);
+      try {
+        await setExtractFate(id, fate);
+        toast(fate === "reference" ? "Kept as reference" : "Marked done without card");
+        reload();
+        requestInspectorRefresh();
+      } catch (e) {
+        toast(e instanceof Error ? e.message : "Could not set extract fate");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [id, busy, toast, reload],
+  );
+
+  const onReactivateFate = useCallback(async () => {
+    if (!id || busy) return;
+    if (!canReactivateExtractFate()) {
+      toast(EXTRACT_FATE_BRIDGE_HINT);
+      return;
+    }
+    setBusy(true);
+    try {
+      await reactivateExtractFate(id);
+      toast("Reactivated extract");
+      reload();
+      requestInspectorRefresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Could not reactivate extract");
     } finally {
       setBusy(false);
     }
@@ -572,6 +623,10 @@ export function ExtractView() {
         }
       : undefined;
   const isClipExtract = audioClip != null;
+  const extractFate = extractFateOf(element);
+  const fateSupported = canSetExtractFate();
+  const reactivateSupported = canReactivateExtractFate();
+  const canReactivate = extractFate !== null || element?.status === "done";
 
   return (
     <div className="reader-screen extract-view" data-testid="route-extract">
@@ -865,7 +920,8 @@ export function ExtractView() {
                 type="button"
                 className="reader-btn"
                 data-testid="extract-convert"
-                disabled={busy}
+                disabled={busy || extractFate !== null}
+                title={extractFate ? "Reactivate this extract before creating a card" : undefined}
                 onClick={onConvert}
               >
                 <Icon
@@ -906,6 +962,55 @@ export function ExtractView() {
               >
                 <Icon name="trash" size={14} />
               </button>
+            </div>
+
+            <div className="extract-fate" data-testid="extract-fate-controls">
+              <div className="extract-fate__label">
+                <span>Honorable exit</span>
+                {extractFate ? (
+                  <span className="extract-fate__chip" data-testid="extract-fate-current">
+                    {extractFateLabel(extractFate)}
+                  </span>
+                ) : null}
+              </div>
+              <div className="extract-fate__actions">
+                <button
+                  type="button"
+                  className="reader-btn"
+                  data-testid="extract-fate-reference"
+                  disabled={busy || !fateSupported || extractFate === "reference"}
+                  title={
+                    fateSupported ? "Keep this extract for reference" : EXTRACT_FATE_BRIDGE_HINT
+                  }
+                  onClick={() => void onSetFate("reference")}
+                >
+                  <Icon name="bookmark" size={14} /> Reference
+                </button>
+                <button
+                  type="button"
+                  className="reader-btn"
+                  data-testid="extract-fate-done-without-card"
+                  disabled={busy || !fateSupported || extractFate === "done_without_card"}
+                  title={fateSupported ? "Finish without making a card" : EXTRACT_FATE_BRIDGE_HINT}
+                  onClick={() => void onSetFate("done_without_card")}
+                >
+                  <Icon name="checkCircle" size={14} /> Done without card
+                </button>
+                <button
+                  type="button"
+                  className="reader-btn"
+                  data-testid="extract-fate-reactivate"
+                  disabled={busy || !reactivateSupported || !canReactivate}
+                  title={
+                    reactivateSupported
+                      ? "Return this extract to the attention queue"
+                      : EXTRACT_FATE_BRIDGE_HINT
+                  }
+                  onClick={() => void onReactivateFate()}
+                >
+                  <Icon name="restore" size={14} /> Reactivate
+                </button>
+              </div>
             </div>
 
             {/* AI-assisted distillation (T093/T094) — DRAFTS ONLY. The extract's own

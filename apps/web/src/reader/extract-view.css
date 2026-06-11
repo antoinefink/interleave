@@ -280,6 +280,40 @@
   flex-wrap: wrap;
 }
 
+.extract-fate {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3, 12px);
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.extract-fate__label,
+.extract-fate__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.extract-fate__label {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 600;
+}
+
+.extract-fate__chip {
+  color: var(--text-1);
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill, 999px);
+  padding: 2px 8px;
+  font-size: var(--t-2xs, 11px);
+}
+
 .ai-assist {
   flex: none;
   margin-top: var(--s-5);

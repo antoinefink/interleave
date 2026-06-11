@@ -30,8 +30,12 @@
  * axis; this service moves the stage, not the status, on an advance.
  */
 
-import type { BlockId, Element, ElementId, Priority } from "@interleave/core";
-import type { InterleaveDatabase } from "@interleave/db";
+import type { BlockId, Element, ElementId, ExtractFate, Priority } from "@interleave/core";
+import {
+  elementRelations,
+  elements as elementsTable,
+  type InterleaveDatabase,
+} from "@interleave/db";
 import {
   addDays,
   EXTRACT_STAGES,
@@ -41,10 +45,12 @@ import {
   nextExtractStage,
   postponeIntervalForPriority,
 } from "@interleave/scheduler";
+import { and, eq, isNull } from "drizzle-orm";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
 import { nowIso } from "./ids";
 import { OperationLogRepository } from "./operation-log-repository";
+import type { DbClient } from "./types";
 
 // The extract stage chain + interval math is the attention scheduler's concern and
 // now lives ONCE in `@interleave/scheduler` (T028). These re-exports keep the
@@ -90,6 +96,9 @@ export interface ExtractActionResult {
   /** The new plain-text body after a rewrite/trim, when the body changed. */
   readonly plainText?: string;
 }
+
+/** Direct user-settable extract fates. `synthesized` is owned by synthesis-note lineage. */
+export type DirectExtractFate = Exclude<ExtractFate, "synthesized">;
 
 /** Arguments to rewrite/trim an extract's body. */
 export interface RewriteExtractInput {
@@ -152,6 +161,7 @@ export class ExtractService {
    */
   setStage(id: ElementId, stage: ExtractStage): ExtractActionResult {
     const element = this.requireExtract(id);
+    this.assertNotFated(element, "setStage");
     return this.db.transaction((tx) => {
       // Persist the new stage first (update_element), then reschedule on the
       // attention scheduler (reschedule_element). Because both run on the SAME tx,
@@ -198,6 +208,7 @@ export class ExtractService {
    */
   postpone(id: ElementId): ExtractActionResult {
     const element = this.requireExtract(id);
+    this.assertNotFated(element, "postpone");
     const priorCount = this.countPostpones(id);
     return this.db.transaction((tx) => {
       // The interval GROWS with the running postpone count (stagnation recedes):
@@ -223,6 +234,96 @@ export class ExtractService {
   }
 
   /**
+   * Mark an extract as honorably terminal without making a card. This is one
+   * `update_element` patch so undo restores status, due date, parked state, and fate
+   * together. Direct users cannot set `synthesized`; that fate is maintained by
+   * `SynthesisService` when a live synthesis note references the extract.
+   */
+  setFate(id: ElementId, fate: DirectExtractFate): ExtractActionResult {
+    if ((fate as ExtractFate) === "synthesized") {
+      throw new Error(
+        "ExtractService.setFate: synthesized fate is maintained by synthesis-note lineage",
+      );
+    }
+    this.requireExtract(id);
+    return {
+      element: this.elements.update(id, {
+        status: "done",
+        dueAt: null,
+        parkedAt: null,
+        extractFate: fate,
+      }),
+    };
+  }
+
+  /**
+   * Return a fated extract to active distillation work. This avoids the ambiguous
+   * `done` + no-fate state by scheduling it immediately in the attention queue.
+   */
+  reactivateFate(id: ElementId): ExtractActionResult {
+    const element = this.requireExtract(id);
+    if (element.extractFate === "synthesized" && this.hasLiveSynthesisReference(id)) {
+      throw new Error(
+        "ExtractService.reactivateFate: unlink the extract from live synthesis notes before reactivating it",
+      );
+    }
+    return {
+      element: this.elements.update(id, {
+        status: "scheduled",
+        dueAt: nowIso(),
+        parkedAt: null,
+        extractFate: null,
+      }),
+    };
+  }
+
+  /**
+   * Cache synthesized fate from authoritative synthesis-note lineage. Callers must
+   * only invoke this while adding/removing a live `references` edge.
+   */
+  setSynthesizedFateWithin(tx: DbClient, id: ElementId): Element {
+    const element = this.requireExtract(id);
+    if (element.extractFate !== null) return element;
+    return this.elements.updateWithin(tx, id, {
+      status: "done",
+      dueAt: null,
+      parkedAt: null,
+      extractFate: "synthesized",
+    });
+  }
+
+  clearSynthesizedFateWithin(tx: DbClient, id: ElementId): Element {
+    const element = this.requireExtract(id);
+    if (element.extractFate !== "synthesized") return element;
+    return this.elements.updateWithin(tx, id, {
+      status: "scheduled",
+      dueAt: nowIso(),
+      parkedAt: null,
+      extractFate: null,
+    });
+  }
+
+  clearSynthesizedFateCacheWithin(tx: DbClient, id: ElementId): Element {
+    const element = this.elements.findById(id);
+    if (!element) {
+      throw new Error(`ExtractService: extract ${id} not found`);
+    }
+    if (element.type !== "extract") {
+      throw new Error(`ExtractService: element ${id} is a ${element.type}, not an extract`);
+    }
+    if (element.extractFate !== "synthesized") return element;
+    if (element.deletedAt) {
+      return this.elements.updateWithin(tx, id, { extractFate: null });
+    }
+    return this.elements.updateWithin(tx, id, {
+      status: "scheduled",
+      dueAt: nowIso(),
+      parkedAt: null,
+      extractFate: null,
+    });
+  }
+
+  /**
    * SOFT-delete an extract (`soft_delete_element`): `deletedAt` + status `deleted`,
    * never a hard DELETE. User data is never destroyed; lineage references remain
    * valid (children keep pointing at it) and it is restorable from the trash.
@@ -239,5 +340,29 @@ export class ExtractService {
    */
   countPostpones(id: ElementId): number {
     return new OperationLogRepository(this.db).countPostpones(id);
+  }
+
+  private hasLiveSynthesisReference(id: ElementId): boolean {
+    const row = this.db
+      .select({ id: elementRelations.id })
+      .from(elementRelations)
+      .innerJoin(elementsTable, eq(elementRelations.fromElementId, elementsTable.id))
+      .where(
+        and(
+          eq(elementRelations.toElementId, id),
+          eq(elementRelations.relationType, "references"),
+          eq(elementsTable.type, "synthesis_note"),
+          isNull(elementsTable.deletedAt),
+        ),
+      )
+      .get();
+    return row != null;
+  }
+
+  private assertNotFated(element: Element, action: string): void {
+    if (element.extractFate === null) return;
+    throw new Error(
+      `ExtractService.${action}: reactivate the extract before continuing distillation work`,
+    );
   }
 }

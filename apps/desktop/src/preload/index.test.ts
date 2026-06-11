@@ -74,6 +74,17 @@ describe("preload bridge", () => {
       cardId: "card-1",
     });
 
+    await api().extracts.setFate({ id: "ex-1", fate: "reference" });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.extractsSetFate, {
+      id: "ex-1",
+      fate: "reference",
+    });
+
+    await api().extracts.reactivateFate({ id: "ex-1" });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.extractsReactivateFate, {
+      id: "ex-1",
+    });
+
     await api().backups.list();
     expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.backupsList);
 

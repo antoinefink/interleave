@@ -61,6 +61,17 @@ function bandLabel(band: YieldBand): string {
   }
 }
 
+function nonCardValue(row: SourceYieldListResult["rows"][number]) {
+  return {
+    productive: row.productiveExtracts,
+    reference: row.referenceExtracts,
+    synthesized: row.synthesizedExtracts,
+    done: row.doneWithoutCardExtracts,
+    synthesisReferenced: row.synthesisReferencedExtracts,
+    notes: row.synthesisNotesCreated,
+  };
+}
+
 export function SourceYield() {
   const desktop = isDesktop();
   const navigate = useNavigate();
@@ -163,6 +174,7 @@ export function SourceYield() {
               <span className="sy-cell sy-cell--read">Read</span>
               <span className="sy-cell sy-cell--blocks">Blocks</span>
               <span className="sy-cell sy-cell--num">Extracts</span>
+              <span className="sy-cell sy-cell--value">Non-card value</span>
               <span className="sy-cell sy-cell--num">Cards</span>
               <span className="sy-cell sy-cell--num">Mature</span>
               <span className="sy-cell sy-cell--num">Leeches</span>
@@ -171,73 +183,87 @@ export function SourceYield() {
               <span className="sy-cell sy-cell--act" />
             </div>
 
-            {rows.map((row) => (
-              <div
-                className={`sy-row sy-row--band-${row.yieldBand}`}
-                key={row.source.id}
-                data-testid="source-yield-row"
-                data-source-id={row.source.id}
-                data-band={row.yieldBand}
-              >
-                <span className="sy-cell sy-cell--src">
-                  <Icon name="source" size={14} />
-                  <span className="sy-src__title" title={row.source.title}>
-                    {row.source.title}
+            {rows.map((row) => {
+              const value = nonCardValue(row);
+              return (
+                <div
+                  className={`sy-row sy-row--band-${row.yieldBand}`}
+                  key={row.source.id}
+                  data-testid="source-yield-row"
+                  data-source-id={row.source.id}
+                  data-band={row.yieldBand}
+                >
+                  <span className="sy-cell sy-cell--src">
+                    <Icon name="source" size={14} />
+                    <span className="sy-src__title" title={row.source.title}>
+                      {row.source.title}
+                    </span>
+                    <Prio priority={row.source.priority} />
                   </span>
-                  <Prio priority={row.source.priority} />
-                </span>
 
-                <span className="sy-cell sy-cell--read">
-                  <span className="sy-bar" aria-hidden="true">
-                    <span
-                      className="sy-bar__fill"
-                      data-testid="source-yield-readbar"
-                      style={{ width: `${Math.round(row.readPct * 100)}%` }}
-                    />
+                  <span className="sy-cell sy-cell--read">
+                    <span className="sy-bar" aria-hidden="true">
+                      <span
+                        className="sy-bar__fill"
+                        data-testid="source-yield-readbar"
+                        style={{ width: `${Math.round(row.readPct * 100)}%` }}
+                      />
+                    </span>
+                    <span className="sy-read__pct">{formatPct(row.readPct)}</span>
                   </span>
-                  <span className="sy-read__pct">{formatPct(row.readPct)}</span>
-                </span>
 
-                <span className="sy-cell sy-cell--blocks">
-                  {formatPct(row.processedBlockRatio)}
-                  <span className="sy-cell__sub">{row.unresolvedBlocks} open</span>
-                </span>
-                <span className="sy-cell sy-cell--num">{row.extractsCreated}</span>
-                <span className="sy-cell sy-cell--num">{row.cardsCreated}</span>
-                <span className="sy-cell sy-cell--num">{row.matureCards}</span>
-                <span className={`sy-cell sy-cell--num${row.leeches > 0 ? " sy-cell--warn" : ""}`}>
-                  {row.leeches}
-                </span>
-                <span className="sy-cell sy-cell--time">
-                  <Icon name="clock" size={12} />
-                  {formatTime(row.timeSpentMs)}
-                </span>
-
-                <span className="sy-cell sy-cell--band">
+                  <span className="sy-cell sy-cell--blocks">
+                    {formatPct(row.processedBlockRatio)}
+                    <span className="sy-cell__sub">{row.unresolvedBlocks} open</span>
+                  </span>
+                  <span className="sy-cell sy-cell--num">{row.extractsCreated}</span>
+                  <span className="sy-cell sy-cell--value" data-testid="source-yield-non-card">
+                    <span className="sy-value__total" data-testid="source-yield-non-card-total">
+                      {value.productive}
+                    </span>
+                    <span className="sy-value__detail" data-testid="source-yield-non-card-detail">
+                      Ref {value.reference} · Synth {value.synthesized} · Done {value.done} · Linked{" "}
+                      {value.synthesisReferenced} · Notes {value.notes}
+                    </span>
+                  </span>
+                  <span className="sy-cell sy-cell--num">{row.cardsCreated}</span>
+                  <span className="sy-cell sy-cell--num">{row.matureCards}</span>
                   <span
-                    className={`sy-band sy-band--${row.yieldBand}`}
-                    data-testid="source-yield-band"
+                    className={`sy-cell sy-cell--num${row.leeches > 0 ? " sy-cell--warn" : ""}`}
                   >
-                    <span className="sy-band__dot" aria-hidden="true" />
-                    {bandLabel(row.yieldBand)}
+                    {row.leeches}
                   </span>
-                </span>
+                  <span className="sy-cell sy-cell--time">
+                    <Icon name="clock" size={12} />
+                    {formatTime(row.timeSpentMs)}
+                  </span>
 
-                <span className="sy-cell sy-cell--act">
-                  <button
-                    type="button"
-                    className="sy-open"
-                    data-testid="source-yield-open"
-                    onClick={() =>
-                      void navigate({ to: "/source/$id", params: { id: row.source.id } })
-                    }
-                  >
-                    Open
-                    <Icon name="chevronRight" size={13} />
-                  </button>
-                </span>
-              </div>
-            ))}
+                  <span className="sy-cell sy-cell--band">
+                    <span
+                      className={`sy-band sy-band--${row.yieldBand}`}
+                      data-testid="source-yield-band"
+                    >
+                      <span className="sy-band__dot" aria-hidden="true" />
+                      {bandLabel(row.yieldBand)}
+                    </span>
+                  </span>
+
+                  <span className="sy-cell sy-cell--act">
+                    <button
+                      type="button"
+                      className="sy-open"
+                      data-testid="source-yield-open"
+                      onClick={() =>
+                        void navigate({ to: "/source/$id", params: { id: row.source.id } })
+                      }
+                    >
+                      Open
+                      <Icon name="chevronRight" size={13} />
+                    </button>
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

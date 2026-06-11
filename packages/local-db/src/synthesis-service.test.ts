@@ -25,11 +25,13 @@ import { elements, operationLog, reviewStates } from "@interleave/db";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CardService } from "./card-service";
+import { ExtractService } from "./extract-service";
 import { createRepositories, type Repositories } from "./index";
 import { QueueRepository } from "./queue-repository";
 import { SourceRepository } from "./source-repository";
 import { SynthesisService } from "./synthesis-service";
 import { createInMemoryDb } from "./test-db";
+import { UndoService } from "./undo-service";
 
 let handle: DbHandle;
 let repos: Repositories;
@@ -53,6 +55,13 @@ function opCount(elementId: string, opType: string): number {
     .where(eq(operationLog.elementId, elementId))
     .all()
     .filter((r) => r.opType === opType).length;
+}
+
+function lastOpType(): string | null {
+  const row = handle.sqlite
+    .prepare("SELECT op_type AS opType FROM operation_log ORDER BY rowid DESC LIMIT 1")
+    .get() as { opType: string } | undefined;
+  return row?.opType ?? null;
 }
 
 /** Seed a source + an extract + a card; returns their ids (reused as link targets). */
@@ -154,6 +163,13 @@ describe("linkElement", () => {
     const extractLink = after.data.linked.find((l) => l.id === extractId);
     expect(extractLink?.type).toBe("extract");
     expect(extractLink?.relationId).toBeTruthy();
+
+    const extract = repos.elements.findById(extractId);
+    expect(extract?.status).toBe("done");
+    expect(extract?.dueAt).toBeNull();
+    expect(extract?.parkedAt).toBeNull();
+    expect(extract?.extractFate).toBe("synthesized");
+    expect(opCount(extractId, "update_element")).toBe(1);
   });
 
   it("is idempotent — a duplicate link is a no-op (no second add_relation op)", () => {
@@ -162,7 +178,34 @@ describe("linkElement", () => {
     svc.linkElement(element.id, extractId);
     const result = svc.linkElement(element.id, extractId); // duplicate
     expect(opCount(element.id, "add_relation")).toBe(1);
+    expect(opCount(extractId, "update_element")).toBe(1);
     expect(result.data.linked).toHaveLength(1);
+  });
+
+  it("does not overwrite a direct honorable fate when a synthesis note references the extract", () => {
+    const { extractId } = seedMaterial();
+    const { element } = svc.create({ title: "Note" });
+    new ExtractService(handle.db).setFate(extractId, "reference");
+
+    svc.linkElement(element.id, extractId);
+    expect(repos.elements.findById(extractId)?.extractFate).toBe("reference");
+    expect(opCount(extractId, "update_element")).toBe(1);
+
+    svc.unlinkElement(element.id, extractId);
+    const extract = repos.elements.findById(extractId);
+    expect(extract?.status).toBe("done");
+    expect(extract?.dueAt).toBeNull();
+    expect(extract?.extractFate).toBe("reference");
+  });
+
+  it("leaves add_relation as the last operation after synthesized cache updates", () => {
+    const { extractId } = seedMaterial();
+    const { element } = svc.create({ title: "Note" });
+
+    svc.linkElement(element.id, extractId);
+
+    expect(repos.elements.findById(extractId)?.extractFate).toBe("synthesized");
+    expect(lastOpType()).toBe("add_relation");
   });
 
   it("rejects a non-extract/non-card target (e.g. a source)", () => {
@@ -196,6 +239,25 @@ describe("unlinkElement", () => {
     expect(result.data.linked).toHaveLength(0);
     expect(opCount(element.id, "remove_relation")).toBe(1);
     expect(repos.elements.listRelationsFrom(element.id)).toHaveLength(0);
+    const extract = repos.elements.findById(extractId);
+    expect(extract?.status).toBe("scheduled");
+    expect(extract?.dueAt).toBeTruthy();
+    expect(extract?.extractFate).toBeNull();
+    expect(lastOpType()).toBe("remove_relation");
+  });
+
+  it("keeps synthesized fate while another live synthesis note still references the extract", () => {
+    const { extractId } = seedMaterial();
+    const first = svc.create({ title: "First note" }).element;
+    const second = svc.create({ title: "Second note" }).element;
+    svc.linkElement(first.id, extractId);
+    svc.linkElement(second.id, extractId);
+
+    svc.unlinkElement(first.id, extractId);
+    expect(repos.elements.findById(extractId)?.extractFate).toBe("synthesized");
+
+    svc.unlinkElement(second.id, extractId);
+    expect(repos.elements.findById(extractId)?.extractFate).toBeNull();
   });
 
   it("is a no-op when the edge is absent (no remove_relation op)", () => {
@@ -203,6 +265,62 @@ describe("unlinkElement", () => {
     const { element } = svc.create({ title: "Note" });
     svc.unlinkElement(element.id, extractId);
     expect(opCount(element.id, "remove_relation")).toBe(0);
+  });
+});
+
+describe("delete", () => {
+  it("clears synthesized fate when deleting the last live synthesis note", () => {
+    const { extractId } = seedMaterial();
+    const { element } = svc.create({ title: "Note" });
+    svc.linkElement(element.id, extractId);
+
+    svc.delete(element.id);
+
+    const extract = repos.elements.findById(extractId);
+    expect(extract?.status).toBe("scheduled");
+    expect(extract?.dueAt).toBeTruthy();
+    expect(extract?.extractFate).toBeNull();
+  });
+
+  it("preserves a direct fate when deleting a synthesis note that references it", () => {
+    const { extractId } = seedMaterial();
+    const { element } = svc.create({ title: "Note" });
+    new ExtractService(handle.db).setFate(extractId, "done_without_card");
+    svc.linkElement(element.id, extractId);
+
+    svc.delete(element.id);
+
+    const extract = repos.elements.findById(extractId);
+    expect(extract?.status).toBe("done");
+    expect(extract?.dueAt).toBeNull();
+    expect(extract?.extractFate).toBe("done_without_card");
+  });
+
+  it("undoing a synthesis-note delete restores synthesized cache for referenced extracts", () => {
+    const { extractId } = seedMaterial();
+    const { element } = svc.create({ title: "Note" });
+    svc.linkElement(element.id, extractId);
+    svc.delete(element.id);
+    expect(repos.elements.findById(extractId)?.extractFate).toBeNull();
+
+    new UndoService(handle.db).undoLast();
+
+    expect(repos.elements.findById(element.id)?.deletedAt).toBeNull();
+    expect(repos.elements.findById(extractId)?.extractFate).toBe("synthesized");
+  });
+
+  it("clears synthesized cache for deleted extract targets when their last synthesis note is deleted", () => {
+    const { extractId } = seedMaterial();
+    const { element } = svc.create({ title: "Note" });
+    svc.linkElement(element.id, extractId);
+    repos.elements.softDelete(extractId);
+
+    svc.delete(element.id);
+
+    const extract = repos.elements.findById(extractId);
+    expect(extract?.status).toBe("deleted");
+    expect(extract?.deletedAt).toBeTruthy();
+    expect(extract?.extractFate).toBeNull();
   });
 });
 

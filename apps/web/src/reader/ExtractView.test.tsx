@@ -211,6 +211,12 @@ const h = vi.hoisted(() => {
     postpone: vi.fn().mockResolvedValue({ extract: inspectorData.element, postponeCount: 1 }),
     markDone: vi.fn().mockResolvedValue({ extract: inspectorData.element }),
     deleteExtract: vi.fn().mockResolvedValue({ extract: inspectorData.element }),
+    setExtractFate: vi.fn().mockResolvedValue({
+      extract: { ...inspectorData.element, status: "done", dueAt: null, extractFate: "reference" },
+    }),
+    reactivateExtractFate: vi.fn().mockResolvedValue({
+      extract: { ...inspectorData.element, status: "scheduled", extractFate: null },
+    }),
     createCard: vi.fn().mockResolvedValue({
       card: {
         id: "card_1",
@@ -264,6 +270,8 @@ vi.mock("../lib/appApi", () => ({
     postponeExtract: h.postpone,
     markExtractDone: h.markDone,
     deleteExtract: h.deleteExtract,
+    setExtractFate: h.setExtractFate,
+    reactivateExtractFate: h.reactivateExtractFate,
     createExtraction: h.createExtraction,
     createCard: h.createCard,
     reviewCard: h.reviewCard,
@@ -358,6 +366,12 @@ beforeEach(() => {
   h.markLeechCard.mockResolvedValue({ card: { ...h.cardSummary, leech: true } });
   h.retireCard.mockResolvedValue({ card: { ...h.cardSummary, retired: true } });
   h.createTask.mockResolvedValue({});
+  h.setExtractFate.mockResolvedValue({
+    extract: { ...h.inspectorData.element, status: "done", dueAt: null, extractFate: "reference" },
+  });
+  h.reactivateExtractFate.mockResolvedValue({
+    extract: { ...h.inspectorData.element, status: "scheduled", extractFate: null },
+  });
 });
 
 async function lineageNode(id: string): Promise<HTMLElement> {
@@ -822,6 +836,35 @@ describe("ExtractView — actions", () => {
 
     fireEvent.click(screen.getByTestId("extract-delete"));
     await waitFor(() => expect(h.deleteExtract).toHaveBeenCalledWith({ id: "ex_1" }));
+  });
+
+  it("sets honorable extract fates and can reactivate a fated extract", async () => {
+    const fatedInspector = {
+      ...h.inspectorData,
+      element: {
+        ...h.inspectorData.element,
+        status: "done",
+        dueAt: null,
+        extractFate: "reference",
+      },
+    };
+    h.getInspectorData.mockResolvedValue({ data: fatedInspector });
+
+    render(<ExtractView />);
+
+    expect(await screen.findByTestId("extract-fate-controls")).toBeInTheDocument();
+    expect(screen.getByTestId("extract-fate-current")).toHaveTextContent("Reference");
+
+    fireEvent.click(screen.getByTestId("extract-fate-done-without-card"));
+    await waitFor(() =>
+      expect(h.setExtractFate).toHaveBeenCalledWith({
+        id: "ex_1",
+        fate: "done_without_card",
+      }),
+    );
+
+    fireEvent.click(screen.getByTestId("extract-fate-reactivate"));
+    await waitFor(() => expect(h.reactivateExtractFate).toHaveBeenCalledWith({ id: "ex_1" }));
   });
 
   it("does not render a redundant static Sub-extract action button", async () => {

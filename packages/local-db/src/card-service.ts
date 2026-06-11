@@ -63,6 +63,8 @@ import type {
 } from "@interleave/core";
 import { canonicalizeCloze, parseCloze } from "@interleave/core";
 import type { InterleaveDatabase } from "@interleave/db";
+import { elementRelations, elements as elementsTable } from "@interleave/db";
+import { and, eq, isNull } from "drizzle-orm";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
 import { newBlockId, newSiblingGroupId, nowIso } from "./ids";
@@ -174,6 +176,14 @@ export class CardService {
     const extract = this.elements.findById(input.extractId);
     if (!extract || extract.deletedAt) {
       throw new Error(`CardService.createFromExtract: extract ${input.extractId} not found`);
+    }
+    if (
+      extract.type === "extract" &&
+      (extract.extractFate !== null || this.hasLiveSynthesisReference(input.extractId))
+    ) {
+      throw new Error(
+        "CardService.createFromExtract: reactivate the extract before creating a card",
+      );
     }
 
     // Lineage: parent IS the extract; source root is the extract's source root
@@ -347,6 +357,14 @@ export class CardService {
         `CardService.createDraftFromSuggestion: owning element ${input.owningElementId} not found`,
       );
     }
+    if (
+      owner.type === "extract" &&
+      (owner.extractFate !== null || this.hasLiveSynthesisReference(input.owningElementId))
+    ) {
+      throw new Error(
+        "CardService.createDraftFromSuggestion: reactivate the extract before creating a card",
+      );
+    }
 
     const parentId = input.owningElementId;
     const sourceId = owner.sourceId ?? input.owningElementId;
@@ -429,6 +447,23 @@ export class CardService {
     });
 
     return { element, card, siblingGroupId, sourceLocationId, mediaRef: null };
+  }
+
+  private hasLiveSynthesisReference(id: ElementId): boolean {
+    const row = this.db
+      .select({ id: elementRelations.id })
+      .from(elementRelations)
+      .innerJoin(elementsTable, eq(elementRelations.fromElementId, elementsTable.id))
+      .where(
+        and(
+          eq(elementRelations.toElementId, id),
+          eq(elementRelations.relationType, "references"),
+          eq(elementsTable.type, "synthesis_note"),
+          isNull(elementsTable.deletedAt),
+        ),
+      )
+      .get();
+    return row != null;
   }
 
   /**

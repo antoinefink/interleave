@@ -42,9 +42,11 @@ import { and, eq, isNotNull, lte } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CardService } from "./card-service";
 import { ElementRepository } from "./element-repository";
+import { ExtractService } from "./extract-service";
 import { ExtractionService } from "./extraction-service";
 import { nowIso } from "./ids";
 import { SourceRepository } from "./source-repository";
+import { SynthesisService } from "./synthesis-service";
 import { createInMemoryDb } from "./test-db";
 
 let handle: DbHandle;
@@ -115,6 +117,51 @@ describe("CardService.createFromExtract — Q&A card", () => {
     expect(element.status).toBe("active");
     expect(element.parentId).toBe(extractId);
     expect(element.sourceId).toBe(sourceId);
+  });
+
+  it("rejects card creation from an extract with a non-card fate", () => {
+    const { extractId } = seedExtract(handle);
+    new ExtractService(handle.db).setFate(extractId, "done_without_card");
+
+    expect(() =>
+      new CardService(handle.db).createFromExtract({
+        extractId,
+        kind: "qa",
+        prompt: "Q?",
+        answer: "A.",
+      }),
+    ).toThrow(/reactivate the extract/);
+  });
+
+  it("rejects card creation from an extract with live synthesis lineage even if the cache is stale", () => {
+    const { extractId } = seedExtract(handle);
+    const synthesis = new SynthesisService(handle.db);
+    const note = synthesis.create({ title: "Synthesis note" }).element;
+    synthesis.linkElement(note.id, extractId);
+    new ElementRepository(handle.db).update(extractId, { extractFate: null });
+
+    expect(() =>
+      new CardService(handle.db).createFromExtract({
+        extractId,
+        kind: "qa",
+        prompt: "Q?",
+        answer: "A.",
+      }),
+    ).toThrow(/reactivate the extract/);
+  });
+
+  it("rejects AI card drafts from an extract with a non-card fate", () => {
+    const { extractId } = seedExtract(handle);
+    new ExtractService(handle.db).setFate(extractId, "reference");
+
+    expect(() =>
+      new CardService(handle.db).createDraftFromSuggestion({
+        owningElementId: extractId,
+        kind: "qa",
+        prompt: "Q?",
+        answer: "A.",
+      }),
+    ).toThrow(/reactivate the extract/);
   });
 
   it("writes a cards row with kind=qa, prompt/answer, and the inherited sourceLocationId", () => {

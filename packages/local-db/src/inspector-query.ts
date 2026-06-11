@@ -52,6 +52,7 @@ export interface ElementSummary {
   readonly priority: number;
   readonly title: string;
   readonly dueAt: string | null;
+  readonly extractFate: Element["extractFate"];
 }
 
 export interface SchedulerSignals {
@@ -82,6 +83,8 @@ export interface SourceYieldSignals {
   readonly readPct: number;
   /** Live `extract` descendants created from the source. */
   readonly extractsCreated: number;
+  /** Extracts that produced non-card value, de-duplicated across fate + synthesis refs. */
+  readonly productiveExtracts: number;
   /** Live `card` descendants created from the source. */
   readonly cardsCreated: number;
 }
@@ -220,6 +223,7 @@ function toSummary(el: Element): ElementSummary {
     priority: el.priority,
     title: el.title,
     dueAt: el.dueAt,
+    extractFate: el.extractFate,
   };
 }
 
@@ -383,6 +387,7 @@ export class InspectorQuery {
           sourceYield = {
             readPct: row.readPct,
             extractsCreated: row.extractsCreated,
+            productiveExtracts: row.productiveExtracts,
             cardsCreated: row.cardsCreated,
           };
         }

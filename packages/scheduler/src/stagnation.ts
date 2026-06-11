@@ -33,7 +33,7 @@
  * `extracts.*` remediations (rewrite / convert / postpone / delete).
  */
 
-import type { IsoTimestamp, Priority } from "@interleave/core";
+import type { ExtractFate, IsoTimestamp, Priority } from "@interleave/core";
 import { MS_PER_DAY } from "./date-util";
 
 /**
@@ -62,7 +62,13 @@ export type StagnationReason = "postponed-repeatedly" | "no-progress" | "no-chil
  * The recommended remediation — each maps to an EXISTING T024 `extracts.*` command
  * (or the extract→card path); T084 adds no new mutation primitive, it only points.
  */
-export type StagnationSuggestion = "rewrite" | "convert" | "postpone" | "delete";
+export type StagnationSuggestion =
+  | "rewrite"
+  | "convert"
+  | "postpone"
+  | "delete"
+  | "keep_as_reference"
+  | "mark_synthesized";
 
 /**
  * The minimal DB-free snapshot the SERVICE reads off the extract + its op log. All
@@ -87,6 +93,10 @@ export interface ExtractStagnationSignals {
   readonly postponeCount: number;
   /** How many live children (sub-extracts / cards) the extract produced. */
   readonly childCount: number;
+  /** Explicit honorable terminal fate, if the extract was resolved without a card. */
+  readonly honorableFate: ExtractFate | null;
+  /** Live synthesis notes currently referencing this extract. */
+  readonly synthesizedReferenceCount: number;
   /**
    * When the extract's stage last ADVANCED (the newest `update_element` whose
    * `patch.stage` changed it), or `null` when it never advanced — then staleness is
@@ -137,6 +147,12 @@ function suggestRemediation(
   staleDays: number,
   postponeThreshold: number,
 ): StagnationSuggestion {
+  if (signals.synthesizedReferenceCount > 0) {
+    return "mark_synthesized";
+  }
+  if (signals.honorableFate) {
+    return "keep_as_reference";
+  }
   // Already cleaned up (clean_extract) with nothing derived → it is card-ready.
   if (signals.stage === "clean_extract" && signals.childCount === 0) {
     return "convert";
@@ -188,10 +204,11 @@ export function isStagnant(
   const since = signals.lastStageAdvanceAt ?? signals.createdAt;
   const daysSinceProgress = daysBetween(since, now);
 
+  const honorableProgress = signals.honorableFate !== null || signals.synthesizedReferenceCount > 0;
   const postponedRepeatedly = signals.postponeCount >= postponeThreshold;
   // "No progress" = still short of the terminal stage (raw_extract / clean_extract).
-  const noProgress = signals.stage !== ATOMIC_STAGE;
-  const noChildren = signals.childCount <= 0;
+  const noProgress = !honorableProgress && signals.stage !== ATOMIC_STAGE;
+  const noChildren = !honorableProgress && signals.childCount <= 0;
   const stale = daysSinceProgress >= staleDays;
 
   const reasons: StagnationReason[] = [];

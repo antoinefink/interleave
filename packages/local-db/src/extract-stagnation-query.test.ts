@@ -26,10 +26,12 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CardService } from "./card-service";
 import { DocumentRepository } from "./document-repository";
+import { ElementRepository } from "./element-repository";
 import { ExtractService } from "./extract-service";
 import { ExtractStagnationQuery } from "./extract-stagnation-query";
 import { ExtractionService } from "./extraction-service";
 import { SourceRepository } from "./source-repository";
+import { SynthesisService } from "./synthesis-service";
 import { createInMemoryDb } from "./test-db";
 
 let handle: DbHandle;
@@ -135,6 +137,46 @@ describe("ExtractStagnationQuery.listStagnantExtracts", () => {
     const query = new ExtractStagnationQuery(handle.db);
     const summary = query.listStagnantExtracts(farFutureAsOf());
     expect(summary.stagnantCount).toBe(0);
+  });
+
+  it("excludes an extract with an honorable fate", () => {
+    const sourceId = seedSource(handle);
+    const extractId = seedExtract(handle, sourceId, 1);
+    postponeN(handle, extractId, STAGNATION_POSTPONE_THRESHOLD);
+    new ElementRepository(handle.db).update(extractId, {
+      status: "done",
+      dueAt: null,
+      extractFate: "done_without_card",
+    });
+
+    const summary = new ExtractStagnationQuery(handle.db).listStagnantExtracts(farFutureAsOf());
+    expect(summary.stagnantCount).toBe(0);
+  });
+
+  it("excludes an extract referenced by a live synthesis note", () => {
+    const sourceId = seedSource(handle);
+    const extractId = seedExtract(handle, sourceId, 1);
+    postponeN(handle, extractId, STAGNATION_POSTPONE_THRESHOLD);
+    const synthesis = new SynthesisService(handle.db);
+    const note = synthesis.create({ title: "Synthesis note" }).element;
+    synthesis.linkElement(note.id, extractId);
+
+    const summary = new ExtractStagnationQuery(handle.db).listStagnantExtracts(farFutureAsOf());
+    expect(summary.stagnantCount).toBe(0);
+  });
+
+  it("does not treat a soft-deleted synthesis note as progress", () => {
+    const sourceId = seedSource(handle);
+    const extractId = seedExtract(handle, sourceId, 1);
+    postponeN(handle, extractId, STAGNATION_POSTPONE_THRESHOLD);
+    const synthesis = new SynthesisService(handle.db);
+    const note = synthesis.create({ title: "Synthesis note" }).element;
+    synthesis.linkElement(note.id, extractId);
+    synthesis.delete(note.id);
+
+    const summary = new ExtractStagnationQuery(handle.db).listStagnantExtracts(farFutureAsOf());
+    expect(summary.stagnantCount).toBe(1);
+    expect(summary.rows[0]?.extract.id).toBe(extractId);
   });
 
   it("does NOT count a recent stage advance as stagnant (staleness from last advance)", () => {

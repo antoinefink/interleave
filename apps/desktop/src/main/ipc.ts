@@ -65,7 +65,9 @@ import {
   ExtractsDeleteRequestSchema,
   ExtractsMarkDoneRequestSchema,
   ExtractsPostponeRequestSchema,
+  ExtractsReactivateFateRequestSchema,
   ExtractsRewriteRequestSchema,
+  ExtractsSetFateRequestSchema,
   ExtractsUpdateStageRequestSchema,
   HealthRequestSchema,
   type HealthResult,
@@ -1079,6 +1081,16 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.extractsMarkDone, (_event, rawRequest: unknown) => {
     const request = ExtractsMarkDoneRequestSchema.parse(rawRequest);
     return dbService.markExtractDone(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.extractsSetFate, (_event, rawRequest: unknown) => {
+    const request = ExtractsSetFateRequestSchema.parse(rawRequest);
+    return dbService.setExtractFate(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.extractsReactivateFate, (_event, rawRequest: unknown) => {
+    const request = ExtractsReactivateFateRequestSchema.parse(rawRequest);
+    return dbService.reactivateExtractFate(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.extractsDelete, (_event, rawRequest: unknown) => {

@@ -59,6 +59,7 @@
 
 import {
   type ElementId,
+  type ExtractFate,
   type IsoTimestamp,
   priorityToLabel,
   scoreSourceYield,
@@ -66,6 +67,7 @@ import {
 } from "@interleave/core";
 import {
   cards as cardsTable,
+  elementRelations,
   elements,
   type InterleaveDatabase,
   reviewLogs,
@@ -100,6 +102,18 @@ export interface SourceYieldRow {
   readonly readPct: number;
   /** Live `extract` descendants created from the source. */
   readonly extractsCreated: number;
+  /** Live fated/reference extracts plus synthesis-referenced extracts, de-duplicated. */
+  readonly productiveExtracts: number;
+  /** Live fated extracts with `extract_fate = 'reference'`. */
+  readonly referenceExtracts: number;
+  /** Live fated extracts with `extract_fate = 'synthesized'`. */
+  readonly synthesizedExtracts: number;
+  /** Live fated extracts with `extract_fate = 'done_without_card'`. */
+  readonly doneWithoutCardExtracts: number;
+  /** Live extract targets referenced by live synthesis notes. */
+  readonly synthesisReferencedExtracts: number;
+  /** Live synthesis notes that reference material from this source. */
+  readonly synthesisNotesCreated: number;
   /** Live `card` descendants created from the source. */
   readonly cardsCreated: number;
   /** Cards whose FSRS stability crosses the maturity threshold (durable knowledge). */
@@ -147,6 +161,12 @@ export interface SourceYieldOptions {
 /** The per-source descendant tallies, accumulated in one grouped pass. */
 interface DescendantTally {
   extracts: number;
+  referenceExtracts: number;
+  synthesizedExtracts: number;
+  doneWithoutCardExtracts: number;
+  fatedExtractIds: Set<string>;
+  synthesisReferencedExtractIds: Set<string>;
+  synthesisNoteIds: Set<string>;
   cards: number;
   mature: number;
   leeches: number;
@@ -154,6 +174,12 @@ interface DescendantTally {
   cardIds: string[];
   /** Most recent descendant `updatedAt`. */
   lastUpdatedAt: string | null;
+}
+
+interface YieldTarget {
+  readonly id: string;
+  readonly type: string;
+  readonly sourceId: string;
 }
 
 /**
@@ -210,17 +236,32 @@ export class SourceYieldQuery {
     const ensure = (sourceId: string): DescendantTally => {
       let t = tallies.get(sourceId);
       if (!t) {
-        t = { extracts: 0, cards: 0, mature: 0, leeches: 0, cardIds: [], lastUpdatedAt: null };
+        t = {
+          extracts: 0,
+          referenceExtracts: 0,
+          synthesizedExtracts: 0,
+          doneWithoutCardExtracts: 0,
+          fatedExtractIds: new Set(),
+          synthesisReferencedExtractIds: new Set(),
+          synthesisNoteIds: new Set(),
+          cards: 0,
+          mature: 0,
+          leeches: 0,
+          cardIds: [],
+          lastUpdatedAt: null,
+        };
         tallies.set(sourceId, t);
       }
       return t;
     };
 
+    const liveTargets = new Map<string, YieldTarget>();
     const descendants = this.db
       .select({
         id: elements.id,
         type: elements.type,
         sourceId: elements.sourceId,
+        extractFate: elements.extractFate,
         updatedAt: elements.updatedAt,
         isLeech: cardsTable.isLeech,
         stability: reviewStates.stability,
@@ -236,12 +277,20 @@ export class SourceYieldQuery {
       // A descendant with no `sourceId` (or one pointing at a non-source) is not part
       // of any source's rollup; skip it.
       if (!d.sourceId) continue;
+      liveTargets.set(d.id, { id: d.id, type: d.type, sourceId: d.sourceId });
       const t = ensure(d.sourceId);
       if (d.updatedAt && (t.lastUpdatedAt === null || d.updatedAt > t.lastUpdatedAt)) {
         t.lastUpdatedAt = d.updatedAt;
       }
       if (d.type === "extract") {
         t.extracts += 1;
+        const fate = d.extractFate as ExtractFate | null;
+        if (fate) {
+          t.fatedExtractIds.add(d.id);
+          if (fate === "reference") t.referenceExtracts += 1;
+          else if (fate === "synthesized") t.synthesizedExtracts += 1;
+          else if (fate === "done_without_card") t.doneWithoutCardExtracts += 1;
+        }
       } else if (d.type === "card") {
         t.cards += 1;
         t.cardIds.push(d.id);
@@ -261,7 +310,41 @@ export class SourceYieldQuery {
       }
     }
 
-    // 4) One batched `review_logs` read over EVERY descendant card across all sources,
+    // 4) Synthesis-note lineage: a live synthesis note that references live source
+    //    material counts once per represented source. Extract targets also count as
+    //    productive extract output, de-duplicated with explicit extract fates.
+    const liveSynthesisNoteIds = this.db
+      .select({ id: elements.id })
+      .from(elements)
+      .where(and(eq(elements.type, "synthesis_note"), isNull(elements.deletedAt)))
+      .all()
+      .map((row) => row.id);
+    if (liveSynthesisNoteIds.length > 0 && liveTargets.size > 0) {
+      const referenceEdges = this.db
+        .select({
+          noteId: elementRelations.fromElementId,
+          targetId: elementRelations.toElementId,
+        })
+        .from(elementRelations)
+        .where(
+          and(
+            eq(elementRelations.relationType, "references"),
+            inArray(elementRelations.fromElementId, liveSynthesisNoteIds),
+          ),
+        )
+        .all();
+      for (const edge of referenceEdges) {
+        const target = liveTargets.get(edge.targetId);
+        if (!target) continue;
+        const t = ensure(target.sourceId);
+        t.synthesisNoteIds.add(edge.noteId);
+        if (target.type === "extract") {
+          t.synthesisReferencedExtractIds.add(target.id);
+        }
+      }
+    }
+
+    // 5) One batched `review_logs` read over EVERY descendant card across all sources,
     //    accumulated per card id → summed/counted per source below.
     const allCardIds = [...tallies.values()].flatMap((t) => t.cardIds);
     const timeByCard = new Map<
@@ -292,10 +375,19 @@ export class SourceYieldQuery {
       }
     }
 
-    // 5) Assemble each source's row, computing read-% from its own read-point + blocks.
+    // 6) Assemble each source's row, computing read-% from its own read-point + blocks.
     const rows: SourceYieldRow[] = sourceRows.map((s) => {
       const t = tallies.get(s.id);
       const extractsCreated = t?.extracts ?? 0;
+      const fatedExtractIds = t?.fatedExtractIds ?? new Set<string>();
+      const synthesisReferencedExtractIds = t?.synthesisReferencedExtractIds ?? new Set<string>();
+      const productiveExtracts = new Set([...fatedExtractIds, ...synthesisReferencedExtractIds])
+        .size;
+      const referenceExtracts = t?.referenceExtracts ?? 0;
+      const synthesizedExtracts = t?.synthesizedExtracts ?? 0;
+      const doneWithoutCardExtracts = t?.doneWithoutCardExtracts ?? 0;
+      const synthesisReferencedExtracts = synthesisReferencedExtractIds.size;
+      const synthesisNotesCreated = t?.synthesisNoteIds.size ?? 0;
       const cardsCreated = t?.cards ?? 0;
       const matureCards = t?.mature ?? 0;
       const leeches = t?.leeches ?? 0;
@@ -326,6 +418,8 @@ export class SourceYieldQuery {
       const verdict = scoreSourceYield({
         readPct,
         extractsCreated,
+        honorableExtracts: productiveExtracts,
+        synthesisNotesCreated,
         cardsCreated,
         matureCards,
         leeches,
@@ -343,6 +437,12 @@ export class SourceYieldQuery {
         },
         readPct,
         extractsCreated,
+        productiveExtracts,
+        referenceExtracts,
+        synthesizedExtracts,
+        doneWithoutCardExtracts,
+        synthesisReferencedExtracts,
+        synthesisNotesCreated,
         cardsCreated,
         matureCards,
         leeches,

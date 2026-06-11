@@ -46,8 +46,8 @@
  * round-trips; no schema change (the op log is already indexed by `elementId`).
  */
 
-import type { IsoTimestamp, OperationLogEntry, Priority } from "@interleave/core";
-import { elements, type InterleaveDatabase, operationLog } from "@interleave/db";
+import type { ExtractFate, IsoTimestamp, OperationLogEntry, Priority } from "@interleave/core";
+import { elementRelations, elements, type InterleaveDatabase, operationLog } from "@interleave/db";
 import {
   type ExtractStagnationSignals,
   isStagnant,
@@ -68,6 +68,8 @@ export interface StagnantExtractRef {
   readonly priority: number;
   /** The attention `due_at` (ISO-8601), or `null`. Extracts are attention items. */
   readonly dueAt: string | null;
+  /** Explicit honorable terminal fate; normally null for stagnant rows. */
+  readonly extractFate: ExtractFate | null;
   readonly createdAt: IsoTimestamp;
 }
 
@@ -78,6 +80,8 @@ export interface StagnantExtractRow {
   readonly postponeCount: number;
   /** How many live children (sub-extracts / cards) it produced (0 for a stagnant one). */
   readonly childCount: number;
+  /** Live synthesis-note references to this extract. Normally 0 for stagnant rows. */
+  readonly synthesizedReferenceCount: number;
   /** Whole days since the last stage advance (or `createdAt`). */
   readonly daysSinceProgress: number;
   /** Which conditions fired (rendered as calm chips). */
@@ -166,6 +170,7 @@ export class ExtractStagnationQuery {
         stage: elements.stage,
         priority: elements.priority,
         dueAt: elements.dueAt,
+        extractFate: elements.extractFate,
         createdAt: elements.createdAt,
         updatedAt: elements.updatedAt,
       })
@@ -192,7 +197,36 @@ export class ExtractStagnationQuery {
       childCounts.set(c.parentId, (childCounts.get(c.parentId) ?? 0) + 1);
     }
 
-    // 3) One grouped pass over the extracts' op log (postpone + stage-advance markers),
+    // 3) One grouped pass over live synthesis-note references to extracts. A linked
+    //    extract has produced synthesis value even if its cached fate is not yet set.
+    const synthesizedReferenceCounts = new Map<string, number>();
+    const liveSynthesisNoteIds = this.db
+      .select({ id: elements.id })
+      .from(elements)
+      .where(and(eq(elements.type, "synthesis_note"), isNull(elements.deletedAt)))
+      .all()
+      .map((row) => row.id);
+    if (liveSynthesisNoteIds.length > 0) {
+      const references = this.db
+        .select({ targetId: elementRelations.toElementId })
+        .from(elementRelations)
+        .where(
+          and(
+            eq(elementRelations.relationType, "references"),
+            inArray(elementRelations.fromElementId, liveSynthesisNoteIds),
+            inArray(elementRelations.toElementId, extractIds),
+          ),
+        )
+        .all();
+      for (const ref of references) {
+        synthesizedReferenceCounts.set(
+          ref.targetId,
+          (synthesizedReferenceCounts.get(ref.targetId) ?? 0) + 1,
+        );
+      }
+    }
+
+    // 4) One grouped pass over the extracts' op log (postpone + stage-advance markers),
     //    bucketed by `elementId`. Newest-first so the FIRST stage-advance op we see per
     //    extract is its LAST advance. (The op log is indexed by `elementId`.)
     const opSignals = new Map<string, OpSignals>();
@@ -230,7 +264,7 @@ export class ExtractStagnationQuery {
       }
     }
 
-    // 4) Run the PURE heuristic per extract; keep only the stagnant rows.
+    // 5) Run the PURE heuristic per extract; keep only the stagnant rows.
     const rows: StagnantExtractRow[] = [];
     for (const e of extractRows) {
       const op = opSignals.get(e.id);
@@ -242,6 +276,8 @@ export class ExtractStagnationQuery {
         dueAt: (e.dueAt as IsoTimestamp | null) ?? null,
         postponeCount: op?.postponeCount ?? 0,
         childCount: childCounts.get(e.id) ?? 0,
+        honorableFate: (e.extractFate as ExtractFate | null) ?? null,
+        synthesizedReferenceCount: synthesizedReferenceCounts.get(e.id) ?? 0,
         lastStageAdvanceAt: (op?.lastStageAdvanceAt as IsoTimestamp | null) ?? null,
       };
       const verdict = isStagnant(signals, asOf);
@@ -253,10 +289,12 @@ export class ExtractStagnationQuery {
           stage: e.stage,
           priority: e.priority,
           dueAt: (e.dueAt as string | null) ?? null,
+          extractFate: (e.extractFate as ExtractFate | null) ?? null,
           createdAt: e.createdAt as IsoTimestamp,
         },
         postponeCount: signals.postponeCount,
         childCount: signals.childCount,
+        synthesizedReferenceCount: signals.synthesizedReferenceCount,
         daysSinceProgress: verdict.daysSinceProgress,
         reasons: verdict.reasons,
         suggestion: verdict.suggestion,

@@ -61,7 +61,9 @@ import {
   ExtractsDeleteRequestSchema,
   ExtractsMarkDoneRequestSchema,
   ExtractsPostponeRequestSchema,
+  ExtractsReactivateFateRequestSchema,
   ExtractsRewriteRequestSchema,
+  ExtractsSetFateRequestSchema,
   ExtractsUpdateStageRequestSchema,
   InboxGetRequestSchema,
   InboxTriageRequestSchema,
@@ -253,6 +255,8 @@ describe("IPC channels", () => {
         "extracts:rewrite",
         "extracts:postpone",
         "extracts:markDone",
+        "extracts:setFate",
+        "extracts:reactivateFate",
         "extracts:delete",
         "review:session:next",
         "review:card",
@@ -2270,11 +2274,30 @@ describe("Extracts postpone/markDone/delete request schemas (T024)", () => {
       ExtractsPostponeRequestSchema,
       ExtractsMarkDoneRequestSchema,
       ExtractsDeleteRequestSchema,
+      ExtractsReactivateFateRequestSchema,
     ]) {
       expect(schema.parse({ id: "el_ex" })).toEqual({ id: "el_ex" });
       expect(() => schema.parse({ id: "" })).toThrow();
       expect(() => schema.parse({})).toThrow();
     }
+  });
+});
+
+describe("ExtractsSetFateRequestSchema (T104)", () => {
+  it("accepts direct non-card fates and rejects direct synthesized", () => {
+    expect(ExtractsSetFateRequestSchema.parse({ id: "el_ex", fate: "reference" })).toEqual({
+      id: "el_ex",
+      fate: "reference",
+    });
+    expect(ExtractsSetFateRequestSchema.parse({ id: "el_ex", fate: "done_without_card" })).toEqual({
+      id: "el_ex",
+      fate: "done_without_card",
+    });
+    expect(() =>
+      ExtractsSetFateRequestSchema.parse({ id: "el_ex", fate: "synthesized" }),
+    ).toThrow();
+    expect(() => ExtractsSetFateRequestSchema.parse({ id: "el_ex" })).toThrow();
+    expect(() => ExtractsSetFateRequestSchema.parse({ id: "", fate: "reference" })).toThrow();
   });
 });
 

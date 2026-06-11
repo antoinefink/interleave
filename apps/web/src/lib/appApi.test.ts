@@ -70,6 +70,15 @@ function installAppApi(overrides: Partial<AppApi> = {}): AppApi {
       markNeedsLater: vi.fn(async (request: unknown) => ({ block: request, summary: request })),
       markUnread: vi.fn(async (request: unknown) => ({ block: request, summary: request })),
     },
+    extracts: {
+      updateStage: vi.fn(async (request: unknown) => ({ extract: request })),
+      rewrite: vi.fn(async (request: unknown) => ({ extract: request, plainText: "body" })),
+      postpone: vi.fn(async (request: unknown) => ({ extract: request, postponeCount: 1 })),
+      markDone: vi.fn(async (request: unknown) => ({ extract: request })),
+      setFate: vi.fn(async (request: unknown) => ({ extract: request })),
+      reactivateFate: vi.fn(async (request: unknown) => ({ extract: request })),
+      delete: vi.fn(async (request: unknown) => ({ extract: request })),
+    },
     synthesis: {
       create: vi.fn(async (request: unknown) => request),
       link: vi.fn(async (request: unknown) => request),
@@ -275,6 +284,12 @@ describe("renderer appApi wrapper", () => {
 
     await appApi.createSynthesisNote({ title: "New note" });
     expect(bridge.synthesis.create).toHaveBeenCalledWith({ title: "New note" });
+
+    await appApi.setExtractFate({ id: "ex-1", fate: "reference" });
+    expect(bridge.extracts.setFate).toHaveBeenCalledWith({ id: "ex-1", fate: "reference" });
+
+    await appApi.reactivateExtractFate({ id: "ex-1" });
+    expect(bridge.extracts.reactivateFate).toHaveBeenCalledWith({ id: "ex-1" });
 
     await appApi.libraryParkedAction({ id: "src-1", action: { kind: "queueSoon" } });
     expect(bridge.library.parkedAction).toHaveBeenCalledWith({

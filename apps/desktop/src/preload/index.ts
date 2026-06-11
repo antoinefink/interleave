@@ -63,7 +63,9 @@ import type {
   ExtractsDeleteRequest,
   ExtractsMarkDoneRequest,
   ExtractsPostponeRequest,
+  ExtractsReactivateFateRequest,
   ExtractsRewriteRequest,
+  ExtractsSetFateRequest,
   ExtractsUpdateStageRequest,
   InboxGetRequest,
   InboxTriageRequest,
@@ -341,6 +343,10 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.extractsPostpone, request),
     markDone: (request: ExtractsMarkDoneRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.extractsMarkDone, request),
+    setFate: (request: ExtractsSetFateRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.extractsSetFate, request),
+    reactivateFate: (request: ExtractsReactivateFateRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.extractsReactivateFate, request),
     delete: (request: ExtractsDeleteRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.extractsDelete, request),
   },

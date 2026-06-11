@@ -62,6 +62,8 @@ const h = vi.hoisted(() => {
     getExtractStagnation: vi.fn(),
     postponeExtract: vi.fn(),
     deleteExtract: vi.fn(),
+    setExtractFate: vi.fn(),
+    reactivateExtractFate: vi.fn(),
     navigate: vi.fn(),
   };
 });
@@ -80,6 +82,8 @@ vi.mock("../lib/appApi", async () => {
       getExtractStagnation: h.getExtractStagnation,
       postponeExtract: h.postponeExtract,
       deleteExtract: h.deleteExtract,
+      setExtractFate: h.setExtractFate,
+      reactivateExtractFate: h.reactivateExtractFate,
     },
   };
 });
@@ -91,6 +95,8 @@ beforeEach(() => {
   h.getExtractStagnation.mockResolvedValue(h.result);
   h.postponeExtract.mockResolvedValue({});
   h.deleteExtract.mockResolvedValue({});
+  h.setExtractFate.mockResolvedValue({});
+  h.reactivateExtractFate.mockResolvedValue({});
 });
 
 describe("StagnantExtracts", () => {
@@ -178,6 +184,69 @@ describe("StagnantExtracts", () => {
       await waitFor(() => expect(h.deleteExtract).toHaveBeenCalledWith({ id: "ex-convert" }));
       await waitFor(() => expect(screen.getAllByTestId("stagnant-row")).toHaveLength(1));
     }
+  });
+
+  it("keeps a stagnant extract as reference when supported", async () => {
+    const referenceRow = {
+      ...h.rewriteRow,
+      extract: { ...h.rewriteRow.extract, id: "ex-ref", extractFate: null },
+      suggestion: "keep_as_reference",
+    } as unknown as StagnantExtractRow;
+    h.getExtractStagnation.mockResolvedValue({
+      asOf: "x",
+      rows: [referenceRow],
+      stagnantCount: 1,
+    });
+
+    render(<StagnantExtracts />);
+    const row = await screen.findByTestId("stagnant-row");
+
+    expect(within(row).getByTestId("stagnant-suggestion")).toHaveTextContent("Keep as reference");
+    expect(within(row).queryByTestId("stagnant-fate")).not.toBeInTheDocument();
+
+    fireEvent.click(within(row).getByTestId("stagnant-reference"));
+    await waitFor(() =>
+      expect(h.setExtractFate).toHaveBeenCalledWith({ id: "ex-ref", fate: "reference" }),
+    );
+  });
+
+  it("renders the synthesized remediation label", async () => {
+    const synthesizedRow = {
+      ...h.rewriteRow,
+      extract: { ...h.rewriteRow.extract, id: "ex-synth", extractFate: null },
+      suggestion: "mark_synthesized",
+    } as unknown as StagnantExtractRow;
+
+    h.getExtractStagnation.mockResolvedValue({
+      asOf: "x",
+      rows: [synthesizedRow],
+      stagnantCount: 1,
+    });
+
+    render(<StagnantExtracts />);
+    const row = await screen.findByTestId("stagnant-row");
+
+    expect(within(row).getByTestId("stagnant-suggestion")).toHaveTextContent("Synthesis reference");
+  });
+
+  it("can reactivate a fated stagnant row when supported", async () => {
+    const referenceRow = {
+      ...h.rewriteRow,
+      extract: { ...h.rewriteRow.extract, id: "ex-ref", extractFate: "reference" },
+      suggestion: "keep_as_reference",
+    } as unknown as StagnantExtractRow;
+
+    h.getExtractStagnation.mockResolvedValue({
+      asOf: "x",
+      rows: [referenceRow],
+      stagnantCount: 1,
+    });
+
+    render(<StagnantExtracts />);
+    const row = await screen.findByTestId("stagnant-row");
+    fireEvent.click(within(row).getByTestId("stagnant-reactivate"));
+
+    await waitFor(() => expect(h.reactivateExtractFate).toHaveBeenCalledWith({ id: "ex-ref" }));
   });
 
   it("shows the empty state when there are no stagnant extracts", async () => {

@@ -21,6 +21,7 @@ function element(overrides: Partial<Element> & { id: ElementId; type: Element["t
     priority: 0.5,
     dueAt: null,
     parkedAt: null,
+    extractFate: null,
     title: "Untitled",
     parentId: null,
     sourceId: null,

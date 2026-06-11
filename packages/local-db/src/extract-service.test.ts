@@ -44,7 +44,9 @@ import {
 } from "./extract-service";
 import { ExtractionService } from "./extraction-service";
 import { SourceRepository } from "./source-repository";
+import { SynthesisService } from "./synthesis-service";
 import { createInMemoryDb } from "./test-db";
+import { UndoService } from "./undo-service";
 
 let handle: DbHandle;
 
@@ -290,6 +292,102 @@ describe("ExtractService.markDone", () => {
       .where(eq(sourceLocations.elementId, extractId))
       .get();
     expect(loc?.sourceElementId).toBe(sourceId);
+  });
+});
+
+describe("ExtractService extract fates (T104)", () => {
+  it("sets a direct honorable fate with one update_element patch and clears active scheduling", () => {
+    const { extractId } = seedExtract(handle);
+    const service = new ExtractService(handle.db);
+
+    const { element } = service.setFate(extractId, "reference");
+    expect(element.status).toBe("done");
+    expect(element.dueAt).toBeNull();
+    expect(element.parkedAt).toBeNull();
+    expect(element.extractFate).toBe("reference");
+    expect(opsFor(handle, extractId).at(-1)).toBe("update_element");
+
+    const lastOp = handle.db
+      .select()
+      .from(operationLog)
+      .where(eq(operationLog.elementId, extractId))
+      .all()
+      .at(-1);
+    const payload = JSON.parse(lastOp?.payload ?? "{}");
+    expect(payload.patch).toMatchObject({
+      status: "done",
+      dueAt: null,
+      parkedAt: null,
+      extractFate: "reference",
+    });
+    expect(payload.prev).toMatchObject({ extractFate: null });
+  });
+
+  it("rejects direct synthesized fate and reactivates a fated extract due now", () => {
+    const { extractId } = seedExtract(handle);
+    const service = new ExtractService(handle.db);
+
+    expect(() => service.setFate(extractId, "synthesized" as never)).toThrow(/synthesis-note/);
+
+    service.setFate(extractId, "done_without_card");
+    const { element } = service.reactivateFate(extractId);
+    expect(element.status).toBe("scheduled");
+    expect(element.dueAt).toBeTruthy();
+    expect(element.parkedAt).toBeNull();
+    expect(element.extractFate).toBeNull();
+  });
+
+  it("does not reactivate a synthesized extract while live synthesis lineage still references it", () => {
+    const { extractId } = seedExtract(handle);
+    const synthesis = new SynthesisService(handle.db);
+    const note = synthesis.create({ title: "Synthesis note" }).element;
+    synthesis.linkElement(note.id, extractId);
+
+    expect(() => new ExtractService(handle.db).reactivateFate(extractId)).toThrow(
+      /unlink the extract/,
+    );
+  });
+
+  it("rejects stage and postpone actions on fated extracts until reactivation", () => {
+    const { extractId } = seedExtract(handle);
+    const service = new ExtractService(handle.db);
+    service.setFate(extractId, "reference");
+
+    expect(() => service.setStage(extractId, "clean_extract")).toThrow(/reactivate/);
+    expect(() => service.postpone(extractId)).toThrow(/reactivate/);
+
+    service.reactivateFate(extractId);
+    expect(() => service.postpone(extractId)).not.toThrow();
+  });
+
+  it("undo restores the full pre-fate active state", () => {
+    const { extractId } = seedExtract(handle);
+    const service = new ExtractService(handle.db);
+    const before = service.postpone(extractId).element;
+
+    service.setFate(extractId, "reference");
+    new UndoService(handle.db).undoLast();
+
+    const restored = new ElementRepository(handle.db).findById(extractId);
+    expect(restored?.status).toBe(before.status);
+    expect(restored?.dueAt).toBe(before.dueAt);
+    expect(restored?.parkedAt).toBe(before.parkedAt);
+    expect(restored?.extractFate).toBeNull();
+  });
+
+  it("undo restores the full fated state after reactivation", () => {
+    const { extractId } = seedExtract(handle);
+    const service = new ExtractService(handle.db);
+    const fated = service.setFate(extractId, "done_without_card").element;
+
+    service.reactivateFate(extractId);
+    new UndoService(handle.db).undoLast();
+
+    const restored = new ElementRepository(handle.db).findById(extractId);
+    expect(restored?.status).toBe(fated.status);
+    expect(restored?.dueAt).toBe(fated.dueAt);
+    expect(restored?.parkedAt).toBe(fated.parkedAt);
+    expect(restored?.extractFate).toBe("done_without_card");
   });
 });
 

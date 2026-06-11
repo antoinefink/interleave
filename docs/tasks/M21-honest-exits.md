@@ -239,8 +239,9 @@ last hop.
 # T104 — Value model v2: honorable non-card fates
 
 - **Milestone:** M21 — Honest exits & the value model
-- **Status:** `[ ]` not started
+- **Status:** `[x]` complete
 - **Depends on:** T024, T084, T095
+- **Commit:** `feat: T104 value model v2`
 - **Roadmap line:** extracts can terminate as reference / synthesized / done-without-card;
   `synthesis_note` lineage counts as productive output in source-yield; stagnation detector,
   T084 suggestions, and analytics respect the new fates. Prerequisite for T112 and T121.
@@ -271,19 +272,19 @@ legitimate synthesis-driven reading. This task BLOCKS T112 and T121 by design.
 
 ## Deliverables
 
-- [ ] Domain: extract terminal fates — `reference` (keep as quotable material, no further
+- [x] Domain: extract terminal fates — `reference` (keep as quotable material, no further
       distillation pressure), `synthesized` (fed a synthesis note), `done_without_card`
       (processed, nothing more to produce) — as explicit states/stage-exits, each op-logged,
       reversible, distinct from delete. Drizzle migration if a new column/value is needed.
-- [ ] Verbs: ExtractView + queue actions + T084 suggestion set gain the new fates (T084's
+- [x] Verbs: ExtractView + queue actions + T084 suggestion set gain the new fates (T084's
       remediation becomes rewrite / convert / **keep-as-reference** / **mark-synthesized** /
       postpone / delete).
-- [ ] `source-yield.ts` v2: synthesis-note lineage and honorable fates count as productive
+- [x] `source-yield.ts` v2: synthesis-note lineage and honorable fates count as productive
       output (weights documented in-code); yield consumers recompute correctly.
-- [ ] Stagnation detector: extracts in honorable fates are not stagnant; tests prove a
+- [x] Stagnation detector: extracts in honorable fates are not stagnant; tests prove a
       synthesized extract stops being flagged.
-- [ ] Analytics: source-yield and extract-stagnation surfaces display the new categories.
-- [ ] Tests: unit across core/scheduler/local-db; e2e — mark an extract reference/synthesized,
+- [x] Analytics: source-yield and extract-stagnation surfaces display the new categories.
+- [x] Tests: unit across core/scheduler/local-db; e2e — mark an extract reference/synthesized,
       verify it leaves stagnation and counts in yield, survives restart.
 
 ## Done when
@@ -298,3 +299,22 @@ legitimate synthesis-driven reading. This task BLOCKS T112 and T121 by design.
 - Weighting question (decide in-code, document): does `synthesized` weigh like a card or like
   an extract? Recommendation: between the two — the point is non-zero, not equivalence.
 - Keep fate-entry cheap to undo: users will mis-file; everything reverses through the op log.
+
+## Completion
+
+- Added nullable `elements.extract_fate` with the closed `reference` / `synthesized` /
+  `done_without_card` vocabulary and an extract-only CHECK constraint.
+- Added typed extract fate commands through local-db, DB service, IPC, preload, and renderer APIs.
+  Direct commands set only `reference` and `done_without_card`; `synthesized` is maintained by
+  live synthesis-note `references` lineage.
+- Source-yield v2 now counts de-duplicated productive non-card output, including fated extracts,
+  live synthesis-referenced extracts, and synthesis notes per represented source.
+- Stagnation v2 excludes honorable fates and live synthesis references, and the maintenance UI can
+  keep a stagnant extract as reference or show the synthesized remediation label.
+- Card creation rejects fated extracts until they are reactivated, preventing `done_without_card`
+  or `reference` output from being double-counted with live cards.
+- Verification:
+  - `pnpm lint`
+  - `pnpm typecheck`
+  - `pnpm test`
+  - `pnpm e2e -- tests/electron/extract-review.spec.ts tests/electron/source-yield.spec.ts tests/electron/extract-stagnation.spec.ts`

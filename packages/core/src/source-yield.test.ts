@@ -19,6 +19,8 @@ import {
 const base: SourceYieldInputs = {
   readPct: 0,
   extractsCreated: 0,
+  honorableExtracts: 0,
+  synthesisNotesCreated: 0,
   cardsCreated: 0,
   matureCards: 0,
   leeches: 0,
@@ -52,6 +54,25 @@ describe("scoreSourceYield", () => {
     });
     expect(v.band).toBe("low");
     expect(v.score).toBeLessThanOrEqual(YIELD_LOW_SCORE);
+  });
+
+  it("does not score a read source with an honorable extract fate as barren", () => {
+    const v = scoreSourceYield({
+      ...base,
+      readPct: 1,
+      extractsCreated: 1,
+      honorableExtracts: 1,
+    });
+    expect(v.band).not.toBe("low");
+    expect(v.score).toBeGreaterThan(YIELD_LOW_SCORE);
+  });
+
+  it("counts synthesis notes between raw extracts and cards", () => {
+    const rawExtract = scoreSourceYield({ ...base, extractsCreated: 1 });
+    const synthesisNote = scoreSourceYield({ ...base, synthesisNotesCreated: 1 });
+    const card = scoreSourceYield({ ...base, cardsCreated: 1 });
+    expect(synthesisNote.score).toBeGreaterThan(rawExtract.score);
+    expect(synthesisNote.score).toBeLessThan(card.score);
   });
 
   it("scores a leech-heavy source LOW even with several cards", () => {
@@ -119,6 +140,8 @@ describe("scoreSourceYield", () => {
     const v = scoreSourceYield({
       readPct: Number.NaN,
       extractsCreated: -3,
+      honorableExtracts: Number.POSITIVE_INFINITY,
+      synthesisNotesCreated: -1,
       cardsCreated: -1,
       matureCards: Number.POSITIVE_INFINITY,
       leeches: -2,

@@ -15,6 +15,7 @@ describe("element schema", () => {
       "priority",
       "dueAt",
       "parkedAt",
+      "extractFate",
       "title",
       "parentId",
       "sourceId",
@@ -24,6 +25,7 @@ describe("element schema", () => {
     ]);
     expect(columns.parentId.name).toBe("parent_id");
     expect(columns.sourceId.name).toBe("source_id");
+    expect(columns.extractFate.name).toBe("extract_fate");
     expect(columns.deletedAt.name).toBe("deleted_at");
   });
 });

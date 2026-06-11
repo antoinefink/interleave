@@ -420,6 +420,42 @@ describe("integrity is enforced", () => {
     ).toThrow();
   });
 
+  it("allows extract fates only on extract elements (CHECK)", () => {
+    expect(() =>
+      handle.db
+        .insert(elements)
+        .values({
+          id: id(),
+          type: "extract",
+          status: "done",
+          stage: "atomic_statement",
+          priority: 0.5,
+          extractFate: "reference",
+          title: "reference extract",
+          createdAt: now(),
+          updatedAt: now(),
+        })
+        .run(),
+    ).not.toThrow();
+
+    expect(() =>
+      handle.db
+        .insert(elements)
+        .values({
+          id: id(),
+          type: "source",
+          status: "done",
+          stage: "raw_source",
+          priority: 0.5,
+          extractFate: "reference",
+          title: "bad source fate",
+          createdAt: now(),
+          updatedAt: now(),
+        })
+        .run(),
+    ).toThrow();
+  });
+
   it("rejects a card whose owning element does not exist (foreign key)", () => {
     expect(() =>
       handle.db

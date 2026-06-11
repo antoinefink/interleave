@@ -69,6 +69,14 @@ export const DISTILLATION_STAGES = [
 export type DistillationStage = (typeof DISTILLATION_STAGES)[number];
 
 /**
+ * Honorable terminal fates for extracts that are done without becoming active-recall
+ * cards (T104). This is extract-specific meaning, deliberately separate from the
+ * universal lifecycle `status` and the distillation `stage`.
+ */
+export const EXTRACT_FATES = ["reference", "synthesized", "done_without_card"] as const;
+export type ExtractFate = (typeof EXTRACT_FATES)[number];
+
+/**
  * Typed edges between elements (`element_relations.relation_type`). Lineage is
  * sacred and modeled as explicit rows, not implicit nesting: `derived_from`
  * carries the extract→source chain, `sibling_group` keeps cloze/Q&A siblings

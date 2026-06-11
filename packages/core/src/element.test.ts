@@ -16,6 +16,7 @@ describe("element model shapes", () => {
       priority: 0.625,
       dueAt: "2026-06-10T00:00:00.000Z",
       parkedAt: null,
+      extractFate: null,
       title: "Selected passage",
       parentId: sourceId,
       sourceId,

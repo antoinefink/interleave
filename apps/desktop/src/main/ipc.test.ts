@@ -68,6 +68,8 @@ function fakeDbService() {
     applyCatchUp: vi.fn(),
     previewVacation: vi.fn(),
     applyVacation: vi.fn(),
+    setExtractFate: vi.fn(),
+    reactivateExtractFate: vi.fn(),
     dismissRetirementSuggestion: vi.fn(() => ({ dismissed: true, stale: false, suggestion: null })),
     getDailyWorkSummary: vi.fn(() => ({
       asOf: "2026-06-08T09:00:00.000Z",
@@ -169,6 +171,15 @@ describe("registerIpcHandlers", () => {
 
     expect(() => handler?.({}, { asOf: "not-a-date" })).toThrow();
     expect(db.getDailyWorkSummary).not.toHaveBeenCalled();
+  });
+
+  it("rejects direct synthesized extract fate before invoking the database service", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+    const handler = electron.handlers.get(IPC_CHANNELS.extractsSetFate);
+
+    expect(() => handler?.({}, { id: "el_ex", fate: "synthesized" })).toThrow();
+    expect(db.setExtractFate).not.toHaveBeenCalled();
   });
 
   it("validates high-risk command payloads before invoking the corresponding DB service", () => {

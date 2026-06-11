@@ -88,8 +88,8 @@
 .sy-row {
   display: grid;
   grid-template-columns:
-    minmax(180px, 2.3fr) minmax(92px, 1fr) minmax(82px, 0.8fr) 64px 56px 64px 70px
-    minmax(78px, 0.9fr) minmax(108px, 1fr) 72px;
+    minmax(160px, 2fr) minmax(86px, 0.9fr) minmax(76px, 0.75fr) 56px
+    minmax(112px, 1.1fr) 50px 58px 64px minmax(72px, 0.8fr) minmax(100px, 0.9fr) 68px;
   align-items: center;
   gap: var(--s-2, 8px);
   padding: 10px var(--s-4, 16px);
@@ -123,6 +123,7 @@
 .sy-cell--num,
 .sy-cell--read,
 .sy-cell--blocks,
+.sy-cell--value,
 .sy-cell--time {
   font-variant-numeric: tabular-nums;
 }
@@ -139,6 +140,23 @@
   align-items: flex-start;
   gap: calc(var(--s-1) / 4);
   color: var(--text-1);
+}
+.sy-cell--value {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+.sy-value__total {
+  font-weight: 650;
+  color: var(--text-1);
+}
+.sy-value__detail {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-2xs, 11px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .sy-cell__sub {
   font-size: var(--t-2xs, 11px);

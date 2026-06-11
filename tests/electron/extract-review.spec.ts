@@ -85,7 +85,13 @@ async function inspect(page: Page, id: string) {
       inspector: {
         get(req: { id: string }): Promise<{
           data: {
-            element: { type: string; stage: string; status: string; dueAt: string | null };
+            element: {
+              type: string;
+              stage: string;
+              status: string;
+              dueAt: string | null;
+              extractFate: string | null;
+            };
             scheduler: { kind: string; stage: string; postponed: number };
             review: unknown | null;
           } | null;
@@ -142,10 +148,32 @@ test("an extract advances raw → clean → atomic, reschedules on attention, an
   await expect(page.locator(".extract-flash__pill").getByText(/Postponed/)).toBeVisible();
   await expect.poll(async () => (await inspect(page, extractId))?.scheduler.postponed).toBe(1);
 
+  // T104: an honorable non-card fate writes through the real preload -> IPC -> DB
+  // path, marks the extract terminal, then Reactivate clears the fate and schedules
+  // it back into attention work.
+  await page.getByTestId("extract-fate-done-without-card").click();
+  await expect
+    .poll(async () => (await inspect(page, extractId))?.element.extractFate)
+    .toBe("done_without_card");
+  expect((await inspect(page, extractId))?.element.status).toBe("done");
+  expect((await inspect(page, extractId))?.element.dueAt).toBeNull();
+
+  await page.getByTestId("extract-fate-reactivate").click();
+  await expect.poll(async () => (await inspect(page, extractId))?.element.extractFate).toBeNull();
+  expect((await inspect(page, extractId))?.element.status).toBe("scheduled");
+  expect((await inspect(page, extractId))?.element.dueAt).toBeTruthy();
+
   // (b) MARK DONE sets status done.
   await page.getByTestId("extract-mark-done").click();
   await expect(page.getByText(/Marked done/)).toBeVisible();
   await expect.poll(async () => (await inspect(page, extractId))?.element.status).toBe("done");
+
+  // T104 persistence: keep-as-reference is a distinct terminal state and survives
+  // restart below.
+  await page.getByTestId("extract-fate-reference").click();
+  await expect
+    .poll(async () => (await inspect(page, extractId))?.element.extractFate)
+    .toBe("reference");
 
   // (c) RESTART: relaunch against the same data dir — the advanced stage, done
   // status, and postpone count survive. Done extracts leave the active schedule.
@@ -157,6 +185,7 @@ test("an extract advances raw → clean → atomic, reschedules on attention, an
   const afterRestart = await inspect(page, extractId);
   expect(afterRestart?.element.stage).toBe("atomic_statement");
   expect(afterRestart?.element.status).toBe("done");
+  expect(afterRestart?.element.extractFate).toBe("reference");
   expect(afterRestart?.scheduler.kind).toBe("attention");
   expect(afterRestart?.scheduler.postponed).toBe(1);
   expect(afterRestart?.review).toBeNull();

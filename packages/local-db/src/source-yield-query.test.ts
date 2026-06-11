@@ -13,7 +13,7 @@
  *  - soft-deleted extracts/cards are excluded.
  */
 
-import type { BlockId, ElementId, IsoTimestamp } from "@interleave/core";
+import type { BlockId, ElementId, ExtractFate, IsoTimestamp } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
 import { cards, reviewLogs, reviewStates } from "@interleave/db";
 import { CARD_MATURE_STABILITY_DAYS } from "@interleave/scheduler";
@@ -71,8 +71,13 @@ function setReadPoint(handle: DbHandle, sourceId: ElementId, k: number): void {
 }
 
 /** Create a live `extract` under `sourceId` (via the lineage column). */
-function seedExtract(handle: DbHandle, sourceId: ElementId): ElementId {
-  const el = new ElementRepository(handle.db).create({
+function seedExtract(
+  handle: DbHandle,
+  sourceId: ElementId,
+  opts: { fate?: ExtractFate } = {},
+): ElementId {
+  const repo = new ElementRepository(handle.db);
+  const el = repo.create({
     type: "extract",
     status: "active",
     stage: "raw_extract",
@@ -80,7 +85,28 @@ function seedExtract(handle: DbHandle, sourceId: ElementId): ElementId {
     title: "Extract",
     sourceId,
   });
+  if (opts.fate) repo.update(el.id, { status: "done", dueAt: null, extractFate: opts.fate });
   return el.id;
+}
+
+/** Create a live synthesis note and optionally reference material from it. */
+function seedSynthesisNote(handle: DbHandle, targetIds: readonly ElementId[] = []): ElementId {
+  const repo = new ElementRepository(handle.db);
+  const note = repo.create({
+    type: "synthesis_note",
+    status: "active",
+    stage: "synthesis",
+    priority: 0.5,
+    title: "Synthesis note",
+  });
+  for (const targetId of targetIds) {
+    repo.addRelation({
+      fromElementId: note.id,
+      toElementId: targetId,
+      relationType: "references",
+    });
+  }
+  return note.id;
 }
 
 /** Create a live `card` under `sourceId`, with an FSRS state + optional leech/stability. */
@@ -195,6 +221,85 @@ describe("SourceYieldQuery.listSourceYield", () => {
     // reviews — just assert it is present and not before the latest review.
     expect(row?.lastActivityAt).not.toBeNull();
     expect(row?.lastActivityAt && row.lastActivityAt >= "2026-05-31T08:00:00.000Z").toBe(true);
+  });
+
+  it("counts fated extracts as non-card value so a read source is not low-yield", () => {
+    const src = seedSource(handle, "Reference source", 4);
+    setReadPoint(handle, src, 3);
+    seedExtract(handle, src, { fate: "reference" });
+
+    const row = new SourceYieldQuery(handle.db)
+      .listSourceYield(ASOF)
+      .rows.find((r) => r.source.id === src);
+
+    expect(row?.extractsCreated).toBe(1);
+    expect(row?.productiveExtracts).toBe(1);
+    expect(row?.referenceExtracts).toBe(1);
+    expect(row?.synthesizedExtracts).toBe(0);
+    expect(row?.doneWithoutCardExtracts).toBe(0);
+    expect(row?.yieldBand).not.toBe("low");
+  });
+
+  it("counts one live synthesis note once per source for multiple extract references", () => {
+    const src = seedSource(handle, "Synthesized source", 4);
+    setReadPoint(handle, src, 3);
+    const first = seedExtract(handle, src);
+    const second = seedExtract(handle, src);
+    seedSynthesisNote(handle, [first, second]);
+
+    const row = new SourceYieldQuery(handle.db)
+      .listSourceYield(ASOF)
+      .rows.find((r) => r.source.id === src);
+
+    expect(row?.synthesisNotesCreated).toBe(1);
+    expect(row?.synthesisReferencedExtracts).toBe(2);
+    expect(row?.productiveExtracts).toBe(2);
+    expect(row?.yieldBand).not.toBe("low");
+  });
+
+  it("counts one synthesis note once for each represented source", () => {
+    const firstSource = seedSource(handle, "First source", 2);
+    const secondSource = seedSource(handle, "Second source", 2);
+    const firstExtract = seedExtract(handle, firstSource);
+    const secondExtract = seedExtract(handle, secondSource);
+    seedSynthesisNote(handle, [firstExtract, secondExtract]);
+
+    const rows = new SourceYieldQuery(handle.db).listSourceYield(ASOF).rows;
+    expect(rows.find((r) => r.source.id === firstSource)?.synthesisNotesCreated).toBe(1);
+    expect(rows.find((r) => r.source.id === secondSource)?.synthesisNotesCreated).toBe(1);
+  });
+
+  it("does not count deleted synthesis notes or deleted referenced targets", () => {
+    const deletedNoteSource = seedSource(handle, "Deleted note source", 2);
+    const deletedTargetSource = seedSource(handle, "Deleted target source", 2);
+    const noteTarget = seedExtract(handle, deletedNoteSource);
+    const deletedTarget = seedExtract(handle, deletedTargetSource);
+    const repo = new ElementRepository(handle.db);
+    const note = seedSynthesisNote(handle, [noteTarget]);
+    seedSynthesisNote(handle, [deletedTarget]);
+    repo.softDelete(note);
+    repo.softDelete(deletedTarget);
+
+    const rows = new SourceYieldQuery(handle.db).listSourceYield(ASOF).rows;
+    expect(rows.find((r) => r.source.id === deletedNoteSource)?.synthesisNotesCreated).toBe(0);
+    expect(rows.find((r) => r.source.id === deletedTargetSource)?.synthesisNotesCreated).toBe(0);
+    const deletedTargetRow = rows.find((r) => r.source.id === deletedTargetSource);
+    expect(deletedTargetRow?.synthesisReferencedExtracts).toBe(0);
+  });
+
+  it("does not double-count an extract with both a fate and synthesis reference", () => {
+    const src = seedSource(handle, "Deduped source", 2);
+    const extract = seedExtract(handle, src, { fate: "synthesized" });
+    seedSynthesisNote(handle, [extract]);
+
+    const row = new SourceYieldQuery(handle.db)
+      .listSourceYield(ASOF)
+      .rows.find((r) => r.source.id === src);
+
+    expect(row?.synthesizedExtracts).toBe(1);
+    expect(row?.synthesisReferencedExtracts).toBe(1);
+    expect(row?.productiveExtracts).toBe(1);
+    expect(row?.synthesisNotesCreated).toBe(1);
   });
 
   it("includes durable block-processing ratios and unresolved counts", () => {

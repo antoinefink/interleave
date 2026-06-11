@@ -26,7 +26,8 @@
  * `yieldScore` is a non-negative number where **higher = more productive**. It
  * rewards what a source actually produced and penalizes wasted effort:
  *
- *   reward   = mature cards (most), then cards, then extracts produced;
+ *   reward   = mature cards (most), then cards, then honorable extract exits /
+ *              cards, then synthesis notes, then unresolved extracts produced;
  *   penalty  = a "read but barren" source (high read %, ~0 output) and a
  *              high leech ratio (lots of failing cards) and lots of review time
  *              spent per mature card (you ground it but little stuck).
@@ -59,6 +60,14 @@ export interface SourceYieldInputs {
   readonly readPct: number;
   /** Live `extract` descendants created from the source. */
   readonly extractsCreated: number;
+  /**
+   * De-duplicated extract-level non-card value: live fated extracts plus live
+   * extracts referenced by synthesis notes. These are stronger than raw extracts
+   * because the user deliberately resolved the extract without forcing a card.
+   */
+  readonly honorableExtracts: number;
+  /** Live synthesis notes that explicitly reference material from this source. */
+  readonly synthesisNotesCreated: number;
   /** Live `card` descendants created from the source. */
   readonly cardsCreated: number;
   /** Cards whose FSRS stability crosses the maturity threshold (durable knowledge). */
@@ -88,6 +97,10 @@ export const UNSTARTED_READ_FLOOR = 0.05;
 export const YIELD_WEIGHT_MATURE_CARD = 3;
 /** Score reward per card created (a card is real output even before it matures). */
 export const YIELD_WEIGHT_CARD = 1;
+/** Score reward per resolved non-card extract (reference / synthesized / no-card). */
+export const YIELD_WEIGHT_HONORABLE_EXTRACT = 1.25;
+/** Score reward per synthesis note that references this source's material. */
+export const YIELD_WEIGHT_SYNTHESIS_NOTE = 0.75;
 /** Score reward per extract created (distillation progress, the weakest reward). */
 export const YIELD_WEIGHT_EXTRACT = 0.5;
 
@@ -139,7 +152,8 @@ function nonNegInt(value: number): number {
  * = more productive. The bands + the un-started neutral floor are documented above.
  *
  * The score is `reward − penalties`, floored at `0`:
- *   reward    = mature×3 + (cards − leeches)×1 + extracts×0.5   (a leech earns no card reward)
+ *   reward    = mature×3 + honorableExtracts×1.25 + (cards − leeches)×1
+ *               + synthesisNotes×0.75 + unresolvedExtracts×0.5
  *   penalties = read-but-barren (scaled by readPct) + leech-ratio + review-time-per-mature
  *
  * A leech does NOT earn its `YIELD_WEIGHT_CARD` reward (it is a card that costs more
@@ -152,12 +166,16 @@ function nonNegInt(value: number): number {
 export function scoreSourceYield(inputs: SourceYieldInputs): SourceYieldVerdict {
   const readPct = clamp01(inputs.readPct);
   const extracts = nonNegInt(inputs.extractsCreated);
+  const honorableExtracts = Math.min(nonNegInt(inputs.honorableExtracts), extracts);
+  const synthesisNotes = nonNegInt(inputs.synthesisNotesCreated);
   const cards = nonNegInt(inputs.cardsCreated);
   const mature = Math.min(nonNegInt(inputs.matureCards), cards);
   const leeches = Math.min(nonNegInt(inputs.leeches), cards);
   const timeSpentMs = Math.max(0, Number.isFinite(inputs.timeSpentMs) ? inputs.timeSpentMs : 0);
 
-  const output = extracts + cards;
+  const unresolvedExtracts = Math.max(0, extracts - honorableExtracts);
+  const output = unresolvedExtracts + honorableExtracts + synthesisNotes + cards;
+  const durableNonCardOutput = honorableExtracts + synthesisNotes;
   const worked = readPct >= UNSTARTED_READ_FLOOR || output > 0 || timeSpentMs > 0;
 
   // The un-started floor: a never-read, never-processed source is neutral, never low.
@@ -171,13 +189,17 @@ export function scoreSourceYield(inputs: SourceYieldInputs): SourceYieldVerdict 
   const productiveCards = Math.max(0, cards - leeches);
   const reward =
     mature * YIELD_WEIGHT_MATURE_CARD +
+    honorableExtracts * YIELD_WEIGHT_HONORABLE_EXTRACT +
     productiveCards * YIELD_WEIGHT_CARD +
-    extracts * YIELD_WEIGHT_EXTRACT;
+    synthesisNotes * YIELD_WEIGHT_SYNTHESIS_NOTE +
+    unresolvedExtracts * YIELD_WEIGHT_EXTRACT;
 
   // Read-but-barren: a substantially-read source with ≤ threshold output is wasted
   // reading. Scaled by readPct so a fully-read barren source is penalized most.
   const barrenPenalty =
-    output <= YIELD_BARREN_OUTPUT_THRESHOLD ? readPct * YIELD_READ_BARREN_PENALTY : 0;
+    durableNonCardOutput === 0 && output <= YIELD_BARREN_OUTPUT_THRESHOLD
+      ? readPct * YIELD_READ_BARREN_PENALTY
+      : 0;
 
   // Leech ratio: the fraction of the source's cards that are failing repeatedly.
   const leechPenalty = cards > 0 ? (leeches / cards) * YIELD_LEECH_RATIO_PENALTY : 0;

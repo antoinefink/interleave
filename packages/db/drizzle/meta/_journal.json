@@ -225,6 +225,13 @@
       "when": 1781192414418,
       "tag": "0031_same_ink",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1781196000000,
+      "tag": "0032_extract_fates",
+      "breakpoints": true
     }
   ]
 }

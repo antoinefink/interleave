@@ -35,12 +35,13 @@ test.describe.configure({ mode: "serial" });
 let dataDir: string;
 let baseUrl: string;
 let stagnantExtractId: string;
+let referenceExtractId: string;
 
 /** A far-future clock so a fresh, never-aged extract reads as stale + stable across runs. */
 const ASOF = "2031-01-01T12:00:00.000Z";
 
 interface StagnantRow {
-  extract: { id: string; title: string; stage: string };
+  extract: { id: string; title: string; stage: string; extractFate?: string | null };
   postponeCount: number;
   childCount: number;
   daysSinceProgress: number;
@@ -118,6 +119,20 @@ async function isLive(page: Page, id: string): Promise<boolean> {
   }, id);
 }
 
+/** The persisted extract fate through the inspector bridge. */
+async function extractFate(page: Page, id: string): Promise<string | null> {
+  return page.evaluate(async (elementId) => {
+    const api = window.appApi as unknown as {
+      inspector: {
+        get(req: { id: string }): Promise<{
+          data: { element: { extractFate: string | null } } | null;
+        }>;
+      };
+    };
+    return (await api.inspector.get({ id: elementId })).data?.element.extractFate ?? null;
+  }, id);
+}
+
 test.beforeAll(() => {
   ensureBuilt();
   dataDir = makeDataDir();
@@ -170,7 +185,9 @@ test("a repeatedly-postponed, never-advanced extract is detected as stagnant", a
     expect(row.reasons).toEqual(
       expect.arrayContaining(["postponed-repeatedly", "no-progress", "no-children", "stale"]),
     );
-    expect(["rewrite", "convert", "postpone", "delete"]).toContain(row.suggestion);
+    expect(["rewrite", "convert", "postpone", "delete", "keep_as_reference"]).toContain(
+      row.suggestion,
+    );
   }
 
   await app.close();
@@ -201,6 +218,36 @@ test("/maintenance/stagnant lists the extract with reasons + a suggested remedia
   expect((await listStagnation(page)).stagnantCount).toBe(1);
 
   await app.close();
+});
+
+test("keeping a stagnant extract as reference removes it and survives restart", async () => {
+  const app1 = await launchApp(dataDir, { seedOnEmpty: true });
+  const page1 = await app1.firstWindow();
+  await page1.waitForLoadState("domcontentloaded");
+
+  const sourceId = await resolveSourceId(page1);
+  referenceExtractId = await makeStagnantExtract(page1, sourceId);
+
+  await page1.goto(`${baseUrl}/maintenance/stagnant?asOf=${encodeURIComponent(ASOF)}`);
+  await page1.waitForLoadState("domcontentloaded");
+  const row = page1.locator(`[data-extract-id="${referenceExtractId}"]`);
+  await expect(row).toBeVisible();
+  await row.getByTestId("stagnant-reference").click();
+  await expect(row).toHaveCount(0);
+  expect(await extractFate(page1, referenceExtractId)).toBe("reference");
+  expect((await listStagnation(page1)).rows.some((r) => r.extract.id === referenceExtractId)).toBe(
+    false,
+  );
+  await app1.close();
+
+  const app2 = await launchApp(dataDir);
+  const page2 = await app2.firstWindow();
+  await page2.waitForLoadState("domcontentloaded");
+  expect(await extractFate(page2, referenceExtractId)).toBe("reference");
+  expect((await listStagnation(page2)).rows.some((r) => r.extract.id === referenceExtractId)).toBe(
+    false,
+  );
+  await app2.close();
 });
 
 test("deleting the stagnant extract from the view removes the row + soft-deletes it", async () => {

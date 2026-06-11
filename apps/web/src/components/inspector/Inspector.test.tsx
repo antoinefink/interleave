@@ -93,6 +93,7 @@ function element(id: string, title: string): ElementSummary {
     stage: "rough_topic",
     priority: 0.5,
     dueAt: null,
+    extractFate: null,
   };
 }
 

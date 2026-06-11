@@ -390,8 +390,9 @@ Detailed specs: [`tasks/M21-honest-exits.md`](./tasks/M21-honest-exits.md)
 - [x] **T103 — Proactive Done: surface `retirementSuggestion`** · _deps: T028, T083_
   Done when: the scheduler's already-computed `retirementSuggestion` (threaded through `SchedulerService`, currently consumed by nothing in `apps/web`) surfaces as a calm nudge on queue rows and in the reader — one tap into the existing DoneIntentMenu with Finished/Abandon prefilled — server-authoritative, dismissible, and dismissals remembered.
   Completed in the T103 final commit. Verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm e2e tests/electron/done-intent.spec.ts`.
-- [ ] **T104 — Value model v2: honorable non-card fates** · _deps: T024, T084, T095_
+- [x] **T104 — Value model v2: honorable non-card fates** · _deps: T024, T084, T095_
   Done when: extracts can terminate as reference / synthesized / done-without-card (distinct states, not delete), `synthesis_note` lineage counts as productive output in source-yield, and the stagnation detector, T084 suggestions, and analytics all respect the new fates — synthesis-driven reading stops being scored as failure. Prerequisite for every yield-keyed behavior (T112, T121).
+  Completed in `feat: T104 value model v2`. Verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm e2e -- tests/electron/extract-review.spec.ts tests/electron/source-yield.spec.ts tests/electron/extract-stagnation.spec.ts`.
 
 ## M22 — Receipts: priority integrity & knowledge maturity (T105–T110)
 Detailed specs: [`tasks/M22-receipts.md`](./tasks/M22-receipts.md)

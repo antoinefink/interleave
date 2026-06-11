@@ -35,6 +35,15 @@ import {
   type StagnationReason,
   type StagnationSuggestion,
 } from "../lib/appApi";
+import {
+  canReactivateExtractFate,
+  canSetExtractFate,
+  EXTRACT_FATE_BRIDGE_HINT,
+  extractFateLabel,
+  extractFateOf,
+  reactivateExtractFate,
+  setExtractFate,
+} from "../lib/extractFateAdapter";
 import { UNDO_EVENT } from "../shell/nav";
 import "../review/review.css";
 import "./leech-cleanup.css";
@@ -49,11 +58,15 @@ const REASON_LABEL: Record<StagnationReason, string> = {
 };
 
 /** The human label + the verb for each suggested remediation. */
-const SUGGESTION_LABEL: Record<StagnationSuggestion, string> = {
+type T104StagnationSuggestion = StagnationSuggestion | "keep_as_reference" | "mark_synthesized";
+
+const SUGGESTION_LABEL: Record<T104StagnationSuggestion, string> = {
   rewrite: "Rewrite",
   convert: "Convert to card",
   postpone: "Postpone",
   delete: "Delete",
+  keep_as_reference: "Keep as reference",
+  mark_synthesized: "Synthesis reference",
 };
 
 /** The readable extract-stage label for the meta row. */
@@ -120,12 +133,14 @@ export function StagnantExtracts() {
 
   /** Postpone / Delete are direct typed commands; remove the row optimistically. */
   const act = useCallback(
-    async (id: string, action: "postpone" | "delete") => {
+    async (id: string, action: "postpone" | "delete" | "reference" | "reactivate") => {
       setBusyId(id);
       setError(null);
       try {
         if (action === "postpone") await appApi.postponeExtract({ id });
-        else await appApi.deleteExtract({ id });
+        else if (action === "delete") await appApi.deleteExtract({ id });
+        else if (action === "reference") await setExtractFate(id, "reference");
+        else await reactivateExtractFate(id);
         setRows((prev) => prev.filter((r) => r.extract.id !== id));
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -197,89 +212,130 @@ export function StagnantExtracts() {
             </p>
           </div>
         ) : (
-          rows.map((row) => (
-            <div
-              className="lc-card se-card"
-              key={row.extract.id}
-              data-testid="stagnant-row"
-              data-extract-id={row.extract.id}
-              data-suggestion={row.suggestion}
-            >
-              <div className="lc-card__meta">
-                <span className="badge badge--soft">{stageLabel(row.extract.stage)}</span>
-                <Prio priority={row.extract.priority} />
-                <span className="badge se-badge--postpone" data-testid="stagnant-postpones">
-                  Postponed ×{row.postponeCount}
-                </span>
-                <span className="badge badge--soft" data-testid="stagnant-stale">
-                  {row.daysSinceProgress}d no progress
-                </span>
-              </div>
-
-              <div className="lc-card__body">
-                <div className="lc-card__prompt" data-testid="stagnant-title">
-                  <Icon name="extract" size={14} />
-                  <span className="se-title" title={row.extract.title}>
-                    {row.extract.title}
+          rows.map((row) => {
+            const suggestion = row.suggestion as T104StagnationSuggestion;
+            const fate = extractFateOf(row.extract);
+            const fateSupported = canSetExtractFate();
+            const reactivateSupported = canReactivateExtractFate();
+            return (
+              <div
+                className="lc-card se-card"
+                key={row.extract.id}
+                data-testid="stagnant-row"
+                data-extract-id={row.extract.id}
+                data-suggestion={suggestion}
+              >
+                <div className="lc-card__meta">
+                  <span className="badge badge--soft">{stageLabel(row.extract.stage)}</span>
+                  <Prio priority={row.extract.priority} />
+                  <span className="badge se-badge--postpone" data-testid="stagnant-postpones">
+                    Postponed ×{row.postponeCount}
                   </span>
-                </div>
-                <div className="se-reasons" data-testid="stagnant-reasons">
-                  {row.reasons.map((reason) => (
-                    <span className="se-reason" key={reason} data-reason={reason}>
-                      {REASON_LABEL[reason]}
+                  <span className="badge badge--soft" data-testid="stagnant-stale">
+                    {row.daysSinceProgress}d no progress
+                  </span>
+                  {fate ? (
+                    <span className="badge badge--soft" data-testid="stagnant-fate">
+                      {extractFateLabel(fate)}
                     </span>
-                  ))}
+                  ) : null}
                 </div>
-                <div className="se-suggest" data-testid="stagnant-suggestion">
-                  <Icon name="sparkle" size={12} />
-                  Suggested: {SUGGESTION_LABEL[row.suggestion]}
-                </div>
-              </div>
 
-              <div className="lc-card__actions" data-testid="stagnant-actions">
-                <button
-                  type="button"
-                  className={`rv-repair__btn${row.suggestion === "rewrite" ? " se-btn--suggested" : ""}`}
-                  data-testid="stagnant-rewrite"
-                  disabled={busyId === row.extract.id}
-                  onClick={() => open(row.extract.id)}
-                >
-                  <Icon name="edit" size={14} />
-                  Rewrite
-                </button>
-                <button
-                  type="button"
-                  className={`rv-repair__btn${row.suggestion === "convert" ? " se-btn--suggested" : ""}`}
-                  data-testid="stagnant-convert"
-                  disabled={busyId === row.extract.id}
-                  onClick={() => open(row.extract.id)}
-                >
-                  <Icon name="card" size={14} />
-                  Convert
-                </button>
-                <button
-                  type="button"
-                  className={`rv-repair__btn${row.suggestion === "postpone" ? " se-btn--suggested" : ""}`}
-                  data-testid="stagnant-postpone"
-                  disabled={busyId === row.extract.id}
-                  onClick={() => void act(row.extract.id, "postpone")}
-                >
-                  <Icon name="hourglass" size={14} />
-                  Postpone
-                </button>
-                <button
-                  type="button"
-                  className={`rv-repair__btn${row.suggestion === "delete" ? " se-btn--suggested" : ""}`}
-                  data-testid="stagnant-delete"
-                  disabled={busyId === row.extract.id}
-                  onClick={() => void act(row.extract.id, "delete")}
-                >
-                  <Icon name="trash" size={14} />
-                  Delete
-                </button>
+                <div className="lc-card__body">
+                  <div className="lc-card__prompt" data-testid="stagnant-title">
+                    <Icon name="extract" size={14} />
+                    <span className="se-title" title={row.extract.title}>
+                      {row.extract.title}
+                    </span>
+                  </div>
+                  <div className="se-reasons" data-testid="stagnant-reasons">
+                    {row.reasons.map((reason) => (
+                      <span className="se-reason" key={reason} data-reason={reason}>
+                        {REASON_LABEL[reason]}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="se-suggest" data-testid="stagnant-suggestion">
+                    <Icon name="sparkle" size={12} />
+                    Suggested: {SUGGESTION_LABEL[suggestion]}
+                  </div>
+                </div>
+
+                <div className="lc-card__actions" data-testid="stagnant-actions">
+                  <button
+                    type="button"
+                    className={`rv-repair__btn${suggestion === "rewrite" ? " se-btn--suggested" : ""}`}
+                    data-testid="stagnant-rewrite"
+                    disabled={busyId === row.extract.id}
+                    onClick={() => open(row.extract.id)}
+                  >
+                    <Icon name="edit" size={14} />
+                    Rewrite
+                  </button>
+                  <button
+                    type="button"
+                    className={`rv-repair__btn${suggestion === "convert" ? " se-btn--suggested" : ""}`}
+                    data-testid="stagnant-convert"
+                    disabled={busyId === row.extract.id}
+                    onClick={() => open(row.extract.id)}
+                  >
+                    <Icon name="card" size={14} />
+                    Convert
+                  </button>
+                  <button
+                    type="button"
+                    className={`rv-repair__btn${suggestion === "postpone" ? " se-btn--suggested" : ""}`}
+                    data-testid="stagnant-postpone"
+                    disabled={busyId === row.extract.id}
+                    onClick={() => void act(row.extract.id, "postpone")}
+                  >
+                    <Icon name="hourglass" size={14} />
+                    Postpone
+                  </button>
+                  <button
+                    type="button"
+                    className={`rv-repair__btn${suggestion === "delete" ? " se-btn--suggested" : ""}`}
+                    data-testid="stagnant-delete"
+                    disabled={busyId === row.extract.id}
+                    onClick={() => void act(row.extract.id, "delete")}
+                  >
+                    <Icon name="trash" size={14} />
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    className={`rv-repair__btn${suggestion === "keep_as_reference" ? " se-btn--suggested" : ""}`}
+                    data-testid="stagnant-reference"
+                    disabled={busyId === row.extract.id || !fateSupported}
+                    title={
+                      fateSupported ? "Keep this extract for reference" : EXTRACT_FATE_BRIDGE_HINT
+                    }
+                    onClick={() => void act(row.extract.id, "reference")}
+                  >
+                    <Icon name="bookmark" size={14} />
+                    Reference
+                  </button>
+                  {fate ? (
+                    <button
+                      type="button"
+                      className="rv-repair__btn"
+                      data-testid="stagnant-reactivate"
+                      disabled={busyId === row.extract.id || !reactivateSupported}
+                      title={
+                        reactivateSupported
+                          ? "Return this extract to the attention queue"
+                          : EXTRACT_FATE_BRIDGE_HINT
+                      }
+                      onClick={() => void act(row.extract.id, "reactivate")}
+                    >
+                      <Icon name="restore" size={14} />
+                      Reactivate
+                    </button>
+                  ) : null}
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </div>

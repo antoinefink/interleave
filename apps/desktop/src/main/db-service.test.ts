@@ -38,6 +38,14 @@ afterEach(() => {
 });
 
 describe("DbService", () => {
+  it("rejects direct synthesized extract fate before reaching repository state (T104)", () => {
+    const svc = Object.create(DbService.prototype) as DbService;
+
+    expect(() => svc.setExtractFate({ id: "el_ex", fate: "synthesized" } as never)).toThrow(
+      "synthesized fate is synthesis-owned",
+    );
+  });
+
   it("opens the DB, runs migrations, and reports a healthy status", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });

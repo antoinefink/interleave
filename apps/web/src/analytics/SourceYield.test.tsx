@@ -29,6 +29,12 @@ const h = vi.hoisted(() => {
     },
     readPct: 1,
     extractsCreated: 0,
+    productiveExtracts: 0,
+    referenceExtracts: 0,
+    synthesizedExtracts: 0,
+    doneWithoutCardExtracts: 0,
+    synthesisReferencedExtracts: 0,
+    synthesisNotesCreated: 0,
     cardsCreated: 0,
     matureCards: 0,
     leeches: 0,
@@ -53,6 +59,12 @@ const h = vi.hoisted(() => {
     },
     readPct: 0.75,
     extractsCreated: 3,
+    productiveExtracts: 2,
+    referenceExtracts: 1,
+    synthesizedExtracts: 0,
+    doneWithoutCardExtracts: 1,
+    synthesisReferencedExtracts: 1,
+    synthesisNotesCreated: 1,
     cardsCreated: 5,
     matureCards: 4,
     leeches: 0,
@@ -108,6 +120,12 @@ describe("SourceYield", () => {
       // Read-% bar width reflects readPct (0.75 → 75%).
       const bar = within(highRow as HTMLElement).getByTestId("source-yield-readbar");
       expect((bar as HTMLElement).style.width).toBe("75%");
+      expect(
+        within(highRow as HTMLElement).getByTestId("source-yield-non-card-total"),
+      ).toHaveTextContent("2");
+      expect(
+        within(highRow as HTMLElement).getByTestId("source-yield-non-card-detail"),
+      ).toHaveTextContent("Ref 1 · Synth 0 · Done 1 · Linked 1 · Notes 1");
     }
   });
 

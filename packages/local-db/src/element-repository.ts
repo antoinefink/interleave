@@ -21,6 +21,7 @@ import type {
   ElementRelation,
   ElementStatus,
   ElementType,
+  ExtractFate,
   IsoTimestamp,
   Priority,
   RelationId,
@@ -72,6 +73,7 @@ export interface UpdateElementInput {
   readonly title?: string;
   readonly dueAt?: IsoTimestamp | null;
   readonly parkedAt?: IsoTimestamp | null;
+  readonly extractFate?: ExtractFate | null;
 }
 
 /**
@@ -116,6 +118,7 @@ export class ElementRepository {
       priority: input.priority,
       dueAt: input.dueAt ?? null,
       parkedAt: null,
+      extractFate: null,
       title: input.title,
       parentId: input.parentId ?? null,
       sourceId: input.sourceId ?? null,
@@ -132,6 +135,7 @@ export class ElementRepository {
         priority: element.priority,
         dueAt: element.dueAt,
         parkedAt: element.parkedAt,
+        extractFate: element.extractFate,
         title: element.title,
         parentId: element.parentId,
         sourceId: element.sourceId,
@@ -240,6 +244,7 @@ export class ElementRepository {
     if (patch.title !== undefined) prev.title = before.title;
     if (patch.dueAt !== undefined) prev.dueAt = before.dueAt;
     if (patch.parkedAt !== undefined) prev.parkedAt = before.parkedAt;
+    if (patch.extractFate !== undefined) prev.extractFate = before.extractFate;
 
     const updatedAt = nowIso();
     const set: Record<string, unknown> = { updatedAt };
@@ -249,6 +254,7 @@ export class ElementRepository {
     if (patch.title !== undefined) set.title = patch.title;
     if (patch.dueAt !== undefined) set.dueAt = patch.dueAt;
     if (patch.parkedAt !== undefined) set.parkedAt = patch.parkedAt;
+    if (patch.extractFate !== undefined) set.extractFate = patch.extractFate;
 
     tx.update(elements).set(set).where(eq(elements.id, id)).run();
     const row = tx.select().from(elements).where(eq(elements.id, id)).get();
@@ -359,6 +365,9 @@ export class ElementRepository {
     // element to where it was (the op payload is the undo/origin source of truth).
     const before = tx.select().from(elements).where(eq(elements.id, id)).get();
     if (!before) throw new Error(`ElementRepository.softDelete: element ${id} not found`);
+    if (before.type === "synthesis_note") {
+      this.clearSynthesisFatesForNoteWithin(tx, id);
+    }
     const prevStatus = before.status;
     const ts = nowIso();
     tx.update(elements)
@@ -386,6 +395,11 @@ export class ElementRepository {
    */
   restore(id: ElementId, status: ElementStatus = "active"): Element {
     return this.db.transaction((tx) => {
+      const before = tx.select().from(elements).where(eq(elements.id, id)).get();
+      if (!before) throw new Error(`ElementRepository.restore: element ${id} not found`);
+      if (before.type === "synthesis_note") {
+        this.setSynthesisFatesForNoteWithin(tx, id);
+      }
       const ts = nowIso();
       tx.update(elements)
         .set({ deletedAt: null, status, updatedAt: ts })
@@ -400,6 +414,76 @@ export class ElementRepository {
       });
       return rowToElement(row);
     });
+  }
+
+  private clearSynthesisFatesForNoteWithin(tx: DbClient, noteId: ElementId): void {
+    for (const target of this.listReferencedExtractRowsWithin(tx, noteId)) {
+      if (target.extractFate !== "synthesized") continue;
+      if (this.hasOtherLiveSynthesisReferenceWithin(tx, target.id as ElementId, noteId)) continue;
+      if (target.deletedAt) {
+        this.updateWithin(tx, target.id as ElementId, { extractFate: null });
+      } else {
+        this.updateWithin(tx, target.id as ElementId, {
+          status: "scheduled",
+          dueAt: nowIso(),
+          parkedAt: null,
+          extractFate: null,
+        });
+      }
+    }
+  }
+
+  private setSynthesisFatesForNoteWithin(tx: DbClient, noteId: ElementId): void {
+    for (const target of this.listReferencedExtractRowsWithin(tx, noteId)) {
+      if (target.deletedAt || target.extractFate !== null) continue;
+      this.updateWithin(tx, target.id as ElementId, {
+        status: "done",
+        dueAt: null,
+        parkedAt: null,
+        extractFate: "synthesized",
+      });
+    }
+  }
+
+  private listReferencedExtractRowsWithin(tx: DbClient, noteId: ElementId) {
+    return tx
+      .select({
+        id: elements.id,
+        deletedAt: elements.deletedAt,
+        extractFate: elements.extractFate,
+      })
+      .from(elementRelations)
+      .innerJoin(elements, eq(elementRelations.toElementId, elements.id))
+      .where(
+        and(
+          eq(elementRelations.fromElementId, noteId),
+          eq(elementRelations.relationType, "references"),
+          eq(elements.type, "extract"),
+        ),
+      )
+      .all();
+  }
+
+  private hasOtherLiveSynthesisReferenceWithin(
+    tx: DbClient,
+    targetId: ElementId,
+    noteId: ElementId,
+  ): boolean {
+    const row = tx
+      .select({ fromElementId: elementRelations.fromElementId })
+      .from(elementRelations)
+      .innerJoin(elements, eq(elementRelations.fromElementId, elements.id))
+      .where(
+        and(
+          eq(elementRelations.toElementId, targetId),
+          eq(elementRelations.relationType, "references"),
+          eq(elements.type, "synthesis_note"),
+          isNull(elements.deletedAt),
+        ),
+      )
+      .all()
+      .find((ref) => ref.fromElementId !== noteId);
+    return row != null;
   }
 
   /** Live (not soft-deleted) elements whose ids are in `ids`, preserving none of the order. */
@@ -463,15 +547,21 @@ export class ElementRepository {
    * latest op a future undo inspects).
    */
   removeRelation(id: RelationId): void {
-    this.db.transaction((tx) => {
-      const row = tx.select().from(elementRelations).where(eq(elementRelations.id, id)).get();
-      if (!row) return;
-      tx.delete(elementRelations).where(eq(elementRelations.id, id)).run();
-      new OperationLogRepository(tx).append(tx, {
-        opType: "remove_relation",
-        elementId: (row.fromElementId as ElementId | undefined) ?? null,
-        payload: { id },
-      });
+    this.db.transaction((tx) => this.removeRelationWithin(tx, id));
+  }
+
+  /**
+   * Remove a relation using an EXISTING transaction, logging `remove_relation` on the
+   * SAME `tx`. A missing relation remains a no-op.
+   */
+  removeRelationWithin(tx: DbClient, id: RelationId): void {
+    const row = tx.select().from(elementRelations).where(eq(elementRelations.id, id)).get();
+    if (!row) return;
+    tx.delete(elementRelations).where(eq(elementRelations.id, id)).run();
+    new OperationLogRepository(tx).append(tx, {
+      opType: "remove_relation",
+      elementId: (row.fromElementId as ElementId | undefined) ?? null,
+      payload: { id },
     });
   }
 

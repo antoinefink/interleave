@@ -38,6 +38,7 @@ import {
   EMBEDDING_API_KEY_MAX,
   EMBEDDING_MODEL_ID_MAX,
   EMBEDDING_PROVIDERS,
+  type ExtractFate,
   FACT_STABILITY,
   type FactExpiryStatus,
   type FactLifetime,
@@ -79,6 +80,7 @@ import { z } from "zod";
 export type {
   AppSettings,
   ConfidenceLevel,
+  ExtractFate,
   FactExpiryStatus,
   FactLifetime,
   FactStability,
@@ -295,6 +297,8 @@ export interface ElementSummary {
   readonly priority: number;
   readonly title: string;
   readonly dueAt: string | null;
+  /** Extract-only honorable terminal fate; `null` for active extracts and all non-extracts. */
+  readonly extractFate: ExtractFate | null;
 }
 
 /** Which scheduler an element is on — the load-bearing FSRS vs attention split. */
@@ -342,6 +346,8 @@ export interface SourceYieldSignals {
   readonly readPct: number;
   /** Live `extract` descendants created from the source. */
   readonly extractsCreated: number;
+  /** Extracts that produced non-card value, de-duplicated across fate + synthesis refs. */
+  readonly productiveExtracts: number;
   /** Live `card` descendants created from the source. */
   readonly cardsCreated: number;
 }
@@ -2914,6 +2920,8 @@ export interface ExtractActionSummary {
   readonly title: string;
   /** The attention `due_at` (ISO-8601) — extracts are attention items, never FSRS. */
   readonly dueAt: string | null;
+  /** Extract-only honorable terminal fate; `null` when no fate is set. */
+  readonly extractFate: ExtractFate | null;
   readonly sourceId: string | null;
   readonly parentId: string | null;
 }
@@ -2981,6 +2989,35 @@ export const ExtractsMarkDoneRequestSchema = z.object({
 export type ExtractsMarkDoneRequest = z.infer<typeof ExtractsMarkDoneRequestSchema>;
 
 export interface ExtractsMarkDoneResult {
+  readonly extract: ExtractActionSummary;
+}
+
+export type DirectExtractFate = "reference" | "done_without_card";
+
+export const DirectExtractFateSchema = z.enum(["reference", "done_without_card"]);
+
+export const ExtractsSetFateRequestSchema = z.object({
+  /** The extract element id to mark as honorably terminal. */
+  id: ElementIdSchema,
+  /**
+   * Direct user commands can only set non-card fates. `synthesized` is maintained by
+   * synthesis-note lineage and is intentionally rejected at the IPC boundary.
+   */
+  fate: DirectExtractFateSchema,
+});
+export type ExtractsSetFateRequest = z.infer<typeof ExtractsSetFateRequestSchema>;
+
+export interface ExtractsSetFateResult {
+  readonly extract: ExtractActionSummary;
+}
+
+export const ExtractsReactivateFateRequestSchema = z.object({
+  /** The extract element id whose honorable fate should be cleared and reactivated. */
+  id: ElementIdSchema,
+});
+export type ExtractsReactivateFateRequest = z.infer<typeof ExtractsReactivateFateRequestSchema>;
+
+export interface ExtractsReactivateFateResult {
   readonly extract: ExtractActionSummary;
 }
 
@@ -5448,6 +5485,18 @@ export interface SourceYieldRow {
   /** How far the source has been read, in `[0, 1]`. */
   readonly readPct: number;
   readonly extractsCreated: number;
+  /** Live fated/reference extracts plus synthesis-referenced extracts, de-duplicated. */
+  readonly productiveExtracts: number;
+  /** Live fated extracts with `extract_fate = 'reference'`. */
+  readonly referenceExtracts: number;
+  /** Live fated extracts with `extract_fate = 'synthesized'`. */
+  readonly synthesizedExtracts: number;
+  /** Live fated extracts with `extract_fate = 'done_without_card'`. */
+  readonly doneWithoutCardExtracts: number;
+  /** Live extract targets referenced by live synthesis notes. */
+  readonly synthesisReferencedExtracts: number;
+  /** Live synthesis notes that reference material from this source. */
+  readonly synthesisNotesCreated: number;
   readonly cardsCreated: number;
   readonly matureCards: number;
   readonly leeches: number;
@@ -5509,7 +5558,13 @@ export type ExtractStagnationListRequest = z.infer<typeof ExtractStagnationListR
 export type StagnationReason = "postponed-repeatedly" | "no-progress" | "no-children" | "stale";
 
 /** The recommended remediation — each maps to an EXISTING `extracts:*` / extract→card command. */
-export type StagnationSuggestion = "rewrite" | "convert" | "postpone" | "delete";
+export type StagnationSuggestion =
+  | "rewrite"
+  | "convert"
+  | "postpone"
+  | "delete"
+  | "keep_as_reference"
+  | "mark_synthesized";
 
 /** A small extract descriptor embedded in each stagnant row (flat, JSON-serializable). */
 export interface StagnantExtractRef {
@@ -5519,6 +5574,8 @@ export interface StagnantExtractRef {
   readonly priority: number;
   /** The attention `due_at` (ISO-8601), or `null`. Extracts are attention items. */
   readonly dueAt: string | null;
+  /** Extract-only honorable terminal fate; `null` when no fate is set. */
+  readonly extractFate?: ExtractFate | null;
   readonly createdAt: string;
 }
 
@@ -5527,6 +5584,7 @@ export interface StagnantExtractRow {
   readonly extract: StagnantExtractRef;
   readonly postponeCount: number;
   readonly childCount: number;
+  readonly synthesizedReferenceCount?: number;
   /** Whole days since the last stage advance (or `createdAt`). */
   readonly daysSinceProgress: number;
   readonly reasons: readonly StagnationReason[];
@@ -6094,6 +6152,10 @@ export interface AppApi {
     postpone(request: ExtractsPostponeRequest): Promise<ExtractsPostponeResult>;
     /** Mark an extract done (status `done`); logs `update_element` (T024). */
     markDone(request: ExtractsMarkDoneRequest): Promise<ExtractsMarkDoneResult>;
+    /** Mark an extract as reference / done-without-card; direct synthesized is rejected (T104). */
+    setFate(request: ExtractsSetFateRequest): Promise<ExtractsSetFateResult>;
+    /** Clear an extract fate and return it to active attention work due now (T104). */
+    reactivateFate(request: ExtractsReactivateFateRequest): Promise<ExtractsReactivateFateResult>;
     /** Soft-delete an extract; logs `soft_delete_element` (T024). */
     delete(request: ExtractsDeleteRequest): Promise<ExtractsDeleteResult>;
   };

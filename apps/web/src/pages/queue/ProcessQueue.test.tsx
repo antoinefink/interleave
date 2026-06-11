@@ -220,6 +220,7 @@ const h = vi.hoisted(() => {
         priority: 0.625,
         title: "skill-acquisition efficiency",
         dueAt: "2026-05-31T06:00:00.000Z",
+        extractFate: null,
         sourceId: "source-1",
         parentId: null,
       },
@@ -233,10 +234,25 @@ const h = vi.hoisted(() => {
         priority: 0.625,
         title: "skill-acquisition efficiency",
         dueAt: "2026-05-31T06:00:00.000Z",
+        extractFate: null,
         sourceId: "source-1",
         parentId: null,
       },
       plainText: "Edited extract body.",
+    }),
+    setExtractFate: vi.fn().mockResolvedValue({
+      extract: {
+        id: "extract-1",
+        type: "extract",
+        status: "done",
+        stage: "clean_extract",
+        priority: 0.625,
+        title: "skill-acquisition efficiency",
+        dueAt: null,
+        extractFate: "reference",
+        sourceId: "source-1",
+        parentId: null,
+      },
     }),
     siblingCardAnswers: vi.fn().mockResolvedValue({ cards: [] }),
     createExtraction: vi.fn().mockResolvedValue({
@@ -323,6 +339,7 @@ vi.mock("../../lib/appApi", async () => {
       getInspectorData: h.getInspectorData,
       updateExtractStage: h.updateExtractStage,
       rewriteExtract: h.rewriteExtract,
+      setExtractFate: h.setExtractFate,
       siblingCardAnswers: h.siblingCardAnswers,
       createExtraction: h.createExtraction,
       createCard: h.createCard,
@@ -514,6 +531,7 @@ function stageMutation(stage: string) {
       priority: 0.625,
       title: "skill-acquisition efficiency",
       dueAt: "2026-05-31T06:00:00.000Z",
+      extractFate: null,
       sourceId: "source-1",
       parentId: null,
     },
@@ -1709,6 +1727,27 @@ describe("ProcessQueue", () => {
     expect(screen.queryByTestId("process-extract-subextract")).not.toBeInTheDocument();
     expect(screen.getByTestId("process-extract-make-qa")).toBeInTheDocument();
     expect(h.navigateSpy).not.toHaveBeenCalled();
+  });
+
+  it("sets extract fates inline without advancing the process cursor", async () => {
+    render(<ProcessQueue />);
+    await moveToExtract();
+
+    fireEvent.click(screen.getByTestId("process-extract-fate-reference"));
+    await waitFor(() =>
+      expect(h.setExtractFate).toHaveBeenCalledWith({ id: "extract-1", fate: "reference" }),
+    );
+    expect(currentItemId()).toBe("extract-1");
+
+    fireEvent.click(screen.getByTestId("process-extract-fate-done-without-card"));
+    await waitFor(() =>
+      expect(h.setExtractFate).toHaveBeenCalledWith({
+        id: "extract-1",
+        fate: "done_without_card",
+      }),
+    );
+    expect(currentItemId()).toBe("extract-1");
+    expect(h.actOnQueueItem).not.toHaveBeenCalled();
   });
 
   it("keeps the process extract body scroll-contained above normal-flow footer controls", async () => {
