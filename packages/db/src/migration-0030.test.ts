@@ -253,6 +253,25 @@ describe("migration 0030 — parked lifecycle state", () => {
         .get("task_legacy") as { status: string };
       expect(legacyTask.status).toBe("dismissed");
 
+      // The regression the original 0030 shipped with: the rebuild must preserve
+      // the lineage COLUMNS of the elements table itself, not just side-table
+      // rows. Under an enforcing connection, `DROP TABLE elements` fired
+      // `ON DELETE SET NULL` into the freshly copied `__new_elements` rows and
+      // nulled every parent_id/source_id — invisible to the row COUNTs below.
+      // (The seeded extract/card have NO op-log rows, so 0034's backfill cannot
+      // mask a 0030 copy failure here.)
+      const lineage = handle.sqlite.prepare(
+        "SELECT parent_id, source_id FROM elements WHERE id = ?",
+      );
+      expect(lineage.get("extract_legacy")).toEqual({
+        parent_id: "source_legacy",
+        source_id: "source_legacy",
+      });
+      expect(lineage.get("card_legacy")).toEqual({
+        parent_id: "extract_legacy",
+        source_id: "source_legacy",
+      });
+
       expect(count(handle, "sources", "element_id = 'source_legacy'")).toBe(1);
       expect(count(handle, "documents", "element_id = 'source_legacy'")).toBe(1);
       expect(count(handle, "document_blocks", "document_id = 'source_legacy'")).toBe(1);

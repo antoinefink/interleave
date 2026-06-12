@@ -2,11 +2,23 @@
 --
 -- SQLite cannot ALTER an existing CHECK constraint, so this migration rebuilds
 -- the two tables whose status checks derive from ELEMENT_STATUSES: `elements`
--- and `tasks`. Drizzle runs migrations inside a transaction, where
--- `PRAGMA foreign_keys=OFF` cannot protect child rows from `DROP TABLE elements`
--- cascades. To keep this migration data-preserving, every element-dependent
--- side-table is copied to a TEMP backup before the rebuild and restored after
--- the new `elements` table exists.
+-- and `tasks`.
+--
+-- REQUIRES `PRAGMA foreign_keys = OFF` for its whole duration. The runner
+-- (`migrateDatabase`) guarantees this; the migration cannot set the pragma
+-- itself because it is a no-op inside Drizzle's migration transaction. With
+-- enforcement ON, `DROP TABLE elements` performs an implicit `DELETE FROM`
+-- whose referential actions (a) cascade-delete every element-dependent
+-- side-table row and (b) fire `ON DELETE SET NULL` into the just-copied
+-- `__new_elements.parent_id`/`source_id` — the original form of this migration
+-- ran under an enforcing connection and silently wiped every lineage link
+-- (migration 0034 backfills them from the operation log).
+--
+-- The TEMP backup + DELETE + restore dance below keeps the side tables
+-- data-preserving on either kind of connection: under FKs OFF the original rows
+-- survive the rebuild and the DELETE clears them so the restore cannot hit
+-- primary-key conflicts; under a (legacy, enforcing) connection the cascades
+-- empty the tables and the restore refills them.
 CREATE TEMP TABLE `__backup_sources` AS SELECT * FROM `sources`;--> statement-breakpoint
 CREATE TEMP TABLE `__backup_documents` AS SELECT * FROM `documents`;--> statement-breakpoint
 CREATE TEMP TABLE `__backup_document_blocks` AS SELECT * FROM `document_blocks`;--> statement-breakpoint
@@ -106,25 +118,45 @@ CREATE TABLE `__new_tasks` (
 );--> statement-breakpoint
 DROP TABLE `tasks`;--> statement-breakpoint
 ALTER TABLE `__new_tasks` RENAME TO `tasks`;--> statement-breakpoint
+DELETE FROM `sources`;--> statement-breakpoint
 INSERT INTO `sources` SELECT * FROM `__backup_sources`;--> statement-breakpoint
+DELETE FROM `documents`;--> statement-breakpoint
 INSERT INTO `documents` SELECT * FROM `__backup_documents`;--> statement-breakpoint
+DELETE FROM `source_locations`;--> statement-breakpoint
 INSERT INTO `source_locations` SELECT * FROM `__backup_source_locations`;--> statement-breakpoint
+DELETE FROM `concepts`;--> statement-breakpoint
 INSERT INTO `concepts` SELECT * FROM `__backup_concepts`;--> statement-breakpoint
+DELETE FROM `tasks`;--> statement-breakpoint
 INSERT INTO `tasks` SELECT * FROM `__backup_tasks`;--> statement-breakpoint
+DELETE FROM `cards`;--> statement-breakpoint
 INSERT INTO `cards` SELECT * FROM `__backup_cards`;--> statement-breakpoint
+DELETE FROM `review_states`;--> statement-breakpoint
 INSERT INTO `review_states` SELECT * FROM `__backup_review_states`;--> statement-breakpoint
+DELETE FROM `review_logs`;--> statement-breakpoint
 INSERT INTO `review_logs` SELECT * FROM `__backup_review_logs`;--> statement-breakpoint
+DELETE FROM `document_blocks`;--> statement-breakpoint
 INSERT INTO `document_blocks` SELECT * FROM `__backup_document_blocks`;--> statement-breakpoint
+DELETE FROM `document_marks`;--> statement-breakpoint
 INSERT INTO `document_marks` SELECT * FROM `__backup_document_marks`;--> statement-breakpoint
+DELETE FROM `source_block_processing`;--> statement-breakpoint
 INSERT INTO `source_block_processing` SELECT * FROM `__backup_source_block_processing`;--> statement-breakpoint
+DELETE FROM `source_block_processing_outputs`;--> statement-breakpoint
 INSERT INTO `source_block_processing_outputs` SELECT * FROM `__backup_source_block_processing_outputs`;--> statement-breakpoint
+DELETE FROM `element_tags`;--> statement-breakpoint
 INSERT INTO `element_tags` SELECT * FROM `__backup_element_tags`;--> statement-breakpoint
+DELETE FROM `element_relations`;--> statement-breakpoint
 INSERT INTO `element_relations` SELECT * FROM `__backup_element_relations`;--> statement-breakpoint
+DELETE FROM `read_points`;--> statement-breakpoint
 INSERT INTO `read_points` SELECT * FROM `__backup_read_points`;--> statement-breakpoint
+DELETE FROM `assets`;--> statement-breakpoint
 INSERT INTO `assets` SELECT * FROM `__backup_assets`;--> statement-breakpoint
+DELETE FROM `occlusion_masks`;--> statement-breakpoint
 INSERT INTO `occlusion_masks` SELECT * FROM `__backup_occlusion_masks`;--> statement-breakpoint
+DELETE FROM `ai_suggestions`;--> statement-breakpoint
 INSERT INTO `ai_suggestions` SELECT * FROM `__backup_ai_suggestions`;--> statement-breakpoint
+DELETE FROM `embeddings`;--> statement-breakpoint
 INSERT INTO `embeddings` SELECT * FROM `__backup_embeddings`;--> statement-breakpoint
+DELETE FROM `ocr_pages`;--> statement-breakpoint
 INSERT INTO `ocr_pages` SELECT * FROM `__backup_ocr_pages`;--> statement-breakpoint
 DELETE FROM `operation_log`;--> statement-breakpoint
 INSERT INTO `operation_log` SELECT * FROM `__backup_operation_log`;--> statement-breakpoint

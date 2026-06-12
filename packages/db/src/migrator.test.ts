@@ -46,6 +46,34 @@ describe("migrateDatabase", () => {
       handle.sqlite.close();
     }
   });
+
+  it("restores foreign_keys = ON and leaves clean referential state", () => {
+    // Migrations run with enforcement OFF (the documented SQLite table-rebuild
+    // procedure — see 0030), so the runner must hand the connection back with
+    // the mandatory pragma re-enabled and a clean foreign_key_check.
+    const { handle } = tableNames();
+    try {
+      migrateDatabase(handle.db);
+      expect(handle.sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
+      expect(handle.sqlite.pragma("foreign_key_check")).toEqual([]);
+    } finally {
+      handle.sqlite.close();
+    }
+  });
+
+  it("refuses to run while a transaction is open (the pragma would silently no-op)", () => {
+    const { handle } = tableNames();
+    try {
+      handle.sqlite.exec("BEGIN");
+      expect(() => migrateDatabase(handle.db)).toThrow(/could not disable foreign_keys/);
+      handle.sqlite.exec("ROLLBACK");
+      // Recovery: the same connection migrates fine once the transaction ends.
+      migrateDatabase(handle.db);
+      expect(handle.sqlite.pragma("foreign_keys", { simple: true })).toBe(1);
+    } finally {
+      handle.sqlite.close();
+    }
+  });
 });
 
 describe("applyVecMigration", () => {
