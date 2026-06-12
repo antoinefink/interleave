@@ -78,6 +78,7 @@ import { OverloadBanner } from "./OverloadBanner";
 import { openQueueItem } from "./openQueueItem";
 import { actionFor, DueBadge, metaFor, titleFor } from "./queueRow";
 import { RecoveryPanel } from "./RecoveryPanel";
+import { SessionAssemblyPreview } from "./SessionAssemblyPreview";
 
 /** The non-open queue actions a row exposes, with their icon + label (T030). */
 type RowActionKind = QueueActAction["kind"];
@@ -413,6 +414,7 @@ export function QueueScreen() {
   const [priorityDismissError, setPriorityDismissError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterId>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilterId>("all");
+  const [sessionPreviewOpen, setSessionPreviewOpen] = useState(false);
   const activeStatuses = STATUS_FILTERS.find((s) => s.id === statusFilter)?.statuses;
   const activeTypes = useMemo(
     () => (filter !== "all" && filter !== "high" ? ([filter] as readonly string[]) : undefined),
@@ -602,9 +604,8 @@ export function QueueScreen() {
       void navigate({ to: "/inbox" });
       return;
     }
-    // The T031 "Process queue" loop starts only when due scheduled work exists.
-    void navigate({ to: "/process", search: asOf ? { asOf } : {} });
-  }, [navigate, select, asOf, dailyWork, dueCount]);
+    setSessionPreviewOpen(true);
+  }, [navigate, select, dailyWork, dueCount]);
 
   /**
    * Apply one in-place queue action through the SAME typed `appApi` mutation path
@@ -1004,6 +1005,21 @@ export function QueueScreen() {
           </button>
           <span className="sessionbar__note">{sessionNote}</span>
         </div>
+
+        <SessionAssemblyPreview
+          open={sessionPreviewOpen}
+          origin="queue"
+          {...(asOf ? { asOf } : {})}
+          defaultTargetMinutes={data?.minuteBudget?.targetMinutes ?? 25}
+          request={{
+            ...(activeTypes ? { types: activeTypes } : {}),
+            ...(activeStatuses ? { statuses: activeStatuses } : {}),
+            ...(filter === "high" ? { protectedOnly: true } : {}),
+            ...(concept ? { concept } : {}),
+            mode: "full",
+          }}
+          onClose={() => setSessionPreviewOpen(false)}
+        />
 
         {/* filters */}
         <div className="q-filters" data-testid="queue-filters">

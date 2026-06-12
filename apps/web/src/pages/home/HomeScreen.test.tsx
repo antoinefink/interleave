@@ -225,6 +225,32 @@ const h = vi.hoisted(() => {
       items: [],
     },
   };
+  const sessionPlan = {
+    targetMinutes: 25,
+    plannedMinutes: 10,
+    candidateMinutes: 10,
+    plannedCount: 1,
+    candidateCount: 1,
+    overTarget: false,
+    confidence: "default" as const,
+    usesDefaultEstimate: true,
+    items: [
+      {
+        item: sourceRow,
+        estimatedMinutes: 10,
+        estimateConfidence: "default" as const,
+        estimateBasis: "attention:source:default",
+      },
+    ],
+    cut: {
+      totalCount: 0,
+      totalMinutes: 0,
+      detailLimit: 25,
+      items: [],
+      byReason: { did_not_fit: { count: 0, minutes: 0 } },
+      byType: {},
+    },
+  };
   const taskRow: QueueItemSummary = {
     id: "task-1",
     type: "task",
@@ -297,6 +323,7 @@ const h = vi.hoisted(() => {
     listQueue: vi.fn(),
     getAnalytics: vi.fn(),
     getDailyWorkSummary: vi.fn(),
+    previewSessionPlan: vi.fn(),
     ackDailyWorkGraduationEvents: vi.fn(),
     undoDailyWorkAutoPostponeReceipt: vi.fn(),
     navigateSpy: vi.fn(),
@@ -311,6 +338,7 @@ const h = vi.hoisted(() => {
     topicRow,
     cardRow,
     taskRow,
+    sessionPlan,
   };
 });
 
@@ -326,6 +354,7 @@ vi.mock("../../lib/appApi", async () => {
     isDesktop: () => h.isDesktop(),
     appApi: {
       listQueue: h.listQueue,
+      previewSessionPlan: h.previewSessionPlan,
       getAnalytics: h.getAnalytics,
       getDailyWorkSummary: h.getDailyWorkSummary,
       ackDailyWorkGraduationEvents: h.ackDailyWorkGraduationEvents,
@@ -345,6 +374,7 @@ beforeEach(() => {
   h.isDesktop.mockReturnValue(true);
   h.search.mockReturnValue({});
   h.listQueue.mockResolvedValue(h.queue);
+  h.previewSessionPlan.mockResolvedValue(h.sessionPlan);
   h.getAnalytics.mockResolvedValue(h.analytics);
   h.getDailyWorkSummary.mockResolvedValue(h.dailyWork);
   h.ackDailyWorkGraduationEvents.mockResolvedValue({
@@ -685,11 +715,20 @@ describe("HomeScreen", () => {
     expect(screen.queryByTestId("home-banner-leeches")).toBeNull();
   });
 
-  it("Start session navigates to /process", async () => {
+  it("Start session previews a plan before navigating to /process", async () => {
     render(<HomeScreen />);
     await screen.findByTestId("home-due-today");
     fireEvent.click(screen.getByTestId("home-start-session"));
-    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/process", search: {} });
+    await screen.findByTestId("session-preview");
+    expect(h.previewSessionPlan).toHaveBeenCalledWith({ mode: "full", targetMinutes: 25 });
+
+    fireEvent.click(await screen.findByTestId("session-preview-start"));
+    await waitFor(() =>
+      expect(h.navigateSpy).toHaveBeenCalledWith({
+        to: "/process",
+        search: { assembled: 1 },
+      }),
+    );
   });
 
   it("a top-due preview row navigates per type, respecting the FSRS-vs-attention split", async () => {
@@ -824,9 +863,21 @@ describe("HomeScreen", () => {
     expect(h.getAnalytics).toHaveBeenCalledWith({ asOf });
     expect(h.getDailyWorkSummary).toHaveBeenCalledWith({ asOf });
 
-    // Start session carries the clock so the /process loop reads the SAME due set.
+    // Start session carries the clock into preview and then into the accepted process route.
     fireEvent.click(screen.getByTestId("home-start-session"));
-    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/process", search: { asOf } });
+    await screen.findByTestId("session-preview");
+    expect(h.previewSessionPlan).toHaveBeenCalledWith({
+      asOf,
+      mode: "full",
+      targetMinutes: 25,
+    });
+    fireEvent.click(await screen.findByTestId("session-preview-start"));
+    await waitFor(() =>
+      expect(h.navigateSpy).toHaveBeenCalledWith({
+        to: "/process",
+        search: { asOf, assembled: 1 },
+      }),
+    );
 
     // An attention preview row (the topic) also carries the clock into /process.
     const rows = screen.getAllByTestId("home-preview-row");

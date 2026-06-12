@@ -245,6 +245,40 @@ const h = vi.hoisted(() => {
       items: [],
     },
   };
+  const sessionPlan = {
+    targetMinutes: 25,
+    plannedMinutes: 10,
+    candidateMinutes: 10,
+    plannedCount: 1,
+    candidateCount: 1,
+    overTarget: false,
+    confidence: "default" as const,
+    usesDefaultEstimate: true,
+    items: [
+      {
+        item: sourceRow,
+        estimatedMinutes: 10,
+        estimateConfidence: "default" as const,
+        estimateBasis: "attention:source:default",
+      },
+    ],
+    cut: {
+      totalCount: 1,
+      totalMinutes: 2,
+      detailLimit: 25,
+      items: [
+        {
+          item: cardRow,
+          estimatedMinutes: 2,
+          estimateConfidence: "default" as const,
+          estimateBasis: "card:qa:default",
+          reason: "did_not_fit" as const,
+        },
+      ],
+      byReason: { did_not_fit: { count: 1, minutes: 2 } },
+      byType: { card: { count: 1, minutes: 2 } },
+    },
+  };
   const dailyWork: DailyWorkWithGraduations = {
     asOf: "2026-05-30T18:00:00.000Z",
     dueQueueItems: 4,
@@ -326,6 +360,7 @@ const h = vi.hoisted(() => {
     // A mutable holder so a test can drive the shell's selected id into the rows.
     selectedId: { current: null as string | null },
     listQueue: vi.fn().mockResolvedValue(result),
+    previewSessionPlan: vi.fn().mockResolvedValue(sessionPlan),
     getDailyWorkSummary: vi.fn().mockResolvedValue(dailyWork),
     actOnQueueItem: vi.fn(),
     // Descendant-aware delete (T135 / U7): default to a LEAF so the row's Delete takes
@@ -364,6 +399,7 @@ const h = vi.hoisted(() => {
     getSettings: vi.fn().mockResolvedValue({ settings: { "ui.noticeDismissals": {} } }),
     updateSetting: vi.fn().mockResolvedValue({ key: "ui.noticeDismissals", value: {} }),
     result,
+    sessionPlan,
     dailyWork,
     priorityIntegrity,
     cardRow,
@@ -382,6 +418,7 @@ vi.mock("../../lib/appApi", async () => {
     isDesktop: () => true,
     appApi: {
       listQueue: h.listQueue,
+      previewSessionPlan: h.previewSessionPlan,
       getDailyWorkSummary: h.getDailyWorkSummary,
       actOnQueueItem: h.actOnQueueItem,
       countDescendants: h.countDescendants,
@@ -541,7 +578,41 @@ describe("QueueScreen", () => {
 
     fireEvent.click(screen.getByTestId("queue-start-session"));
 
-    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/process", search: {} });
+    await screen.findByTestId("session-preview");
+    expect(h.previewSessionPlan).toHaveBeenCalledWith({
+      mode: "full",
+      targetMinutes: 25,
+    });
+    fireEvent.click(await screen.findByTestId("session-preview-start"));
+    await waitFor(() =>
+      expect(h.navigateSpy).toHaveBeenCalledWith({
+        to: "/process",
+        search: { assembled: 1 },
+      }),
+    );
+  });
+
+  it("passes active queue filters into the session preview request", async () => {
+    h.useSearch.mockReturnValue({ concept: "Intelligence" });
+    render(<QueueScreen />);
+    await screen.findAllByTestId("queue-item");
+
+    fireEvent.click(screen.getByTestId("queue-filter-high"));
+    fireEvent.click(screen.getByTestId("queue-status-scheduled"));
+    fireEvent.click(screen.getByTestId("queue-start-session"));
+
+    await screen.findByTestId("session-preview");
+    await waitFor(() =>
+      expect(h.previewSessionPlan).toHaveBeenCalledWith(
+        expect.objectContaining({
+          concept: "Intelligence",
+          statuses: ["scheduled"],
+          protectedOnly: true,
+          mode: "full",
+          targetMinutes: 30,
+        }),
+      ),
+    );
   });
 
   it("routes the primary CTA to inbox triage when the due queue is empty but imports are waiting", async () => {

@@ -102,6 +102,7 @@ import {
   ReviewSessionService,
   resolveSourceRef,
   type SemanticResolveContext,
+  SessionPlanQuery,
   SourceYieldQuery,
   StandingAutoPostponeService,
   type SynthesisData,
@@ -267,6 +268,8 @@ import type {
   QueueListResult,
   QueueScheduleRequest,
   QueueScheduleResult,
+  QueueSessionPlanRequest,
+  QueueSessionPlanResult,
   QueueUndoRequest,
   QueueUndoResult,
   QueueVacationRequest,
@@ -452,13 +455,14 @@ import { PdfRegionService } from "./pdf-region-service";
 import { UrlImportService } from "./url-import-service";
 
 function queueFiltersFromRequest(
-  request: Pick<QueueListRequest, "types" | "concept" | "tag" | "statuses">,
+  request: Pick<QueueListRequest, "types" | "concept" | "tag" | "statuses" | "protectedOnly">,
 ): { filters?: QueueFilters } {
   const filters: QueueFilters = {
     ...(request.types ? { types: request.types } : {}),
     ...(request.concept ? { concept: request.concept } : {}),
     ...(request.tag ? { tag: request.tag } : {}),
     ...(request.statuses ? { statuses: request.statuses } : {}),
+    ...(request.protectedOnly ? { protectedOnly: true } : {}),
   };
   return Object.keys(filters).length > 0 ? { filters } : {};
 }
@@ -508,6 +512,7 @@ export class DbService {
   private inspector: InspectorQuery | null = null;
   private lineage: LineageQuery | null = null;
   private queue: QueueQuery | null = null;
+  private sessionPlan: SessionPlanQuery | null = null;
   private timeCost: TimeCostQuery | null = null;
   private dailyWork: DailyWorkQuery | null = null;
   private library: LibraryQuery | null = null;
@@ -804,6 +809,7 @@ export class DbService {
     this.lineage = new LineageQuery(this.repositories);
     this.queue = new QueueQuery(this.repositories);
     this.timeCost = new TimeCostQuery(this.handle.db);
+    this.sessionPlan = new SessionPlanQuery(this.handle.db, this.repositories);
     // The facet-driven browse-all read behind `/library` (distinct from search):
     // lists ALL live elements narrowed by type/concept/priority/status facets,
     // including topic/synthesis_note/task which the FTS index never covers.
@@ -881,6 +887,7 @@ export class DbService {
     this.inspector = null;
     this.lineage = null;
     this.queue = null;
+    this.sessionPlan = null;
     this.timeCost = null;
     this.dailyWork = null;
     this.library = null;
@@ -1244,6 +1251,14 @@ export class DbService {
     return this.timeCost;
   }
 
+  /** Read-only session assembly query layer (T118), bound to the open database. */
+  private get sessionPlanQuery(): SessionPlanQuery {
+    if (!this.sessionPlan) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.sessionPlan;
+  }
+
   /**
    * The unified, sorted, filtered due queue (T029). The {@link QueueQuery} merges
    * the two DISTINCT due reads (due cards via the FSRS `review_states.due_at` join;
@@ -1287,6 +1302,41 @@ export class DbService {
             timeEstimate,
           }
         : {}),
+    };
+  }
+
+  /**
+   * Preview what due queue work fits in a target number of minutes (T118). This is a
+   * trusted read model: session assembly itself writes no operation_log rows and
+   * changes no due/review state. The existing standing auto-postpone materialization
+   * may converge today's queue before the read, but renderer `asOf` remains read-only.
+   */
+  previewSessionPlan(request: QueueSessionPlanRequest): QueueSessionPlanResult {
+    if (!request.asOf) this.materializeStandingAutoPostponeToday();
+    const plan = this.sessionPlanQuery.preview({
+      targetMinutes: request.targetMinutes,
+      ...queueFiltersFromRequest(request),
+      ...(request.asOf ? { asOf: request.asOf as IsoTimestamp } : {}),
+      ...(request.mode ? { mode: request.mode } : {}),
+    });
+    return {
+      targetMinutes: plan.targetMinutes,
+      plannedMinutes: plan.plannedMinutes,
+      candidateMinutes: plan.totalCandidateMinutes,
+      plannedCount: plan.plannedItems.length,
+      candidateCount: plan.candidateCount,
+      overTarget: plan.overTarget,
+      confidence: plan.confidence,
+      usesDefaultEstimate: plan.hasDefaultEstimates,
+      items: plan.plannedItems,
+      cut: {
+        totalCount: plan.cutCount,
+        totalMinutes: plan.cutMinutes,
+        detailLimit: plan.cutDetailLimit,
+        items: plan.cutItems,
+        byReason: { did_not_fit: { count: plan.cutReasons.did_not_fit, minutes: plan.cutMinutes } },
+        byType: plan.cutByType,
+      },
     };
   }
 

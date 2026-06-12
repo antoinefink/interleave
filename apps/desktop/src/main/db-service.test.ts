@@ -517,6 +517,42 @@ describe("DbService", () => {
     svc.close();
   });
 
+  it("does not materialize standing auto-postpone for historical session-plan previews (T118)", () => {
+    const preview = vi.fn(() => ({
+      targetMinutes: 25,
+      plannedItems: [],
+      cutItems: [],
+      plannedMinutes: 0,
+      cutMinutes: 0,
+      cutCount: 0,
+      candidateCount: 0,
+      totalCandidateMinutes: 0,
+      overTarget: false,
+      confidence: "learned" as const,
+      hasDefaultEstimates: false,
+      cutDetailLimit: 25,
+      cutReasons: { did_not_fit: 0 },
+      cutByType: {},
+    }));
+    const svc = Object.create(DbService.prototype) as DbService;
+    const materialize = vi.fn();
+    Object.defineProperty(svc, "sessionPlanQuery", { value: { preview } });
+    Object.defineProperty(svc, "materializeStandingAutoPostponeToday", { value: materialize });
+
+    svc.previewSessionPlan({
+      targetMinutes: 25,
+      asOf: "2026-05-01T12:00:00.000Z",
+    });
+    expect(materialize).not.toHaveBeenCalled();
+    expect(preview).toHaveBeenLastCalledWith({
+      targetMinutes: 25,
+      asOf: "2026-05-01T12:00:00.000Z",
+    });
+
+    svc.previewSessionPlan({ targetMinutes: 25 });
+    expect(materialize).toHaveBeenCalledTimes(1);
+  });
+
   it("save-for-later triage parks an inbox source instead of dismissing it", () => {
     const first = new DbService();
     first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });

@@ -350,6 +350,7 @@ export {
   QueueQuery,
   type QueueScheduler,
   type QueueSchedulerSignals,
+  type QueueSessionPlanCandidateData,
 } from "./queue-query";
 export {
   isQueueActionableStatus,
@@ -427,6 +428,14 @@ export {
   RRF_K,
   SemanticSearchRepository,
 } from "./semantic-search-repository";
+export {
+  DEFAULT_SESSION_PLAN_CUT_DETAIL_LIMIT,
+  type SessionPlanCutRow,
+  type SessionPlanItemRow,
+  type SessionPlanPreview,
+  SessionPlanQuery,
+  type SessionPlanReadOptions,
+} from "./session-plan-query";
 export { SettingsRepository } from "./settings-repository";
 export {
   SourceDedupQuery,

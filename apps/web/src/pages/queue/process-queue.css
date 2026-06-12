@@ -870,3 +870,24 @@
   gap: var(--s-3);
   margin-top: var(--s-3);
 }
+.pq-session-summary {
+  display: flex;
+  gap: var(--s-3);
+  justify-content: center;
+  flex-wrap: wrap;
+  margin: var(--s-3) 0 0;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}
+.pq-session-summary span {
+  padding: var(--s-1) var(--s-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+}
+.pq-modes--assembled {
+  min-width: 0;
+}
+.pq-modes--assembled .pq-seg {
+  white-space: nowrap;
+}

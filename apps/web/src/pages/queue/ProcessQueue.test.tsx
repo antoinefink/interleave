@@ -22,6 +22,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { requestQueueRefresh } from "../../components/queue/queueRefresh";
 import type {
   DailyWorkSummaryResult,
   KnowledgeGraduationEvent,
@@ -193,7 +194,7 @@ const h = vi.hoisted(() => {
     easy: { dueAt: "2026-06-09T08:00:00.000Z", scheduledDays: 10, label: "10d" },
   };
   return {
-    search: {} as { asOf?: string },
+    search: {} as { asOf?: string; mode?: string; assembled?: string | number | boolean },
     navigateSpy: vi.fn(),
     selectSpy: vi.fn(),
     listQueue: vi.fn().mockResolvedValue(result),
@@ -492,9 +493,12 @@ vi.mock("./jitter", () => ({
 }));
 
 import { ProcessQueue } from "./ProcessQueue";
+import { acceptSessionAssembly, clearAcceptedSessionAssembly } from "./sessionAssemblyState";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  clearAcceptedSessionAssembly();
+  h.search = {};
   h.listQueue.mockResolvedValue(h.result);
   h.actOnQueueItem.mockResolvedValue({ item: null, removed: true, undo: null });
   h.getDailyWorkSummary.mockResolvedValue(h.dailyWork);
@@ -550,6 +554,43 @@ beforeEach(() => {
     },
   });
 });
+
+function acceptTestAssembly(
+  rows: readonly { readonly item: QueueItemSummary; readonly estimatedMinutes: number }[],
+  cut: { readonly totalCount: number; readonly totalMinutes: number } = {
+    totalCount: 0,
+    totalMinutes: 0,
+  },
+) {
+  acceptSessionAssembly({
+    origin: "queue",
+    mode: "full",
+    plan: {
+      targetMinutes: 25,
+      plannedMinutes: rows.reduce((sum, row) => sum + row.estimatedMinutes, 0),
+      candidateMinutes: rows.reduce((sum, row) => sum + row.estimatedMinutes, 0) + cut.totalMinutes,
+      plannedCount: rows.length,
+      candidateCount: rows.length + cut.totalCount,
+      overTarget: false,
+      confidence: "default",
+      usesDefaultEstimate: true,
+      items: rows.map((row) => ({
+        item: row.item,
+        estimatedMinutes: row.estimatedMinutes,
+        estimateConfidence: "default",
+        estimateBasis: "test",
+      })),
+      cut: {
+        totalCount: cut.totalCount,
+        totalMinutes: cut.totalMinutes,
+        detailLimit: 25,
+        items: [],
+        byReason: { did_not_fit: { count: cut.totalCount, minutes: cut.totalMinutes } },
+        byType: {},
+      },
+    },
+  });
+}
 
 /** The id of the single rendered process item (the cursor item), or null. */
 function currentItemId(): string | null {
@@ -1288,8 +1329,9 @@ describe("ProcessQueue", () => {
   it("renders the compact recall readout with the card's real FSRS values + provenance crumb", async () => {
     render(<ProcessQueue />);
     await screen.findByTestId("process-item");
+    await screen.findByTestId("process-card-prompt", undefined, { timeout: 3000 });
     fireEvent.click(screen.getByTestId("process-card-reveal"));
-    const recall = await screen.findByTestId("process-card-recall");
+    const recall = await screen.findByTestId("process-card-recall", undefined, { timeout: 3000 });
     // The de-duplicated readout must show the card's ACTUAL FSRS values (stability 9.4d,
     // difficulty 5.1/10, retrievability 82%), not merely exist.
     expect(recall).toHaveTextContent("9.4d stability");
@@ -1419,10 +1461,11 @@ describe("ProcessQueue", () => {
     h.reviewCard.mockResolvedValueOnce({ card: duplicateCard });
     render(<ProcessQueue />);
     await screen.findByTestId("process-item");
+    await screen.findByTestId("process-card-prompt", undefined, { timeout: 3000 });
 
     fireEvent.click(screen.getByTestId("process-card-reveal"));
 
-    const answer = await screen.findByTestId("process-card-answer");
+    const answer = await screen.findByTestId("process-card-answer", undefined, { timeout: 3000 });
     expect(answer).toHaveTextContent(/focusing on admiration/i);
     await screen.findByTestId("process-card-refblock");
     expect(screen.queryByTestId("process-card-refblock-quote")).not.toBeInTheDocument();
@@ -2279,6 +2322,150 @@ describe("ProcessQueue", () => {
     await waitFor(() =>
       expect(h.listQueue).toHaveBeenCalledWith(expect.objectContaining({ mode: "read" })),
     );
+  });
+
+  it("T118: assembled mode consumes the accepted deck without re-reading queue.list", async () => {
+    h.search = { assembled: 1 };
+    const sourceItem = h.result.items.find((item) => item.id === "source-1");
+    if (!sourceItem) throw new Error("Missing source fixture");
+    acceptTestAssembly([{ item: sourceItem, estimatedMinutes: 10 }], {
+      totalCount: 1,
+      totalMinutes: 2,
+    });
+
+    render(<ProcessQueue />);
+
+    await screen.findByTestId("process-item");
+    expect(h.listQueue).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("process-modes")).not.toBeInTheDocument();
+    expect(screen.getByTestId("process-assembled-mode")).toHaveTextContent("Planned deck");
+  });
+
+  it("T118: queue refresh does not restart an active assembled deck", async () => {
+    h.search = { assembled: 1 };
+    const card = h.result.items.find((item) => item.id === "card-1");
+    const extract = h.result.items.find((item) => item.id === "extract-1");
+    if (!card || !extract) throw new Error("Missing assembled fixtures");
+    acceptTestAssembly([
+      { item: card, estimatedMinutes: 2 },
+      { item: extract, estimatedMinutes: 6 },
+    ]);
+
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    expect(currentItemId()).toBe("card-1");
+
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+
+    h.getDailyWorkSummary.mockClear();
+    requestQueueRefresh();
+
+    await waitFor(() => expect(h.getDailyWorkSummary).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("process-progress")).toHaveTextContent("2 / 2");
+    expect(currentItemId()).toBe("extract-1");
+    expect(h.listQueue).not.toHaveBeenCalled();
+  });
+
+  it("T118: daily-work read failure does not invalidate the assembled deck", async () => {
+    h.search = { assembled: 1 };
+    const extract = h.result.items.find((item) => item.id === "extract-1");
+    if (!extract) throw new Error("Missing extract fixture");
+    h.getDailyWorkSummary.mockRejectedValueOnce(new Error("daily failed"));
+    acceptTestAssembly([{ item: extract, estimatedMinutes: 6 }]);
+
+    render(<ProcessQueue />);
+
+    await screen.findByTestId("process-item");
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+
+    expect(await screen.findByTestId("process-session-summary")).toHaveTextContent(
+      "Completed 6 min",
+    );
+  });
+
+  it("T118: undo subtracts completed minutes before a repeated assembled action", async () => {
+    h.search = { assembled: 1 };
+    const card = h.result.items.find((item) => item.id === "card-1");
+    const extract = h.result.items.find((item) => item.id === "extract-1");
+    if (!card || !extract) throw new Error("Missing assembled fixtures");
+    acceptTestAssembly([
+      { item: card, estimatedMinutes: 2 },
+      { item: extract, estimatedMinutes: 6 },
+    ]);
+
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
+    await waitFor(() => expect(currentItemId()).toBe("card-1"));
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+
+    expect(await screen.findByTestId("process-session-summary")).toHaveTextContent(
+      "Completed 8 min",
+    );
+  });
+
+  it("T118: lineage branch-delete undo restores assembled cursor and minutes", async () => {
+    h.search = { assembled: 1 };
+    const card = h.result.items.find((item) => item.id === "card-1");
+    const extract = h.result.items.find((item) => item.id === "extract-1");
+    if (!card || !extract) throw new Error("Missing assembled fixtures");
+    h.countDescendants.mockResolvedValueOnce({
+      extracts: 0,
+      cards: 1,
+      cardsWithHistory: 0,
+      total: 1,
+    });
+    h.softDeleteSubtree.mockResolvedValueOnce({
+      batchId: "branch-1",
+      affected: ["extract-1"],
+      skipped: [],
+    });
+    acceptTestAssembly([
+      { item: extract, estimatedMinutes: 6 },
+      { item: card, estimatedMinutes: 2 },
+    ]);
+
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    expect(currentItemId()).toBe("extract-1");
+
+    fireEvent.click(screen.getByTestId("process-action-delete"));
+    fireEvent.click(await screen.findByTestId("lineage-delete-branch"));
+    await waitFor(() => expect(currentItemId()).toBe("card-1"));
+
+    const snackbar = await screen.findByTestId("process-delete-snackbar");
+    fireEvent.click(within(snackbar).getByRole("button", { name: /undo/i }));
+
+    await waitFor(() =>
+      expect(h.restoreBatchFromTrash).toHaveBeenCalledWith({ batchId: "branch-1" }),
+    );
+    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+    expect(screen.getByTestId("process-progress")).toHaveTextContent("1 / 2");
+
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+    await waitFor(() => expect(currentItemId()).toBe("card-1"));
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+
+    expect(await screen.findByTestId("process-session-summary")).toHaveTextContent(
+      "Completed 8 min",
+    );
+  });
+
+  it("T118: assembled mode recovers when the accepted plan state is missing", async () => {
+    h.search = { assembled: 1 };
+
+    render(<ProcessQueue />);
+
+    expect(await screen.findByTestId("process-session-expired")).toHaveTextContent(
+      "Session plan expired",
+    );
+    expect(h.listQueue).not.toHaveBeenCalled();
   });
 
   it("T076: the 'N left' counter reflects the FULL mixed deck, not a type-filtered slice", async () => {

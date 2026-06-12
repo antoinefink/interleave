@@ -32,6 +32,7 @@ export const IPC_CHANNELS = {
   queueAct: "queue:act",
   queueSchedule: "queue:schedule",
   queueUndo: "queue:undo",
+  queueSessionPlan: "queue:sessionPlan",
   queueAutoPostpone: "queue:autoPostpone",
   queueAutoPostponeApply: "queue:autoPostpone:apply",
   queueCatchUp: "queue:catchUp",

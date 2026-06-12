@@ -101,6 +101,7 @@ import {
   QueueListRequestSchema,
   type QueueListResult,
   QueueScheduleRequestSchema,
+  QueueSessionPlanRequestSchema,
   QueueUndoRequestSchema,
   QueueVacationRequestSchema,
   ReadPointGetRequestSchema,
@@ -201,6 +202,7 @@ describe("IPC channels", () => {
         "queue:list",
         "queue:act",
         "queue:schedule",
+        "queue:sessionPlan",
         "queue:undo",
         "queue:autoPostpone",
         "queue:autoPostpone:apply",
@@ -1815,12 +1817,14 @@ describe("QueueListRequestSchema asOf guard", () => {
         asOf: "2027-06-01T12:00:00.000Z",
         types: ["card"],
         mode: "review",
+        protectedOnly: true,
         includeTimeEstimate: true,
       }),
     ).toEqual({
       asOf: "2027-06-01T12:00:00.000Z",
       types: ["card"],
       mode: "review",
+      protectedOnly: true,
       includeTimeEstimate: true,
     });
 
@@ -1869,6 +1873,32 @@ describe("QueueListRequestSchema asOf guard", () => {
       ],
     });
     expect(result.budget).toEqual({ used: 2, target: 20 });
+  });
+});
+
+describe("QueueSessionPlanRequestSchema (T118)", () => {
+  it("requires a bounded integer target while accepting zero as an empty-plan request", () => {
+    expect(
+      QueueSessionPlanRequestSchema.parse({
+        targetMinutes: 0,
+        asOf: "2027-06-01T12:00:00.000Z",
+        mode: "read",
+        types: ["source"],
+        protectedOnly: true,
+      }),
+    ).toEqual({
+      targetMinutes: 0,
+      asOf: "2027-06-01T12:00:00.000Z",
+      mode: "read",
+      types: ["source"],
+      protectedOnly: true,
+    });
+
+    expect(() => QueueSessionPlanRequestSchema.parse({})).toThrow();
+    expect(() => QueueSessionPlanRequestSchema.parse({ targetMinutes: -1 })).toThrow();
+    expect(() => QueueSessionPlanRequestSchema.parse({ targetMinutes: 1.5 })).toThrow();
+    expect(() => QueueSessionPlanRequestSchema.parse({ targetMinutes: Number.NaN })).toThrow();
+    expect(() => QueueSessionPlanRequestSchema.parse({ targetMinutes: 999_999 })).toThrow();
   });
 });
 

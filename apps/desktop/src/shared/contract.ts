@@ -848,6 +848,8 @@ export const QueueListRequestSchema = z.object({
   tag: z.string().trim().max(256).optional(),
   /** Keep only these lifecycle statuses. */
   statuses: z.array(z.enum(ELEMENT_STATUSES)).optional(),
+  /** Keep only A-priority rows that the queue labels protected. */
+  protectedOnly: z.boolean().optional(),
   /**
    * The active session mode (T076) — a SOFT type up-weight on the auto-sort, not a
    * filter. `review` floats cards, `read` floats reading items, `full` is neutral.
@@ -894,6 +896,61 @@ export interface QueueListResult {
   readonly minuteBudget?: QueueMinuteBudget;
   /** Full filtered due-set time estimate, priced on the trusted side when requested. */
   readonly timeEstimate?: QueueTimeEstimate;
+}
+
+// ---------------------------------------------------------------------------
+// queue.sessionPlan()  (T118 — what fits in N minutes)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read-only session assembly. The renderer supplies a minute target plus the same
+ * queue-scoped filters/mode/read-clock as `queue.list`; MAIN owns due membership,
+ * processability, pricing, and fill/cut reasons. Generating a plan does not mutate
+ * queue state or append `operation_log`. Existing trusted current-day standing
+ * materialization may run before the read, as with `queue.list`, but a historical
+ * renderer `asOf` is only a read clock and never controls that materialization marker.
+ */
+export const QueueSessionPlanRequestSchema = QueueListRequestSchema.omit({
+  includeTimeEstimate: true,
+}).extend({
+  targetMinutes: z.number().int().min(0).max(DAILY_BUDGET_MINUTES_MAX),
+});
+export type QueueSessionPlanRequest = z.infer<typeof QueueSessionPlanRequestSchema>;
+
+export interface QueueSessionPlanItem {
+  readonly item: QueueItemSummary;
+  readonly estimatedMinutes: number;
+  readonly estimateConfidence: QueueTimeEstimateConfidence;
+  readonly estimateBasis: string;
+}
+
+export interface QueueSessionPlanCutItem extends QueueSessionPlanItem {
+  readonly reason: "did_not_fit";
+}
+
+export interface QueueSessionPlanCutAggregate {
+  readonly count: number;
+  readonly minutes: number;
+}
+
+export interface QueueSessionPlanResult {
+  readonly targetMinutes: number;
+  readonly plannedMinutes: number;
+  readonly candidateMinutes: number;
+  readonly plannedCount: number;
+  readonly candidateCount: number;
+  readonly overTarget: boolean;
+  readonly confidence: QueueTimeEstimateConfidence;
+  readonly usesDefaultEstimate: boolean;
+  readonly items: readonly QueueSessionPlanItem[];
+  readonly cut: {
+    readonly totalCount: number;
+    readonly totalMinutes: number;
+    readonly detailLimit: number;
+    readonly items: readonly QueueSessionPlanCutItem[];
+    readonly byReason: Readonly<Record<"did_not_fit", QueueSessionPlanCutAggregate>>;
+    readonly byType: Readonly<Record<string, QueueSessionPlanCutAggregate>>;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -6604,6 +6661,12 @@ export interface AppApi {
      * trusted current local day's standing auto-postpone policy when automatic.
      */
     list(request?: QueueListRequest): Promise<QueueListResult>;
+    /**
+     * Preview a minute-sized session plan (T118) — READ-ONLY. Returns the exact planned
+     * deck plus an honest bounded cut list; execution still goes through existing
+     * queue/review actions after the user accepts the plan.
+     */
+    sessionPlan(request: QueueSessionPlanRequest): Promise<QueueSessionPlanResult>;
     /**
      * Apply one in-place queue action (T030) — postpone / raise / lower / done /
      * dismiss / delete — without leaving the list. One transaction + the correct

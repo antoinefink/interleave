@@ -16,7 +16,7 @@
  *      counts + the budget meter + the reviews-per-day spark from seeded data;
  *   2. after grading one due card at `asOf`, the streak banner appears (a review on
  *      `asOf`'s day → a 1-day streak) — proving the streak is real, not invented;
- *   3. clicking `home-start-session` lands on the /process loop;
+ *   3. clicking `home-start-session` opens session preview and confirmation lands on the /process loop;
  *   4. NAV-EXCLUSIVITY — on `/` exactly one `.shell-nav [aria-current="page"]`
  *      exists and it is `nav-home` (and nav-library/nav-concepts are NOT
  *      current), preserving the ac73484 single-active-nav fix;
@@ -123,13 +123,15 @@ test("grading a due card makes the streak banner appear (real, not invented)", a
   await app.close();
 });
 
-test("Start session navigates to the /process loop", async () => {
+test("Start session previews and confirms the /process loop", async () => {
   const app = await launchApp(dataDir, { seedOnEmpty: true });
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
 
   await openHome(page);
   await page.getByTestId("home-start-session").click();
+  await expect(page.getByTestId("session-preview")).toBeVisible();
+  await page.getByTestId("session-preview-start").click();
   await expect(page).toHaveURL(/\/process/);
   await expect(page.getByTestId("route-process")).toBeVisible();
 

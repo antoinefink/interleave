@@ -100,6 +100,7 @@ import type {
   QueueCatchUpRequest,
   QueueListRequest,
   QueueScheduleRequest,
+  QueueSessionPlanRequest,
   QueueUndoRequest,
   QueueVacationRequest,
   ReadPointGetRequest,
@@ -210,6 +211,8 @@ const appApi: AppApi = {
   },
   queue: {
     list: (request?: QueueListRequest) => ipcRenderer.invoke(IPC_CHANNELS.queueList, request ?? {}),
+    sessionPlan: (request: QueueSessionPlanRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.queueSessionPlan, request),
     act: (request: QueueActRequest) => ipcRenderer.invoke(IPC_CHANNELS.queueAct, request),
     schedule: (request: QueueScheduleRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.queueSchedule, request),

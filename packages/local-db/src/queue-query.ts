@@ -174,6 +174,8 @@ export interface QueueFilters {
   readonly tag?: string;
   /** Keep only these lifecycle statuses. */
   readonly statuses?: readonly ElementStatus[];
+  /** Keep only A-priority rows that the queue labels protected. */
+  readonly protectedOnly?: boolean;
 }
 
 /** The complete queue read: rows + per-type counts + the budget gauge. */
@@ -205,6 +207,11 @@ export interface QueueListData {
 }
 
 export interface QueueAutoPostponeCandidateData {
+  readonly items: readonly QueueItemSummary[];
+  readonly timeCostSummary: QueueTimeCostSummary;
+}
+
+export interface QueueSessionPlanCandidateData {
   readonly items: readonly QueueItemSummary[];
   readonly timeCostSummary: QueueTimeCostSummary;
 }
@@ -259,10 +266,6 @@ function dueStateFor(dueAt: string | null, asOf: number): QueueDueState {
     return dueDay < nowDay ? "overdue" : "today";
   }
   return "soon";
-}
-
-function typeMatches(element: Element, filters: QueueFilters): boolean {
-  return !filters.types || filters.types.length === 0 || filters.types.includes(element.type);
 }
 
 /** A short human label for a due time relative to `asOf`. */
@@ -517,6 +520,25 @@ export class QueueQuery {
   autoPostponeCandidates(
     options: { asOf?: IsoTimestamp; filters?: QueueFilters; mode?: SessionMode } = {},
   ): QueueAutoPostponeCandidateData {
+    return this.fullDueCandidates(options);
+  }
+
+  /**
+   * Full due-candidate read for session assembly (T118). This intentionally shares
+   * queue membership, filters, mode, and T076 score order with the full candidate path,
+   * but excludes system-owned weekly-review tasks because ProcessQueue cannot safely
+   * process that ritual through generic queue actions.
+   */
+  sessionPlanCandidates(
+    options: { asOf?: IsoTimestamp; filters?: QueueFilters; mode?: SessionMode } = {},
+  ): QueueSessionPlanCandidateData {
+    return this.fullDueCandidates(options, { excludeWeeklyReview: true });
+  }
+
+  private fullDueCandidates(
+    options: { asOf?: IsoTimestamp; filters?: QueueFilters; mode?: SessionMode } = {},
+    candidateOptions: { excludeWeeklyReview?: boolean } = {},
+  ): QueueAutoPostponeCandidateData {
     const asOfIso = options.asOf ?? (new Date().toISOString() as IsoTimestamp);
     const asOfMs = Date.parse(asOfIso);
     const filters = options.filters ?? {};
@@ -530,30 +552,24 @@ export class QueueQuery {
     };
 
     let timeCostSummary = createEmptyQueueTimeCostSummary();
-    const cardRows = dueCardsFull.map(({ element, state, card }) => {
-      if (
-        this.matchesElementFilters(element, filters, conceptMatch) &&
-        typeMatches(element, filters)
-      ) {
-        timeCostSummary = queueTimeCostSummaryWithItem(timeCostSummary, element, {
-          kind: card.kind,
-          mediaRef: card.mediaRef,
-        });
-      }
-      return this.toCardSummary(element, asOfMs, batch, state);
-    });
-    const attentionRows = dueAttention.map((element) => {
-      if (
-        this.matchesElementFilters(element, filters, conceptMatch) &&
-        typeMatches(element, filters)
-      ) {
-        timeCostSummary = queueTimeCostSummaryWithItem(timeCostSummary, element);
-      }
-      return this.toAttentionSummary(element, asOfMs, batch);
-    });
-    let rows = [...cardRows, ...attentionRows].filter((row) =>
-      this.matchesFilters(row, filters, conceptMatch),
-    );
+    const rowsForScoring: QueueItemSummary[] = [];
+    for (const { element, state, card } of dueCardsFull) {
+      const row = this.toCardSummary(element, asOfMs, batch, state);
+      if (!this.matchesFilters(row, filters, conceptMatch)) continue;
+      rowsForScoring.push(row);
+      timeCostSummary = queueTimeCostSummaryWithItem(timeCostSummary, element, {
+        kind: card.kind,
+        mediaRef: card.mediaRef,
+      });
+    }
+    for (const element of dueAttention) {
+      const row = this.toAttentionSummary(element, asOfMs, batch);
+      if (!this.matchesFilters(row, filters, conceptMatch)) continue;
+      if (candidateOptions.excludeWeeklyReview && row.taskType === "weekly_review") continue;
+      rowsForScoring.push(row);
+      timeCostSummary = queueTimeCostSummaryWithItem(timeCostSummary, element);
+    }
+    let rows = rowsForScoring;
     rows = scoreQueueItems(rows, { mode, asOf: asOfIso }).map((row) =>
       this.decorateDisplay(row, asOfMs),
     );
@@ -612,6 +628,7 @@ export class QueueQuery {
     if (filters.statuses && filters.statuses.length > 0) {
       if (!filters.statuses.includes(element.status as ElementStatus)) return false;
     }
+    if (filters.protectedOnly && priorityToLabel(element.priority) !== "A") return false;
     if (filters.concept) {
       if (!conceptMatch?.(element.id)) return false;
     }
@@ -634,6 +651,7 @@ export class QueueQuery {
     if (filters.statuses && filters.statuses.length > 0) {
       if (!filters.statuses.includes(row.status as ElementStatus)) return false;
     }
+    if (filters.protectedOnly && !row.protected) return false;
     if (filters.concept) {
       // Match against ANY of the element's concept memberships by name (T041), not
       // just the first one displayed on the row — an element can join several.

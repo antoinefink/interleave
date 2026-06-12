@@ -680,6 +680,8 @@ export interface QueueListRequest {
   /** Tag filter, by tag name (T041). */
   readonly tag?: string;
   readonly statuses?: readonly string[];
+  /** Keep only A-priority rows that the queue labels protected. */
+  readonly protectedOnly?: boolean;
   /**
    * The session mode (T076) — `review` floats cards, `read` floats reading items,
    * `full` (default) is neutral. A SOFT ordering bias, not a filter: both types stay
@@ -721,6 +723,50 @@ export interface QueueListResult {
   readonly budget: { readonly used: number; readonly target: number };
   readonly minuteBudget?: QueueMinuteBudget;
   readonly timeEstimate?: QueueTimeEstimate;
+}
+
+// ---------------------------------------------------------------------------
+// queue.sessionPlan()  (T118 — what fits in N minutes)
+// ---------------------------------------------------------------------------
+
+export interface QueueSessionPlanRequest extends Omit<QueueListRequest, "includeTimeEstimate"> {
+  readonly targetMinutes: number;
+}
+
+export interface QueueSessionPlanItem {
+  readonly item: QueueItemSummary;
+  readonly estimatedMinutes: number;
+  readonly estimateConfidence: QueueTimeEstimateConfidence;
+  readonly estimateBasis: string;
+}
+
+export interface QueueSessionPlanCutItem extends QueueSessionPlanItem {
+  readonly reason: "did_not_fit";
+}
+
+export interface QueueSessionPlanCutAggregate {
+  readonly count: number;
+  readonly minutes: number;
+}
+
+export interface QueueSessionPlanResult {
+  readonly targetMinutes: number;
+  readonly plannedMinutes: number;
+  readonly candidateMinutes: number;
+  readonly plannedCount: number;
+  readonly candidateCount: number;
+  readonly overTarget: boolean;
+  readonly confidence: QueueTimeEstimateConfidence;
+  readonly usesDefaultEstimate: boolean;
+  readonly items: readonly QueueSessionPlanItem[];
+  readonly cut: {
+    readonly totalCount: number;
+    readonly totalMinutes: number;
+    readonly detailLimit: number;
+    readonly items: readonly QueueSessionPlanCutItem[];
+    readonly byReason: Readonly<Record<"did_not_fit", QueueSessionPlanCutAggregate>>;
+    readonly byType: Readonly<Record<string, QueueSessionPlanCutAggregate>>;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -4387,6 +4433,7 @@ export interface AppApi {
   };
   readonly queue: {
     list(request?: QueueListRequest): Promise<QueueListResult>;
+    sessionPlan(request: QueueSessionPlanRequest): Promise<QueueSessionPlanResult>;
     act(request: QueueActRequest): Promise<QueueActResult>;
     schedule(request: QueueScheduleRequest): Promise<QueueScheduleResult>;
     undo(request: QueueUndoRequest): Promise<QueueUndoResult>;
@@ -4799,6 +4846,9 @@ export const appApi = {
    */
   listQueue(request?: QueueListRequest): Promise<QueueListResult> {
     return requireAppApi().queue.list(request);
+  },
+  previewSessionPlan(request: QueueSessionPlanRequest): Promise<QueueSessionPlanResult> {
+    return requireAppApi().queue.sessionPlan(request);
   },
   /**
    * Apply one in-place queue action (T030) — postpone / raise / lower / done /

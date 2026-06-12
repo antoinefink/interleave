@@ -214,7 +214,7 @@ stronger audit trail than SuperMemo ever had.
 # T118 — Session assembly ("what fits in N minutes")
 
 - **Milestone:** M24 — Ambient, time-denominated overload
-- **Status:** `[ ]` not started
+- **Status:** `[x]` done
 - **Depends on:** T116
 - **Roadmap line:** the user can request a session sized to N minutes; composition respects
   priority order, protection rules, and the T119 quota when present, and states what was left
@@ -236,13 +236,13 @@ overruns a choice instead of a surprise.
 
 ## Deliverables
 
-- [ ] Session-plan read model: given N minutes, fill by queue-score order within type-protection
+- [x] Session-plan read model: given N minutes, fill by queue-score order within type-protection
       rules (and the T119 distillation share when available), pricing by T115; return the plan +
       the cut list with reasons ("didn't fit: 12 items, ~40 min").
-- [ ] UI: a "Start a session" affordance on queue/home (N presets + free entry) → plan preview →
+- [x] UI: a "Start a session" affordance on queue/home (N presets + free entry) → plan preview →
       run through ProcessQueue; end-of-session summary (planned vs actual minutes — feeds T115's
       future tuning).
-- [ ] Tests: unit (fill math, protection rules, cut-list honesty); e2e — 25-minute session on a
+- [x] Tests: unit (fill math, protection rules, cut-list honesty); e2e — 25-minute session on a
       mixed fixture assembles, runs, and summarizes.
 
 ## Done when
@@ -255,3 +255,10 @@ overruns a choice instead of a surprise.
 
 - Do not let session assembly become a parallel scheduler: it selects from what is due/eligible
   by existing rules; it never changes due dates.
+- Completed in this commit with a read-only `queue.sessionPlan` bridge, short-lived accepted-plan
+  handoff into ProcessQueue, high-priority/protection filtering owned by trusted queue reads, and
+  guarded preview/assembled-session lifecycle handling so refreshes and stale preview responses do
+  not restart or mis-size a session.
+- T119 quota behavior is intentionally not user-visible in T118; current cut reasons are limited to
+  `did_not_fit`, with quota left as downstream policy work.
+- Verification: `pnpm lint`; `pnpm typecheck`; `pnpm test`; `pnpm e2e -- tests/electron/process-queue.spec.ts tests/electron/home.spec.ts`.

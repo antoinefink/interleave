@@ -51,6 +51,25 @@ function installAppApi(overrides: Partial<AppApi> = {}): AppApi {
     },
     queue: {
       list: vi.fn(async (request?: unknown) => ({ items: [], request })),
+      sessionPlan: vi.fn(async (request: unknown) => ({
+        targetMinutes: (request as { targetMinutes?: number }).targetMinutes ?? 0,
+        plannedMinutes: 0,
+        candidateMinutes: 0,
+        plannedCount: 0,
+        candidateCount: 0,
+        overTarget: false,
+        confidence: "learned",
+        usesDefaultEstimate: false,
+        items: [],
+        cut: {
+          totalCount: 0,
+          totalMinutes: 0,
+          detailLimit: 25,
+          items: [],
+          byReason: { did_not_fit: { count: 0, minutes: 0 } },
+          byType: {},
+        },
+      })),
       act: vi.fn(async (request: unknown) => request),
       schedule: vi.fn(async (request: unknown) => request),
       undo: vi.fn(async (request: unknown) => request),
@@ -431,6 +450,19 @@ describe("renderer appApi wrapper", () => {
 
     await appApi.listQueue({ types: ["card"] });
     expect(bridge.queue.list).toHaveBeenCalledWith({ types: ["card"] });
+
+    await appApi.previewSessionPlan({
+      targetMinutes: 25,
+      types: ["card"],
+      protectedOnly: true,
+      mode: "review",
+    });
+    expect(bridge.queue.sessionPlan).toHaveBeenCalledWith({
+      targetMinutes: 25,
+      types: ["card"],
+      protectedOnly: true,
+      mode: "review",
+    });
 
     await appApi.dismissSourceRetirementSuggestion({
       sourceElementId: "src-1",

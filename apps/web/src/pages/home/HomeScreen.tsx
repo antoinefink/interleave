@@ -57,6 +57,7 @@ import "../../analytics/analytics.css";
 import "../queue/queue.css";
 import { openQueueItem } from "../queue/openQueueItem";
 import { actionFor, DueBadge, metaFor, titleFor } from "../queue/queueRow";
+import { SessionAssemblyPreview } from "../queue/SessionAssemblyPreview";
 import "./home.css";
 
 /** Format a `[0,1]` retention fraction as a whole-percent string, or `null` if none. */
@@ -248,6 +249,7 @@ export function HomeScreen() {
   const [queue, setQueue] = useState<QueueListResult | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsGetResult | null>(null);
   const [dailyWork, setDailyWork] = useState<DailyWorkSummaryResult | null>(null);
+  const [sessionPreviewOpen, setSessionPreviewOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -337,9 +339,8 @@ export function HomeScreen() {
       void navigate({ to: "/inbox" });
       return;
     }
-    // Due scheduled work is the only case that starts the T031 one-at-a-time loop.
-    void navigate({ to: "/process", search: asOf ? { asOf } : {} });
-  }, [navigate, select, asOf, dailyWork, queue]);
+    setSessionPreviewOpen(true);
+  }, [navigate, select, dailyWork, queue]);
 
   const graduationEvents = dailyWork?.graduationEvents ?? EMPTY_GRADUATION_EVENTS;
 
@@ -546,6 +547,15 @@ export function HomeScreen() {
           ) : null}
           <span className="sessionbar__note">{sessionNote}</span>
         </div>
+
+        <SessionAssemblyPreview
+          open={sessionPreviewOpen}
+          origin="home"
+          {...(asOf ? { asOf } : {})}
+          defaultTargetMinutes={queue?.minuteBudget?.targetMinutes ?? 25}
+          request={{ mode: "full" }}
+          onClose={() => setSessionPreviewOpen(false)}
+        />
 
         <GraduationReceipts
           events={graduationEvents}

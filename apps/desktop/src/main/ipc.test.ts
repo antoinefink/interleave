@@ -51,6 +51,25 @@ function fakeDbService() {
     updateSetting: vi.fn(),
     updateAppSettings: vi.fn(),
     listQueue: vi.fn(() => ({ items: [] })),
+    previewSessionPlan: vi.fn(() => ({
+      targetMinutes: 25,
+      plannedMinutes: 0,
+      candidateMinutes: 0,
+      plannedCount: 0,
+      candidateCount: 0,
+      overTarget: false,
+      confidence: "learned",
+      usesDefaultEstimate: false,
+      items: [],
+      cut: {
+        totalCount: 0,
+        totalMinutes: 0,
+        detailLimit: 25,
+        items: [],
+        byReason: { did_not_fit: { count: 0, minutes: 0 } },
+        byType: {},
+      },
+    })),
     actOnQueueItem: vi.fn(),
     createCard: vi.fn(),
     createExtraction: vi.fn(),
@@ -209,6 +228,40 @@ describe("registerIpcHandlers", () => {
       electron.handlers.get(IPC_CHANNELS.queueAct)?.({}, { id: "el_1", action: { kind: "nope" } }),
     ).toThrow();
     expect(db.actOnQueueItem).not.toHaveBeenCalled();
+  });
+
+  it("validates and forwards queue.sessionPlan payloads", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+    const handler = electron.handlers.get(IPC_CHANNELS.queueSessionPlan);
+
+    expect(
+      handler?.(
+        {},
+        {
+          targetMinutes: 25,
+          asOf: "2026-06-08T09:00:00.000Z",
+          types: ["card"],
+          statuses: ["scheduled"],
+          protectedOnly: true,
+          mode: "review",
+        },
+      ),
+    ).toMatchObject({
+      targetMinutes: 25,
+      plannedCount: 0,
+    });
+    expect(db.previewSessionPlan).toHaveBeenCalledWith({
+      targetMinutes: 25,
+      asOf: "2026-06-08T09:00:00.000Z",
+      types: ["card"],
+      statuses: ["scheduled"],
+      protectedOnly: true,
+      mode: "review",
+    });
+
+    expect(() => handler?.({}, { targetMinutes: -1 })).toThrow();
+    expect(db.previewSessionPlan).toHaveBeenCalledTimes(1);
   });
 
   describe("lineage-aware delete IPC boundary (T135)", () => {

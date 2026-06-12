@@ -107,6 +107,12 @@ import { useSelection } from "../../shell/selection";
 import { resumeLabel } from "./doneIntentBreakdown";
 import { jitterOrder } from "./jitter";
 import { openQueueItem } from "./openQueueItem";
+import {
+  type AcceptedSessionAssembly,
+  clearAcceptedSessionAssembly,
+  consumeAcceptedSessionAssembly,
+  sessionMinuteLabel,
+} from "./sessionAssemblyState";
 import "./queue.css";
 import "./process-queue.css";
 import { useProcessShortcuts } from "./useProcessShortcuts";
@@ -224,8 +230,14 @@ export function ProcessQueue() {
   // The route declares no `validateSearch`, so search is loosely typed — an
   // optional `asOf` date-scopes the due reads (the E2E drives a fixed clock) and an
   // optional `mode` seeds the session ordering bias (T076).
-  const search = useSearch({ strict: false }) as { asOf?: string; mode?: string };
+  const search = useSearch({ strict: false }) as {
+    asOf?: string;
+    mode?: string;
+    assembled?: string | number | boolean;
+  };
   const asOf = typeof search.asOf === "string" ? search.asOf : undefined;
+  const assembledMode =
+    search.assembled === 1 || search.assembled === "1" || search.assembled === true;
 
   const [mode, setMode] = useState<SessionMode>(
     search.mode === "review" || search.mode === "read" ? search.mode : "full",
@@ -260,6 +272,11 @@ export function ProcessQueue() {
   const [dailyWork, setDailyWork] = useState<DailyWorkSummaryResult | null>(null);
   const [deckLoading, setDeckLoading] = useState(true);
   const [deckLoaded, setDeckLoaded] = useState(false);
+  const [assembledSession, setAssembledSession] = useState<AcceptedSessionAssembly | null>(null);
+  const [missingAssembly, setMissingAssembly] = useState(false);
+  const [completedEstimatedMinutes, setCompletedEstimatedMinutes] = useState(0);
+  const assembledSessionRef = useRef<AcceptedSessionAssembly | null>(null);
+  const sessionStartedAtRef = useRef(Date.now());
 
   // --- The inline card-review surface state (lifted here so the keyboard can drive
   // reveal/grade while a card is the current item, exactly like the review session).
@@ -399,6 +416,34 @@ export function ProcessQueue() {
       const activeMode = modeOverride ?? modeRef.current;
       setDeckLoading(true);
       try {
+        if (assembledMode) {
+          const isInitialAssemblyLoad = assembledSessionRef.current === null;
+          const accepted = assembledSessionRef.current ?? consumeAcceptedSessionAssembly();
+          assembledSessionRef.current = accepted;
+          if (isInitialAssemblyLoad) {
+            setUndoState(null);
+            setDoneIntentSnackbar(null);
+            setMissingAssembly(accepted === null);
+            setAssembledSession(accepted);
+            setOrder(accepted ? [...accepted.plannedItems] : []);
+            setMode(accepted?.mode ?? activeMode);
+            setCursor(0);
+            setProcessed(0);
+            setCompletedEstimatedMinutes(0);
+            sessionStartedAtRef.current = Date.now();
+            gradedRef.current = new Set();
+            setDeckLoaded(accepted !== null);
+          }
+          try {
+            const workResult = await appApi.getDailyWorkSummary(asOf ? { asOf } : {});
+            setDailyWork(workResult);
+            setError(null);
+          } catch (e) {
+            setDailyWork(null);
+            setError(e instanceof Error ? e.message : String(e));
+          }
+          return;
+        }
         const [queueResult, workResult] = await Promise.allSettled([
           appApi.listQueue({
             ...(asOf ? { asOf } : {}),
@@ -413,8 +458,13 @@ export function ProcessQueue() {
           setOrder(jitterOrder(processableQueueItems(queueResult.value.items)));
           setCursor(0);
           setProcessed(0);
+          setCompletedEstimatedMinutes(0);
+          sessionStartedAtRef.current = Date.now();
           gradedRef.current = new Set();
           setDeckLoaded(true);
+          setAssembledSession(null);
+          assembledSessionRef.current = null;
+          setMissingAssembly(false);
         } else {
           setOrder([]);
           setDeckLoaded(false);
@@ -441,7 +491,7 @@ export function ProcessQueue() {
         setDeckLoading(false);
       }
     },
-    [asOf],
+    [asOf, assembledMode],
   );
 
   useEffect(() => {
@@ -526,10 +576,31 @@ export function ProcessQueue() {
    */
   const onModeChange = useCallback(
     (next: SessionMode) => {
+      if (assembledMode) return;
       setMode(next);
       void load(next);
     },
-    [load],
+    [assembledMode, load],
+  );
+
+  const recordCompletedEstimate = useCallback(
+    (id: string) => {
+      if (!assembledSession) return;
+      setCompletedEstimatedMinutes(
+        (minutes) => minutes + (assembledSession.plannedEstimates[id] ?? 0),
+      );
+    },
+    [assembledSession],
+  );
+
+  const subtractCompletedEstimate = useCallback(
+    (id: string) => {
+      if (!assembledSession) return;
+      setCompletedEstimatedMinutes((minutes) =>
+        Math.max(0, minutes - (assembledSession.plannedEstimates[id] ?? 0)),
+      );
+    },
+    [assembledSession],
   );
 
   const openRecommendedWork = useCallback(() => {
@@ -568,6 +639,7 @@ export function ProcessQueue() {
       try {
         const res = await appApi.actOnQueueItem({ id: current.id, action });
         setProcessed((p) => p + 1);
+        recordCompletedEstimate(current.id);
         advance();
         requestInspectorRefresh();
         const undo: ProcessUndoState["undo"] | null = res.undo
@@ -596,7 +668,7 @@ export function ProcessQueue() {
         setBusy(false);
       }
     },
-    [current, busy, cursor, clearUndo, advance],
+    [current, busy, cursor, clearUndo, advance, recordCompletedEstimate],
   );
 
   /**
@@ -619,8 +691,16 @@ export function ProcessQueue() {
     onAfter: (_target, kind) => {
       if (kind === "quiet") return; // runAction already advanced + bookkept.
       setProcessed((p) => p + 1);
+      if (current) recordCompletedEstimate(current.id);
       clearUndo();
       advance();
+      requestInspectorRefresh();
+    },
+    onUndoAfter: (target) => {
+      setCursor(cursor);
+      setProcessed((p) => Math.max(0, p - 1));
+      if (current) subtractCompletedEstimate(current.id);
+      select(target.id);
       requestInspectorRefresh();
     },
   });
@@ -689,6 +769,7 @@ export function ProcessQueue() {
       try {
         await appApi.scheduleQueueItem({ id: current.id, choice });
         setProcessed((p) => p + 1);
+        recordCompletedEstimate(current.id);
         advance();
         requestInspectorRefresh();
         setUndoState({
@@ -702,7 +783,7 @@ export function ProcessQueue() {
         setBusy(false);
       }
     },
-    [current, busy, cursor, clearUndo, advance],
+    [current, busy, cursor, clearUndo, advance, recordCompletedEstimate],
   );
 
   const undoLastProcessAction = useCallback(async () => {
@@ -726,6 +807,7 @@ export function ProcessQueue() {
       }
       setCursor(pending.index);
       setProcessed((p) => Math.max(0, p - 1));
+      subtractCompletedEstimate(pending.id);
       select(pending.id);
       requestInspectorRefresh();
       toast("Undone");
@@ -735,7 +817,7 @@ export function ProcessQueue() {
     } finally {
       setBusy(false);
     }
-  }, [undoState, busy, select, toast]);
+  }, [undoState, busy, select, subtractCompletedEstimate, toast]);
 
   const onExtractChange = useCallback(
     (change: SourceEditorChange) => {
@@ -1235,10 +1317,11 @@ export function ProcessQueue() {
       }
       gradedRef.current.add(cardView.id);
       setProcessed((p) => p + 1);
+      recordCompletedEstimate(cardView.id);
       advance();
       setBusy(false);
     },
-    [isCard, cardView, revealed, busy, clearUndo, asOf, advance],
+    [isCard, cardView, revealed, busy, clearUndo, asOf, advance, recordCompletedEstimate],
   );
 
   /** Open the current item in its full surface — the ONLY navigation in the loop. */
@@ -1319,9 +1402,19 @@ export function ProcessQueue() {
     done,
     remaining,
     mode,
+    assembled: assembledSession !== null,
     onModeChange,
+    onAdjust: () => {
+      const target = assembledSession?.origin === "home" ? "/" : "/queue";
+      clearAcceptedSessionAssembly();
+      void navigate({ to: target, search: asOf ? { asOf } : {} });
+    },
     onEnd: () => navigate({ to: "/queue", search: asOf ? { asOf } : {} }),
   };
+  const elapsedMinutes = Math.max(
+    0,
+    Math.round((Date.now() - sessionStartedAtRef.current) / 60000),
+  );
 
   // The source's "block N of M" resume location for the DoneIntentMenu — only when an
   // actual read-point exists (read-point = where, decoupled from due-date = when). Null
@@ -1353,6 +1446,29 @@ export function ProcessQueue() {
               <p className="q-empty__body">Checking scheduled work for today.</p>
             </div>
           </div>
+        ) : missingAssembly ? (
+          <div className="q-panel pq-donepanel" data-testid="process-session-expired">
+            <div className="q-empty">
+              <div className="q-empty__icon q-empty__icon--filter">
+                <Icon name="queue" size={24} />
+              </div>
+              <h2 className="q-empty__title">Session plan expired</h2>
+              <p className="q-empty__body">
+                Return to the queue to preview the current due work before starting a planned deck.
+              </p>
+              <div className="pq-done__actions">
+                <button
+                  type="button"
+                  className="sessionbar__start"
+                  data-testid="process-back"
+                  onClick={() => navigate({ to: "/queue", search: asOf ? { asOf } : {} })}
+                >
+                  <Icon name="return" size={14} />
+                  Back to queue
+                </button>
+              </div>
+            </div>
+          </div>
         ) : done ? (
           <div className="q-panel pq-donepanel" data-testid="process-done">
             <ProcessSessionControls {...sessionControls} />
@@ -1378,6 +1494,23 @@ export function ProcessQueue() {
                   they're due.
                 </p>
               )}
+              {assembledSession && !zeroLoad ? (
+                <div className="pq-session-summary" data-testid="process-session-summary">
+                  <span>
+                    Planned{" "}
+                    {sessionMinuteLabel(
+                      assembledSession.plannedMinutes,
+                      assembledSession.usesDefaultEstimate,
+                    )}
+                  </span>
+                  <span>Completed {sessionMinuteLabel(completedEstimatedMinutes, false)}</span>
+                  <span>Elapsed {elapsedMinutes} min</span>
+                  <span>
+                    Left out {assembledSession.cut.totalCount} item
+                    {assembledSession.cut.totalCount === 1 ? "" : "s"}
+                  </span>
+                </div>
+              ) : null}
               <div className="pq-done__actions">
                 {zeroLoad &&
                 (dailyWork?.recommendedAction === "triage_inbox" ||
@@ -1402,10 +1535,19 @@ export function ProcessQueue() {
                   type="button"
                   className="pq-btn"
                   data-testid="process-restart"
-                  onClick={() => void load()}
+                  onClick={() => {
+                    if (assembledSession) {
+                      void navigate({
+                        to: assembledSession.origin === "home" ? "/" : "/queue",
+                        search: asOf ? { asOf } : {},
+                      });
+                      return;
+                    }
+                    void load();
+                  }}
                 >
                   <Icon name="review" size={14} />
-                  Reload queue
+                  {assembledSession ? "Plan another" : "Reload queue"}
                 </button>
                 <button
                   type="button"
@@ -1501,7 +1643,9 @@ type ProcessSessionControlsProps = {
   done: boolean;
   remaining: number;
   mode: SessionMode;
+  assembled: boolean;
   onModeChange: (mode: SessionMode) => void;
+  onAdjust: () => void;
   onEnd: () => void;
 };
 
@@ -1511,7 +1655,9 @@ function ProcessSessionControls({
   done,
   remaining,
   mode,
+  assembled,
   onModeChange,
+  onAdjust,
   onEnd,
 }: ProcessSessionControlsProps) {
   return (
@@ -1530,22 +1676,37 @@ function ProcessSessionControls({
           />
         </div>
       </div>
-      <div className="pq-modes" data-testid="process-modes">
-        <span className="pq-modes__label">Mode</span>
-        {MODES.map((m) => (
+      {assembled ? (
+        <div className="pq-modes pq-modes--assembled" data-testid="process-assembled-mode">
+          <span className="pq-modes__label">Planned deck</span>
           <button
             type="button"
-            key={m.id}
-            data-testid={`process-mode-${m.id}`}
-            aria-pressed={mode === m.id}
-            className={`pq-seg${mode === m.id ? " pq-seg--on" : ""}`}
-            onClick={() => onModeChange(m.id)}
+            className="pq-seg"
+            data-testid="process-adjust-session"
+            onClick={onAdjust}
           >
-            <Icon name={m.icon} size={12} />
-            {m.label}
+            <Icon name="calendar" size={12} />
+            Adjust session
           </button>
-        ))}
-      </div>
+        </div>
+      ) : (
+        <div className="pq-modes" data-testid="process-modes">
+          <span className="pq-modes__label">Mode</span>
+          {MODES.map((m) => (
+            <button
+              type="button"
+              key={m.id}
+              data-testid={`process-mode-${m.id}`}
+              aria-pressed={mode === m.id}
+              className={`pq-seg${mode === m.id ? " pq-seg--on" : ""}`}
+              onClick={() => onModeChange(m.id)}
+            >
+              <Icon name={m.icon} size={12} />
+              {m.label}
+            </button>
+          ))}
+        </div>
+      )}
       <button type="button" className="pq-end" data-testid="process-end" onClick={onEnd}>
         <Icon name="x" size={14} />
         End session

@@ -113,6 +113,7 @@ import {
   QueueCatchUpRequestSchema,
   QueueListRequestSchema,
   QueueScheduleRequestSchema,
+  QueueSessionPlanRequestSchema,
   QueueUndoRequestSchema,
   QueueVacationRequestSchema,
   ReadPointGetRequestSchema,
@@ -320,6 +321,11 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.queueList, (_event, rawRequest: unknown) => {
     const request = QueueListRequestSchema.parse(rawRequest ?? {});
     return dbService.listQueue(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.queueSessionPlan, (_event, rawRequest: unknown) => {
+    const request = QueueSessionPlanRequestSchema.parse(rawRequest);
+    return dbService.previewSessionPlan(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.queueAct, (_event, rawRequest: unknown) => {

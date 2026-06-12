@@ -88,6 +88,12 @@ export interface UseLineageDeleteOptions {
     kind: "quiet" | "keep" | "branch" | "markDone" | "rest",
   ) => void;
   /**
+   * Run after a controller-owned snackbar undo succeeds. Defaults to `onAfter` so
+   * existing hosts continue to refresh after undo; hosts with local cursor/progress
+   * state can distinguish undo from forward mutation.
+   */
+  readonly onUndoAfter?: (target: LineageDeleteTarget, kind: "quiet" | "keep" | "branch") => void;
+  /**
    * The host's own single-row soft-delete for the LEAF / quiet path (R4) — usually the
    * existing `deleteExtract` / `actOnQueueItem({delete})` call. Kept as-is so the leaf
    * delete stays the SAME op the host's ⌘Z / Trash already understand. When omitted, the
@@ -104,7 +110,7 @@ export interface UseLineageDeleteOptions {
 }
 
 export function useLineageDelete(options: UseLineageDeleteOptions = {}) {
-  const { onAfter, quietDelete, hostOwnsQuietUndo = false } = options;
+  const { onAfter, onUndoAfter, quietDelete, hostOwnsQuietUndo = false } = options;
   const [snackbar, setSnackbar] = useState<LineageDeleteSnackbar | null>(null);
   // A single in-flight guard for the mutation phase (count is guarded inside the menu).
   const [busy, setBusy] = useState(false);
@@ -152,7 +158,7 @@ export function useLineageDelete(options: UseLineageDeleteOptions = {}) {
           onUndo: () => {
             void appApi
               .undoLast()
-              .then(() => onAfter?.(target, "quiet"))
+              .then(() => (onUndoAfter ?? onAfter)?.(target, "quiet"))
               .catch((e) =>
                 setSnackbar({ message: e instanceof Error ? e.message : String(e), icon: "trash" }),
               );
@@ -160,7 +166,7 @@ export function useLineageDelete(options: UseLineageDeleteOptions = {}) {
           },
         };
       }),
-    [run, quietDelete, hostOwnsQuietUndo, onAfter],
+    [run, quietDelete, hostOwnsQuietUndo, onAfter, onUndoAfter],
   );
 
   /** Keep descendants (default): tombstone only the node; descendants stay live. */
@@ -178,7 +184,7 @@ export function useLineageDelete(options: UseLineageDeleteOptions = {}) {
           onUndo: () => {
             void appApi
               .undoLast()
-              .then(() => onAfter?.(target, "keep"))
+              .then(() => (onUndoAfter ?? onAfter)?.(target, "keep"))
               .catch((e) =>
                 setSnackbar({ message: e instanceof Error ? e.message : String(e), icon: "trash" }),
               );
@@ -186,7 +192,7 @@ export function useLineageDelete(options: UseLineageDeleteOptions = {}) {
           },
         };
       }),
-    [run, onAfter],
+    [run, onAfter, onUndoAfter],
   );
 
   /**
@@ -209,7 +215,7 @@ export function useLineageDelete(options: UseLineageDeleteOptions = {}) {
           onUndo: () => {
             void appApi
               .restoreBatchFromTrash({ batchId })
-              .then(() => onAfter?.(target, "branch"))
+              .then(() => (onUndoAfter ?? onAfter)?.(target, "branch"))
               .catch((e) =>
                 setSnackbar({ message: e instanceof Error ? e.message : String(e), icon: "trash" }),
               );
@@ -217,7 +223,7 @@ export function useLineageDelete(options: UseLineageDeleteOptions = {}) {
           },
         };
       }),
-    [run, onAfter],
+    [run, onAfter, onUndoAfter],
   );
 
   /**

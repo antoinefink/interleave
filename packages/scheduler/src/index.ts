@@ -147,6 +147,16 @@ export {
   resolveDesiredRetentionDetailed,
 } from "./retention";
 export {
+  type CutSessionItem,
+  type PlannedSessionItem,
+  planSession,
+  type SessionPlan,
+  type SessionPlanCandidate,
+  type SessionPlanCutReason,
+  type SessionPlanEstimateConfidence,
+  type SessionPlanOptions,
+} from "./session-plan";
+export {
   type ExtractStagnationSignals,
   isStagnant,
   STAGNATION_POSTPONE_THRESHOLD,

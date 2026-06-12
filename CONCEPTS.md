@@ -176,6 +176,12 @@ The user's intended amount of Due queue work for a day, expressed as estimated m
 
 The Daily budget is a soft overload boundary, not a hard eligibility rule: it informs gauges, session planning, and postponement suggestions while the Due queue remains the source of what is actionable.
 
+### Session assembly
+
+The read-only process that selects a bounded deck of current Due queue work to fit a target amount of estimated time before handing that exact deck to the processing loop.
+
+Session assembly is distinct from Auto-postpone: it does not move work or change schedules. Acceptance creates a short-lived execution handoff, not a durable scheduling decision.
+
 ### Auto-postpone
 
 The overload-management process that moves lower-value due work later so the remaining Due queue better fits the Daily budget.

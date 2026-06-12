@@ -7,8 +7,8 @@
  * the shared demo collection, manufactures a mixed due set of ≥10 items (the seeded
  * cards + extracts created via the existing `extractions.create` bridge), then:
  *
- *   1. opens `/process` (date-scoped via `?asOf=` so the near-future due dates read
- *      as due) from the queue's "Start session";
+ *   1. opens the session preview from the queue's "Start session", then starts the
+ *      assembled `/process` deck (date-scoped via `?asOf=` so near-future due dates read as due);
  *   2. processes each item one at a time with a MIX of actions (done / postpone /
  *      raise / lower / skip), asserting only ONE item shows at a time, the cursor
  *      advances after each action, and the URL never leaves `/process` (no return to
@@ -187,12 +187,62 @@ test("Start session opens the loop, which shows ONE element at a time", async ()
   await page.waitForLoadState("domcontentloaded");
   await expect(page.getByTestId("route-queue")).toBeVisible();
   await page.getByTestId("queue-start-session").click();
+  await expect(page.getByTestId("session-preview")).toBeVisible();
+  await expect(page.getByTestId("session-cut-list")).toBeVisible();
+  const plannedMinutes = await page.getByTestId("session-planned-minutes").innerText();
+  const completedMinutes = await page
+    .getByTestId("session-planned-row-minutes")
+    .first()
+    .innerText();
+  const cutCount = await page.getByTestId("session-cut-count").innerText();
+  await page.getByTestId("session-preview-start").click();
   await expect(page.getByTestId("route-process")).toBeVisible();
   expect(new URL(page.url()).pathname).toBe("/process");
+  expect(new URL(page.url()).searchParams.get("assembled")).toBe("1");
 
   // Exactly ONE process item is shown (the cursor item), with a progress readout.
   await expect(page.getByTestId("process-item")).toHaveCount(1);
   await expect(page.getByTestId("process-progress")).toBeVisible();
+  await expect(page.getByTestId("process-assembled-mode")).toBeVisible();
+
+  let processed = 0;
+  for (let i = 0; i < 20; i++) {
+    if (
+      await page
+        .getByTestId("process-done")
+        .isVisible()
+        .catch(() => false)
+    )
+      break;
+    const item = page.getByTestId("process-item");
+    await expect(item).toHaveCount(1);
+    const before = await item.getAttribute("data-element-id");
+    if (processed === 0) {
+      const itemType = await item.getAttribute("data-element-type");
+      await item.getByTestId("process-action-markDone").click();
+      if (itemType === "source") await page.getByTestId("done-intent-finished").click();
+    } else {
+      await item.getByTestId("process-action-skip").click();
+    }
+    processed++;
+    await expect
+      .poll(async () => {
+        const doneVisible = await page.getByTestId("process-done").isVisible();
+        if (doneVisible) return "done";
+        return (await page.getByTestId("process-item").getAttribute("data-element-id")) ?? "";
+      })
+      .not.toBe(before);
+  }
+
+  expect(processed).toBeGreaterThan(0);
+  await expect(page.getByTestId("process-done")).toBeVisible();
+  await expect(page.getByTestId("process-session-summary")).toContainText(
+    `Planned ${plannedMinutes}`,
+  );
+  await expect(page.getByTestId("process-session-summary")).toContainText(
+    `Completed ${completedMinutes.replace(/^~/, "")}`,
+  );
+  await expect(page.getByTestId("process-session-summary")).toContainText(cutCount);
 
   await app.close();
 });
@@ -661,14 +711,16 @@ test("undoes a lifecycle action inside /process and persists the restored item a
 });
 
 test("the loop reaches the Queue-clear done state when every item is processed", async () => {
-  const app = await launchApp(dataDir, { seedOnEmpty: true });
+  const freshDir = makeDataDir();
+  const app = await launchApp(freshDir, { seedOnEmpty: true });
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
+  const url = new URL(page.url());
+  baseUrl = `${url.protocol}//${url.host}`;
 
   await openProcess(page, AS_OF);
 
-  // Drive to the end: mark every remaining item done one at a time. The due set was
-  // partially consumed by earlier serial tests, so loop until the done state shows.
+  // Drive to the end: mark every remaining seeded item done one at a time.
   for (let i = 0; i < 30; i++) {
     if (
       await page
