@@ -107,6 +107,24 @@ describe("preload bridge", () => {
       topicLimit: 6,
     });
 
+    await api().analytics.topicKnowledgeState({
+      asOf: "2026-06-07T12:00:00.000Z",
+      windowDays: 90,
+      limit: 10,
+      subjectType: "topic",
+      subjectId: "topic-1",
+    });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(
+      IPC_CHANNELS.analyticsTopicKnowledgeState,
+      {
+        asOf: "2026-06-07T12:00:00.000Z",
+        windowDays: 90,
+        limit: 10,
+        subjectType: "topic",
+        subjectId: "topic-1",
+      },
+    );
+
     await api().topics.fallow({
       topicId: "topic-1",
       fallowUntil: "2026-07-01T00:00:00.000Z",

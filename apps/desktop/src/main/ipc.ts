@@ -171,6 +171,7 @@ import {
   TasksListRequestSchema,
   TasksPostponeRequestSchema,
   TopicFallowRequestSchema,
+  TopicKnowledgeStateGetRequestSchema,
   TopicUnfallowRequestSchema,
   TrashEmptyRequestSchema,
   TrashListRequestSchema,
@@ -1385,6 +1386,11 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.analyticsPriorityIntegrity, (_event, rawRequest: unknown) => {
     const request = PriorityIntegrityGetRequestSchema.parse(rawRequest);
     return dbService.getPriorityIntegrity(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.analyticsTopicKnowledgeState, (_event, rawRequest: unknown) => {
+    const request = TopicKnowledgeStateGetRequestSchema.parse(rawRequest);
+    return dbService.getTopicKnowledgeState(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.balanceGet, (_event, rawRequest: unknown) => {

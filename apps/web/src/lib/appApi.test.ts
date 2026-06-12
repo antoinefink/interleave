@@ -145,6 +145,60 @@ function installAppApi(overrides: Partial<AppApi> = {}): AppApi {
         },
         request,
       })),
+      topicKnowledgeState: vi.fn(async (request?: unknown) => ({
+        asOf: "2026-06-07T12:00:00.000Z",
+        windowDays: 90,
+        subjects: [
+          {
+            subjectType: "topic",
+            subjectId: "topic-1",
+            title: "Topic",
+            priority: 1,
+            priorityLabel: "A",
+            directMemberCount: null,
+            includedElementCount: 3,
+            funnel: {
+              read: 1,
+              extracted: 1,
+              distilled: 1,
+              carded: 1,
+              mature: 1,
+              extractedOfRead: 1,
+              distilledOfExtracted: 1,
+              cardedOfDistilled: 1,
+              matureOfCarded: 1,
+            },
+            stability: { young: 0, maturing: 0, mature: 1, retired: 0 },
+            retention: {
+              windowDays: 90,
+              reviewCount: 3,
+              measuredRetention: 1,
+              retentionTarget: 0.9,
+              directConceptTarget: null,
+              deltaFromTarget: 0.1,
+              snapshots: [],
+            },
+            staleness: { staleItems: 0, needsReverify: 0 },
+            graduationState: {
+              status: "graduated",
+              reason: "Mature-card ratio and measured retention meet the current graduation bar.",
+              thresholdVersion: "v1",
+            },
+          },
+        ],
+        graduationEvents: [
+          {
+            eventId: "topic:topic-1:graduated:v1",
+            eventType: "current_graduated",
+            subjectType: "topic",
+            subjectId: "topic-1",
+            title: "Topic",
+            asOf: "2026-06-07T12:00:00.000Z",
+            thresholdVersion: "v1",
+          },
+        ],
+        request,
+      })),
     },
     balance: {
       get: vi.fn(async (request?: unknown) => ({
@@ -408,6 +462,38 @@ describe("renderer appApi wrapper", () => {
       priorityAttribution: "current",
     });
     expect(bridge.analytics.priorityIntegrity).toHaveBeenCalledWith(request);
+  });
+
+  it("forwards topic knowledge-state requests to the analytics bridge surface", async () => {
+    const bridge = installAppApi();
+    const request = {
+      asOf: "2026-06-07T12:00:00.000Z",
+      windowDays: 90,
+      limit: 10,
+      subjectType: "topic" as const,
+      subjectId: "topic-1",
+    };
+
+    await expect(appApi.getTopicKnowledgeState(request)).resolves.toMatchObject({
+      asOf: "2026-06-07T12:00:00.000Z",
+      subjects: [{ subjectId: "topic-1", graduationState: { status: "graduated" } }],
+      graduationEvents: [{ eventId: "topic:topic-1:graduated:v1" }],
+    });
+    expect(bridge.analytics.topicKnowledgeState).toHaveBeenCalledWith(request);
+  });
+
+  it("returns an empty topic knowledge-state snapshot outside desktop mode", async () => {
+    await expect(
+      appApi.getTopicKnowledgeState({
+        asOf: "2026-06-07T12:00:00.000Z",
+        windowDays: 30,
+      }),
+    ).resolves.toEqual({
+      asOf: "2026-06-07T12:00:00.000Z",
+      windowDays: 30,
+      subjects: [],
+      graduationEvents: [],
+    });
   });
 
   it("forwards the fixed backups folder command without a payload", async () => {

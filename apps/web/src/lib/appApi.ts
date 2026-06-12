@@ -3708,6 +3708,105 @@ export interface PriorityIntegrityGetResult {
 }
 
 // ---------------------------------------------------------------------------
+// analytics.topicKnowledgeState()  (T108 — topic/concept maturity receipts)
+// ---------------------------------------------------------------------------
+
+export interface TopicKnowledgeStateGetRequest {
+  readonly asOf?: string;
+  readonly windowDays?: number;
+  readonly limit?: number;
+  readonly subjectType?: "concept" | "topic";
+  readonly subjectId?: string;
+}
+
+export type TopicKnowledgeStateSubjectType = "concept" | "topic";
+export type TopicKnowledgeGraduationStatus =
+  | "insufficient_evidence"
+  | "building"
+  | "near_graduation"
+  | "graduated"
+  | "needs_attention";
+
+export interface KnowledgeFunnel {
+  readonly read: number;
+  readonly extracted: number;
+  readonly distilled: number;
+  readonly carded: number;
+  readonly mature: number;
+  readonly extractedOfRead: number | null;
+  readonly distilledOfExtracted: number | null;
+  readonly cardedOfDistilled: number | null;
+  readonly matureOfCarded: number | null;
+}
+
+export interface KnowledgeStabilityBuckets {
+  readonly young: number;
+  readonly maturing: number;
+  readonly mature: number;
+  readonly retired: number;
+}
+
+export interface KnowledgeRetentionSnapshot {
+  readonly start: string;
+  readonly end: string;
+  readonly reviewCount: number;
+  readonly measuredRetention: number | null;
+}
+
+export interface KnowledgeRetentionTrend {
+  readonly windowDays: number;
+  readonly reviewCount: number;
+  readonly measuredRetention: number | null;
+  readonly retentionTarget: number | null;
+  readonly directConceptTarget: number | null;
+  readonly deltaFromTarget: number | null;
+  readonly snapshots: readonly KnowledgeRetentionSnapshot[];
+}
+
+export interface KnowledgeStaleness {
+  readonly staleItems: number;
+  readonly needsReverify: number;
+}
+
+export interface KnowledgeGraduationState {
+  readonly status: TopicKnowledgeGraduationStatus;
+  readonly reason: string;
+  readonly thresholdVersion: "v1";
+}
+
+export interface TopicKnowledgeStateSubject {
+  readonly subjectType: TopicKnowledgeStateSubjectType;
+  readonly subjectId: string;
+  readonly title: string;
+  readonly priority: number | null;
+  readonly priorityLabel: PriorityLabel | null;
+  readonly directMemberCount: number | null;
+  readonly includedElementCount: number;
+  readonly funnel: KnowledgeFunnel;
+  readonly stability: KnowledgeStabilityBuckets;
+  readonly retention: KnowledgeRetentionTrend;
+  readonly staleness: KnowledgeStaleness;
+  readonly graduationState: KnowledgeGraduationState;
+}
+
+export interface KnowledgeGraduationEvent {
+  readonly eventId: string;
+  readonly eventType: "current_graduated";
+  readonly subjectType: TopicKnowledgeStateSubjectType;
+  readonly subjectId: string;
+  readonly title: string;
+  readonly asOf: string;
+  readonly thresholdVersion: "v1";
+}
+
+export interface TopicKnowledgeStateGetResult {
+  readonly asOf: string;
+  readonly windowDays: number;
+  readonly subjects: readonly TopicKnowledgeStateSubject[];
+  readonly graduationEvents: readonly KnowledgeGraduationEvent[];
+}
+
+// ---------------------------------------------------------------------------
 // dailyWork.*  (T101 — daily workflow routing)
 // ---------------------------------------------------------------------------
 
@@ -4160,6 +4259,9 @@ export interface AppApi {
       request?: AnalyticsReviewActivityRequest,
     ): Promise<AnalyticsReviewActivityResult>;
     priorityIntegrity(request?: PriorityIntegrityGetRequest): Promise<PriorityIntegrityGetResult>;
+    topicKnowledgeState(
+      request?: TopicKnowledgeStateGetRequest,
+    ): Promise<TopicKnowledgeStateGetResult>;
   };
   readonly balance: {
     get(request?: BalanceGetRequest): Promise<BalanceGetResult>;
@@ -5204,6 +5306,23 @@ export const appApi = {
    */
   getPriorityIntegrity(request?: PriorityIntegrityGetRequest): Promise<PriorityIntegrityGetResult> {
     return requireAppApi().analytics.priorityIntegrity(request);
+  },
+  /**
+   * Topic/concept maturity receipt (T108): current funnel, stability buckets,
+   * retention snapshots, and current graduation candidates. Read-only.
+   */
+  getTopicKnowledgeState(
+    request?: TopicKnowledgeStateGetRequest,
+  ): Promise<TopicKnowledgeStateGetResult> {
+    if (!isDesktop() || !window.appApi?.analytics?.topicKnowledgeState) {
+      return Promise.resolve({
+        asOf: request?.asOf ?? new Date().toISOString(),
+        windowDays: request?.windowDays ?? 90,
+        subjects: [],
+        graduationEvents: [],
+      });
+    }
+    return requireAppApi().analytics.topicKnowledgeState(request);
   },
   /**
    * The import/process balance snapshot (T046) — the week's sources imported /

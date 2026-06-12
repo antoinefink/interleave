@@ -155,6 +155,7 @@ import type {
   TasksListRequest,
   TasksPostponeRequest,
   TopicFallowRequest,
+  TopicKnowledgeStateGetRequest,
   TopicUnfallowRequest,
   TrashPurgeRequest,
   TrashRestoreRequest,
@@ -479,6 +480,8 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.analyticsReviewActivity, request),
     priorityIntegrity: (request?: PriorityIntegrityGetRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.analyticsPriorityIntegrity, request),
+    topicKnowledgeState: (request?: TopicKnowledgeStateGetRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.analyticsTopicKnowledgeState, request),
   },
   balance: {
     get: (request?: BalanceGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.balanceGet, request),

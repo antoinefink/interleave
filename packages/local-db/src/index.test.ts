@@ -44,6 +44,7 @@ describe("local-db repository factory", () => {
       "parkedResurfacingQuery",
       "parkedResurfacing",
       "priorityIntegrity",
+      "topicKnowledgeState",
       "chronicPostpone",
       "chronicPostponeService",
       "fallow",

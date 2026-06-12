@@ -22,6 +22,24 @@ A schedulable knowledge-processing element that groups or narrows work under a b
 
 A Topic can carry its own document-like reading surface while still inheriting source lineage from the material it belongs to. Extracts made from that surface should preserve the Topic as the local location while keeping the original Source as evidence root.
 
+### Concept
+
+A hierarchical first-class organizing element used to group knowledge work by domain and to carry concept-scoped review policy.
+
+A Concept is distinct from a Topic: a Topic is schedulable work, while a Concept is an organizing axis that can have child concepts, member elements, and recall-retention policy for assigned cards.
+
+### Knowledge-state receipt
+
+A read-only maturity summary for a Topic or Concept, derived from durable processing, review, retention, and verification facts.
+
+Knowledge-state receipts explain current maturity without changing scheduling, creating history, or deciding future work. Surfaces can render or compose them, but commands remain responsible for mutations.
+
+### Knowledge graduation
+
+The current-state judgment that a Topic or Concept has enough active-card, review, maturity, retention, and freshness evidence to count as mature knowledge.
+
+Knowledge graduation is not a stored lifecycle transition by itself. Until a separate ledger owns history, it is a deterministic receipt that can appear or disappear as the underlying evidence changes.
+
 ### Source lineage
 
 The chain that lets a derived element point back to the source evidence it came from, including source identity, selected text, citation or link metadata, and a location the reader can jump to.

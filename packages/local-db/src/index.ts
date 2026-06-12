@@ -454,6 +454,30 @@ export {
   TaskService,
   type TaskSummary,
 } from "./task-service";
+export {
+  DEFAULT_TOPIC_KNOWLEDGE_STATE_LIMIT,
+  KNOWLEDGE_GRADUATION_MATURE_RATIO,
+  KNOWLEDGE_GRADUATION_MIN_CARDS,
+  KNOWLEDGE_GRADUATION_MIN_REVIEWS,
+  KNOWLEDGE_GRADUATION_NEAR_RATIO,
+  KNOWLEDGE_RETENTION_TARGET_TOLERANCE,
+  KNOWLEDGE_STATE_SNAPSHOT_COUNT,
+  KNOWLEDGE_STATE_WINDOW_DAYS,
+  KNOWLEDGE_YOUNG_STABILITY_MAX_DAYS,
+  type KnowledgeFunnel,
+  type KnowledgeGraduationEvent,
+  type KnowledgeGraduationState,
+  type KnowledgeRetentionSnapshot,
+  type KnowledgeRetentionTrend,
+  type KnowledgeStabilityBuckets,
+  type KnowledgeStaleness,
+  type TopicKnowledgeGraduationStatus,
+  type TopicKnowledgeStateOptions,
+  TopicKnowledgeStateQuery,
+  type TopicKnowledgeStateSubject,
+  type TopicKnowledgeStateSubjectType,
+  type TopicKnowledgeStateSummary,
+} from "./topic-knowledge-state-query";
 export { type TrashItem, TrashRepository } from "./trash-query";
 export type { DbClient, TransactionClient } from "./types";
 export { type UndoResult, UndoService } from "./undo-service";
@@ -520,6 +544,8 @@ export interface Repositories {
   readonly parkedResurfacing: import("./parked-resurfacing-service").ParkedResurfacingService;
   /** Priority-fidelity read model (T105): serviced/deferred/debt by band/topic. Read-only. */
   readonly priorityIntegrity: import("./priority-integrity-query").PriorityIntegrityQuery;
+  /** Topic/concept maturity receipts (T108): current funnel, retention, and graduation state. */
+  readonly topicKnowledgeState: import("./topic-knowledge-state-query").TopicKnowledgeStateQuery;
   /** Chronic-postpone reckoning list (T106). Read-only, folded from operation-log markers. */
   readonly chronicPostpone: import("./chronic-postpone-query").ChronicPostponeQuery;
   /** Undoable chronic-postpone keep/demote/done/delete batches (T106). */
@@ -598,6 +624,7 @@ import { SourceRepository } from "./source-repository";
 import { SourceYieldQuery } from "./source-yield-query";
 import { SynthesisService } from "./synthesis-service";
 import { TaskService } from "./task-service";
+import { TopicKnowledgeStateQuery } from "./topic-knowledge-state-query";
 import { TrashRepository } from "./trash-query";
 
 /** Options for {@link createRepositories}. */
@@ -654,6 +681,7 @@ export function createRepositories(
     parkedResurfacingQuery: new ParkedResurfacingQuery(db),
     parkedResurfacing: new ParkedResurfacingService(db),
     priorityIntegrity: new PriorityIntegrityQuery(db),
+    topicKnowledgeState: new TopicKnowledgeStateQuery(db),
     chronicPostpone: new ChronicPostponeQuery(db),
     chronicPostponeService: new ChronicPostponeService(db),
     fallow: new FallowService(db),

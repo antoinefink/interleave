@@ -19,6 +19,7 @@ describe("IPC_CHANNELS", () => {
     expect(IPC_CHANNELS.jobsUpdated).toBe("jobs:updated");
     expect(IPC_CHANNELS.analyticsReviewActivity).toBe("analytics:reviewActivity");
     expect(IPC_CHANNELS.analyticsPriorityIntegrity).toBe("analytics:priorityIntegrity");
+    expect(IPC_CHANNELS.analyticsTopicKnowledgeState).toBe("analytics:topicKnowledgeState");
     expect(IPC_CHANNELS.backupsOpenFolder).toBe("backups:openFolder");
     expect(IPC_CHANNELS.maintenanceParkedResurfacing).toBe("maintenance:parkedResurfacing");
     expect(IPC_CHANNELS.maintenanceParkedResurfacingApply).toBe(

@@ -5625,6 +5625,121 @@ export interface PriorityIntegrityGetResult {
 }
 
 // ---------------------------------------------------------------------------
+// analytics.topicKnowledgeState()  (T108 — topic/concept maturity receipts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Topic knowledge-state analytics (T108) — a read-only receipt over durable facts:
+ * live concept membership/topic subtrees, extract/card lineage, review logs, review
+ * states, retention targets, and verification tasks. It computes the current
+ * knowledge funnel, stability buckets, rolling retention snapshots, and deterministic
+ * current graduation candidates. NO mutation, NO `operation_log`, no weekly-review
+ * session creation (T110 owns that ritual).
+ */
+export const TopicKnowledgeStateGetRequestSchema = z
+  .object({
+    /** The instant to compute the receipt for (ISO-8601); defaults to now. */
+    asOf: IsoTimestampInputSchema.optional(),
+    /** Rolling retention window in days (1–365); defaults to 90. */
+    windowDays: z.number().int().min(1).max(365).optional(),
+    /** Cap the subject count (1–200); defaults to 50. */
+    limit: z.number().int().min(1).max(200).optional(),
+    /** Optional subject filter; omit to include both concepts and topics. */
+    subjectType: z.enum(["concept", "topic"]).optional(),
+    /** Optional exact subject id filter. */
+    subjectId: z.string().min(1).optional(),
+  })
+  .optional();
+export type TopicKnowledgeStateGetRequest = z.infer<typeof TopicKnowledgeStateGetRequestSchema>;
+
+export type TopicKnowledgeStateSubjectType = "concept" | "topic";
+export type TopicKnowledgeGraduationStatus =
+  | "insufficient_evidence"
+  | "building"
+  | "near_graduation"
+  | "graduated"
+  | "needs_attention";
+
+export interface KnowledgeFunnel {
+  readonly read: number;
+  readonly extracted: number;
+  readonly distilled: number;
+  readonly carded: number;
+  readonly mature: number;
+  readonly extractedOfRead: number | null;
+  readonly distilledOfExtracted: number | null;
+  readonly cardedOfDistilled: number | null;
+  readonly matureOfCarded: number | null;
+}
+
+export interface KnowledgeStabilityBuckets {
+  readonly young: number;
+  readonly maturing: number;
+  readonly mature: number;
+  readonly retired: number;
+}
+
+export interface KnowledgeRetentionSnapshot {
+  readonly start: string;
+  readonly end: string;
+  readonly reviewCount: number;
+  readonly measuredRetention: number | null;
+}
+
+export interface KnowledgeRetentionTrend {
+  readonly windowDays: number;
+  readonly reviewCount: number;
+  readonly measuredRetention: number | null;
+  readonly retentionTarget: number | null;
+  readonly directConceptTarget: number | null;
+  readonly deltaFromTarget: number | null;
+  readonly snapshots: readonly KnowledgeRetentionSnapshot[];
+}
+
+export interface KnowledgeStaleness {
+  readonly staleItems: number;
+  readonly needsReverify: number;
+}
+
+export interface KnowledgeGraduationState {
+  readonly status: TopicKnowledgeGraduationStatus;
+  readonly reason: string;
+  readonly thresholdVersion: "v1";
+}
+
+export interface TopicKnowledgeStateSubject {
+  readonly subjectType: TopicKnowledgeStateSubjectType;
+  readonly subjectId: string;
+  readonly title: string;
+  readonly priority: number | null;
+  readonly priorityLabel: PriorityLabel | null;
+  readonly directMemberCount: number | null;
+  readonly includedElementCount: number;
+  readonly funnel: KnowledgeFunnel;
+  readonly stability: KnowledgeStabilityBuckets;
+  readonly retention: KnowledgeRetentionTrend;
+  readonly staleness: KnowledgeStaleness;
+  readonly graduationState: KnowledgeGraduationState;
+}
+
+export interface KnowledgeGraduationEvent {
+  readonly eventId: string;
+  readonly eventType: "current_graduated";
+  readonly subjectType: TopicKnowledgeStateSubjectType;
+  readonly subjectId: string;
+  readonly title: string;
+  readonly asOf: string;
+  readonly thresholdVersion: "v1";
+}
+
+export interface TopicKnowledgeStateGetResult {
+  readonly asOf: string;
+  readonly windowDays: number;
+  readonly subjects: readonly TopicKnowledgeStateSubject[];
+  readonly graduationEvents: readonly KnowledgeGraduationEvent[];
+}
+
+// ---------------------------------------------------------------------------
 // dailyWork.summary()  (T101 — daily workflow routing)
 // ---------------------------------------------------------------------------
 
@@ -6678,6 +6793,13 @@ export interface AppApi {
      * threshold flags over the durable logs. Read-only.
      */
     priorityIntegrity(request?: PriorityIntegrityGetRequest): Promise<PriorityIntegrityGetResult>;
+    /**
+     * Topic/concept maturity receipt (T108): current funnel, stability buckets,
+     * retention snapshots, and current graduation candidates. Read-only.
+     */
+    topicKnowledgeState(
+      request?: TopicKnowledgeStateGetRequest,
+    ): Promise<TopicKnowledgeStateGetResult>;
   };
   readonly balance: {
     /**

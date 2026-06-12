@@ -127,18 +127,46 @@ test("the analytics bridge surface exists (no raw SQL)", async () => {
 
   const surface = await page.evaluate(() => {
     const api = window.appApi as unknown as {
-      analytics?: { get?: unknown; reviewActivity?: unknown };
+      analytics?: { get?: unknown; reviewActivity?: unknown; topicKnowledgeState?: unknown };
       db?: { query?: unknown };
     };
     return {
       hasAnalyticsGet: typeof api?.analytics?.get === "function",
       hasReviewActivity: typeof api?.analytics?.reviewActivity === "function",
+      hasTopicKnowledgeState: typeof api?.analytics?.topicKnowledgeState === "function",
       hasQuery: typeof api?.db?.query === "function",
     };
   });
   expect(surface.hasAnalyticsGet).toBe(true);
   expect(surface.hasReviewActivity).toBe(true);
+  expect(surface.hasTopicKnowledgeState).toBe(true);
   expect(surface.hasQuery).toBe(false);
+
+  const topicKnowledge = await page.evaluate(async (asOf) => {
+    const api = window.appApi as unknown as {
+      analytics: {
+        topicKnowledgeState(req: { asOf: string; limit: number }): Promise<{
+          asOf: string;
+          windowDays: number;
+          subjects: unknown[];
+          graduationEvents: unknown[];
+        }>;
+      };
+    };
+    const state = await api.analytics.topicKnowledgeState({ asOf, limit: 5 });
+    return {
+      asOf: state.asOf,
+      windowDays: state.windowDays,
+      subjectCount: state.subjects.length,
+      graduationEventCount: state.graduationEvents.length,
+    };
+  }, ASOF);
+  expect(topicKnowledge).toMatchObject({
+    asOf: ASOF,
+    windowDays: 90,
+  });
+  expect(topicKnowledge.subjectCount).toBeGreaterThanOrEqual(0);
+  expect(topicKnowledge.graduationEventCount).toBeGreaterThanOrEqual(0);
 
   await app.close();
 });

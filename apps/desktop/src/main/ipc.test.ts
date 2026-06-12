@@ -93,6 +93,13 @@ function fakeDbService() {
       },
       request,
     })),
+    getTopicKnowledgeState: vi.fn((request?: unknown) => ({
+      asOf: "2026-06-08T09:00:00.000Z",
+      windowDays: 90,
+      subjects: [],
+      graduationEvents: [],
+      request,
+    })),
     getMaintenanceChronicPostpones: vi.fn((request?: unknown) => ({
       rows: [],
       totalDue: 0,
@@ -233,6 +240,32 @@ describe("registerIpcHandlers", () => {
 
     expect(() => handler?.({}, { asOf: "not-a-date" })).toThrow();
     expect(db.getPriorityIntegrity).not.toHaveBeenCalled();
+  });
+
+  it("validates and forwards topic knowledge-state requests", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+    const request = {
+      asOf: "2026-06-08T09:00:00.000Z",
+      windowDays: 90,
+      limit: 10,
+      subjectType: "topic",
+      subjectId: "topic-1",
+    };
+    const handler = electron.handlers.get(IPC_CHANNELS.analyticsTopicKnowledgeState);
+
+    expect(handler?.({}, request)).toMatchObject({ subjects: [] });
+    expect(db.getTopicKnowledgeState).toHaveBeenCalledWith(request);
+  });
+
+  it("rejects malformed topic knowledge-state filters before invoking the database service", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+    const handler = electron.handlers.get(IPC_CHANNELS.analyticsTopicKnowledgeState);
+
+    expect(() => handler?.({}, { subjectType: "source" })).toThrow();
+    expect(() => handler?.({}, { limit: 0 })).toThrow();
+    expect(db.getTopicKnowledgeState).not.toHaveBeenCalled();
   });
 
   it("validates and forwards topic fallow commands", () => {

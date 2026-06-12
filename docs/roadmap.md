@@ -406,8 +406,9 @@ Detailed specs: [`tasks/M22-receipts.md`](./tasks/M22-receipts.md)
 - [x] **T107 — Fallow: deliberate topic rest** · _deps: T105_
   Done when: a topic can be rested to a chosen return date — distinct from postpone (no recession growth, excluded from missed-priority accounting) and from abandon (it provably returns) — visible on the topic, reversible, op-logged.
   Completed in this commit. Verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm e2e -- tests/electron/fallow-topic.spec.ts`. Learning captured in [`docs/solutions/architecture-patterns/topic-fallow-rest-operation-log-preimages.md`](./solutions/architecture-patterns/topic-fallow-rest-operation-log-preimages.md). Downstream: T108 can treat fallowed topics as deliberate rest context rather than missed-priority debt; T110 can compose resting topics into the weekly ledger.
-- [ ] **T108 — Topic knowledge-state read model** · _deps: T079, T083, T104_
+- [x] **T108 — Topic knowledge-state read model** · _deps: T079, T083, T104_
   Done when: per topic/concept, a typed read model reports the funnel as stage-to-stage ratios (read → extracted → distilled → carded → mature), stability distribution, and measured retention trend vs the T079 target, and emits graduation events when thresholds cross.
+  Completed in this commit. Verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm e2e`; focused coverage includes `topic-knowledge-state-query`, analytics bridge contract/preload/appApi tests, and `tests/electron/analytics.spec.ts`. Learning captured in [`docs/solutions/architecture-patterns/topic-knowledge-state-read-model.md`](./solutions/architecture-patterns/topic-knowledge-state-read-model.md). Downstream: T109 owns UI surfaces and daily-summary graduation rendering; T110 owns weekly-ledger composition.
 - [ ] **T109 — Maturity surfaces** · _deps: T108_
   Done when: topic pages render the knowledge-state panel, analytics gains the concept-level retention view (replacing the deferred stub noted in `AnalyticsScreen.tsx`), and graduation events appear in the daily summary.
 - [ ] **T110 — Weekly ledger & integrity session** · _deps: T106, T109_

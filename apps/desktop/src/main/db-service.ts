@@ -365,6 +365,8 @@ import type {
   TasksPostponeResult,
   TopicFallowRequest,
   TopicFallowResult,
+  TopicKnowledgeStateGetRequest,
+  TopicKnowledgeStateGetResult,
   TopicUnfallowRequest,
   TrashEmptyResult,
   TrashListResult,
@@ -5364,6 +5366,21 @@ export class DbService {
       resting: summary.resting,
       thresholdFlags: summary.thresholdFlags,
     };
+  }
+
+  /**
+   * Topic/concept knowledge-state receipt (T108): current funnel, stability buckets,
+   * rolling retention snapshots, and current graduation candidates. Read-only — no
+   * mutation, no `operation_log`, no weekly-review session creation.
+   */
+  getTopicKnowledgeState(request?: TopicKnowledgeStateGetRequest): TopicKnowledgeStateGetResult {
+    const asOf = (request?.asOf ?? nowIso()) as IsoTimestamp;
+    return this.repos.topicKnowledgeState.getTopicKnowledgeState(asOf, {
+      ...(request?.windowDays !== undefined ? { windowDays: request.windowDays } : {}),
+      ...(request?.limit !== undefined ? { limit: request.limit } : {}),
+      ...(request?.subjectType !== undefined ? { subjectType: request.subjectType } : {}),
+      ...(request?.subjectId !== undefined ? { subjectId: request.subjectId } : {}),
+    });
   }
 
   /**

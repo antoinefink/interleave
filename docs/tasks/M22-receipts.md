@@ -239,7 +239,7 @@ not abandoned land. It also keeps T105's ledger honest: fallowed work is not "mi
 # T108 — Topic knowledge-state read model
 
 - **Milestone:** M22 — Receipts
-- **Status:** `[ ]` not started
+- **Status:** `[x]` completed in this commit
 - **Depends on:** T079, T083, T104
 - **Roadmap line:** per topic/concept, a typed read model reports the funnel as stage-to-stage
   ratios (read → extracted → distilled → carded → mature), stability distribution, and measured
@@ -263,27 +263,54 @@ coverage gaps, is retention trending toward my target.
 
 ## Deliverables
 
-- [ ] `TopicKnowledgeStateQuery` in `packages/local-db`: per topic/concept — funnel counts +
+- [x] `TopicKnowledgeStateQuery` in `packages/local-db`: per topic/concept — funnel counts +
       adjacent-stage ratios, stability buckets (young / maturing / mature / retired), measured
       retention (rolling 90d) vs T079 target, staleness/needs-reverify counts (T090 now; T123
       later), and threshold-crossing graduation events (computed, idempotent — an event is a
       state read, not a stored row).
-- [ ] Typed IPC surface; contract tests.
-- [ ] Tests: seeded-fixture unit tests for ratios, buckets, trend, and graduation edges
+- [x] Typed IPC surface; contract tests.
+- [x] Tests: seeded-fixture unit tests for ratios, buckets, trend, and graduation edges
       (crossing up AND regressing back down).
 
 ## Done when
 
-- For a seeded topic with known composition, the model returns the exact expected funnel,
+- [x] For a seeded topic with known composition, the model returns the exact expected funnel,
   buckets, trend, and graduation state; surfaces are T109's job — this task ships the model +
   contract only.
-- Standard gates pass.
+- [x] Standard gates pass.
 
 ## Notes / risks
 
 - Concept vs topic linkage: elements relate to concepts (T041) and to topic elements — decide
   the aggregation key (recommendation: concepts, with topic elements mapping through their
   concept links) and document it in the query header.
+
+## Completion notes
+
+- Added `TopicKnowledgeStateQuery` as a read-only local-db model over live elements,
+  concept membership, topic descendants, block-processing summaries, review states/logs,
+  source-yield fates, retention targets, and open verification tasks.
+- Concepts aggregate direct concept membership plus descendant concepts. Topic elements aggregate
+  their live `parentId` subtree only; `sourceId` remains provenance and is not used as membership.
+- Graduation is a deterministic current-state receipt, not a stored mutation: active non-retired
+  cards must satisfy minimum card/review floors, mature ratio, retention target tolerance, and no
+  stale/reverify flags. The event id is stable for current graduated subjects.
+- Added typed `analytics.topicKnowledgeState` IPC/preload/appApi support with non-desktop fallback
+  preserving the renderer boundary and exposing no generic SQL or filesystem API.
+
+## Verification
+
+- `pnpm lint`
+- `pnpm typecheck`
+- `pnpm test`
+- `pnpm e2e`
+- Focused: `pnpm test -- packages/local-db/src/topic-knowledge-state-query.test.ts packages/local-db/src/index.test.ts apps/desktop/src/shared/channels.test.ts apps/desktop/src/shared/contract.test.ts apps/desktop/src/main/ipc.test.ts apps/desktop/src/preload/index.test.ts apps/web/src/lib/appApi.test.ts`
+- Focused: `pnpm exec playwright test tests/electron/analytics.spec.ts --project=electron --workers=1`
+
+## Learning
+
+- Captured in
+  [`docs/solutions/architecture-patterns/topic-knowledge-state-read-model.md`](../solutions/architecture-patterns/topic-knowledge-state-read-model.md).
 
 ---
 

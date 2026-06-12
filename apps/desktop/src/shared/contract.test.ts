@@ -160,6 +160,7 @@ import {
   TasksListRequestSchema,
   TasksPostponeRequestSchema,
   TopicFallowRequestSchema,
+  TopicKnowledgeStateGetRequestSchema,
   TopicUnfallowRequestSchema,
   VaultCollectOrphansRequestSchema,
   type VaultCollectOrphansResult,
@@ -319,6 +320,7 @@ describe("IPC channels", () => {
         "analytics:get",
         "analytics:reviewActivity",
         "analytics:priorityIntegrity",
+        "analytics:topicKnowledgeState",
         "balance:get",
         "dailyWork:summary",
         "backups:create",
@@ -393,6 +395,35 @@ describe("PriorityIntegrityGetRequestSchema (T105)", () => {
     for (const topicLimit of [0, 51, 1.5]) {
       expect(() => PriorityIntegrityGetRequestSchema.parse({ topicLimit })).toThrow();
     }
+  });
+});
+
+describe("TopicKnowledgeStateGetRequestSchema (T108)", () => {
+  it("accepts omitted or bounded subject-filtered requests", () => {
+    expect(TopicKnowledgeStateGetRequestSchema.parse(undefined)).toBeUndefined();
+    expect(TopicKnowledgeStateGetRequestSchema.parse({})).toEqual({});
+    expect(
+      TopicKnowledgeStateGetRequestSchema.parse({
+        asOf: "2026-06-08T09:00:00.000Z",
+        windowDays: 90,
+        limit: 25,
+        subjectType: "concept",
+        subjectId: "concept-1",
+      }),
+    ).toEqual({
+      asOf: "2026-06-08T09:00:00.000Z",
+      windowDays: 90,
+      limit: 25,
+      subjectType: "concept",
+      subjectId: "concept-1",
+    });
+  });
+
+  it("rejects malformed clocks, unbounded limits, and unknown subject types", () => {
+    expect(() => TopicKnowledgeStateGetRequestSchema.parse({ asOf: "not-a-date" })).toThrow();
+    expect(() => TopicKnowledgeStateGetRequestSchema.parse({ windowDays: 0 })).toThrow();
+    expect(() => TopicKnowledgeStateGetRequestSchema.parse({ limit: 201 })).toThrow();
+    expect(() => TopicKnowledgeStateGetRequestSchema.parse({ subjectType: "source" })).toThrow();
   });
 });
 
