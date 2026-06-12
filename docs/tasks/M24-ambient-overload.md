@@ -76,7 +76,7 @@ when history is thin.
 - Source/extract elapsed work is intentionally not inferred from read progress, media duration, or
   T083 review-time rollups. Those rows remain default-priced until a later task records actual
   attention-work timings.
-- Final commit: TBD.
+- Implementation commit: bd3b8cce.
 
 ---
 
