@@ -79,7 +79,7 @@ Additive preimage on the existing op (no new op type), symmetric on undo:
 
 ## Related
 
-- [[sqlite-table-rebuild-with-foreign-keys-on-fires-on-delete-actions]] — the migration-0030 FK-set-null wipe this pattern closes at the delete path (candidate for a consolidation cross-link).
+- [[sqlite-table-rebuild-with-foreign-keys-on-fires-on-delete-actions]] — the migration-side cause: the same FK-set-null wipe, fixed in the migration runner + repair migration 0034. This note is its delete-path counterpart; the two are cross-linked but kept distinct (migration cause/repair vs. delete-path design).
 - [[queue-eligibility-inventory-scheduler-state]] — clear both `elements.due_at` and `review_states.due_at` on queue exit; symmetric undo.
 - [[topic-fallow-rest-operation-log-preimages]] — shared-`batchId` batch mutation with intent-aware, preimage-based restore.
 - [[extract-fates-value-model-v2-source-yield-stagnation]] — reconciling the cached `synthesized` extract-fate on delete/restore.

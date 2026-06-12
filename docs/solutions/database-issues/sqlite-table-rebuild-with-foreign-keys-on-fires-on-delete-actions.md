@@ -101,9 +101,17 @@ per-statement enforcement provided during migrations.
   payload names a parent that still exists while `elements.parent_id` is NULL.
 - Column order in `.schema` output is forensic gold: `ADD COLUMN` always appends, so a mid-table
   column proves a historical rebuild.
+- The same `ON DELETE SET NULL` self-FK vector exists at the **user-facing delete path**, not only
+  in migrations: any real `DELETE` (purge / Empty Trash) of a node that still anchors live
+  descendants nulls their `parent_id`/`source_id`. T135 closes it there with a purge guard at
+  *every* hard-delete seam — generalize the rule to "guard every real DELETE of a node with live
+  dependents," not just migrations.
 
 ## Related
 
+- `docs/solutions/architecture-patterns/lineage-aware-deletion-tombstone-purge-guard.md` — the
+  delete-path counterpart (T135): the same FK-set-null orphan vector, closed for user-facing
+  deletion via tombstone-and-keep, a purge guard at every hard-delete seam, and symmetric restore.
 - `docs/solutions/database-issues/drizzle-migrator-high-water-mark-skips-out-of-order-migrations.md`
   — the other Drizzle-runner trap: journal `when` values must stay monotonic (respected by
   0034's hand-written journal entry).
