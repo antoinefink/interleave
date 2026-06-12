@@ -26,7 +26,9 @@ import type { IsoTimestamp, Priority } from "@interleave/core";
 import { PRIORITY_LABEL_VALUE } from "@interleave/core";
 import { describe, expect, it } from "vitest";
 import {
+  ATTENTION_SCHEDULE_REASON_KINDS,
   adaptiveAttentionIntervalMultiplier,
+  attentionScheduleReasonFromAdaptiveReason,
   basePostponeIntervalDays,
   DEFAULT_ATTENTION_INTERVAL_MULTIPLIER,
   EXTRACT_STAGES,
@@ -265,6 +267,71 @@ describe("adaptiveAttentionIntervalMultiplier", () => {
   });
 });
 
+describe("attention schedule reason vocabulary", () => {
+  it("exports the closed T113 reason vocabulary including the reserved descendant-lapse kind", () => {
+    expect(ATTENTION_SCHEDULE_REASON_KINDS).toEqual([
+      "yield_shortened",
+      "yield_lengthened",
+      "recency_damped",
+      "postpone_recession",
+      "source_unresolved_shortened",
+      "source_exhausted_lengthened",
+      "descendant_lapses",
+      "band_base",
+    ]);
+  });
+
+  it("normalizes legacy adaptive diagnostics into T113 schedule reasons", () => {
+    expect(
+      attentionScheduleReasonFromAdaptiveReason({
+        reasonKind: "yield_shortened",
+        priorMultiplier: 1,
+        clampedPriorMultiplier: 1,
+        newMultiplier: 0.9,
+        productiveOutputCount: 2,
+        baseIntervalDays: 10,
+        intervalAfterMultiplierDays: 9,
+        finalIntervalDays: 8,
+      }),
+    ).toMatchObject({
+      kind: "yield_shortened",
+      priorMultiplier: 1,
+      clampedPriorMultiplier: 1,
+      newMultiplier: 0.9,
+      productiveOutputCount: 2,
+      baseIntervalDays: 10,
+      intervalAfterMultiplierDays: 9,
+      finalIntervalDays: 8,
+    });
+
+    expect(
+      attentionScheduleReasonFromAdaptiveReason({
+        reasonKind: "yield_held",
+        priorMultiplier: 1,
+        clampedPriorMultiplier: 1,
+        newMultiplier: 1,
+        productiveOutputCount: 0,
+        baseIntervalDays: 10,
+        intervalAfterMultiplierDays: 10,
+        finalIntervalDays: 10,
+      }),
+    ).toEqual({ kind: "band_base", baseIntervalDays: 10, finalIntervalDays: 10 });
+
+    expect(
+      attentionScheduleReasonFromAdaptiveReason({
+        reasonKind: "yield_input_malformed",
+        priorMultiplier: 1,
+        clampedPriorMultiplier: 1,
+        newMultiplier: 1,
+        productiveOutputCount: 0,
+        baseIntervalDays: 10,
+        intervalAfterMultiplierDays: 10,
+        finalIntervalDays: 10,
+      }),
+    ).toBeNull();
+  });
+});
+
 describe("nextDueAt (heuristic + action override)", () => {
   it("schedules an extract by its STAGE band", () => {
     const input: Schedulable = { type: "extract", stage: "clean_extract", priority: B };
@@ -302,6 +369,12 @@ describe("nextDueAt (heuristic + action override)", () => {
     );
 
     expect(decision.intervalDays).toBe(3);
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "source_unresolved_shortened",
+      baseIntervalDays: 7,
+      finalIntervalDays: 3,
+      unresolvedRatio: 0.5,
+    });
   });
 
   it("pushes mostly ignored no-output sources later and suggests retirement", () => {
@@ -321,6 +394,12 @@ describe("nextDueAt (heuristic + action override)", () => {
 
     expect(decision.intervalDays).toBe(60);
     expect(decision.retirementSuggestion).toBe(true);
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "source_exhausted_lengthened",
+      baseIntervalDays: 30,
+      finalIntervalDays: 60,
+      ignoredRatio: 0.75,
+    });
   });
 
   it("a topic falls back to the by-priority band when no setting is supplied", () => {
@@ -404,6 +483,15 @@ describe("nextDueAt (heuristic + action override)", () => {
     const decision = nextDueAt({ type: "source", priority: B, lastSeenAt }, NOW);
     expect(decision.intervalDays).toBe(expectedIntervalDays);
     expect(daysBetween(NOW, decision.dueAt)).toBe(expectedIntervalDays);
+    if (expectedIntervalDays < 7) {
+      expect(decision.scheduleReason).toMatchObject({
+        kind: "recency_damped",
+        baseIntervalDays: 7,
+        finalIntervalDays: expectedIntervalDays,
+      });
+    } else {
+      expect(decision.scheduleReason).toMatchObject({ kind: "band_base" });
+    }
   });
 
   it.each([
@@ -435,6 +523,11 @@ describe("nextDueAt (heuristic + action override)", () => {
 
     expect(decision.intervalDays).toBe(2);
     expect(daysBetween(NOW, decision.dueAt)).toBe(2);
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "source_unresolved_shortened",
+      baseIntervalDays: 7,
+      finalIntervalDays: 2,
+    });
   });
 
   it("applies recency after mostly ignored no-output source-processing adjustment", () => {
@@ -456,6 +549,11 @@ describe("nextDueAt (heuristic + action override)", () => {
     expect(decision.intervalDays).toBe(30);
     expect(daysBetween(NOW, decision.dueAt)).toBe(30);
     expect(decision.retirementSuggestion).toBe(true);
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "source_exhausted_lengthened",
+      baseIntervalDays: 30,
+      finalIntervalDays: 30,
+    });
   });
 
   it("with adaptive intervals on, applies the multiplier between action interval and recency", () => {
@@ -480,6 +578,15 @@ describe("nextDueAt (heuristic + action override)", () => {
       baseIntervalDays: 60,
       intervalAfterMultiplierDays: 54,
       finalIntervalDays: 51,
+    });
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "yield_shortened",
+      priorMultiplier: 1,
+      newMultiplier: 0.9,
+      baseIntervalDays: 60,
+      intervalAfterMultiplierDays: 54,
+      finalIntervalDays: 51,
+      productiveOutputCount: 1,
     });
     expect(decision.intervalDays).toBe(51);
     expect(daysBetween(NOW, decision.dueAt)).toBe(51);
@@ -512,6 +619,48 @@ describe("nextDueAt (heuristic + action override)", () => {
       intervalAfterMultiplierDays: 35,
       finalIntervalDays: 35,
     });
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "yield_lengthened",
+      baseIntervalDays: 30,
+      intervalAfterMultiplierDays: 35,
+      finalIntervalDays: 35,
+      productiveOutputCount: 0,
+    });
+  });
+
+  it("with adaptive intervals on, explains high-unresolved no-output source visits as source processing", () => {
+    const decision = nextDueAt(
+      {
+        type: "source",
+        priority: B,
+        adaptiveAttentionIntervals: true,
+        attentionIntervalMultiplier: 1,
+        visitYield: { unresolvedRatio: 0.5, terminalRatio: 0.5, ignoredRatio: 0 },
+        sourceProcessing: {
+          unresolvedRatio: 0.5,
+          terminalRatio: 0.5,
+          ignoredRatio: 0,
+          extractedOutputCount: 0,
+        },
+      },
+      NOW,
+    );
+
+    expect(decision.intervalDays).toBe(3);
+    expect(decision.attentionIntervalMultiplier).toBe(0.95);
+    expect(decision.adaptiveReason).toMatchObject({
+      reasonKind: "yield_shortened",
+      productiveOutputCount: 0,
+      baseIntervalDays: 7,
+      intervalAfterMultiplierDays: 7,
+      finalIntervalDays: 3,
+    });
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "source_unresolved_shortened",
+      baseIntervalDays: 7,
+      finalIntervalDays: 3,
+      extractedOutputCount: 0,
+    });
   });
 
   it("with adaptive intervals on, productive extract visits emit structured reason data", () => {
@@ -536,6 +685,87 @@ describe("nextDueAt (heuristic + action override)", () => {
       intervalAfterMultiplierDays: 9,
       finalIntervalDays: 9,
     });
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "yield_shortened",
+      productiveOutputCount: 1,
+      baseIntervalDays: 10,
+      intervalAfterMultiplierDays: 9,
+      finalIntervalDays: 9,
+    });
+  });
+
+  it("maps malformed adaptive input to no visible schedule reason", () => {
+    const decision = nextDueAt(
+      {
+        type: "extract",
+        stage: "clean_extract",
+        priority: C,
+        adaptiveAttentionIntervals: true,
+        attentionIntervalMultiplier: 1,
+        visitYield: { cardsCreated: -1 },
+      },
+      NOW,
+    );
+
+    expect(decision.adaptiveReason?.reasonKind).toBe("yield_input_malformed");
+    expect(decision.scheduleReason).toBeUndefined();
+  });
+
+  it("emits postpone recession as a schedule reason", () => {
+    const decision = nextDueAt(
+      {
+        type: "extract",
+        stage: "raw_extract",
+        priority: B,
+        lastAction: "postpone",
+        postponeCount: 2,
+      },
+      NOW,
+    );
+
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "postpone_recession",
+      baseIntervalDays: extractStageIntervalDays("raw_extract", B),
+      intervalAfterPostponeDays: postponeIntervalForPriority(B, 2),
+      finalIntervalDays: postponeIntervalForPriority(B, 2),
+      postponeCount: 2,
+    });
+  });
+
+  it("does not emit the reserved descendant-lapse reason in T113 scheduler paths", () => {
+    const decisions = [
+      nextDueAt({ type: "source", priority: B }, NOW),
+      nextDueAt({ type: "source", priority: B, lastSeenAt: addDays(NOW, -3) }, NOW),
+      nextDueAt({ type: "source", priority: B, lastAction: "postpone", postponeCount: 1 }, NOW),
+      nextDueAt(
+        {
+          type: "source",
+          priority: B,
+          sourceProcessing: {
+            unresolvedRatio: 0.5,
+            terminalRatio: 0.5,
+            ignoredRatio: 0,
+            extractedOutputCount: 1,
+          },
+        },
+        NOW,
+      ),
+      nextDueAt(
+        {
+          type: "extract",
+          stage: "clean_extract",
+          priority: C,
+          adaptiveAttentionIntervals: true,
+          attentionIntervalMultiplier: 1,
+          visitYield: { synthesisOutputsCreated: 1 },
+        },
+        NOW,
+      ),
+    ];
+
+    expect(decisions.map((decision) => decision.scheduleReason?.kind)).not.toContain(
+      "descendant_lapses",
+    );
   });
 
   it.each([

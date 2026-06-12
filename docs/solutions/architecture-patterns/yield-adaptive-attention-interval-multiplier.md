@@ -1,6 +1,7 @@
 ---
 title: "Persist adaptive attention intervals as bounded, undoable scheduler state"
 date: "2026-06-12"
+last_updated: "2026-06-12"
 category: "docs/solutions/architecture-patterns"
 module: "packages/scheduler"
 problem_type: "architecture_pattern"
@@ -28,9 +29,13 @@ tags:
 ## Context
 
 T112 added yield-adaptive attention intervals without changing default scheduler behavior. The
-durable pattern is to persist only a bounded per-element multiplier, keep the feature gated by a
-typed setting that defaults off, compute changes from command-scoped yield deltas, and write enough
+durable pattern is to persist only a bounded per-element multiplier, keep learned behavior gated
+until UI explainability exists, compute changes from command-scoped yield deltas, and write enough
 `operation_log` diagnostics and preimages for explainability and undo.
+
+T113 completed the explanation path and flipped adaptive attention intervals on by default. Keep
+the T112 persistence pattern paired with the T113 trusted schedule-reason projection before making
+new learned scheduler behavior default-on.
 
 The implementation touches four boundaries:
 
@@ -51,11 +56,14 @@ attentionIntervalMultiplier: real("attention_interval_multiplier")
   .default(1.0)
 ```
 
-Gate the behavior through typed app settings, defaulting off until the UI can explain the learned
-schedule:
+Gate learned behavior through typed app settings until the UI can explain the learned schedule:
 
 ```ts
+// T112 before schedule explainability shipped
 adaptiveAttentionIntervals: false;
+
+// T113 after trusted schedule reasons reached queue, home, and inspector surfaces
+adaptiveAttentionIntervals: true;
 ```
 
 Only adaptive source/extract processing commands should feed the multiplier. The scheduler service
@@ -159,6 +167,7 @@ Verification for T112 passed:
 ## Related
 
 - [Attention scheduler recency needs separate last-seen and action clocks](../logic-errors/attention-scheduler-last-seen-clock-semantics.md) is the predecessor learning for T111 clock semantics.
+- [Trust schedule reasons only from the governing reschedule operation](./trusted-schedule-reasons-from-governing-reschedule-ops.md) is the T113 follow-on that explains learned and heuristic schedule changes safely enough to make adaptive intervals default-on.
 - [Track source block processing as durable source-scoped state](./durable-source-block-processing-state.md) defines durable source-processing inputs that scheduler adaptation can consume.
 - [Model honorable non-card extract fates as first-class value output](./extract-fates-value-model-v2-source-yield-stagnation.md) defines yield semantics beyond card creation.
 - [Chronic postpone reckoning from operation-log reset markers](./chronic-postpone-reckoning-from-operation-log-reset-markers.md) documents operation-log-derived scheduler state.

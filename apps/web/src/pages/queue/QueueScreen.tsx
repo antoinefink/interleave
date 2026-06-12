@@ -24,9 +24,15 @@
  */
 
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "../../components/Icon";
-import { Prio, SchedulerChip, TypeIcon } from "../../components/inspector/primitives";
+import {
+  formatAttentionScheduleReason,
+  Prio,
+  ScheduleReasonLine,
+  SchedulerChip,
+  TypeIcon,
+} from "../../components/inspector/primitives";
 import {
   dismissNoticeUntil,
   isNoticeDismissed,
@@ -162,6 +168,7 @@ function QueueItem({
   /** Explicit (tomorrow/next-week/next-month/manual) scheduling — attention items only. */
   onSchedule: (item: QueueItemSummary, choice: QueueScheduleChoice) => void;
 }) {
+  const scheduleReasonId = useId();
   const action = actionFor(item);
   // The per-type meta sub-line, matching the kit's `QueueItem` (one branch per
   // type so every row reads with real content before the SchedulerChip). `concept`
@@ -180,9 +187,11 @@ function QueueItem({
     fsrsState: item.schedulerSignals.fsrsState,
     stage: item.schedulerSignals.stage,
     postponed: item.schedulerSignals.postponed,
+    scheduleReason: item.schedulerSignals.scheduleReason ?? null,
     lastProcessedAt: null,
     retirementSuggestion: item.schedulerSignals.retirementSuggestion,
   };
+  const scheduleReasonText = formatAttentionScheduleReason(chip);
   const retirementSuggestion = item.schedulerSignals.retirementSuggestion;
   const [retirementReviewSignal, setRetirementReviewSignal] = useState(0);
   // Stable per-row callbacks for the source Done intent surface (mirrors the useCallback
@@ -219,6 +228,7 @@ function QueueItem({
         type="button"
         className="qitem__open"
         data-testid="queue-open"
+        aria-describedby={scheduleReasonText ? scheduleReasonId : undefined}
         onClick={() => {
           onSelect(item);
           onOpen(item);
@@ -251,6 +261,13 @@ function QueueItem({
               </>
             ) : null}
           </span>
+          {scheduleReasonText ? (
+            <ScheduleReasonLine
+              id={scheduleReasonId}
+              scheduler={chip}
+              className="qitem__schedule-reason"
+            />
+          ) : null}
         </span>
         <span className="qitem__action">
           <Prio priority={item.priority} />

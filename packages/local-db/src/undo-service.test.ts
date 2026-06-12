@@ -191,6 +191,40 @@ describe("UndoService.undoLast", () => {
     expect(elements.findById(id)?.dueAt).toBe(originalDue);
   });
 
+  it("restores schedule reason evidence when undo returns to a learned due date", () => {
+    const elements = new ElementRepository(handle.db);
+    const undo = new UndoService(handle.db);
+    const log = new OperationLogRepository(handle.db);
+    const id = createActiveElement(handle);
+    const learnedDue = "2026-02-01T00:00:00.000Z" as IsoTimestamp;
+    const explicitDue = "2026-03-01T00:00:00.000Z" as IsoTimestamp;
+
+    handle.db.transaction((tx) => {
+      elements.rescheduleWithin(tx, id, learnedDue, "scheduled", {
+        action: "extract",
+        scheduledAt: "2026-01-25T00:00:00.000Z",
+        scheduleReason: {
+          kind: "yield_shortened",
+          baseIntervalDays: 7,
+          finalIntervalDays: 6,
+          intervalAfterMultiplierDays: 6,
+          productiveOutputCount: 2,
+        },
+      });
+    });
+    elements.reschedule(id, explicitDue);
+    expect(elements.findById(id)?.dueAt).toBe(explicitDue);
+
+    const result = undo.undoLast();
+    expect(result.undone).toBe(true);
+    expect(result.opType).toBe("reschedule_element");
+    expect(elements.findById(id)?.dueAt).toBe(learnedDue);
+    expect(log.currentScheduleProjection(id, learnedDue).reason).toMatchObject({
+      kind: "yield_shortened",
+      productiveOutputCount: 2,
+    });
+  });
+
   it("undoes queue-soon-from-parked with the parked timestamp restored", () => {
     const elements = new ElementRepository(handle.db);
     const undo = new UndoService(handle.db);

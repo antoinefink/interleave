@@ -201,6 +201,36 @@ export interface ElementSummary {
 /** Which scheduler an element is on — the load-bearing FSRS vs attention split. */
 export type SchedulerKind = "fsrs" | "attention";
 
+export type AttentionScheduleReasonKind =
+  | "yield_shortened"
+  | "yield_lengthened"
+  | "recency_damped"
+  | "postpone_recession"
+  | "source_unresolved_shortened"
+  | "source_exhausted_lengthened"
+  | "descendant_lapses"
+  | "band_base";
+
+export interface AttentionScheduleReason {
+  readonly kind: AttentionScheduleReasonKind;
+  readonly baseIntervalDays: number | null;
+  readonly finalIntervalDays: number | null;
+  readonly intervalAfterMultiplierDays?: number | null;
+  readonly priorMultiplier?: number | null;
+  readonly newMultiplier?: number | null;
+  readonly productiveOutputCount?: number | null;
+  readonly unresolvedRatio?: number | null;
+  readonly terminalRatio?: number | null;
+  readonly ignoredRatio?: number | null;
+  readonly daysSinceLastSeen?: number | null;
+  readonly recencyCreditDays?: number | null;
+  readonly intervalAfterPostponeDays?: number | null;
+  readonly postponeCount?: number | null;
+  readonly intervalAfterSourceProcessingDays?: number | null;
+  readonly extractedOutputCount?: number | null;
+  readonly descendantLapseCount?: number | null;
+}
+
 export interface SchedulerSignals {
   readonly kind: SchedulerKind;
   readonly retrievability: number | null;
@@ -212,6 +242,8 @@ export interface SchedulerSignals {
   readonly stage: string;
   readonly postponed: number;
   readonly lastProcessedAt: string | null;
+  /** Trusted attention-scheduler explanation payload (hidden for cards/band-base). */
+  readonly scheduleReason: AttentionScheduleReason | null;
   /**
    * The attention chip's "yield (N extracts / M cards)" for a SOURCE (T083) — read %,
    * extracts/cards created. `null` for non-source attention items and for cards; absent
@@ -515,6 +547,8 @@ export interface QueueSchedulerSignals {
   readonly stage: string;
   /** How many times an attention element has been postponed. */
   readonly postponed: number;
+  /** Trusted attention-scheduler explanation payload (hidden for cards/band-base). */
+  readonly scheduleReason: AttentionScheduleReason | null;
   /** Dismissible source-retirement suggestion for "done with no yield" sources (T103). */
   readonly retirementSuggestion: SourceRetirementSuggestion | null;
 }

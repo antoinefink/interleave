@@ -72,6 +72,7 @@ import {
   MetaRow,
   Prio,
   priorityLabel,
+  ScheduleReasonLine,
   SchedulerChip,
   Status,
   stageLabel,
@@ -2348,6 +2349,7 @@ function InspectorBody({
           <span>{scheduler.kind === "fsrs" ? "Recall (FSRS)" : "Attention"}</span>
           <SchedulerChip scheduler={scheduler} />
         </div>
+        <ScheduleReasonLine scheduler={scheduler} className="insp-schedule-reason" />
         {scheduler.kind === "fsrs" ? (
           review ? (
             <FsrsStats scheduler={scheduler} />

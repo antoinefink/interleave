@@ -79,6 +79,7 @@ function sourceHit(overrides: Partial<SearchResult> = {}): SearchResult {
       fsrsState: null,
       stage: "raw_source",
       postponed: 0,
+      scheduleReason: null,
       lastProcessedAt: null,
     },
     due: "soon",

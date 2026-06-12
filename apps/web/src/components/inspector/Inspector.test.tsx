@@ -120,6 +120,7 @@ function topicData(title: string): InspectorData {
       fsrsState: null,
       stage: "rough_topic",
       postponed: 0,
+      scheduleReason: null,
       lastProcessedAt: null,
       yield: null,
     },
@@ -224,6 +225,7 @@ function extractDataWithSourceLineage(): InspectorData {
       fsrsState: null,
       stage: "clean_extract",
       postponed: 0,
+      scheduleReason: null,
       lastProcessedAt: new Date().toISOString(),
       yield: null,
     },
@@ -280,6 +282,7 @@ function cardDataWithSourceContext(): InspectorData {
       fsrsState: "review",
       stage: "active_card",
       postponed: 0,
+      scheduleReason: null,
       lastProcessedAt: null,
       yield: null,
     },
@@ -661,6 +664,47 @@ describe("Inspector", () => {
       startOffset: 10,
       endOffset: 35,
     });
+  });
+
+  it("renders the trusted attention schedule reason before the attention summary", async () => {
+    h.selectedId = "ext-1";
+    const data = extractDataWithSourceLineage();
+    h.getInspectorData.mockResolvedValue({
+      data: {
+        ...data,
+        scheduler: {
+          ...data.scheduler,
+          scheduleReason: {
+            kind: "source_unresolved_shortened",
+            baseIntervalDays: 7,
+            finalIntervalDays: 3,
+            unresolvedRatio: 0.5,
+            terminalRatio: 0.5,
+            ignoredRatio: 0,
+            extractedOutputCount: 0,
+          },
+        },
+      },
+    });
+
+    render(<Inspector />);
+
+    const section = await screen.findByTestId("scheduler-section");
+    const reason = within(section).getByTestId("schedule-reason-line");
+    expect(reason).toHaveTextContent("Returning sooner: source still has unresolved blocks.");
+    expect(
+      section.textContent?.indexOf("Returning sooner: source still has unresolved blocks."),
+    ).toBeLessThan(section.textContent?.indexOf("Seen today") ?? Number.POSITIVE_INFINITY);
+  });
+
+  it("does not render attention schedule reasons for FSRS scheduler signals", async () => {
+    h.selectedId = "card-1";
+    h.getInspectorData.mockResolvedValue({ data: cardDataWithSourceContext() });
+
+    render(<Inspector />);
+
+    const section = await screen.findByTestId("scheduler-section");
+    expect(within(section).queryByTestId("schedule-reason-line")).toBeNull();
   });
 
   it("schedules an attention item through the existing queue schedule bridge", async () => {

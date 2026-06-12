@@ -75,6 +75,7 @@ interface RawOpRow {
 }
 
 interface ParsedOp {
+  readonly id: string;
   readonly opType: OperationType;
   readonly elementId: ElementId | null;
   readonly payload: Record<string, unknown>;
@@ -82,9 +83,11 @@ interface ParsedOp {
 
 export class UndoService {
   private readonly elements: ElementRepository;
+  private readonly operationLog: OperationLogRepository;
 
   constructor(private readonly db: InterleaveDatabase) {
     this.elements = new ElementRepository(db);
+    this.operationLog = new OperationLogRepository(db);
   }
 
   /**
@@ -307,12 +310,24 @@ export class UndoService {
         const prevReviewDueAt = isCardDefer
           ? ((op.payload.prevReviewDueAt ?? null) as IsoTimestamp | null)
           : null;
+        const restoredScheduleEvidence = this.operationLog.scheduleEvidenceForDueAtBefore(
+          id,
+          prevDueAt,
+          op.id,
+        );
         const rescheduled = this.db.transaction((tx) => {
-          const el = this.elements.rescheduleWithin(tx, id, prevDueAt, prevStatus, undefined, {
-            ...(prevAttentionIntervalMultiplier !== undefined
-              ? { attentionIntervalMultiplier: prevAttentionIntervalMultiplier }
-              : {}),
-          });
+          const el = this.elements.rescheduleWithin(
+            tx,
+            id,
+            prevDueAt,
+            prevStatus,
+            restoredScheduleEvidence,
+            {
+              ...(prevAttentionIntervalMultiplier !== undefined
+                ? { attentionIntervalMultiplier: prevAttentionIntervalMultiplier }
+                : {}),
+            },
+          );
           if (isCardDefer) {
             tx.update(reviewStates)
               .set({ dueAt: prevReviewDueAt })
@@ -381,6 +396,7 @@ export class UndoService {
       payload = {};
     }
     return {
+      id: row.id,
       opType: row.opType as OperationType,
       elementId: (row.elementId as ElementId | null) ?? null,
       payload,

@@ -189,6 +189,7 @@ function chipSignals(item: QueueItemSummary): SchedulerSignals {
     fsrsState: null,
     stage: item.schedulerSignals.stage,
     postponed: item.schedulerSignals.postponed,
+    scheduleReason: item.schedulerSignals.scheduleReason,
     lastProcessedAt: null,
   };
 }
@@ -205,6 +206,7 @@ function cardChipSignals(card: ReviewCardView): SchedulerSignals {
     fsrsState: card.schedulerSignals.fsrsState,
     stage: card.stage,
     postponed: 0,
+    scheduleReason: null,
     lastProcessedAt: null,
   };
 }

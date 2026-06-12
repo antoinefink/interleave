@@ -73,6 +73,7 @@ function chipSignals(card: ReviewCardView): SchedulerSignals {
     fsrsState: card.schedulerSignals.fsrsState,
     stage: card.stage,
     postponed: 0,
+    scheduleReason: null,
     lastProcessedAt: null,
   };
 }

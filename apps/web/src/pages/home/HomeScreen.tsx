@@ -25,9 +25,15 @@
 
 import { DEFAULT_RANDOM_AUDIT_SIZE } from "@interleave/core";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { Icon } from "../../components/Icon";
-import { Prio, SchedulerChip, TypeIcon } from "../../components/inspector/primitives";
+import {
+  formatAttentionScheduleReason,
+  Prio,
+  ScheduleReasonLine,
+  SchedulerChip,
+  TypeIcon,
+} from "../../components/inspector/primitives";
 import { BudgetMeter } from "../../components/queue/BudgetMeter";
 import "../../components/inspector/inspector.css";
 import {
@@ -116,6 +122,7 @@ function PreviewRow({
   item: QueueItemSummary;
   onOpen: (item: QueueItemSummary) => void;
 }) {
+  const scheduleReasonId = useId();
   const action = actionFor(item);
   // The per-type meta sub-line (shared with the Daily Queue list so the two
   // surfaces never drift); `null` for a type with no sub-line content.
@@ -130,14 +137,17 @@ function PreviewRow({
     fsrsState: null,
     stage: item.schedulerSignals.stage,
     postponed: item.schedulerSignals.postponed,
+    scheduleReason: item.schedulerSignals.scheduleReason ?? null,
     lastProcessedAt: null,
   };
+  const scheduleReasonText = formatAttentionScheduleReason(chip);
   return (
     <button
       type="button"
       data-testid="home-preview-row"
       data-element-id={item.id}
       data-element-type={item.type}
+      aria-describedby={scheduleReasonText ? scheduleReasonId : undefined}
       className={`home-prow${item.protected ? " home-prow--protected" : ""}`}
       onClick={() => onOpen(item)}
     >
@@ -149,6 +159,13 @@ function PreviewRow({
           {item.concept ? <span className="concept-tag">{item.concept}</span> : null}
           <SchedulerChip scheduler={chip} />
         </span>
+        {scheduleReasonText ? (
+          <ScheduleReasonLine
+            id={scheduleReasonId}
+            scheduler={chip}
+            className="home-prow__schedule-reason"
+          />
+        ) : null}
       </span>
       <span className="home-prow__action">
         <Prio priority={item.priority} />

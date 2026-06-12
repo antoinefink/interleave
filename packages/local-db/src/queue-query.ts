@@ -43,6 +43,7 @@ import {
   scoreQueueItems,
 } from "@interleave/scheduler";
 import type { Repositories } from "./index";
+import type { CurrentScheduleReason } from "./operation-log-repository";
 import { isQueueActionableStatus } from "./queue-repository";
 
 export type { SessionMode } from "@interleave/scheduler";
@@ -77,6 +78,8 @@ export interface QueueSchedulerSignals {
   readonly stage: string;
   /** How many times an attention element has been postponed. */
   readonly postponed: number;
+  /** Structured reason for the currently persisted attention schedule, if explainable. */
+  readonly scheduleReason: CurrentScheduleReason | null;
   /** Source-only proactive Done/Abandon suggestion (T103); null for other rows. */
   readonly retirementSuggestion: SourceRetirementSuggestion | null;
 }
@@ -624,6 +627,7 @@ export class QueueQuery {
         lapses: state?.lapses ?? null,
         stage: element.stage,
         postponed: 0,
+        scheduleReason: null,
         retirementSuggestion: null,
       },
       sourceTitle: ctx ? ctx.sourceTitle : null,
@@ -685,6 +689,9 @@ export class QueueQuery {
     // task-only read (rare), so it stays inline even when batched.
     const task = element.type === "task" ? this.repos.tasks.findTask(element.id) : null;
     const linked = task?.linkedElement ?? null;
+    const scheduleProjection = batch
+      ? null
+      : this.repos.operationLog.currentScheduleProjection(element.id, element.dueAt);
     return {
       id: element.id,
       type: element.type,
@@ -701,7 +708,8 @@ export class QueueQuery {
         fsrsState: null,
         lapses: null,
         stage: element.stage,
-        postponed: batch ? 0 : this.countPostpones(element.id),
+        postponed: scheduleProjection?.effectivePostponeCount ?? 0,
+        scheduleReason: scheduleProjection?.reason ?? null,
         retirementSuggestion:
           !batch && element.type === "source"
             ? this.repos.retirementSuggestions.visibleForSource(element.id)
@@ -768,6 +776,10 @@ export class QueueQuery {
         cardType: card?.card.kind ?? null,
       };
     }
+    const scheduleProjection = this.repos.operationLog.currentScheduleProjection(
+      row.id as ElementId,
+      element.dueAt,
+    );
     return {
       ...row,
       ...fallowFields,
@@ -775,7 +787,8 @@ export class QueueQuery {
       author,
       schedulerSignals: {
         ...row.schedulerSignals,
-        postponed: this.countPostpones(row.id as ElementId),
+        postponed: scheduleProjection.effectivePostponeCount,
+        scheduleReason: scheduleProjection.reason,
         retirementSuggestion:
           element.type === "source"
             ? this.repos.retirementSuggestions.visibleForSource(element.id)
@@ -848,14 +861,5 @@ export class QueueQuery {
    */
   private conceptFor(id: ElementId): string | null {
     return this.repos.concepts.firstConceptName(id);
-  }
-
-  /**
-   * How many times an attention element has been postponed — delegates to the ONE
-   * canonical {@link OperationLogRepository.countPostpones} (the schema-churn-free
-   * counter the `SchedulerChip` shows), shared with the inspector + scheduler.
-   */
-  private countPostpones(id: ElementId): number {
-    return this.repos.operationLog.countPostpones(id);
   }
 }

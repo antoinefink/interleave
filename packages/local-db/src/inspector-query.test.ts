@@ -273,6 +273,37 @@ describe("InspectorQuery.get — attention scheduler", () => {
     expect(data?.source?.id).toBe(sourceId);
     expect(data?.review).toBeNull();
   });
+
+  it("uses the effective postpone count in attention schedule signals", () => {
+    const source = repos.sources.create({
+      title: "Repeatedly postponed source",
+      priority: 0.5,
+      status: "active",
+      stage: "raw_source",
+    });
+    const sourceId = source.element.id;
+    handle.db.transaction((tx) => {
+      repos.elements.rescheduleWithin(tx, sourceId, "2026-06-20T12:00:00.000Z", "scheduled", {
+        action: "postpone",
+        scheduledAt: "2026-05-30T12:00:00.000Z",
+        postpone: true,
+        postponeCount: 1,
+      });
+      repos.operationLog.append(tx, {
+        opType: "update_element",
+        payload: {
+          chronicPostponeReset: true,
+          prevEffectivePostponeCount: 1,
+        },
+        elementId: sourceId,
+      });
+    });
+
+    const data = inspector.get(sourceId);
+
+    expect(data?.scheduler.postponed).toBe(0);
+    expect(data?.scheduler.scheduleReason).toBeNull();
+  });
 });
 
 describe("InspectorQuery.get — source reliability (T091)", () => {

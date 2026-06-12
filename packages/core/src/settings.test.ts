@@ -88,7 +88,7 @@ describe("AppSettings defaults", () => {
   });
 
   it("keeps adaptive attention intervals off by default until explainability lands", () => {
-    expect(DEFAULT_APP_SETTINGS.adaptiveAttentionIntervals).toBe(false);
+    expect(DEFAULT_APP_SETTINGS.adaptiveAttentionIntervals).toBe(true);
   });
 });
 

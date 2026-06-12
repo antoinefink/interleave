@@ -374,6 +374,12 @@
   margin-top: 4px;
   flex-wrap: wrap;
 }
+.qitem__schedule-reason {
+  margin-top: var(--s-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .qitem__sub {
   font-size: var(--t-sm);
   color: var(--text-2);

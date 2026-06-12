@@ -783,6 +783,18 @@
   color: var(--text-3);
 }
 
+.schedule-reason-line {
+  display: block;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: var(--lh-snug);
+}
+.insp-schedule-reason {
+  margin: calc(var(--s-1) * -1) 0 var(--s-2);
+  overflow-wrap: anywhere;
+}
+
 .attention-summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

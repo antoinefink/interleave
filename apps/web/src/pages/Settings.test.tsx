@@ -100,7 +100,7 @@ const settings: RendererSettings = {
   chronicPostponeThreshold: 5,
   weeklyReviewEnabled: true,
   weeklyReviewCadenceDays: 7,
-  adaptiveAttentionIntervals: false,
+  adaptiveAttentionIntervals: true,
   importBalanceFactor: 1.5,
   keyboardLayout: "qwerty",
   theme: "dark",

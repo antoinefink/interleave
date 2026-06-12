@@ -35,6 +35,47 @@ interface RawOpRow {
   createdAt: string;
 }
 
+export type CurrentScheduleReasonKind =
+  | "yield_shortened"
+  | "yield_lengthened"
+  | "recency_damped"
+  | "postpone_recession"
+  | "source_unresolved_shortened"
+  | "source_exhausted_lengthened"
+  | "descendant_lapses"
+  | "band_base";
+
+export interface CurrentScheduleReason {
+  readonly kind: CurrentScheduleReasonKind;
+  readonly baseIntervalDays: number | null;
+  readonly finalIntervalDays: number | null;
+  readonly intervalAfterMultiplierDays?: number | null;
+  readonly priorMultiplier?: number | null;
+  readonly newMultiplier?: number | null;
+  readonly productiveOutputCount?: number | null;
+  readonly unresolvedRatio?: number | null;
+  readonly terminalRatio?: number | null;
+  readonly ignoredRatio?: number | null;
+  readonly daysSinceLastSeen?: number | null;
+  readonly recencyCreditDays?: number | null;
+  readonly intervalAfterPostponeDays?: number | null;
+  readonly postponeCount?: number | null;
+  readonly intervalAfterSourceProcessingDays?: number | null;
+  readonly extractedOutputCount?: number | null;
+  readonly descendantLapseCount?: number | null;
+}
+
+export interface CurrentScheduleProjection {
+  /** Effective count after chronic-postpone reset/reset-undo folding. */
+  readonly effectivePostponeCount: number;
+  /**
+   * Structured reason for the schedule currently governing `elements.due_at`.
+   * `null` means either band-base/no learned deviation, no current schedule, or a
+   * stale diagnostic superseded by a newer schedule op.
+   */
+  readonly reason: CurrentScheduleReason | null;
+}
+
 function payloadObject(payload: unknown): Record<string, unknown> | null {
   return typeof payload === "object" && payload !== null
     ? (payload as Record<string, unknown>)
@@ -50,6 +91,169 @@ function rowToEntry(row: RawOpRow): OperationLogEntry {
     elementId: row.elementId as OperationLogEntry["elementId"],
     createdAt: row.createdAt,
   };
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function finiteNonNegative(value: unknown): number | null {
+  const number = finiteNumber(value);
+  return number !== null && number >= 0 ? number : null;
+}
+
+function finitePositive(value: unknown): number | null {
+  const number = finiteNumber(value);
+  return number !== null && number > 0 ? number : null;
+}
+
+function intervalDaysBetween(start: unknown, end: unknown): number | null {
+  if (typeof start !== "string" || typeof end !== "string") return null;
+  const startMs = Date.parse(start);
+  const endMs = Date.parse(end);
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) return null;
+  return Math.max(0, Math.round((endMs - startMs) / 86_400_000));
+}
+
+function adaptiveReasonFromPayload(payload: Record<string, unknown>): CurrentScheduleReason | null {
+  const adaptive = payloadObject(payload.attentionAdaptive);
+  const reason = payloadObject(adaptive?.reason);
+  if (!reason) return null;
+  const reasonKind = reason?.reasonKind;
+  if (reasonKind === "yield_held" || reasonKind === "yield_input_malformed") return null;
+  if (reasonKind !== "yield_shortened" && reasonKind !== "yield_lengthened") return null;
+  const productiveOutputCount = finiteNumber(reason.productiveOutputCount);
+  if (reasonKind === "yield_shortened" && (!productiveOutputCount || productiveOutputCount <= 0)) {
+    return null;
+  }
+  if (reasonKind === "yield_lengthened" && productiveOutputCount !== 0) return null;
+  return {
+    kind: reasonKind,
+    baseIntervalDays: finiteNumber(reason.baseIntervalDays),
+    finalIntervalDays: finiteNumber(reason.finalIntervalDays),
+    intervalAfterMultiplierDays: finiteNumber(reason.intervalAfterMultiplierDays),
+    priorMultiplier: finiteNumber(reason.priorMultiplier),
+    newMultiplier: finiteNumber(reason.newMultiplier),
+    productiveOutputCount,
+    unresolvedRatio: finiteNumber(reason.unresolvedRatio),
+    terminalRatio: finiteNumber(reason.terminalRatio),
+    ignoredRatio: finiteNumber(reason.ignoredRatio),
+  };
+}
+
+function currentScheduleReasonFromPayload(
+  value: unknown,
+  effectivePostponeCount: number,
+): CurrentScheduleReason | null {
+  const reason = payloadObject(value);
+  if (!reason || typeof reason.kind !== "string") return null;
+
+  const baseIntervalDays = finiteNumber(reason.baseIntervalDays);
+  const finalIntervalDays = finiteNumber(reason.finalIntervalDays);
+  switch (reason.kind) {
+    case "yield_shortened": {
+      const productiveOutputCount = finiteNumber(reason.productiveOutputCount);
+      if (productiveOutputCount === null || productiveOutputCount <= 0) return null;
+      return {
+        kind: "yield_shortened",
+        baseIntervalDays,
+        finalIntervalDays,
+        intervalAfterMultiplierDays: finiteNumber(reason.intervalAfterMultiplierDays),
+        priorMultiplier: finiteNumber(reason.priorMultiplier),
+        newMultiplier: finiteNumber(reason.newMultiplier),
+        productiveOutputCount,
+        unresolvedRatio: finiteNumber(reason.unresolvedRatio),
+        terminalRatio: finiteNumber(reason.terminalRatio),
+        ignoredRatio: finiteNumber(reason.ignoredRatio),
+      };
+    }
+    case "yield_lengthened":
+      if (finiteNumber(reason.productiveOutputCount) !== 0) return null;
+      return {
+        kind: "yield_lengthened",
+        baseIntervalDays,
+        finalIntervalDays,
+        intervalAfterMultiplierDays: finiteNumber(reason.intervalAfterMultiplierDays),
+        priorMultiplier: finiteNumber(reason.priorMultiplier),
+        newMultiplier: finiteNumber(reason.newMultiplier),
+        productiveOutputCount: finiteNumber(reason.productiveOutputCount),
+        unresolvedRatio: finiteNumber(reason.unresolvedRatio),
+        terminalRatio: finiteNumber(reason.terminalRatio),
+        ignoredRatio: finiteNumber(reason.ignoredRatio),
+      };
+    case "recency_damped": {
+      const daysSinceLastSeen = finiteNumber(reason.daysSinceLastSeen);
+      if (daysSinceLastSeen === null) return null;
+      return {
+        kind: "recency_damped",
+        baseIntervalDays,
+        finalIntervalDays,
+        daysSinceLastSeen,
+        recencyCreditDays: finiteNumber(reason.recencyCreditDays),
+      };
+    }
+    case "postpone_recession":
+      if (effectivePostponeCount <= 0) return null;
+      return {
+        kind: "postpone_recession",
+        baseIntervalDays,
+        finalIntervalDays,
+        intervalAfterPostponeDays: finiteNumber(reason.intervalAfterPostponeDays),
+        postponeCount: effectivePostponeCount,
+      };
+    case "source_unresolved_shortened":
+      if (
+        finitePositive(reason.unresolvedRatio) === null ||
+        finiteNonNegative(reason.terminalRatio) === null ||
+        finiteNonNegative(reason.ignoredRatio) === null ||
+        finiteNonNegative(reason.extractedOutputCount) === null
+      ) {
+        return null;
+      }
+      return {
+        kind: "source_unresolved_shortened",
+        baseIntervalDays,
+        finalIntervalDays,
+        intervalAfterSourceProcessingDays: finiteNumber(reason.intervalAfterSourceProcessingDays),
+        unresolvedRatio: finiteNumber(reason.unresolvedRatio),
+        terminalRatio: finiteNumber(reason.terminalRatio),
+        ignoredRatio: finiteNumber(reason.ignoredRatio),
+        extractedOutputCount: finiteNumber(reason.extractedOutputCount),
+      };
+    case "source_exhausted_lengthened":
+      if (
+        finiteNonNegative(reason.unresolvedRatio) === null ||
+        finiteNonNegative(reason.terminalRatio) === null ||
+        finiteNonNegative(reason.ignoredRatio) === null ||
+        finiteNumber(reason.extractedOutputCount) !== 0
+      ) {
+        return null;
+      }
+      return {
+        kind: "source_exhausted_lengthened",
+        baseIntervalDays,
+        finalIntervalDays,
+        intervalAfterSourceProcessingDays: finiteNumber(reason.intervalAfterSourceProcessingDays),
+        unresolvedRatio: finiteNumber(reason.unresolvedRatio),
+        terminalRatio: finiteNumber(reason.terminalRatio),
+        ignoredRatio: finiteNumber(reason.ignoredRatio),
+        extractedOutputCount: finiteNumber(reason.extractedOutputCount),
+      };
+    case "descendant_lapses": {
+      const descendantLapseCount = finitePositive(reason.descendantLapseCount);
+      if (descendantLapseCount === null) return null;
+      return {
+        kind: "descendant_lapses",
+        baseIntervalDays,
+        finalIntervalDays,
+        descendantLapseCount,
+      };
+    }
+    case "band_base":
+      return null;
+    default:
+      return null;
+  }
 }
 
 export class OperationLogRepository {
@@ -114,6 +318,91 @@ export class OperationLogRepository {
       .get();
     if (!row) return null;
     return payloadObject(JSON.parse(row.payload))?.attentionAdaptive ?? null;
+  }
+
+  /**
+   * Evidence-only extras to preserve schedule explainability when undo restores an
+   * older `due_at`. This intentionally copies no command markers (`postpone`,
+   * `choice`, `queueSoon`, `batchId`) so undo does not create new semantic history.
+   */
+  scheduleEvidenceForDueAtBefore(
+    elementId: string,
+    dueAt: string | null,
+    excludedOperationId: string,
+  ): Readonly<Record<string, unknown>> | undefined {
+    if (!dueAt) return undefined;
+    for (const op of this.listForElement(elementId)) {
+      if (op.id === excludedOperationId || op.opType !== "reschedule_element") continue;
+      const payload = payloadObject(op.payload);
+      if (!payload || payload.dueAt !== dueAt) continue;
+      const extras: Record<string, unknown> = {};
+      if (payload.scheduleReason !== undefined) extras.scheduleReason = payload.scheduleReason;
+      if (payload.attentionAdaptive !== undefined) {
+        extras.attentionAdaptive = payload.attentionAdaptive;
+      }
+      return Object.keys(extras).length > 0 ? extras : undefined;
+    }
+    return undefined;
+  }
+
+  /**
+   * Read-side projection for the schedule reason that still governs the current
+   * `elements.due_at`. It deliberately reads ONLY the latest `reschedule_element`
+   * row, so an older adaptive diagnostic is suppressed after a newer explicit
+   * schedule/postpone/undo supersedes it.
+   */
+  currentScheduleProjection(
+    elementId: string,
+    currentDueAt: string | null,
+  ): CurrentScheduleProjection {
+    const effectivePostponeCount = this.countPostpones(elementId);
+    if (!currentDueAt) return { effectivePostponeCount, reason: null };
+
+    const row = this.db
+      .select({ payload: operationLog.payload })
+      .from(operationLog)
+      .where(
+        and(eq(operationLog.elementId, elementId), eq(operationLog.opType, "reschedule_element")),
+      )
+      .orderBy(desc(operationLog.createdAt), desc(sql`rowid`))
+      .limit(1)
+      .get();
+    if (!row) return { effectivePostponeCount, reason: null };
+
+    const payload = payloadObject(JSON.parse(row.payload));
+    if (!payload || payload.dueAt !== currentDueAt) {
+      return { effectivePostponeCount, reason: null };
+    }
+
+    if (payload.choice !== undefined || payload.queueSoon === true) {
+      return { effectivePostponeCount, reason: null };
+    }
+
+    const persistedReason = currentScheduleReasonFromPayload(
+      payload.scheduleReason,
+      effectivePostponeCount,
+    );
+    if (persistedReason) return { effectivePostponeCount, reason: persistedReason };
+
+    const adaptiveReason = adaptiveReasonFromPayload(payload);
+    if (adaptiveReason) return { effectivePostponeCount, reason: adaptiveReason };
+
+    if (payload.postpone === true) {
+      if (effectivePostponeCount <= 0) return { effectivePostponeCount, reason: null };
+      const intervalDays = intervalDaysBetween(payload.scheduledAt, payload.dueAt);
+      return {
+        effectivePostponeCount,
+        reason: {
+          kind: "postpone_recession",
+          baseIntervalDays: null,
+          finalIntervalDays: intervalDays,
+          intervalAfterPostponeDays: intervalDays,
+          postponeCount: effectivePostponeCount,
+        },
+      };
+    }
+
+    return { effectivePostponeCount, reason: null };
   }
 
   /** The whole log, newest first (audit/backup helper). */

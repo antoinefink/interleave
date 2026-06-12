@@ -51,6 +51,7 @@ const h = vi.hoisted(() => {
     fsrsState: null,
     stage: "raw_source",
     postponed: 0,
+    scheduleReason: null,
     lastProcessedAt: null,
   };
   const fsrsScheduler: SearchResult["scheduler"] = {
@@ -63,6 +64,7 @@ const h = vi.hoisted(() => {
     fsrsState: "review",
     stage: "active_card",
     postponed: 0,
+    scheduleReason: null,
     lastProcessedAt: "2026-05-01T00:00:00.000Z",
   };
   const sourceHit: SearchResult = {

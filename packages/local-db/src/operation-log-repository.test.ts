@@ -161,3 +161,375 @@ describe("OperationLogRepository.countPostpones (T028 — the shared helper)", (
     expect(log.countPostpones(el.id)).toBe(5);
   });
 });
+
+describe("OperationLogRepository.currentScheduleProjection (T113 — schedule reasons)", () => {
+  it("projects the latest adaptive reason only while it still governs the current due date", () => {
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+    const el = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.5,
+      title: "Adaptive source",
+      dueAt: "2026-06-05T12:00:00.000Z",
+    });
+
+    handle.db.transaction((tx) => {
+      log.append(tx, {
+        opType: "reschedule_element",
+        payload: {
+          id: el.id,
+          dueAt: "2026-06-05T12:00:00.000Z",
+          scheduledAt: "2026-05-30T12:00:00.000Z",
+          attentionAdaptive: {
+            version: 1,
+            enabled: true,
+            reason: {
+              reasonKind: "yield_shortened",
+              baseIntervalDays: 7,
+              intervalAfterMultiplierDays: 6,
+              finalIntervalDays: 6,
+              priorMultiplier: 1,
+              newMultiplier: 0.85,
+              productiveOutputCount: 3,
+            },
+          },
+        },
+        elementId: el.id,
+      });
+    });
+
+    expect(log.currentScheduleProjection(el.id, "2026-06-05T12:00:00.000Z").reason).toMatchObject({
+      kind: "yield_shortened",
+      baseIntervalDays: 7,
+      finalIntervalDays: 6,
+      newMultiplier: 0.85,
+      productiveOutputCount: 3,
+    });
+
+    handle.db.transaction((tx) => {
+      log.append(tx, {
+        opType: "reschedule_element",
+        payload: {
+          id: el.id,
+          dueAt: "2026-06-08T12:00:00.000Z",
+          choice: "nextWeek",
+        },
+        elementId: el.id,
+      });
+    });
+
+    expect(log.currentScheduleProjection(el.id, "2026-06-08T12:00:00.000Z").reason).toBeNull();
+    expect(log.currentScheduleProjection(el.id, "2026-06-05T12:00:00.000Z").reason).toBeNull();
+  });
+
+  it("uses the reset-folded effective postpone count in postpone reasons", () => {
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+    const el = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.5,
+      title: "Postponed source",
+      dueAt: "2026-06-20T12:00:00.000Z",
+    });
+
+    for (let i = 0; i < 3; i++) {
+      handle.db.transaction((tx) => {
+        log.append(tx, {
+          opType: "reschedule_element",
+          payload: {
+            id: el.id,
+            dueAt: "2026-06-20T12:00:00.000Z",
+            scheduledAt: "2026-05-30T12:00:00.000Z",
+            postpone: true,
+            postponeCount: i + 1,
+          },
+          elementId: el.id,
+        });
+      });
+    }
+
+    expect(log.currentScheduleProjection(el.id, "2026-06-20T12:00:00.000Z")).toMatchObject({
+      effectivePostponeCount: 3,
+      reason: {
+        kind: "postpone_recession",
+        finalIntervalDays: 21,
+        postponeCount: 3,
+      },
+    });
+
+    handle.db.transaction((tx) => {
+      log.append(tx, {
+        opType: "update_element",
+        payload: {
+          chronicPostponeReset: true,
+          prevEffectivePostponeCount: 3,
+        },
+        elementId: el.id,
+      });
+    });
+
+    expect(log.currentScheduleProjection(el.id, "2026-06-20T12:00:00.000Z")).toMatchObject({
+      effectivePostponeCount: 0,
+      reason: null,
+    });
+  });
+
+  it("projects persisted scheduleReason payloads for non-adaptive scheduler reasons", () => {
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+    const el = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.625,
+      title: "Unresolved source",
+      dueAt: "2026-06-03T12:00:00.000Z",
+    });
+
+    handle.db.transaction((tx) => {
+      log.append(tx, {
+        opType: "reschedule_element",
+        payload: {
+          id: el.id,
+          dueAt: "2026-06-03T12:00:00.000Z",
+          scheduledAt: "2026-05-30T12:00:00.000Z",
+          action: "extract",
+          scheduleReason: {
+            kind: "source_unresolved_shortened",
+            baseIntervalDays: 7,
+            finalIntervalDays: 4,
+            intervalAfterSourceProcessingDays: 4,
+            unresolvedRatio: 0.6,
+            terminalRatio: 0.3,
+            ignoredRatio: 0.1,
+            extractedOutputCount: 1,
+          },
+        },
+        elementId: el.id,
+      });
+    });
+
+    expect(log.currentScheduleProjection(el.id, "2026-06-03T12:00:00.000Z").reason).toMatchObject({
+      kind: "source_unresolved_shortened",
+      baseIntervalDays: 7,
+      finalIntervalDays: 4,
+      intervalAfterSourceProcessingDays: 4,
+      unresolvedRatio: 0.6,
+      extractedOutputCount: 1,
+    });
+  });
+
+  it.each([
+    [
+      "yield_lengthened",
+      {
+        kind: "yield_lengthened",
+        baseIntervalDays: 30,
+        finalIntervalDays: 35,
+        intervalAfterMultiplierDays: 35,
+        productiveOutputCount: 0,
+      },
+      "yield_lengthened",
+    ],
+    [
+      "recency_damped",
+      {
+        kind: "recency_damped",
+        baseIntervalDays: 7,
+        finalIntervalDays: 4,
+        daysSinceLastSeen: 9,
+        recencyCreditDays: 3,
+      },
+      "recency_damped",
+    ],
+    [
+      "source_exhausted_lengthened",
+      {
+        kind: "source_exhausted_lengthened",
+        baseIntervalDays: 30,
+        finalIntervalDays: 60,
+        intervalAfterSourceProcessingDays: 60,
+        unresolvedRatio: 0,
+        terminalRatio: 1,
+        ignoredRatio: 0.75,
+        extractedOutputCount: 0,
+      },
+      "source_exhausted_lengthened",
+    ],
+    [
+      "descendant_lapses",
+      {
+        kind: "descendant_lapses",
+        baseIntervalDays: 7,
+        finalIntervalDays: 4,
+        descendantLapseCount: 2,
+      },
+      "descendant_lapses",
+    ],
+    [
+      "missing yield evidence",
+      {
+        kind: "yield_lengthened",
+        baseIntervalDays: 30,
+        finalIntervalDays: 35,
+      },
+      null,
+    ],
+    [
+      "missing recency evidence",
+      {
+        kind: "recency_damped",
+        baseIntervalDays: 7,
+        finalIntervalDays: 4,
+      },
+      null,
+    ],
+    [
+      "missing source evidence",
+      {
+        kind: "source_unresolved_shortened",
+        baseIntervalDays: 7,
+        finalIntervalDays: 3,
+      },
+      null,
+    ],
+    [
+      "zero descendant evidence",
+      {
+        kind: "descendant_lapses",
+        baseIntervalDays: 7,
+        finalIntervalDays: 4,
+        descendantLapseCount: 0,
+      },
+      null,
+    ],
+  ])("projects or suppresses persisted %s scheduleReason evidence", (_, scheduleReason, expected) => {
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+    const dueAt = "2026-06-04T12:00:00.000Z";
+    const el = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.625,
+      title: `Reason ${String(expected ?? "suppressed")}`,
+      dueAt,
+    });
+
+    handle.db.transaction((tx) => {
+      log.append(tx, {
+        opType: "reschedule_element",
+        payload: {
+          id: el.id,
+          dueAt,
+          scheduledAt: "2026-05-30T12:00:00.000Z",
+          action: "extract",
+          scheduleReason,
+        },
+        elementId: el.id,
+      });
+    });
+
+    const reason = log.currentScheduleProjection(el.id, dueAt).reason;
+    expect(reason?.kind ?? null).toBe(expected);
+  });
+
+  it("suppresses legacy zero-output yield_shortened adaptive diagnostics", () => {
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+    const dueAt = "2026-06-05T12:00:00.000Z";
+    const el = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.625,
+      title: "Legacy unresolved adaptive",
+      dueAt,
+    });
+
+    handle.db.transaction((tx) => {
+      log.append(tx, {
+        opType: "reschedule_element",
+        payload: {
+          id: el.id,
+          dueAt,
+          scheduledAt: "2026-05-30T12:00:00.000Z",
+          attentionAdaptive: {
+            version: 1,
+            enabled: true,
+            reason: {
+              reasonKind: "yield_shortened",
+              baseIntervalDays: 7,
+              intervalAfterMultiplierDays: 7,
+              finalIntervalDays: 3,
+              priorMultiplier: 1,
+              newMultiplier: 0.95,
+              productiveOutputCount: 0,
+              unresolvedRatio: 0.5,
+            },
+          },
+        },
+        elementId: el.id,
+      });
+    });
+
+    expect(log.currentScheduleProjection(el.id, dueAt).reason).toBeNull();
+  });
+
+  it("suppresses explicit-choice and queue-soon reschedules even when stale reason fields exist", () => {
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+    const el = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.625,
+      title: "Explicit schedule",
+      dueAt: "2026-06-07T12:00:00.000Z",
+    });
+
+    handle.db.transaction((tx) => {
+      log.append(tx, {
+        opType: "reschedule_element",
+        payload: {
+          id: el.id,
+          dueAt: "2026-06-07T12:00:00.000Z",
+          choice: "nextWeek",
+          scheduleReason: {
+            kind: "recency_damped",
+            baseIntervalDays: 7,
+            finalIntervalDays: 4,
+            daysSinceLastSeen: 6,
+          },
+        },
+        elementId: el.id,
+      });
+    });
+
+    expect(log.currentScheduleProjection(el.id, "2026-06-07T12:00:00.000Z").reason).toBeNull();
+
+    handle.db.transaction((tx) => {
+      log.append(tx, {
+        opType: "reschedule_element",
+        payload: {
+          id: el.id,
+          dueAt: "2026-05-30T12:00:00.000Z",
+          queueSoon: true,
+          scheduleReason: {
+            kind: "recency_damped",
+            baseIntervalDays: 7,
+            finalIntervalDays: 4,
+            daysSinceLastSeen: 6,
+          },
+        },
+        elementId: el.id,
+      });
+    });
+
+    expect(log.currentScheduleProjection(el.id, "2026-05-30T12:00:00.000Z").reason).toBeNull();
+  });
+});

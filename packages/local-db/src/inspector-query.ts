@@ -36,6 +36,7 @@ import { deriveExpiryStatus, priorityToLabel } from "@interleave/core";
 import type { SourceRetirementSuggestion } from "@interleave/scheduler";
 import { cardRowToLifetime } from "./card-edit-service";
 import type { Repositories } from "./index";
+import type { CurrentScheduleReason } from "./operation-log-repository";
 import { resolveSourceRef } from "./source-ref-query";
 
 /** Which scheduler an element type is governed by (the FSRS vs attention split). */
@@ -67,6 +68,8 @@ export interface SchedulerSignals {
   readonly fsrsState: string | null;
   readonly stage: string;
   readonly postponed: number;
+  /** Structured reason for the currently persisted attention schedule, if explainable. */
+  readonly scheduleReason: CurrentScheduleReason | null;
   readonly lastProcessedAt: string | null;
   /**
    * The attention `SchedulerChip`'s promised "yield (N extracts / M cards)" for a
@@ -362,6 +365,7 @@ export class InspectorQuery {
         fsrsState: state?.fsrsState ?? null,
         stage: element.stage,
         postponed: 0,
+        scheduleReason: null,
         lastProcessedAt: state?.lastReviewedAt ?? null,
         // Yield is a SOURCE concern; a card's panel shows FSRS stats instead.
         yield: null,
@@ -396,6 +400,10 @@ export class InspectorQuery {
           };
         }
       }
+      const scheduleProjection = this.repos.operationLog.currentScheduleProjection(
+        id,
+        element.dueAt,
+      );
       scheduler = {
         kind: "attention",
         retrievability: null,
@@ -408,7 +416,8 @@ export class InspectorQuery {
         // The postponed count is read from the op log (T024): each postpone records
         // a `postpone` marker on its `reschedule_element` op, so the count needs no
         // schema column. The full attention scheduler lands with T028.
-        postponed: this.countPostpones(id),
+        postponed: scheduleProjection.effectivePostponeCount,
+        scheduleReason: scheduleProjection.reason,
         lastProcessedAt: element.updatedAt,
         yield: sourceYield,
         retirementSuggestion:
@@ -438,16 +447,6 @@ export class InspectorQuery {
       // T090 — claim-lifetime + derived expiry (cards only; null for other types).
       lifetime,
     };
-  }
-
-  /**
-   * How many times an attention element has been postponed (T024) — delegates to
-   * the ONE canonical {@link OperationLogRepository.countPostpones} (the
-   * schema-churn-free counter the `SchedulerChip` shows), shared across the four
-   * former copies so the marker shape lives in a single place.
-   */
-  private countPostpones(id: ElementId): number {
-    return this.repos.operationLog.countPostpones(id);
   }
 }
 

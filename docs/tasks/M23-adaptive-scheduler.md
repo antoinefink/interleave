@@ -182,7 +182,7 @@ growing linearly with source count.
 # T113 — Schedule explainability
 
 - **Milestone:** M23 — Adaptive attention scheduler
-- **Status:** `[ ]` not started
+- **Status:** `[x]` complete
 - **Depends on:** T112
 - **Roadmap line:** wherever a due date is shown, a learned interval change carries a structured
   one-line reason via `schedulerSignals`; no unexplained interval change reaches the UI.
@@ -204,14 +204,14 @@ read as the system being broken.
 
 ## Deliverables
 
-- [ ] Reason vocabulary (small union: `yield_shortened`, `yield_lengthened`, `recency_damped`,
-      `postpone_recession`, `descendant_lapses` (reserved for T114), `band_base`) carried on
-      schedule reads.
-- [ ] Queue row affordance (hover/inline) + inspector line rendering the reason; band-base
+- [x] Reason vocabulary (small union: `yield_shortened`, `yield_lengthened`, `recency_damped`,
+      `postpone_recession`, `source_unresolved_shortened`, `source_exhausted_lengthened`,
+      `descendant_lapses` (reserved for T114), `band_base`) carried on schedule reads.
+- [x] Queue row affordance (inline) + inspector line rendering the reason; band-base
       schedules show nothing (silence is the default state, not noise).
-- [ ] T112's flag flips to default-ON here (adaptive intervals ship to users only with reasons
+- [x] T112's flag flips to default-ON here (adaptive intervals ship to users only with reasons
       attached).
-- [ ] Tests: unit (reason emission matches the interval math for each branch); renderer unit
+- [x] Tests: unit (reason emission matches the interval math for each branch); renderer unit
       (formatting); e2e — productive fixture shows the shortened-reason line.
 
 ## Done when
@@ -224,6 +224,23 @@ read as the system being broken.
 
 - Keep the union closed and exhaustively switched — a new scheduler input without a reason kind
   must fail typecheck, not render blank.
+- T113 persists `scheduleReason` on the governing `reschedule_element` operation and only projects
+  it while that operation's `dueAt` still matches `elements.due_at`; explicit choices and
+  queue-soon reschedules stay silent.
+
+## Completion notes
+
+- Added the closed `AttentionScheduleReason` vocabulary and durable `scheduleReason` projection
+  through scheduler decisions, `operation_log`, queue rows, inspector reads, and the desktop IPC
+  contract.
+- Queue rows, home preview rows, and the inspector scheduler section now render visible one-line
+  reasons from structured data; `band_base`, explicit choices, queue-soon, stale ops, malformed
+  diagnostics, and under-evidenced reasons stay silent.
+- Flipped `scheduler.adaptiveAttentionIntervals` to default-on and added boundary coverage that the
+  typed settings patch accepts boolean updates.
+- Verification: `pnpm lint`; `pnpm typecheck`; `pnpm test`; `pnpm e2e -- tests/electron/schedule-explainability.spec.ts`.
+- Learning captured in
+  [`docs/solutions/architecture-patterns/trusted-schedule-reasons-from-governing-reschedule-ops.md`](../solutions/architecture-patterns/trusted-schedule-reasons-from-governing-reschedule-ops.md).
 
 ---
 

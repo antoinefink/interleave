@@ -249,6 +249,7 @@ export class SchedulerService {
         decision.attentionIntervalMultiplier !== undefined
           ? { attentionAdaptive: adaptivePayload(adaptive, decision.adaptiveReason) }
           : {}),
+        ...(decision.scheduleReason ? { scheduleReason: decision.scheduleReason } : {}),
         ...(batchId ? { batchId } : {}),
       };
       const rescheduled = this.elements.rescheduleWithin(
@@ -304,6 +305,7 @@ export class SchedulerService {
         decision.attentionIntervalMultiplier !== undefined
           ? { attentionAdaptive: adaptivePayload(adaptive, decision.adaptiveReason) }
           : {}),
+        ...(decision.scheduleReason ? { scheduleReason: decision.scheduleReason } : {}),
       },
       {
         updatedAt: now,
@@ -398,6 +400,7 @@ export class SchedulerService {
       {
         action: "activate",
         scheduledAt: now,
+        ...(decision.scheduleReason ? { scheduleReason: decision.scheduleReason } : {}),
       },
       {
         updatedAt: now,

@@ -424,8 +424,15 @@ Detailed specs: [`tasks/M23-adaptive-scheduler.md`](./tasks/M23-adaptive-schedul
   Completed in `c8ad6d3b`. Verification: `pnpm lint`; `pnpm typecheck`; `pnpm test`; `pnpm e2e -- tests/electron/queue.spec.ts tests/electron/scale-smoke.spec.ts`. Downstream: T112 can build the adaptive interval multiplier on a real recency input and a scheduler-specific drift diagnostic.
 - [x] **T112 — Yield-adaptive interval multiplier** · _deps: T104, T111_ · (`d4489520`)
   Completed in `d4489520`. Each source/extract now carries a bounded adaptive attention multiplier, gated by `scheduler.adaptiveAttentionIntervals` until T113 explainability ships. Processed visits persist multiplier updates transactionally with schedule writes, record adaptive diagnostics in `operation_log`, restore via undo preimages, and count synthesis/fated extract output as productive yield. Verification: `pnpm lint`; `pnpm typecheck`; `pnpm test`; `pnpm e2e tests/electron/extraction.spec.ts tests/electron/extract-review.spec.ts`. Downstream: T113 can surface the structured adaptive reasons and flip the setting default on.
-- [ ] **T113 — Schedule explainability** · _deps: T112_
+- [x] **T113 — Schedule explainability** · _deps: T112_ · (`this commit`)
   Done when: wherever a due date is shown (queue row, inspector), a learned interval change carries a structured one-line reason via `schedulerSignals`; no unexplained interval change reaches the UI.
+  Completed in this commit. Schedule decisions now persist a closed `scheduleReason` payload with
+  the governing `reschedule_element` operation, queue/inspector reads project only the reason that
+  still matches the current `due_at`, and queue/home/inspector UI renders visible one-line
+  explanations while suppressing band-base, explicit choices, queue-soon, stale, malformed, and
+  under-evidenced diagnostics. `scheduler.adaptiveAttentionIntervals` now defaults on. Verification:
+  `pnpm lint`; `pnpm typecheck`; `pnpm test`; `pnpm e2e -- tests/electron/schedule-explainability.spec.ts`.
+  Learning captured in [`docs/solutions/architecture-patterns/trusted-schedule-reasons-from-governing-reschedule-ops.md`](./solutions/architecture-patterns/trusted-schedule-reasons-from-governing-reschedule-ops.md).
 - [ ] **T114 — Descendant-health input** · _deps: T112_
   Done when: descendant-card lapse rate feeds the multiplier (struggling descendants pull the parent source back sooner), capped and explained, with tests proving a lapsing cluster shortens the parent's return interval.
 

@@ -20,6 +20,7 @@ function queueItem(overrides: Partial<QueueItemSummary>): QueueItemSummary {
       lapses: null,
       stage: "raw_source",
       postponed: 0,
+      scheduleReason: null,
       retirementSuggestion: null,
     },
     sourceTitle: null,

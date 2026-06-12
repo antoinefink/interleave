@@ -1,7 +1,12 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import type { SchedulerSignals } from "../../lib/appApi";
-import { FsrsStats, SchedulerChip } from "./primitives";
+import {
+  FsrsStats,
+  formatAttentionScheduleReason,
+  ScheduleReasonLine,
+  SchedulerChip,
+} from "./primitives";
 
 /** A complete FSRS `SchedulerSignals` with the raw doubles from the screenshots. */
 function fsrsSignals(overrides: Partial<SchedulerSignals> = {}): SchedulerSignals {
@@ -15,6 +20,24 @@ function fsrsSignals(overrides: Partial<SchedulerSignals> = {}): SchedulerSignal
     fsrsState: "review",
     stage: "active_card",
     postponed: 0,
+    scheduleReason: null,
+    lastProcessedAt: "2026-06-01T08:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function attentionSignals(overrides: Partial<SchedulerSignals> = {}): SchedulerSignals {
+  return {
+    kind: "attention",
+    retrievability: null,
+    stability: null,
+    difficulty: null,
+    reps: null,
+    lapses: null,
+    fsrsState: null,
+    stage: "clean_extract",
+    postponed: 0,
+    scheduleReason: null,
     lastProcessedAt: "2026-06-01T08:00:00.000Z",
     ...overrides,
   };
@@ -79,5 +102,153 @@ describe("FsrsStats", () => {
     const values = container.querySelectorAll(".fstat__v");
     expect((values[0] as HTMLElement).textContent).toBe("0d");
     expect((values[1] as HTMLElement).textContent).toBe("0/10");
+  });
+});
+
+describe("ScheduleReasonLine", () => {
+  it("formats every visible attention schedule reason with the T113 templates", () => {
+    expect(
+      formatAttentionScheduleReason(
+        attentionSignals({
+          scheduleReason: {
+            kind: "yield_shortened",
+            baseIntervalDays: 7,
+            finalIntervalDays: 6,
+            productiveOutputCount: 2,
+          },
+        }),
+      ),
+    ).toBe("Returning sooner: last visit produced 2 output(s).");
+    expect(
+      formatAttentionScheduleReason(
+        attentionSignals({
+          scheduleReason: {
+            kind: "yield_lengthened",
+            baseIntervalDays: 30,
+            finalIntervalDays: 35,
+            productiveOutputCount: 0,
+          },
+        }),
+      ),
+    ).toBe("Receding: recent visit produced no output.");
+    expect(
+      formatAttentionScheduleReason(
+        attentionSignals({
+          scheduleReason: {
+            kind: "recency_damped",
+            baseIntervalDays: 7,
+            finalIntervalDays: 4,
+            daysSinceLastSeen: 14,
+          },
+        }),
+      ),
+    ).toBe("Returning sooner: untouched for 14d.");
+    expect(
+      formatAttentionScheduleReason(
+        attentionSignals({
+          scheduleReason: {
+            kind: "postpone_recession",
+            baseIntervalDays: 7,
+            finalIntervalDays: 21,
+            postponeCount: 3,
+          },
+        }),
+      ),
+    ).toBe("Receding after postpone x3.");
+    expect(
+      formatAttentionScheduleReason(
+        attentionSignals({
+          scheduleReason: {
+            kind: "source_unresolved_shortened",
+            baseIntervalDays: 7,
+            finalIntervalDays: 3,
+            unresolvedRatio: 0.5,
+            terminalRatio: 0.5,
+            ignoredRatio: 0,
+            extractedOutputCount: 0,
+          },
+        }),
+      ),
+    ).toBe("Returning sooner: source still has unresolved blocks.");
+    expect(
+      formatAttentionScheduleReason(
+        attentionSignals({
+          scheduleReason: {
+            kind: "source_exhausted_lengthened",
+            baseIntervalDays: 30,
+            finalIntervalDays: 60,
+            unresolvedRatio: 0,
+            terminalRatio: 1,
+            ignoredRatio: 0.75,
+            extractedOutputCount: 0,
+          },
+        }),
+      ),
+    ).toBe("Receding: source produced no extractable output.");
+    expect(
+      formatAttentionScheduleReason(
+        attentionSignals({
+          scheduleReason: {
+            kind: "descendant_lapses",
+            baseIntervalDays: 7,
+            finalIntervalDays: 4,
+            descendantLapseCount: 2,
+          },
+        }),
+      ),
+    ).toBe("Returning sooner: descendant cards are struggling.");
+  });
+
+  it("does not mount for band-base, missing evidence, or FSRS card signals", () => {
+    const { rerender, queryByTestId } = render(
+      <ScheduleReasonLine
+        scheduler={attentionSignals({
+          scheduleReason: { kind: "band_base", baseIntervalDays: 7, finalIntervalDays: 7 },
+        })}
+      />,
+    );
+    expect(queryByTestId("schedule-reason-line")).toBeNull();
+
+    rerender(
+      <ScheduleReasonLine
+        scheduler={attentionSignals({
+          scheduleReason: {
+            kind: "yield_shortened",
+            baseIntervalDays: 7,
+            finalIntervalDays: 6,
+            productiveOutputCount: null,
+          },
+        })}
+      />,
+    );
+    expect(queryByTestId("schedule-reason-line")).toBeNull();
+
+    rerender(
+      <ScheduleReasonLine
+        scheduler={attentionSignals({
+          scheduleReason: {
+            kind: "yield_shortened",
+            baseIntervalDays: 7,
+            finalIntervalDays: 6,
+            productiveOutputCount: 0,
+          },
+        })}
+      />,
+    );
+    expect(queryByTestId("schedule-reason-line")).toBeNull();
+
+    rerender(
+      <ScheduleReasonLine
+        scheduler={fsrsSignals({
+          scheduleReason: {
+            kind: "postpone_recession",
+            baseIntervalDays: 7,
+            finalIntervalDays: 28,
+            postponeCount: 4,
+          },
+        })}
+      />,
+    );
+    expect(queryByTestId("schedule-reason-line")).toBeNull();
   });
 });

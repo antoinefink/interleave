@@ -2621,6 +2621,7 @@ export class DbService {
       fsrsState: null,
       stage: element.stage,
       postponed: 0,
+      scheduleReason: null,
       lastProcessedAt: element.updatedAt ?? null,
     };
     return {
@@ -4704,6 +4705,7 @@ export class DbService {
         fsrsState: null,
         stage: element.stage,
         postponed: 0,
+        scheduleReason: null,
         lastProcessedAt: element.updatedAt ?? null,
       };
 
@@ -4943,6 +4945,7 @@ export class DbService {
         fsrsState: null,
         stage: element.stage,
         postponed: 0,
+        scheduleReason: null,
         lastProcessedAt: element.updatedAt ?? null,
       };
 
@@ -5115,6 +5118,7 @@ export class DbService {
       fsrsState: null,
       stage: element.stage,
       postponed: 0,
+      scheduleReason: null,
       lastProcessedAt: element.updatedAt ?? null,
     };
 

@@ -385,11 +385,17 @@ describe("SchedulerService.rescheduleForAction", () => {
 
     const service = new SchedulerService(handle.db);
     const result = service.rescheduleForAction(sourceId, "rewrite", "2026-05-30T12:00:00.000Z");
-    expect(result.intervalDays).toBe(60);
+    expect(result.intervalDays).toBe(35);
     expect(result.retirementSuggestion).toBe(true);
+    expect(rescheduleOps(handle, sourceId).at(-1)?.payload.scheduleReason).toMatchObject({
+      kind: "yield_lengthened",
+      finalIntervalDays: 35,
+      productiveOutputCount: 0,
+    });
   });
 
   it("keeps flag-off source visits on the legacy payload shape with multiplier unchanged", () => {
+    new SettingsRepository(handle.db).updateAppSettings({ adaptiveAttentionIntervals: false });
     const { sourceId } = seedExtract(handle, 0.375); // C source; extraction creates yield.
     const service = new SchedulerService(handle.db);
     const now = "2026-05-30T12:00:00.000Z";
@@ -404,6 +410,7 @@ describe("SchedulerService.rescheduleForAction", () => {
   });
 
   it("when enabled, ignores pre-existing lifetime output without a visit baseline", () => {
+    new SettingsRepository(handle.db).updateAppSettings({ adaptiveAttentionIntervals: false });
     const { sourceId } = seedExtract(handle, 0.375); // C source; one older child extract exists.
     new SettingsRepository(handle.db).updateAppSettings({ adaptiveAttentionIntervals: true });
     const service = new SchedulerService(handle.db);

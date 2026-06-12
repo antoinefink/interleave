@@ -141,6 +141,8 @@ export interface ScheduleDecision {
   readonly dueAt: IsoTimestamp;
   /** The interval (in days) from `now` that produced `dueAt` — for tests/telemetry. */
   readonly intervalDays: number;
+  /** Structured reason for the interval chosen, consumed by T113 read models. */
+  readonly scheduleReason?: AttentionScheduleReason;
   /** Low-yield source signal: mostly processed/ignored with no extracted output. */
   readonly retirementSuggestion?: boolean;
   /** The persisted multiplier to write after an adaptive decision. */
@@ -197,11 +199,138 @@ export interface AdaptiveIntervalReason extends AdaptiveIntervalMultiplierDecisi
   readonly finalIntervalDays: number;
 }
 
+export const ATTENTION_SCHEDULE_REASON_KINDS = [
+  "yield_shortened",
+  "yield_lengthened",
+  "recency_damped",
+  "postpone_recession",
+  "source_unresolved_shortened",
+  "source_exhausted_lengthened",
+  "descendant_lapses",
+  "band_base",
+] as const;
+
+export type AttentionScheduleReasonKind = (typeof ATTENTION_SCHEDULE_REASON_KINDS)[number];
+
+interface AttentionScheduleReasonBase {
+  readonly kind: AttentionScheduleReasonKind;
+  readonly baseIntervalDays: number;
+  readonly finalIntervalDays: number;
+}
+
+export type AttentionScheduleReason =
+  | (AttentionScheduleReasonBase & {
+      readonly kind: "yield_shortened" | "yield_lengthened";
+      readonly intervalAfterMultiplierDays: number;
+      readonly priorMultiplier: number;
+      readonly clampedPriorMultiplier: number;
+      readonly newMultiplier: number;
+      readonly productiveOutputCount: number;
+      readonly unresolvedRatio?: number;
+      readonly terminalRatio?: number;
+      readonly ignoredRatio?: number;
+    })
+  | (AttentionScheduleReasonBase & {
+      readonly kind: "recency_damped";
+      readonly daysSinceLastSeen: number;
+      readonly recencyCreditDays: number;
+    })
+  | (AttentionScheduleReasonBase & {
+      readonly kind: "postpone_recession";
+      readonly intervalAfterPostponeDays: number;
+      readonly postponeCount: number;
+    })
+  | (AttentionScheduleReasonBase & {
+      readonly kind: "source_unresolved_shortened";
+      readonly intervalAfterSourceProcessingDays: number;
+      readonly unresolvedRatio: number;
+      readonly terminalRatio: number;
+      readonly ignoredRatio: number;
+      readonly extractedOutputCount: number;
+    })
+  | (AttentionScheduleReasonBase & {
+      readonly kind: "source_exhausted_lengthened";
+      readonly intervalAfterSourceProcessingDays: number;
+      readonly unresolvedRatio: number;
+      readonly terminalRatio: number;
+      readonly ignoredRatio: number;
+      readonly extractedOutputCount: number;
+    })
+  | (AttentionScheduleReasonBase & {
+      readonly kind: "descendant_lapses";
+      readonly descendantLapseCount: number;
+    })
+  | (AttentionScheduleReasonBase & {
+      readonly kind: "band_base";
+    });
+
+type PendingAttentionScheduleReason = AttentionScheduleReason extends infer Reason
+  ? Reason extends AttentionScheduleReason
+    ? Omit<Reason, "finalIntervalDays">
+    : never
+  : never;
+
+function completeScheduleReason(
+  reason: PendingAttentionScheduleReason,
+  finalIntervalDays: number,
+): AttentionScheduleReason {
+  switch (reason.kind) {
+    case "yield_shortened":
+    case "yield_lengthened":
+      return { ...reason, finalIntervalDays };
+    case "recency_damped":
+      return { ...reason, finalIntervalDays };
+    case "postpone_recession":
+      return { ...reason, finalIntervalDays };
+    case "source_unresolved_shortened":
+      return { ...reason, finalIntervalDays };
+    case "source_exhausted_lengthened":
+      return { ...reason, finalIntervalDays };
+    case "descendant_lapses":
+      return { ...reason, finalIntervalDays };
+    case "band_base":
+      return { ...reason, finalIntervalDays };
+  }
+}
+
+export function attentionScheduleReasonFromAdaptiveReason(
+  reason: AdaptiveIntervalReason,
+): AttentionScheduleReason | null {
+  switch (reason.reasonKind) {
+    case "yield_shortened":
+    case "yield_lengthened":
+      return {
+        kind: reason.reasonKind,
+        baseIntervalDays: reason.baseIntervalDays,
+        intervalAfterMultiplierDays: reason.intervalAfterMultiplierDays,
+        finalIntervalDays: reason.finalIntervalDays,
+        priorMultiplier: reason.priorMultiplier,
+        clampedPriorMultiplier: reason.clampedPriorMultiplier,
+        newMultiplier: reason.newMultiplier,
+        productiveOutputCount: reason.productiveOutputCount,
+        ...(reason.unresolvedRatio !== undefined
+          ? { unresolvedRatio: reason.unresolvedRatio }
+          : {}),
+        ...(reason.terminalRatio !== undefined ? { terminalRatio: reason.terminalRatio } : {}),
+        ...(reason.ignoredRatio !== undefined ? { ignoredRatio: reason.ignoredRatio } : {}),
+      };
+    case "yield_held":
+      return {
+        kind: "band_base",
+        baseIntervalDays: reason.baseIntervalDays,
+        finalIntervalDays: reason.finalIntervalDays,
+      };
+    case "yield_input_malformed":
+      return null;
+  }
+}
+
 interface IntervalAdjustment {
   readonly intervalDays: number;
   readonly retirementSuggestion?: boolean;
   readonly attentionIntervalMultiplier?: number;
   readonly adaptiveReason?: Omit<AdaptiveIntervalReason, "finalIntervalDays">;
+  readonly scheduleReason?: PendingAttentionScheduleReason;
 }
 
 export interface SourceRetirementSuggestionInput extends SourceProcessingSignals {
@@ -567,7 +696,19 @@ function adjustForSourceProcessing(input: Schedulable, intervalDays: number): In
   const highValue = priorityLabel === "A" || priorityLabel === "B";
   const signals = input.sourceProcessing;
   if (highValue && signals.unresolvedRatio > 0.25) {
-    return { intervalDays: Math.max(1, Math.floor(intervalDays / 2)) };
+    const intervalAfterSourceProcessingDays = Math.max(1, Math.floor(intervalDays / 2));
+    return {
+      intervalDays: intervalAfterSourceProcessingDays,
+      scheduleReason: {
+        kind: "source_unresolved_shortened",
+        baseIntervalDays: intervalDays,
+        intervalAfterSourceProcessingDays,
+        unresolvedRatio: signals.unresolvedRatio,
+        terminalRatio: signals.terminalRatio,
+        ignoredRatio: signals.ignoredRatio,
+        extractedOutputCount: signals.extractedOutputCount,
+      },
+    };
   }
   if (
     sourceRetirementSuggestion({
@@ -578,9 +719,19 @@ function adjustForSourceProcessing(input: Schedulable, intervalDays: number): In
       unresolvedBlocks: 0,
     })
   ) {
+    const finalIntervalDays = Math.min(POSTPONE_CEILING_DAYS, intervalDays * 2);
     return {
-      intervalDays: Math.min(POSTPONE_CEILING_DAYS, intervalDays * 2),
+      intervalDays: finalIntervalDays,
       retirementSuggestion: true,
+      scheduleReason: {
+        kind: "source_exhausted_lengthened",
+        baseIntervalDays: intervalDays,
+        intervalAfterSourceProcessingDays: finalIntervalDays,
+        unresolvedRatio: signals.unresolvedRatio,
+        terminalRatio: signals.terminalRatio,
+        ignoredRatio: signals.ignoredRatio,
+        extractedOutputCount: signals.extractedOutputCount,
+      },
     };
   }
   return { intervalDays };
@@ -627,6 +778,26 @@ function applyAdaptiveIntervalMultiplier(
     1,
     Math.round(baseIntervalDays * multiplier.newMultiplier),
   );
+  const visibleAdaptiveReason =
+    multiplier.reasonKind === "yield_shortened" || multiplier.reasonKind === "yield_lengthened";
+  const scheduleReason: PendingAttentionScheduleReason | undefined = visibleAdaptiveReason
+    ? {
+        kind: multiplier.reasonKind,
+        baseIntervalDays,
+        intervalAfterMultiplierDays,
+        priorMultiplier: multiplier.priorMultiplier,
+        clampedPriorMultiplier: multiplier.clampedPriorMultiplier,
+        newMultiplier: multiplier.newMultiplier,
+        productiveOutputCount: multiplier.productiveOutputCount,
+        ...(multiplier.unresolvedRatio !== undefined
+          ? { unresolvedRatio: multiplier.unresolvedRatio }
+          : {}),
+        ...(multiplier.terminalRatio !== undefined
+          ? { terminalRatio: multiplier.terminalRatio }
+          : {}),
+        ...(multiplier.ignoredRatio !== undefined ? { ignoredRatio: multiplier.ignoredRatio } : {}),
+      }
+    : undefined;
   return {
     intervalDays: intervalAfterMultiplierDays,
     attentionIntervalMultiplier: multiplier.newMultiplier,
@@ -635,28 +806,72 @@ function applyAdaptiveIntervalMultiplier(
       baseIntervalDays,
       intervalAfterMultiplierDays,
     },
+    ...(scheduleReason ? { scheduleReason } : {}),
     ...(retirementSuggestionForSource(input) ? { retirementSuggestion: true } : {}),
   };
+}
+
+function shouldApplySourceProcessingAfterAdaptive(adjustment: IntervalAdjustment | null): boolean {
+  if (!adjustment?.adaptiveReason) return adjustment === null;
+  if (
+    adjustment.adaptiveReason.reasonKind === "yield_held" ||
+    adjustment.adaptiveReason.reasonKind === "yield_input_malformed"
+  ) {
+    return true;
+  }
+  return (
+    adjustment.adaptiveReason.reasonKind === "yield_shortened" &&
+    adjustment.adaptiveReason.productiveOutputCount === 0
+  );
+}
+
+function mergeAdaptiveAndSourceAdjustments(
+  adaptive: IntervalAdjustment,
+  source: IntervalAdjustment,
+): IntervalAdjustment {
+  return {
+    intervalDays: source.intervalDays,
+    ...(source.retirementSuggestion || adaptive.retirementSuggestion
+      ? { retirementSuggestion: true }
+      : {}),
+    ...(adaptive.attentionIntervalMultiplier !== undefined
+      ? { attentionIntervalMultiplier: adaptive.attentionIntervalMultiplier }
+      : {}),
+    ...(adaptive.adaptiveReason ? { adaptiveReason: adaptive.adaptiveReason } : {}),
+    ...((source.scheduleReason ?? adaptive.scheduleReason)
+      ? { scheduleReason: source.scheduleReason ?? adaptive.scheduleReason }
+      : {}),
+  };
+}
+
+interface RecencyCreditResult {
+  readonly intervalDays: number;
+  readonly daysSinceLastSeen?: number;
+  readonly recencyCreditDays?: number;
 }
 
 function applyRecencyCredit(
   baseIntervalDays: number,
   lastSeenAt: IsoTimestamp | null | undefined,
   now: IsoTimestamp,
-): number {
-  if (!lastSeenAt) return baseIntervalDays;
+): RecencyCreditResult {
+  if (!lastSeenAt) return { intervalDays: baseIntervalDays };
 
   const lastSeenMs = Date.parse(lastSeenAt);
   const nowMs = Date.parse(now);
   if (Number.isNaN(lastSeenMs) || Number.isNaN(nowMs) || lastSeenMs > nowMs) {
-    return baseIntervalDays;
+    return { intervalDays: baseIntervalDays };
   }
 
   const ageDays = Math.floor((nowMs - lastSeenMs) / MS_PER_DAY);
-  if (ageDays < 1) return baseIntervalDays;
+  if (ageDays < 1) return { intervalDays: baseIntervalDays };
 
   const creditDays = Math.min(ageDays, Math.floor(baseIntervalDays / 2));
-  return Math.max(1, baseIntervalDays - creditDays);
+  return {
+    intervalDays: Math.max(1, baseIntervalDays - creditDays),
+    daysSinceLastSeen: ageDays,
+    recencyCreditDays: creditDays,
+  };
 }
 
 /**
@@ -672,14 +887,47 @@ function applyRecencyCredit(
  */
 export function nextDueAt(input: Schedulable, now: IsoTimestamp): ScheduleDecision {
   const override = actionOverrideIntervalDays(input);
-  const baseIntervalDays = override ?? heuristicIntervalDays(input);
+  const heuristicBaseIntervalDays = heuristicIntervalDays(input);
+  const baseIntervalDays = override ?? heuristicBaseIntervalDays;
+  const adaptiveAdjustment = applyAdaptiveIntervalMultiplier(input, baseIntervalDays);
+  const sourceAdjustment = shouldApplySourceProcessingAfterAdaptive(adaptiveAdjustment)
+    ? adjustForSourceProcessing(input, adaptiveAdjustment?.intervalDays ?? baseIntervalDays)
+    : null;
   const adjusted =
-    applyAdaptiveIntervalMultiplier(input, baseIntervalDays) ??
-    adjustForSourceProcessing(input, baseIntervalDays);
-  const intervalDays = applyRecencyCredit(adjusted.intervalDays, input.lastSeenAt, now);
+    adaptiveAdjustment && sourceAdjustment
+      ? mergeAdaptiveAndSourceAdjustments(adaptiveAdjustment, sourceAdjustment)
+      : (adaptiveAdjustment ?? sourceAdjustment ?? { intervalDays: baseIntervalDays });
+  const recency = applyRecencyCredit(adjusted.intervalDays, input.lastSeenAt, now);
+  const intervalDays = recency.intervalDays;
+  const malformedAdaptiveReason = adjusted.adaptiveReason?.reasonKind === "yield_input_malformed";
+  const scheduleReason: AttentionScheduleReason | undefined =
+    adjusted.scheduleReason !== undefined
+      ? completeScheduleReason(adjusted.scheduleReason, intervalDays)
+      : malformedAdaptiveReason
+        ? undefined
+        : input.lastAction === "postpone"
+          ? {
+              kind: "postpone_recession",
+              baseIntervalDays: heuristicBaseIntervalDays,
+              intervalAfterPostponeDays: baseIntervalDays,
+              finalIntervalDays: intervalDays,
+              postponeCount: Math.max(0, Math.floor(input.postponeCount ?? 0)),
+            }
+          : recency.recencyCreditDays !== undefined &&
+              recency.recencyCreditDays > 0 &&
+              recency.daysSinceLastSeen !== undefined
+            ? {
+                kind: "recency_damped",
+                baseIntervalDays: adjusted.intervalDays,
+                finalIntervalDays: intervalDays,
+                daysSinceLastSeen: recency.daysSinceLastSeen,
+                recencyCreditDays: recency.recencyCreditDays,
+              }
+            : { kind: "band_base", baseIntervalDays, finalIntervalDays: intervalDays };
   const decision: ScheduleDecision = {
     dueAt: addDays(now, intervalDays),
     intervalDays,
+    ...(scheduleReason ? { scheduleReason } : {}),
   };
   return {
     ...decision,

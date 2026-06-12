@@ -218,6 +218,7 @@ describe("ExtractService.advanceStage (raw → clean → atomic)", () => {
   });
 
   it("keeps flag-off stage moves on the legacy payload shape with multiplier unchanged", () => {
+    new SettingsRepository(handle.db).updateAppSettings({ adaptiveAttentionIntervals: false });
     const { extractId } = seedExtract(handle, 0.375); // C extract
     const service = new ExtractService(handle.db);
 

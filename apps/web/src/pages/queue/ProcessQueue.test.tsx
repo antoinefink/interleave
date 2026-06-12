@@ -52,6 +52,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "clean_extract",
       postponed: 0,
+      scheduleReason: null,
       retirementSuggestion: null,
     },
     sourceTitle: "On the Measure of Intelligence",
@@ -91,6 +92,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "active_card",
       postponed: 0,
+      scheduleReason: null,
       retirementSuggestion: null,
     },
   });
@@ -2166,6 +2168,7 @@ describe("ProcessQueue", () => {
         lapses: null,
         stage: "rough_topic",
         postponed: 0,
+        scheduleReason: null,
         retirementSuggestion: null,
       },
       sourceTitle: null,

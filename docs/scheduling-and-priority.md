@@ -67,6 +67,21 @@ values keep the base interval. Valid older timestamps subtract whole-day credit 
 base interval, with a one-day minimum, so untouched work returns sooner than otherwise-identical
 freshly processed work without becoming immediately due again.
 
+### Adaptive interval explainability
+
+Processed source/extract visits use a bounded per-element attention multiplier by default. The
+governing `reschedule_element` operation stores a structured `scheduleReason` alongside the new
+`dueAt`, and queue/inspector read models only project that reason while the operation still matches
+the current `elements.due_at`. Explicit manual choices and queue-soon schedules are intentionally
+silent.
+
+Visible reason kinds are closed and renderer-formatted: productive visits can show
+`yield_shortened`, barren visits `yield_lengthened`, old untouched work `recency_damped`, repeated
+deferrals `postpone_recession`, and source block-processing adjustments
+`source_unresolved_shortened` / `source_exhausted_lengthened`. `band_base` is the quiet default.
+`descendant_lapses` is reserved for descendant-health input and is not emitted until that input
+exists.
+
 ## The daily queue
 
 The queue is the user-facing product of both schedulers combined.

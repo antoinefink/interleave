@@ -1844,6 +1844,13 @@ describe("SettingsPatchSchema (T011)", () => {
       weeklyReviewEnabled: false,
     });
     expect(() => SettingsPatchSchema.parse({ weeklyReviewEnabled: "no" })).toThrow();
+    expect(SettingsPatchSchema.parse({ adaptiveAttentionIntervals: false })).toEqual({
+      adaptiveAttentionIntervals: false,
+    });
+    expect(SettingsPatchSchema.parse({ adaptiveAttentionIntervals: true })).toEqual({
+      adaptiveAttentionIntervals: true,
+    });
+    expect(() => SettingsPatchSchema.parse({ adaptiveAttentionIntervals: "no" })).toThrow();
   });
 
   it("accepts a display name, rejects an over-long one (shell identity)", () => {

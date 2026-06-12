@@ -14,7 +14,7 @@
  * selection seams are stubbed. No SQLite/IPC — the renderer is a pure UI consumer.
  */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   DailyWorkSummaryResult,
@@ -51,6 +51,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "active_card",
       postponed: 0,
+      scheduleReason: null,
       retirementSuggestion: null,
     },
     sourceTitle: "On the Measure of Intelligence",
@@ -86,6 +87,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "clean_extract",
       postponed: 1,
+      scheduleReason: null,
       retirementSuggestion: null,
     },
     sourceTitle: "On the Measure of Intelligence",
@@ -121,6 +123,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "raw_source",
       postponed: 0,
+      scheduleReason: null,
       retirementSuggestion: null,
     },
     sourceTitle: "The Bitter Lesson",
@@ -156,6 +159,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "rough_topic",
       postponed: 0,
+      scheduleReason: null,
       retirementSuggestion: null,
     },
     sourceTitle: null,
@@ -193,6 +197,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "rough_topic",
       postponed: 0,
+      scheduleReason: null,
       retirementSuggestion: null,
     },
     sourceTitle: null,
@@ -336,6 +341,7 @@ const h = vi.hoisted(() => {
     result,
     dailyWork,
     priorityIntegrity,
+    cardRow,
     sourceRow,
     extractRow,
     topicRow,
@@ -401,6 +407,48 @@ describe("QueueScreen", () => {
   it("renders one qitem per due row", async () => {
     render(<QueueScreen />);
     await waitFor(() => expect(screen.getAllByTestId("queue-item")).toHaveLength(4));
+  });
+
+  it("renders trusted attention schedule reasons and associates them with the row button", async () => {
+    h.listQueue.mockResolvedValue({
+      ...h.result,
+      items: [
+        h.cardRow,
+        {
+          ...h.extractRow,
+          schedulerSignals: {
+            ...h.extractRow.schedulerSignals,
+            scheduleReason: {
+              kind: "yield_shortened",
+              baseIntervalDays: 7,
+              finalIntervalDays: 6,
+              productiveOutputCount: 2,
+            },
+          },
+        },
+        {
+          ...h.topicRow,
+          schedulerSignals: {
+            ...h.topicRow.schedulerSignals,
+            scheduleReason: { kind: "band_base", baseIntervalDays: 7, finalIntervalDays: 7 },
+          },
+        },
+      ],
+      counts: { ...h.result.counts, all: 3, topic: 1 },
+      budget: { used: 3, target: 30 },
+    });
+
+    render(<QueueScreen />);
+
+    const reason = await screen.findByText("Returning sooner: last visit produced 2 output(s).");
+    const row = reason.closest('[data-testid="queue-item"]');
+    if (!(row instanceof HTMLElement)) throw new Error("Missing queue row");
+    const openButton = within(row).getByTestId("queue-open");
+    expect(openButton).toHaveAccessibleDescription(
+      "Returning sooner: last visit produced 2 output(s).",
+    );
+    expect(screen.getAllByTestId("schedule-reason-line")).toHaveLength(1);
+    expect(screen.queryByText("band_base")).not.toBeInTheDocument();
   });
 
   it("starts the process route only when daily work has due queue items", async () => {

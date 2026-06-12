@@ -71,6 +71,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "raw_source",
       postponed: 0,
+      scheduleReason: null,
       retirementSuggestion: null,
     },
     sourceTitle: "The Bitter Lesson",
@@ -106,6 +107,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "clean_extract",
       postponed: 1,
+      scheduleReason: null,
       retirementSuggestion: null,
     },
     sourceTitle: "On the Measure of Intelligence",
@@ -144,6 +146,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "rough_topic",
       postponed: 0,
+      scheduleReason: null,
       retirementSuggestion: null,
     },
     sourceTitle: null,
@@ -180,6 +183,7 @@ const h = vi.hoisted(() => {
       fsrsState: null,
       lapses: null,
       stage: "active_card",
+      scheduleReason: null,
       postponed: 0,
       retirementSuggestion: null,
     },
@@ -231,6 +235,7 @@ const h = vi.hoisted(() => {
       lapses: null,
       stage: "rough_topic",
       postponed: 0,
+      scheduleReason: null,
       retirementSuggestion: null,
     },
     sourceTitle: null,
@@ -410,6 +415,44 @@ describe("HomeScreen", () => {
     expect(rows).toHaveLength(4);
     // No actionable queue controls leak into the preview.
     expect(screen.queryByTestId("queue-actions")).toBeNull();
+  });
+
+  it("renders trusted attention schedule reasons in the top-due preview", async () => {
+    h.listQueue.mockResolvedValue({
+      ...h.queue,
+      items: [
+        {
+          ...h.extractRow,
+          schedulerSignals: {
+            ...h.extractRow.schedulerSignals,
+            scheduleReason: {
+              kind: "postpone_recession",
+              baseIntervalDays: 7,
+              finalIntervalDays: 28,
+              postponeCount: 2,
+            },
+          },
+        },
+        {
+          ...h.topicRow,
+          schedulerSignals: {
+            ...h.topicRow.schedulerSignals,
+            scheduleReason: { kind: "band_base", baseIntervalDays: 7, finalIntervalDays: 7 },
+          },
+        },
+      ],
+      counts: { ...h.queue.counts, all: 2, extract: 1, topic: 1 },
+      budget: { used: 2, target: 30 },
+    });
+
+    render(<HomeScreen />);
+
+    const reason = await screen.findByText("Receding after postpone x2.");
+    const row = reason.closest('[data-testid="home-preview-row"]');
+    if (!(row instanceof HTMLElement)) throw new Error("Missing home preview row");
+    expect(row).toHaveAccessibleDescription("Receding after postpone x2.");
+    expect(screen.getAllByTestId("schedule-reason-line")).toHaveLength(1);
+    expect(screen.queryByText("band_base")).not.toBeInTheDocument();
   });
 
   it("shows the empty 'Queue clear' state when counts.all === 0", async () => {

@@ -66,8 +66,9 @@ export type ThemePreference = (typeof THEMES)[number];
  * - `weeklyReviewEnabled` — whether the scheduled weekly ledger/integrity session
  *   is active (T110). Turning it off suppresses the system-owned weekly task.
  * - `weeklyReviewCadenceDays` — the attention cadence for the weekly session (T110).
- * - `adaptiveAttentionIntervals` — whether T112's per-element attention interval
- *   multiplier is used by processed source/extract visits. Default OFF until T113.
+ * - `adaptiveAttentionIntervals` — whether per-element attention interval
+ *   multipliers are used by processed source/extract visits. Default ON now that
+ *   T113 exposes the reason line for interval changes.
  * - `importBalanceFactor` — how lopsided imports-vs-processing must be before the
  *   balance warning fires (T046): imports must exceed processed output by this
  *   multiple. Higher = less sensitive. Read by the pure `judgeBalance` rule.
@@ -347,7 +348,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   chronicPostponeThreshold: 5,
   weeklyReviewEnabled: true,
   weeklyReviewCadenceDays: 7,
-  adaptiveAttentionIntervals: false,
+  adaptiveAttentionIntervals: true,
   importBalanceFactor: DEFAULT_IMPORT_BALANCE_FACTOR,
   keyboardLayout: "qwerty",
   theme: "dark",

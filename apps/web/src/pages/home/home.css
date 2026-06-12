@@ -215,6 +215,12 @@
   margin-top: 3px;
   flex-wrap: wrap;
 }
+.home-prow__schedule-reason {
+  margin-top: var(--s-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .home-prow__action {
   display: flex;
   align-items: center;

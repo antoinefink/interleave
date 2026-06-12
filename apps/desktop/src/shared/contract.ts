@@ -246,6 +246,7 @@ export const SettingsPatchSchema = z
       .int()
       .min(WEEKLY_REVIEW_CADENCE_DAYS_MIN)
       .max(WEEKLY_REVIEW_CADENCE_DAYS_MAX),
+    adaptiveAttentionIntervals: z.boolean(),
     importBalanceFactor: z.number().min(IMPORT_BALANCE_FACTOR_MIN).max(IMPORT_BALANCE_FACTOR_MAX),
     keyboardLayout: z.enum(KEYBOARD_LAYOUTS),
     theme: z.enum(THEMES),
@@ -325,11 +326,42 @@ export interface ElementSummary {
 /** Which scheduler an element is on — the load-bearing FSRS vs attention split. */
 export type SchedulerKind = "fsrs" | "attention";
 
+export type CurrentScheduleReasonKind =
+  | "yield_shortened"
+  | "yield_lengthened"
+  | "recency_damped"
+  | "postpone_recession"
+  | "source_unresolved_shortened"
+  | "source_exhausted_lengthened"
+  | "descendant_lapses"
+  | "band_base";
+
+/** Structured, renderer-formatted reason for the current persisted attention schedule. */
+export interface CurrentScheduleReason {
+  readonly kind: CurrentScheduleReasonKind;
+  readonly baseIntervalDays: number | null;
+  readonly finalIntervalDays: number | null;
+  readonly intervalAfterMultiplierDays?: number | null;
+  readonly priorMultiplier?: number | null;
+  readonly newMultiplier?: number | null;
+  readonly productiveOutputCount?: number | null;
+  readonly unresolvedRatio?: number | null;
+  readonly terminalRatio?: number | null;
+  readonly ignoredRatio?: number | null;
+  readonly daysSinceLastSeen?: number | null;
+  readonly recencyCreditDays?: number | null;
+  readonly intervalAfterPostponeDays?: number | null;
+  readonly postponeCount?: number | null;
+  readonly intervalAfterSourceProcessingDays?: number | null;
+  readonly extractedOutputCount?: number | null;
+  readonly descendantLapseCount?: number | null;
+}
+
 /**
  * The scheduler signals shown by the `SchedulerChip`/readout. `fsrs` carries
  * memory signals (retrievability/stability/difficulty) for cards; `attention`
- * carries process-again signals (stage/priority/last-processed/postponed×N) for
- * sources/topics/extracts/tasks/synthesis notes.
+ * carries process-again signals (stage/priority/last-processed/postponed×N) and
+ * an optional structured reason for the current attention due date.
  */
 export interface SchedulerSignals {
   readonly kind: SchedulerKind;
@@ -348,6 +380,8 @@ export interface SchedulerSignals {
   readonly stage: string;
   /** How many times this element has been postponed. */
   readonly postponed: number;
+  /** Structured reason for the current attention schedule; `null` for cards/band-base. */
+  readonly scheduleReason: CurrentScheduleReason | null;
   /** When it was last processed/reviewed (ISO-8601), when known. */
   readonly lastProcessedAt: string | null;
   /**
@@ -703,6 +737,8 @@ export interface QueueSchedulerSignals {
   readonly stage: string;
   /** How many times an attention element has been postponed. */
   readonly postponed: number;
+  /** Structured reason for the current attention schedule; `null` for cards/band-base. */
+  readonly scheduleReason: CurrentScheduleReason | null;
   /** Dismissible source-retirement suggestion for "done with no yield" sources (T103). */
   readonly retirementSuggestion: SourceRetirementSuggestion | null;
 }

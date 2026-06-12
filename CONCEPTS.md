@@ -140,6 +140,12 @@ A learned adjustment to an attention-scheduled element's return cadence based on
 
 Adaptive attention intervals are bounded attention-scheduler state. They do not apply to FSRS card reviews, and any persisted change should remain explainable, transactional, and undoable like the schedule change it modifies.
 
+### Attention schedule reason
+
+A structured explanation for why an attention-scheduled element is returning sooner, later, or unchanged at its current return date.
+
+An Attention schedule reason is trusted only while durable scheduling evidence still governs that return date. It is not renderer inference, and it does not apply to FSRS card reviews or explicit user commands such as Queue soon.
+
 ### Due queue
 
 The currently actionable processing set: due active-recall cards plus due attention-scheduled sources, topics, extracts, and similar non-card work.

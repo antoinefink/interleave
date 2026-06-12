@@ -172,6 +172,63 @@ export function SchedulerChip({ scheduler }: { scheduler: SchedulerSignals }) {
   );
 }
 
+function hasFiniteEvidence(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+export function formatAttentionScheduleReason(scheduler: SchedulerSignals): string | null {
+  if (scheduler.kind !== "attention") return null;
+  const reason = scheduler.scheduleReason ?? null;
+  if (!reason || reason.kind === "band_base") return null;
+
+  switch (reason.kind) {
+    case "yield_shortened":
+      return hasFiniteEvidence(reason.productiveOutputCount) && reason.productiveOutputCount > 0
+        ? `Returning sooner: last visit produced ${reason.productiveOutputCount} output(s).`
+        : null;
+    case "yield_lengthened":
+      return "Receding: recent visit produced no output.";
+    case "recency_damped":
+      return hasFiniteEvidence(reason.daysSinceLastSeen)
+        ? `Returning sooner: untouched for ${reason.daysSinceLastSeen}d.`
+        : null;
+    case "postpone_recession":
+      return hasFiniteEvidence(reason.postponeCount)
+        ? `Receding after postpone x${reason.postponeCount}.`
+        : null;
+    case "source_unresolved_shortened":
+      return "Returning sooner: source still has unresolved blocks.";
+    case "source_exhausted_lengthened":
+      return "Receding: source produced no extractable output.";
+    case "descendant_lapses":
+      return "Returning sooner: descendant cards are struggling.";
+    default:
+      return null;
+  }
+}
+
+export function ScheduleReasonLine({
+  scheduler,
+  id,
+  className,
+}: {
+  scheduler: SchedulerSignals;
+  id?: string;
+  className?: string;
+}) {
+  const text = formatAttentionScheduleReason(scheduler);
+  if (!text) return null;
+  return (
+    <span
+      id={id}
+      className={["schedule-reason-line", className].filter(Boolean).join(" ")}
+      data-testid="schedule-reason-line"
+    >
+      {text}
+    </span>
+  );
+}
+
 /** The FSRS three-stat readout (Stability / Difficulty / Retrievability). */
 export function FsrsStats({ scheduler }: { scheduler: SchedulerSignals }) {
   const stability = scheduler.stability ?? 0;

@@ -165,6 +165,51 @@ describe("QueueQuery", () => {
     expect(source?.schedulerSignals.kind).toBe("attention");
   });
 
+  it("carries the current attention schedule reason on due queue rows", () => {
+    const source = repos.sources.create({
+      title: "Productive source",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "active",
+      stage: "raw_source",
+    });
+    handle.db.transaction((tx) => {
+      repos.elements.rescheduleWithin(
+        tx,
+        source.element.id,
+        iso("2026-05-30T06:00:00.000Z"),
+        "scheduled",
+        {
+          action: "extract",
+          scheduledAt: "2026-05-24T06:00:00.000Z",
+          attentionAdaptive: {
+            version: 1,
+            enabled: true,
+            reason: {
+              reasonKind: "yield_shortened",
+              baseIntervalDays: 7,
+              intervalAfterMultiplierDays: 6,
+              finalIntervalDays: 6,
+              priorMultiplier: 1,
+              newMultiplier: 0.85,
+              productiveOutputCount: 2,
+            },
+          },
+        },
+      );
+    });
+
+    const row = queue
+      .list({ asOf: NOW, filters: { types: ["source"] } })
+      .items.find((item) => item.id === source.element.id);
+
+    expect(row?.schedulerSignals.scheduleReason).toMatchObject({
+      kind: "yield_shortened",
+      finalIntervalDays: 6,
+      newMultiplier: 0.85,
+      productiveOutputCount: 2,
+    });
+  });
+
   it("decorates visible source rows with a source retirement suggestion", () => {
     const { element } = repos.sources.createWithDocument({
       title: "Low-yield source",
