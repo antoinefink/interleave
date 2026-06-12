@@ -104,6 +104,7 @@ import {
   SourceYieldQuery,
   type SynthesisData,
   type SynthesisLinkedElement,
+  TimeCostQuery,
   UndoService,
   WorkloadService,
 } from "@interleave/local-db";
@@ -491,6 +492,7 @@ export class DbService {
   private inspector: InspectorQuery | null = null;
   private lineage: LineageQuery | null = null;
   private queue: QueueQuery | null = null;
+  private timeCost: TimeCostQuery | null = null;
   private dailyWork: DailyWorkQuery | null = null;
   private library: LibraryQuery | null = null;
   /** The per-source yield rollup (T083) — read %, extracts/cards/mature/leeches/time, ranked. */
@@ -783,6 +785,7 @@ export class DbService {
     this.inspector = new InspectorQuery(this.repositories);
     this.lineage = new LineageQuery(this.repositories);
     this.queue = new QueueQuery(this.repositories);
+    this.timeCost = new TimeCostQuery(this.handle.db);
     // The facet-driven browse-all read behind `/library` (distinct from search):
     // lists ALL live elements narrowed by type/concept/priority/status facets,
     // including topic/synthesis_note/task which the FTS index never covers.
@@ -859,6 +862,7 @@ export class DbService {
     this.inspector = null;
     this.lineage = null;
     this.queue = null;
+    this.timeCost = null;
     this.dailyWork = null;
     this.library = null;
     this.queueAction = null;
@@ -1212,6 +1216,14 @@ export class DbService {
     return this.queue;
   }
 
+  /** Read-only per-item time-cost model (T115), bound to the open database. */
+  private get timeCostQuery(): TimeCostQuery {
+    if (!this.timeCost) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.timeCost;
+  }
+
   /**
    * The unified, sorted, filtered due queue (T029). The {@link QueueQuery} merges
    * the two DISTINCT due reads (due cards via the FSRS `review_states.due_at` join;
@@ -1224,8 +1236,9 @@ export class DbService {
    * separate inside the read.
    */
   listQueue(request: QueueListRequest): QueueListResult {
+    const asOf = (request.asOf as IsoTimestamp | undefined) ?? nowIso();
     const data = this.queueQuery.list({
-      ...(request.asOf ? { asOf: request.asOf as IsoTimestamp } : {}),
+      asOf,
       ...(request.mode ? { mode: request.mode } : {}),
       filters: {
         ...(request.types ? { types: request.types } : {}),
@@ -1234,7 +1247,22 @@ export class DbService {
         ...(request.statuses ? { statuses: request.statuses } : {}),
       },
     });
-    return { items: data.items, counts: data.counts, budget: data.budget };
+    const timeEstimate = request.includeTimeEstimate
+      ? this.timeCostQuery.estimateQueue(data.timeCostSummary, {
+          asOf,
+          visibleItems: data.items.map((item) => ({
+            id: item.id,
+            type: item.type,
+            stage: item.stage,
+          })),
+        })
+      : undefined;
+    return {
+      items: data.items,
+      counts: data.counts,
+      budget: data.budget,
+      ...(timeEstimate ? { timeEstimate } : {}),
+    };
   }
 
   /** The per-row queue ACT seam (T030), bound to the open database. */

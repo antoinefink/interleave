@@ -139,6 +139,8 @@ test("the /queue screen renders due rows with chips, priority + due labels", asy
   // The budget meter + filters render.
   await expect(page.getByTestId("budget-meter")).toBeVisible();
   await expect(page.getByTestId("queue-filters")).toBeVisible();
+  await expect(page.getByTestId("queue-subtitle")).toContainText(/est\. ~\d+ min/);
+  await expect(page.getByTestId("queue-subtitle")).toContainText("some estimates use defaults");
 
   // At least one due row renders, and a card row shows the FSRS chip.
   const rows = page.getByTestId("queue-item");

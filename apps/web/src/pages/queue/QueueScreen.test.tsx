@@ -237,6 +237,12 @@ const h = vi.hoisted(() => {
       protected: 2,
     },
     budget: { used: 4, target: 30 },
+    timeEstimate: {
+      confidence: "default",
+      totalMinutes: 19,
+      pricedItemCount: 4,
+      items: [],
+    },
   };
   const dailyWork: DailyWorkWithGraduations = {
     asOf: "2026-05-30T18:00:00.000Z",
@@ -423,6 +429,23 @@ describe("QueueScreen", () => {
   it("renders one qitem per due row", async () => {
     render(<QueueScreen />);
     await waitFor(() => expect(screen.getAllByTestId("queue-item")).toHaveLength(4));
+  });
+
+  it("renders backend queue minutes with accessible approximate text", async () => {
+    render(<QueueScreen />);
+
+    expect(await screen.findByTestId("queue-subtitle")).toHaveTextContent("est. ~19 min");
+    expect(screen.getByTestId("queue-subtitle")).toHaveTextContent(
+      "About 19 minutes; some estimates use defaults.",
+    );
+  });
+
+  it("does not invent estimated minutes before the queue read resolves", () => {
+    h.listQueue.mockReturnValue(new Promise(() => undefined));
+
+    render(<QueueScreen />);
+
+    expect(screen.getByTestId("queue-subtitle")).not.toHaveTextContent("est.");
   });
 
   it("renders trusted attention schedule reasons and associates them with the row button", async () => {
@@ -1506,6 +1529,6 @@ describe("QueueScreen", () => {
     h.listQueue.mockClear();
     window.dispatchEvent(new CustomEvent("interleave:undo"));
 
-    await waitFor(() => expect(h.listQueue).toHaveBeenCalledWith({}));
+    await waitFor(() => expect(h.listQueue).toHaveBeenCalledWith({ includeTimeEstimate: true }));
   });
 });

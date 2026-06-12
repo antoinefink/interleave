@@ -45,6 +45,11 @@ import {
 import type { Repositories } from "./index";
 import type { CurrentScheduleReason } from "./operation-log-repository";
 import { isQueueActionableStatus } from "./queue-repository";
+import {
+  createEmptyQueueTimeCostSummary,
+  type QueueTimeCostSummary,
+  queueTimeCostSummaryWithItem,
+} from "./time-cost-query";
 
 export type { SessionMode } from "@interleave/scheduler";
 
@@ -195,6 +200,8 @@ export interface QueueListData {
   };
   /** The daily review budget gauge: items due today vs the configured target. */
   readonly budget: { readonly used: number; readonly target: number };
+  /** Internal pricing summary for the due set after request filters; not returned across IPC. */
+  readonly timeCostSummary: QueueTimeCostSummary;
 }
 
 /** The FSRS forgetting-curve constants (factor=19/81, decay=-0.5). */
@@ -403,9 +410,17 @@ export class QueueQuery {
       overdue: 0,
       protected: 0,
     };
-    const countOne = (element: Element, dueAt: string | null): void => {
+    let timeCostSummary = createEmptyQueueTimeCostSummary();
+    const countOne = (
+      element: Element,
+      dueAt: string | null,
+      card?: { readonly kind: string; readonly mediaRef: string | null },
+    ): void => {
       if (!this.matchesElementFilters(element, filters, conceptMatch)) return;
       counts.all++;
+      if (!filters.types || filters.types.length === 0 || filters.types.includes(element.type)) {
+        timeCostSummary = queueTimeCostSummaryWithItem(timeCostSummary, element, card);
+      }
       const t = element.type;
       if (t === "card") counts.card++;
       else if (t === "source") counts.source++;
@@ -418,7 +433,7 @@ export class QueueQuery {
       }
       if (dueStateFor(dueAt, asOfMs) === "overdue") counts.overdue++;
     };
-    for (const { element, state } of dueCardsFull) countOne(element, state.dueAt);
+    for (const { element, state, card } of dueCardsFull) countOne(element, state.dueAt, card);
     for (const element of dueAttention) countOne(element, element.dueAt);
 
     // SCORE-CANDIDATE CAP (T100): only the soonest-due `SCORE_CANDIDATE_CAP` cards get a
@@ -465,7 +480,7 @@ export class QueueQuery {
     const target = this.repos.settings.getAppSettings().dailyReviewBudget;
     const used = counts.all;
 
-    return { items: rows, counts, budget: { used, target } };
+    return { items: rows, counts, budget: { used, target }, timeCostSummary };
   }
 
   /**

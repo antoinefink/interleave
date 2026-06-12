@@ -682,12 +682,34 @@ export interface QueueListRequest {
    * in the list; the mode only re-orders them.
    */
   readonly mode?: QueueSessionMode;
+  /** Include the T115 minute estimate; count-only callers leave this false/omitted. */
+  readonly includeTimeEstimate?: boolean;
+}
+
+/** Confidence for queue time-cost estimates. `default` means at least one priced component uses a documented fallback. */
+export type QueueTimeEstimateConfidence = "learned" | "default";
+
+/** Optional estimate for a visible queue row, when the trusted read model provides per-row pricing. */
+export interface QueueVisibleTimeEstimate {
+  readonly id: string;
+  readonly estimatedMinutes: number;
+  readonly confidence: QueueTimeEstimateConfidence;
+  readonly basis: string;
+}
+
+/** Trusted aggregate pricing for the filtered due queue. Budget remains item-count based in T115. */
+export interface QueueTimeEstimate {
+  readonly confidence: QueueTimeEstimateConfidence;
+  readonly totalMinutes: number;
+  readonly pricedItemCount: number;
+  readonly items: readonly QueueVisibleTimeEstimate[];
 }
 
 export interface QueueListResult {
   readonly items: readonly QueueItemSummary[];
   readonly counts: QueueCounts;
   readonly budget: { readonly used: number; readonly target: number };
+  readonly timeEstimate?: QueueTimeEstimate;
 }
 
 // ---------------------------------------------------------------------------

@@ -99,6 +99,7 @@ import {
   QueueAutoPostponeRequestSchema,
   QueueCatchUpRequestSchema,
   QueueListRequestSchema,
+  type QueueListResult,
   QueueScheduleRequestSchema,
   QueueUndoRequestSchema,
   QueueVacationRequestSchema,
@@ -1804,6 +1805,69 @@ describe("QueueListRequestSchema asOf guard", () => {
     );
     expect(() => QueueListRequestSchema.parse({ asOf: "" })).toThrow();
     expect(() => QueueListRequestSchema.parse({ asOf: "soon" })).toThrow();
+  });
+
+  it("accepts opt-in trusted time estimates on QueueListResult", () => {
+    expect(QueueListRequestSchema.parse({})).toEqual({});
+    expect(
+      QueueListRequestSchema.parse({
+        asOf: "2027-06-01T12:00:00.000Z",
+        types: ["card"],
+        mode: "review",
+        includeTimeEstimate: true,
+      }),
+    ).toEqual({
+      asOf: "2027-06-01T12:00:00.000Z",
+      types: ["card"],
+      mode: "review",
+      includeTimeEstimate: true,
+    });
+
+    const result = {
+      items: [],
+      counts: {
+        all: 2,
+        card: 1,
+        source: 1,
+        extract: 0,
+        topic: 0,
+        task: 0,
+        highPriority: 1,
+        overdue: 0,
+        protected: 1,
+      },
+      budget: { used: 2, target: 20 },
+      timeEstimate: {
+        confidence: "default",
+        totalMinutes: 12,
+        pricedItemCount: 2,
+        items: [
+          {
+            id: "card-1",
+            estimatedMinutes: 2,
+            confidence: "learned",
+            basis: "qa",
+          },
+          {
+            id: "source-1",
+            estimatedMinutes: 10,
+            confidence: "default",
+            basis: "source",
+          },
+        ],
+      },
+    } satisfies QueueListResult;
+
+    expect(result.timeEstimate).toEqual({
+      confidence: "default",
+      totalMinutes: 12,
+      pricedItemCount: 2,
+      items: [
+        { id: "card-1", estimatedMinutes: 2, confidence: "learned", basis: "qa" },
+        { id: "source-1", estimatedMinutes: 10, confidence: "default", basis: "source" },
+      ],
+    });
+    expect(result.budget).toEqual({ used: 2, target: 20 });
   });
 });
 

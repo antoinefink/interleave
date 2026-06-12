@@ -253,6 +253,18 @@ describe("preload bridge", () => {
     expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.jobsList, {});
   });
 
+  it("forwards queue list requests through the existing queue:list channel without reshaping", async () => {
+    const request: NonNullable<Parameters<AppApi["queue"]["list"]>[0]> = {
+      asOf: "2027-06-01T12:00:00.000Z",
+      types: ["card"],
+      mode: "review",
+    };
+
+    await api().queue.list(request);
+
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.queueList, request);
+  });
+
   it("forwards receive-only subscriptions without exposing raw events", () => {
     const callback = vi.fn();
     const unsubscribe = api().jobs.subscribe(callback);

@@ -105,9 +105,20 @@ export class QueueRepository {
    * avoids a separate whole-table `reviewStateMap()` scan AND a per-row
    * `findReviewState` (the N+1). Same filter/order as {@link dueCards}.
    */
-  dueCardsWithState(asOf: IsoTimestamp): { element: Element; state: ReviewState }[] {
+  dueCardsWithState(asOf: IsoTimestamp): {
+    element: Element;
+    state: ReviewState;
+    card: { kind: string; mediaRef: string | null };
+  }[] {
     const rows = this.db
-      .select({ element: elements, state: reviewStates })
+      .select({
+        element: elements,
+        state: reviewStates,
+        card: {
+          kind: cards.kind,
+          mediaRef: cards.mediaRef,
+        },
+      })
       .from(reviewStates)
       .innerJoin(elements, eq(elements.id, reviewStates.elementId))
       .innerJoin(cards, eq(cards.elementId, elements.id))
@@ -126,6 +137,7 @@ export class QueueRepository {
     return rows.map((r) => ({
       element: rowToElement(r.element),
       state: rowToReviewState(r.state),
+      card: r.card,
     }));
   }
 

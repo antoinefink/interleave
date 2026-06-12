@@ -3,6 +3,7 @@ import {
   type AppApi,
   appApi,
   isDesktop,
+  type QueueListResult,
   RESET_LOCAL_DATA_CONFIRMATION_PHRASE,
   RESTORE_BACKUP_CONFIRMATION_PHRASE,
   requireAppApi,
@@ -488,6 +489,38 @@ describe("renderer appApi wrapper", () => {
       id: "src-1",
       action: { kind: "queueSoon" },
     });
+  });
+
+  it("returns queue time estimates from the existing listQueue wrapper", async () => {
+    const result = {
+      items: [],
+      counts: {
+        all: 2,
+        card: 1,
+        source: 1,
+        extract: 0,
+        topic: 0,
+        task: 0,
+        highPriority: 1,
+        overdue: 0,
+        protected: 1,
+      },
+      budget: { used: 2, target: 20 },
+      timeEstimate: {
+        confidence: "default",
+        totalMinutes: 12,
+        pricedItemCount: 2,
+        items: [
+          { id: "card-1", estimatedMinutes: 2, confidence: "learned", basis: "qa" },
+          { id: "source-1", estimatedMinutes: 10, confidence: "default", basis: "source" },
+        ],
+      },
+    } satisfies QueueListResult;
+    const bridge = installAppApi();
+    vi.mocked(bridge.queue.list).mockResolvedValue(result);
+
+    await expect(appApi.listQueue({ types: ["card"] })).resolves.toBe(result);
+    expect(bridge.queue.list).toHaveBeenCalledWith({ types: ["card"] });
   });
 
   it("forwards parked resurfacing maintenance methods", async () => {

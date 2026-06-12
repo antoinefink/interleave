@@ -843,14 +843,37 @@ export const QueueListRequestSchema = z.object({
    * Defaults to `"full"`. Both types always stay in the list; the mode re-orders them.
    */
   mode: z.enum(["full", "review", "read"]).optional(),
+  /** Include the T115 minute estimate; count-only callers leave this false/omitted. */
+  includeTimeEstimate: z.boolean().optional(),
 });
 export type QueueListRequest = z.infer<typeof QueueListRequestSchema>;
+
+/** Confidence for queue time-cost estimates. `default` means at least one priced component uses a documented fallback. */
+export type QueueTimeEstimateConfidence = "learned" | "default";
+
+/** Optional estimate for a visible queue row, when the trusted read model provides per-row pricing. */
+export interface QueueVisibleTimeEstimate {
+  readonly id: string;
+  readonly estimatedMinutes: number;
+  readonly confidence: QueueTimeEstimateConfidence;
+  readonly basis: string;
+}
+
+/** Trusted aggregate pricing for the filtered due queue. Budget remains item-count based in T115. */
+export interface QueueTimeEstimate {
+  readonly confidence: QueueTimeEstimateConfidence;
+  readonly totalMinutes: number;
+  readonly pricedItemCount: number;
+  readonly items: readonly QueueVisibleTimeEstimate[];
+}
 
 export interface QueueListResult {
   readonly items: readonly QueueItemSummary[];
   readonly counts: QueueCounts;
   /** The daily review budget gauge: items due vs the configured target. */
   readonly budget: { readonly used: number; readonly target: number };
+  /** Full filtered due-set time estimate, priced on the trusted side when requested. */
+  readonly timeEstimate?: QueueTimeEstimate;
 }
 
 // ---------------------------------------------------------------------------

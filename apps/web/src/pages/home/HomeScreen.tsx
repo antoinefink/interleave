@@ -47,6 +47,7 @@ import {
   type ReviewModeSelector,
   type SchedulerSignals,
 } from "../../lib/appApi";
+import { formatQueueTimeEstimate } from "../../lib/queueTimeEstimate";
 import { ReviewModeButton } from "../../review/ReviewModeButton";
 import "../../review/review.css";
 import { UNDO_EVENT } from "../../shell/nav";
@@ -256,7 +257,7 @@ export function HomeScreen() {
     }
     try {
       const [queueResult, analyticsResult, workResult] = await Promise.allSettled([
-        appApi.listQueue(asOf ? { asOf } : {}),
+        appApi.listQueue({ ...(asOf ? { asOf } : {}), includeTimeEstimate: true }),
         appApi.getAnalytics(asOf ? { asOf } : {}),
         appApi.getDailyWorkSummary(asOf ? { asOf } : {}),
       ]);
@@ -381,11 +382,7 @@ export function HomeScreen() {
 
   const counts = queue?.counts;
   const dueCount = counts?.all ?? 0;
-  // `est. N min` is a shared heuristic (≈2 min/item, 8-min floor) mirroring the
-  // Daily Queue (`QueueScreen`), so the two surfaces show the SAME estimate — it is
-  // labelled "est." and is the only arithmetic here; everything else is pre-computed
-  // by the bridge.
-  const estMin = Math.max(8, dueCount * 2);
+  const estimateLabel = formatQueueTimeEstimate(queue?.timeEstimate);
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
@@ -429,9 +426,23 @@ export function HomeScreen() {
           <div>
             <h1 className="q-title">{greeting()}</h1>
             <p className="q-sub" data-testid="home-subtitle">
-              {hasQueue
-                ? `${today} · ${dueCount} item${dueCount === 1 ? "" : "s"} due · est. ${estMin} min`
-                : today}
+              {hasQueue ? (
+                <>
+                  {today} · {dueCount} item{dueCount === 1 ? "" : "s"} due
+                  {estimateLabel ? (
+                    <>
+                      {" "}
+                      · est.{" "}
+                      <span>
+                        {estimateLabel.text}
+                        <span className="sr-only"> {estimateLabel.ariaLabel}</span>
+                      </span>
+                    </>
+                  ) : null}
+                </>
+              ) : (
+                today
+              )}
             </p>
           </div>
         </div>

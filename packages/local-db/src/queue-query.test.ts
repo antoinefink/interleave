@@ -527,6 +527,22 @@ describe("QueueQuery", () => {
     expect(res.counts.extract).toBe(1);
     expect(res.counts.card).toBe(1);
     expect(res.counts.all).toBe(3);
+    expect(res.timeCostSummary.pricedItemCount).toBe(1);
+    expect(res.timeCostSummary.cardBuckets.qa).toBe(1);
+    expect(res.timeCostSummary.attention.source).toBe(0);
+  });
+
+  it("keeps time-cost summaries over the full filtered due set even when visible rows are limited", () => {
+    buildDueSet();
+
+    const res = queue.list({ asOf: NOW, limit: 1 });
+
+    expect(res.items).toHaveLength(1);
+    expect(res.counts.all).toBe(3);
+    expect(res.timeCostSummary.pricedItemCount).toBe(3);
+    expect(res.timeCostSummary.cardBuckets.qa).toBe(1);
+    expect(res.timeCostSummary.attention.source).toBe(1);
+    expect(res.timeCostSummary.attention.extract).toBe(1);
   });
 
   it("reads the daily review budget from settings for the gauge", () => {

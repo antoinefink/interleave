@@ -217,6 +217,12 @@ const h = vi.hoisted(() => {
       protected: 1,
     },
     budget: { used: 4, target: 30 },
+    timeEstimate: {
+      confidence: "default",
+      totalMinutes: 19,
+      pricedItemCount: 4,
+      items: [],
+    },
   };
   const taskRow: QueueItemSummary = {
     id: "task-1",
@@ -348,12 +354,24 @@ describe("HomeScreen", () => {
   it("renders the due counts + budget from the mocked listQueue", async () => {
     render(<HomeScreen />);
     expect(await screen.findByTestId("home-due-today")).toBeTruthy();
+    expect(screen.getByTestId("home-subtitle")).toHaveTextContent("est. ~19 min");
+    expect(screen.getByTestId("home-subtitle")).toHaveTextContent(
+      "About 19 minutes; some estimates use defaults.",
+    );
     expect(screen.getByTestId("home-due-today").textContent).toBe("4");
     expect(screen.getByTestId("home-overdue-count").textContent).toBe("2");
     expect(screen.getByTestId("home-protected-count").textContent).toBe("1");
     // The budget gauge renders used / target from the read.
     expect(screen.getByTestId("budget-meter").textContent).toContain("4");
     expect(screen.getByTestId("budget-meter").textContent).toContain("30");
+  });
+
+  it("does not invent estimated minutes before the queue read resolves", () => {
+    h.listQueue.mockReturnValue(new Promise(() => undefined));
+
+    render(<HomeScreen />);
+
+    expect(screen.getByTestId("home-subtitle")).not.toHaveTextContent("est.");
   });
 
   it("renders the streak/retention banner, the metric tiles, and the spark from getAnalytics", async () => {
@@ -727,7 +745,7 @@ describe("HomeScreen", () => {
     await screen.findByTestId("home-due-today");
 
     // All reads are date-scoped by the same clock the dashboard renders.
-    expect(h.listQueue).toHaveBeenCalledWith({ asOf });
+    expect(h.listQueue).toHaveBeenCalledWith({ asOf, includeTimeEstimate: true });
     expect(h.getAnalytics).toHaveBeenCalledWith({ asOf });
     expect(h.getDailyWorkSummary).toHaveBeenCalledWith({ asOf });
 

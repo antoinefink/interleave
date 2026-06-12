@@ -121,6 +121,12 @@ const h = vi.hoisted(() => {
       protected: 2,
     },
     budget: { used: 3, target: 30 },
+    timeEstimate: {
+      confidence: "default",
+      totalMinutes: 18,
+      pricedItemCount: 3,
+      items: [],
+    },
   };
   const dailyWork: DailyWorkWithGraduations = {
     asOf: "2026-05-30T18:00:00.000Z",

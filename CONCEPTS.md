@@ -164,6 +164,12 @@ The currently actionable processing set: due active-recall cards plus due attent
 
 Due queue work is distinct from inbox sources, which still need triage, and from future review load, which may be forecast without being actionable yet.
 
+### Queue time estimate
+
+A read-only minute estimate for current Due queue work, scoped to the queue-eligible set and labeled by whether timing was learned or defaulted.
+
+Queue time estimates should preserve the distinction between active-recall card reviews and attention-scheduled processing work. They explain expected effort without changing scheduling, priority, review state, or queue eligibility.
+
 ### System-owned task
 
 A scheduled Task element created and maintained by Interleave itself for a product ritual or integrity workflow, not by generic user task creation.

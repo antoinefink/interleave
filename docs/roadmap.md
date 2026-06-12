@@ -447,8 +447,8 @@ Detailed specs: [`tasks/M23-adaptive-scheduler.md`](./tasks/M23-adaptive-schedul
 ## M24 — Ambient, time-denominated overload (T115–T118)
 Detailed specs: [`tasks/M24-ambient-overload.md`](./tasks/M24-ambient-overload.md)
 
-- [ ] **T115 — Per-item time-cost model** · _deps: T037, T083_
-  Done when: a typed read model estimates per-item minutes — cards from median graded response times in `review_logs` by card type; sources/extracts from recorded per-format time-spent — with explicit coarse defaults when history is thin, exposed for budget, gauge, and planner consumers.
+- [x] **T115 — Per-item time-cost model** · done · _deps: T037, T083_ · commit: bd3b8cce
+  Done when: a typed read model estimates per-item minutes — cards from median graded response times in `review_logs` by timing bucket and attention rows from documented defaults until elapsed attention-work telemetry exists — with explicit coarse defaults when history is thin, exposed through `queue.list` for budget, gauge, and planner consumers.
 - [ ] **T116 — Minutes-denominated daily budget** · _deps: T115_
   Done when: the daily budget is set in minutes (count setting migrated with a sensible conversion), the queue gauge projects today's real time cost, and over-budget detection compares minutes to minutes — one 6-second cloze and one 90-minute PDF pass stop costing the same "1 item".
 - [ ] **T117 — Standing auto-postpone policy** · _deps: T058, T077, T105_

@@ -67,6 +67,7 @@ import {
   type QueueScheduleChoice,
   type SchedulerSignals,
 } from "../../lib/appApi";
+import { formatQueueTimeEstimate } from "../../lib/queueTimeEstimate";
 import { UNDO_EVENT } from "../../shell/nav";
 import { useSelection } from "../../shell/selection";
 import "./queue.css";
@@ -444,6 +445,7 @@ export function QueueScreen() {
           ...(asOf ? { asOf } : {}),
           ...(statuses ? { statuses } : {}),
           ...(concept ? { concept } : {}),
+          includeTimeEstimate: true,
         }),
         appApi.getDailyWorkSummary(asOf ? { asOf } : {}),
         appApi.getPriorityIntegrity(asOf ? { asOf } : undefined),
@@ -551,7 +553,7 @@ export function QueueScreen() {
 
   const counts = data?.counts;
   const dueCount = counts?.all ?? 0;
-  const estMin = Math.max(8, dueCount * 2);
+  const estimateLabel = formatQueueTimeEstimate(data?.timeEstimate);
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
@@ -853,7 +855,23 @@ export function QueueScreen() {
               Daily Queue <HelpLink slug="daily-loop" />
             </h1>
             <p className="q-sub" data-testid="queue-subtitle">
-              {today} · {dueCount} item{dueCount === 1 ? "" : "s"} due · est. {estMin} min
+              {data ? (
+                <>
+                  {today} · {dueCount} item{dueCount === 1 ? "" : "s"} due
+                  {estimateLabel ? (
+                    <>
+                      {" "}
+                      · est.{" "}
+                      <span>
+                        {estimateLabel.text}
+                        <span className="sr-only"> {estimateLabel.ariaLabel}</span>
+                      </span>
+                    </>
+                  ) : null}
+                </>
+              ) : (
+                today
+              )}
             </p>
           </div>
         </div>

@@ -27,11 +27,11 @@
 # T115 — Per-item time-cost model
 
 - **Milestone:** M24 — Ambient, time-denominated overload
-- **Status:** `[ ]` not started
+- **Status:** `[x]` done
 - **Depends on:** T037, T083
 - **Roadmap line:** a typed read model estimates per-item minutes — cards from median graded
-  response times in `review_logs` by card type; sources/extracts from recorded per-format
-  time-spent — with explicit coarse defaults when history is thin.
+  response times in `review_logs` by timing bucket; attention rows use documented defaults until
+  elapsed attention-work telemetry exists. Every default is flagged.
 
 ## Goal
 
@@ -43,33 +43,40 @@ when history is thin.
 
 - Existing code: `review_logs` response-time capture
   (`docs/solutions/architecture-patterns/review-analytics-data-capture-in-review-logs.md`),
-  T083's per-source time-spent rollup, the queue header's display-only "est. minutes"
-  (`QueueScreen.tsx:5` — this model replaces its guesswork), media `durationMs`.
+  T083's per-source time-spent rollup (review time only, not elapsed reading time), the queue
+  header's display-only "est. minutes" (`QueueScreen.tsx:5` — this model replaces its guesswork),
+  media `durationMs`.
 - Invariants: pure read model; estimates carry their confidence (`learned` vs `default`) so
   consumers can label them.
 
 ## Deliverables
 
-- [ ] `TimeCostQuery` in `packages/local-db`: per-item minute estimates — cards: rolling median
-      graded response time by card type (Q&A / cloze / occlusion / audio); sources: per-format
-      reading pace (min/1k words or min/page from recorded time-spent) × remaining unread share;
-      extracts/statements: per-stage medians; media: remaining duration. Coarse documented
-      defaults when an estimator has < N observations, flagged `default`.
-- [ ] Typed IPC surface; the queue header estimate rewired to this model (labeled "~" when any
-      component is `default`).
-- [ ] Tests: unit with seeded logs proving medians, fallbacks, and the learned/default flag;
-      contract tests.
+- [x] `TimeCostQuery` in `packages/local-db`: full due-set minute estimates — cards: rolling
+      median graded review time by timing bucket (Q&A / cloze / occlusion / audio) with audio
+      falling back to the base card bucket, then defaults; attention rows: documented defaults
+      because elapsed reading/extract-processing time is not yet persisted. Coarse documented
+      defaults when an estimator has < 3 valid observations, flagged `default`.
+- [x] Typed IPC surface through `queue.list`; Queue and Home header estimates are rewired to this
+      model and labeled "~" plus accessible explanatory text when any component is `default`.
+- [x] Tests: unit with seeded logs proving medians, fallbacks, and the learned/default flag;
+      contract/preload/appApi/UI tests.
 
 ## Done when
 
 - Given seeded history, the model prices a mixed queue correctly and flags thin-history
   estimates; the queue header uses it.
 - Standard gates pass.
+- Completion verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and relevant Electron queue
+  E2E.
 
 ## Notes / risks
 
 - Outlier discipline: medians, not means — one walked-away-from-the-desk review must not poison
   a card type's cost.
+- Source/extract elapsed work is intentionally not inferred from read progress, media duration, or
+  T083 review-time rollups. Those rows remain default-priced until a later task records actual
+  attention-work timings.
+- Implementation commit: bd3b8cce.
 
 ---
 
