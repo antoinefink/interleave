@@ -172,6 +172,7 @@ export function LineageDeleteMenu({
         );
         if (items.length === 0) return;
         e.preventDefault();
+        // biome-ignore lint/complexity/useIndexOf: items is HTMLButtonElement[] but document.activeElement is Element | null; indexOf would require an unsafe cast.
         const idx = items.findIndex((el) => el === document.activeElement);
         const delta = e.key === "ArrowDown" ? 1 : -1;
         const next = items[(idx + delta + items.length) % items.length];
