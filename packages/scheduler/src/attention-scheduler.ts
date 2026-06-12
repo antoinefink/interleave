@@ -133,6 +133,12 @@ export interface Schedulable {
    * one adaptive step.
    */
   readonly visitYield?: AttentionVisitYieldInput | null;
+  /**
+   * Source-only descendant review-health signal. Recent true descendant-card
+   * lapses can shorten this one schedule decision transiently, but never mutate
+   * the persisted adaptive multiplier.
+   */
+  readonly descendantHealth?: DescendantHealthSignals | null;
 }
 
 /** The result of a scheduling decision: the new due time + the interval chosen. */
@@ -168,6 +174,12 @@ export interface AttentionVisitYieldInput {
   readonly unresolvedRatio?: number;
   readonly terminalRatio?: number;
   readonly ignoredRatio?: number;
+}
+
+export interface DescendantHealthSignals {
+  readonly descendantLapseCount: number;
+  readonly affectedCardCount: number;
+  readonly descendantCardCount: number;
 }
 
 export type AdaptiveIntervalReasonKind =
@@ -259,6 +271,10 @@ export type AttentionScheduleReason =
   | (AttentionScheduleReasonBase & {
       readonly kind: "descendant_lapses";
       readonly descendantLapseCount: number;
+      readonly affectedCardCount?: number;
+      readonly descendantCardCount?: number;
+      readonly descendantLapseRate?: number;
+      readonly intervalAfterDescendantDays?: number;
     })
   | (AttentionScheduleReasonBase & {
       readonly kind: "band_base";
@@ -371,6 +387,10 @@ const LOW_PRIORITY_BARREN_STEP = 0.15;
 const HIGH_PRIORITY_UNRESOLVED_STEP = -0.05;
 const UNRESOLVED_HIGH_VALUE_THRESHOLD = 0.25;
 const LOW_UNRESOLVED_BARREN_THRESHOLD = 0.1;
+const MIN_DESCENDANT_LAPSE_COUNT = 3;
+const MIN_DESCENDANT_AFFECTED_CARD_COUNT = 2;
+const MIN_DESCENDANT_LAPSE_RATE = 0.1;
+const MAX_DESCENDANT_LAPSE_PRESSURE = 0.25;
 
 function clampAttentionIntervalMultiplier(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_ATTENTION_INTERVAL_MULTIPLIER;
@@ -382,6 +402,18 @@ function clampAttentionIntervalMultiplier(value: number): number {
 
 function finiteNonNegative(value: number | null | undefined): number | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  return value;
+}
+
+function finitePositiveInteger(value: number | null | undefined): number | null {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value <= 0 ||
+    !Number.isInteger(value)
+  ) {
+    return null;
+  }
   return value;
 }
 
@@ -844,6 +876,64 @@ function mergeAdaptiveAndSourceAdjustments(
   };
 }
 
+interface DescendantHealthAdjustment {
+  readonly intervalDays: number;
+  readonly scheduleReason: PendingAttentionScheduleReason;
+}
+
+function adjustForDescendantHealth(
+  input: Schedulable,
+  intervalDays: number,
+  baseIntervalDays: number,
+): DescendantHealthAdjustment | null {
+  if (input.type !== "source" || !input.descendantHealth) return null;
+
+  const descendantLapseCount = finitePositiveInteger(input.descendantHealth.descendantLapseCount);
+  const affectedCardCount = finitePositiveInteger(input.descendantHealth.affectedCardCount);
+  const descendantCardCount = finitePositiveInteger(input.descendantHealth.descendantCardCount);
+  if (
+    descendantLapseCount === null ||
+    affectedCardCount === null ||
+    descendantCardCount === null ||
+    affectedCardCount > descendantCardCount
+  ) {
+    return null;
+  }
+
+  const descendantLapseRate = descendantLapseCount / descendantCardCount;
+  if (
+    descendantLapseCount < MIN_DESCENDANT_LAPSE_COUNT ||
+    affectedCardCount < MIN_DESCENDANT_AFFECTED_CARD_COUNT ||
+    descendantLapseRate < MIN_DESCENDANT_LAPSE_RATE
+  ) {
+    return null;
+  }
+
+  const pressure = Math.min(MAX_DESCENDANT_LAPSE_PRESSURE, descendantLapseRate);
+  const minimumDescendantIntervalDays = Math.max(
+    1,
+    Math.ceil(baseIntervalDays * MIN_ATTENTION_INTERVAL_MULTIPLIER),
+  );
+  const intervalAfterDescendantDays = Math.max(
+    minimumDescendantIntervalDays,
+    Math.round(intervalDays * (1 - pressure)),
+  );
+  if (intervalAfterDescendantDays >= intervalDays) return null;
+
+  return {
+    intervalDays: intervalAfterDescendantDays,
+    scheduleReason: {
+      kind: "descendant_lapses",
+      baseIntervalDays: intervalDays,
+      intervalAfterDescendantDays,
+      descendantLapseCount,
+      affectedCardCount,
+      descendantCardCount,
+      descendantLapseRate,
+    },
+  };
+}
+
 interface RecencyCreditResult {
   readonly intervalDays: number;
   readonly daysSinceLastSeen?: number;
@@ -897,12 +987,36 @@ export function nextDueAt(input: Schedulable, now: IsoTimestamp): ScheduleDecisi
     adaptiveAdjustment && sourceAdjustment
       ? mergeAdaptiveAndSourceAdjustments(adaptiveAdjustment, sourceAdjustment)
       : (adaptiveAdjustment ?? sourceAdjustment ?? { intervalDays: baseIntervalDays });
-  const recency = applyRecencyCredit(adjusted.intervalDays, input.lastSeenAt, now);
+  const baselineRecency = applyRecencyCredit(adjusted.intervalDays, input.lastSeenAt, now);
+  const descendantAdjustment = adjustForDescendantHealth(
+    input,
+    adjusted.intervalDays,
+    baseIntervalDays,
+  );
+  const descendantRecency =
+    descendantAdjustment === null
+      ? null
+      : applyRecencyCredit(descendantAdjustment.intervalDays, input.lastSeenAt, now);
+  const descendantWins =
+    descendantAdjustment !== null &&
+    descendantRecency !== null &&
+    descendantRecency.intervalDays < baselineRecency.intervalDays;
+  const finalAdjusted =
+    descendantWins && descendantAdjustment
+      ? {
+          ...adjusted,
+          intervalDays: descendantAdjustment.intervalDays,
+          scheduleReason: descendantAdjustment.scheduleReason,
+        }
+      : adjusted;
+  const recency =
+    descendantWins && descendantRecency !== null ? descendantRecency : baselineRecency;
   const intervalDays = recency.intervalDays;
-  const malformedAdaptiveReason = adjusted.adaptiveReason?.reasonKind === "yield_input_malformed";
+  const malformedAdaptiveReason =
+    finalAdjusted.adaptiveReason?.reasonKind === "yield_input_malformed";
   const scheduleReason: AttentionScheduleReason | undefined =
-    adjusted.scheduleReason !== undefined
-      ? completeScheduleReason(adjusted.scheduleReason, intervalDays)
+    finalAdjusted.scheduleReason !== undefined
+      ? completeScheduleReason(finalAdjusted.scheduleReason, intervalDays)
       : malformedAdaptiveReason
         ? undefined
         : input.lastAction === "postpone"
@@ -918,7 +1032,7 @@ export function nextDueAt(input: Schedulable, now: IsoTimestamp): ScheduleDecisi
               recency.daysSinceLastSeen !== undefined
             ? {
                 kind: "recency_damped",
-                baseIntervalDays: adjusted.intervalDays,
+                baseIntervalDays: finalAdjusted.intervalDays,
                 finalIntervalDays: intervalDays,
                 daysSinceLastSeen: recency.daysSinceLastSeen,
                 recencyCreditDays: recency.recencyCreditDays,
@@ -931,14 +1045,14 @@ export function nextDueAt(input: Schedulable, now: IsoTimestamp): ScheduleDecisi
   };
   return {
     ...decision,
-    ...(adjusted.retirementSuggestion ? { retirementSuggestion: true } : {}),
-    ...(adjusted.attentionIntervalMultiplier !== undefined
-      ? { attentionIntervalMultiplier: adjusted.attentionIntervalMultiplier }
+    ...(finalAdjusted.retirementSuggestion ? { retirementSuggestion: true } : {}),
+    ...(finalAdjusted.attentionIntervalMultiplier !== undefined
+      ? { attentionIntervalMultiplier: finalAdjusted.attentionIntervalMultiplier }
       : {}),
-    ...(adjusted.adaptiveReason
+    ...(finalAdjusted.adaptiveReason
       ? {
           adaptiveReason: {
-            ...adjusted.adaptiveReason,
+            ...finalAdjusted.adaptiveReason,
             finalIntervalDays: intervalDays,
           },
         }

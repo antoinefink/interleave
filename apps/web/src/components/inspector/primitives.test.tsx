@@ -192,7 +192,11 @@ describe("ScheduleReasonLine", () => {
             kind: "descendant_lapses",
             baseIntervalDays: 7,
             finalIntervalDays: 4,
-            descendantLapseCount: 2,
+            descendantLapseCount: 3,
+            affectedCardCount: 2,
+            descendantCardCount: 20,
+            descendantLapseRate: 0.15,
+            intervalAfterDescendantDays: 6,
           },
         }),
       ),
@@ -217,6 +221,20 @@ describe("ScheduleReasonLine", () => {
             baseIntervalDays: 7,
             finalIntervalDays: 6,
             productiveOutputCount: null,
+          },
+        })}
+      />,
+    );
+    expect(queryByTestId("schedule-reason-line")).toBeNull();
+
+    rerender(
+      <ScheduleReasonLine
+        scheduler={attentionSignals({
+          scheduleReason: {
+            kind: "descendant_lapses",
+            baseIntervalDays: 7,
+            finalIntervalDays: 4,
+            descendantLapseCount: 3,
           },
         })}
       />,

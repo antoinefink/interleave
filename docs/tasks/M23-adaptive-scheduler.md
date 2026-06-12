@@ -206,7 +206,8 @@ read as the system being broken.
 
 - [x] Reason vocabulary (small union: `yield_shortened`, `yield_lengthened`, `recency_damped`,
       `postpone_recession`, `source_unresolved_shortened`, `source_exhausted_lengthened`,
-      `descendant_lapses` (reserved for T114), `band_base`) carried on schedule reads.
+      `descendant_lapses` (emitted by T114 when descendant-health evidence crosses threshold),
+      `band_base`) carried on schedule reads.
 - [x] Queue row affordance (inline) + inspector line rendering the reason; band-base
       schedules show nothing (silence is the default state, not noise).
 - [x] T112's flag flips to default-ON here (adaptive intervals ship to users only with reasons
@@ -247,7 +248,7 @@ read as the system being broken.
 # T114 — Descendant-health input
 
 - **Milestone:** M23 — Adaptive attention scheduler
-- **Status:** `[ ]` not started
+- **Status:** `[x]` complete; commit `feat: T114 descendant health input`
 - **Depends on:** T112
 - **Roadmap line:** descendant-card lapse rate feeds the multiplier (struggling descendants pull
   the parent source back sooner), capped and explained, with tests proving a lapsing cluster
@@ -270,11 +271,16 @@ full re-reading proposal workflow is M28; this task is only the scheduling input
 
 ## Deliverables
 
-- [ ] Descendant lapse-rate input on the descriptor (windowed, e.g. lapses across live
-      descendants in the last 30d normalized by descendant count), with an explicit cap on its
-      multiplier contribution.
-- [ ] `descendant_lapses` reason emitted when the input bites (T113 renders it).
-- [ ] Tests: unit — a lapsing-cluster fixture shortens the parent's interval within cap; a
+- [x] Descendant lapse-rate input on the descriptor: only live descendant cards that are
+      active/scheduled and non-retired contribute; the signal requires at least 3 true lapse
+      increments across at least 2 affected cards in the last 30 days, with a windowed lapse rate
+      of at least 10%.
+- [x] `descendant_lapses` reason emitted when the input bites after review-triggered source
+      reschedules; manual explicit schedules and queue-soon commands suppress stale reason
+      projection.
+- [x] Transient interval pressure is capped at a maximum 25% shortening and can never lengthen a
+      source or alter descendant cards' own FSRS schedules.
+- [x] Tests: unit — a lapsing-cluster fixture shortens the parent's interval within cap; a
       healthy-descendants fixture is a no-op; e2e — inspector shows the reason on a seeded
       struggling source.
 
@@ -283,6 +289,16 @@ full re-reading proposal workflow is M28; this task is only the scheduling input
 - A source with a struggling descendant cluster returns measurably sooner, capped, with the
   reason visible; healthy sources are unaffected.
 - Standard gates pass.
+
+## Completion notes
+
+- `descendant_lapses` is no longer reserved: it is emitted only from review-triggered source
+  reschedules after the lapse floor, affected-card floor, 30-day window, and 10% lapse-rate floor
+  are all met.
+- Manual explicit schedules and queue-soon commands remain user intent, not heuristic evidence, and
+  therefore suppress stale descendant-lapse reason projection.
+- Verification: `pnpm lint`; `pnpm typecheck`; `pnpm test`;
+  `pnpm e2e -- tests/electron/schedule-explainability.spec.ts`.
 
 ## Notes / risks
 

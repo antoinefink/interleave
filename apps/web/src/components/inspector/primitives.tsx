@@ -201,7 +201,13 @@ export function formatAttentionScheduleReason(scheduler: SchedulerSignals): stri
     case "source_exhausted_lengthened":
       return "Receding: source produced no extractable output.";
     case "descendant_lapses":
-      return "Returning sooner: descendant cards are struggling.";
+      return hasFiniteEvidence(reason.descendantLapseCount) &&
+        hasFiniteEvidence(reason.affectedCardCount) &&
+        hasFiniteEvidence(reason.descendantCardCount) &&
+        hasFiniteEvidence(reason.descendantLapseRate) &&
+        hasFiniteEvidence(reason.intervalAfterDescendantDays)
+        ? "Returning sooner: descendant cards are struggling."
+        : null;
     default:
       return null;
   }

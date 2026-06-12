@@ -78,9 +78,14 @@ silent.
 Visible reason kinds are closed and renderer-formatted: productive visits can show
 `yield_shortened`, barren visits `yield_lengthened`, old untouched work `recency_damped`, repeated
 deferrals `postpone_recession`, and source block-processing adjustments
-`source_unresolved_shortened` / `source_exhausted_lengthened`. `band_base` is the quiet default.
-`descendant_lapses` is reserved for descendant-health input and is not emitted until that input
-exists.
+`source_unresolved_shortened` / `source_exhausted_lengthened`. `descendant_lapses` is emitted
+only after review-triggered source reschedules when live descendant cards show at least 3 true
+lapse increments across at least 2 affected active/scheduled, non-retired cards in the last
+30 days and the windowed lapse rate is at least 10%. Its effect is transient and can shorten the
+parent source interval by at most 25%; healthy or under-evidenced descendants are a no-op.
+`band_base` is the quiet default. Explicit manual schedules and queue-soon commands suppress stale
+reason projection, so a user-chosen return date is never reinterpreted as descendant-lapse
+pressure.
 
 ## The daily queue
 

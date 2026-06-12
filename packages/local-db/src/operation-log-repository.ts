@@ -63,6 +63,10 @@ export interface CurrentScheduleReason {
   readonly intervalAfterSourceProcessingDays?: number | null;
   readonly extractedOutputCount?: number | null;
   readonly descendantLapseCount?: number | null;
+  readonly affectedCardCount?: number | null;
+  readonly descendantCardCount?: number | null;
+  readonly descendantLapseRate?: number | null;
+  readonly intervalAfterDescendantDays?: number | null;
 }
 
 export interface CurrentScheduleProjection {
@@ -105,6 +109,11 @@ function finiteNonNegative(value: unknown): number | null {
 function finitePositive(value: unknown): number | null {
   const number = finiteNumber(value);
   return number !== null && number > 0 ? number : null;
+}
+
+function finitePositiveInteger(value: unknown): number | null {
+  const number = finitePositive(value);
+  return number !== null && Number.isInteger(number) ? number : null;
 }
 
 function intervalDaysBetween(start: unknown, end: unknown): number | null {
@@ -240,13 +249,41 @@ function currentScheduleReasonFromPayload(
         extractedOutputCount: finiteNumber(reason.extractedOutputCount),
       };
     case "descendant_lapses": {
-      const descendantLapseCount = finitePositive(reason.descendantLapseCount);
-      if (descendantLapseCount === null) return null;
+      const descendantLapseCount = finitePositiveInteger(reason.descendantLapseCount);
+      const affectedCardCount = finitePositiveInteger(reason.affectedCardCount);
+      const descendantCardCount = finitePositiveInteger(reason.descendantCardCount);
+      const descendantLapseRate = finitePositive(reason.descendantLapseRate);
+      const intervalAfterDescendantDays = finitePositive(reason.intervalAfterDescendantDays);
+      const expectedRate =
+        descendantLapseCount !== null && descendantCardCount !== null
+          ? descendantLapseCount / descendantCardCount
+          : null;
+      if (
+        descendantLapseCount === null ||
+        descendantLapseCount < 3 ||
+        affectedCardCount === null ||
+        affectedCardCount < 2 ||
+        descendantCardCount === null ||
+        affectedCardCount > descendantCardCount ||
+        descendantLapseRate === null ||
+        descendantLapseRate < 0.1 ||
+        expectedRate === null ||
+        Math.abs(descendantLapseRate - expectedRate) > 0.000_001 ||
+        intervalAfterDescendantDays === null ||
+        (baseIntervalDays !== null && intervalAfterDescendantDays >= baseIntervalDays) ||
+        (finalIntervalDays !== null && finalIntervalDays > intervalAfterDescendantDays)
+      ) {
+        return null;
+      }
       return {
         kind: "descendant_lapses",
         baseIntervalDays,
         finalIntervalDays,
         descendantLapseCount,
+        affectedCardCount,
+        descendantCardCount,
+        descendantLapseRate,
+        intervalAfterDescendantDays,
       };
     }
     case "band_base":

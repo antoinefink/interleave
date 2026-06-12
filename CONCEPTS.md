@@ -146,6 +146,12 @@ A structured explanation for why an attention-scheduled element is returning soo
 
 An Attention schedule reason is trusted only while durable scheduling evidence still governs that return date. It is not renderer inference, and it does not apply to FSRS card reviews or explicit user commands such as Queue soon.
 
+### Descendant health
+
+The recent review-health signal from cards derived from a Source, used only to decide whether that parent Source should return sooner for attention.
+
+Descendant health is evidence about the Source's surrounding comprehension debt, not a card schedule. It can influence a Source's Attention scheduler decision while FSRS remains the owner of each descendant card's review state.
+
 ### Due queue
 
 The currently actionable processing set: due active-recall cards plus due attention-scheduled sources, topics, extracts, and similar non-card work.

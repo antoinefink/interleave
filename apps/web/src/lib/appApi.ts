@@ -229,6 +229,10 @@ export interface AttentionScheduleReason {
   readonly intervalAfterSourceProcessingDays?: number | null;
   readonly extractedOutputCount?: number | null;
   readonly descendantLapseCount?: number | null;
+  readonly affectedCardCount?: number | null;
+  readonly descendantCardCount?: number | null;
+  readonly descendantLapseRate?: number | null;
+  readonly intervalAfterDescendantDays?: number | null;
 }
 
 export interface SchedulerSignals {

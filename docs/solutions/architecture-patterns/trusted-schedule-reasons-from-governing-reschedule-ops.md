@@ -33,8 +33,8 @@ tags:
 
 T113 made attention scheduling explainable across the write path, read models, IPC contracts, and
 UI. The scheduler now emits a closed `AttentionScheduleReason` value for adaptive yield, recency
-damping, postpone recession, source-processing outcomes, reserved descendant lapse signals, and the
-silent `band_base` baseline.
+damping, postpone recession, source-processing outcomes, descendant lapse signals, and the silent
+`band_base` baseline.
 
 The important boundary is that the UI does not trust the latest diagnostic ever written. Local DB
 projects only the reason that still governs the current schedule: the newest relevant
@@ -98,7 +98,7 @@ logic later.
 ## When to Apply
 
 - A due date is affected by scheduler heuristics, learned multipliers, source-processing evidence,
-  recency damping, or repeated postpones.
+  descendant-card lapse evidence, recency damping, or repeated postpones.
 - A user-facing surface needs to explain why a non-card item is returning sooner or later.
 - The explanation must survive app restart, undo, and read-model refresh without renderer
   inference.
@@ -112,8 +112,9 @@ label or remain silent.
 
 Source-processing work can compose interval math and explanation differently. A barren source can
 lengthen its return cadence because it produced no output; a source with unresolved blocks can
-return sooner because there is still processing work left. Both reasons need source evidence, not
-just a changed interval.
+return sooner because there is still processing work left. Descendant-card lapse pressure can also
+return a source sooner when recent live descendant cards cross the evidence floors. All of these
+reasons need concrete evidence, not just a changed interval.
 
 Visible formatting should stay evidence-gated:
 
@@ -124,6 +125,10 @@ case "yield_shortened":
     : null;
 case "postpone_recession":
   return postponeCount > 0 ? `Receding after postpone x${postponeCount}.` : null;
+case "descendant_lapses":
+  return hasCompleteDescendantEvidence(reason)
+    ? "Returning sooner: descendant cards are struggling."
+    : null;
 ```
 
 T113 verification covered the whole path:
@@ -137,6 +142,7 @@ T113 verification covered the whole path:
 ## Related
 
 - [Persist adaptive attention intervals as bounded, undoable scheduler state](./yield-adaptive-attention-interval-multiplier.md)
+- [Use descendant-card lapse evidence to transiently reschedule parent sources](./review-triggered-descendant-health-source-rescheduling.md)
 - [Chronic postpone reckoning from operation-log reset markers](./chronic-postpone-reckoning-from-operation-log-reset-markers.md)
 - [Model priority integrity as read-only analytics over durable logs](./priority-integrity-read-model.md)
 - [Track source block processing as durable source-scoped state](./durable-source-block-processing-state.md)

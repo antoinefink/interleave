@@ -8,12 +8,15 @@
  * a temporary, fully-migrated in-memory better-sqlite3 DB.
  */
 
+import type { ElementId } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
 import { cards, elements, operationLog, reviewLogs, reviewStates } from "@interleave/db";
 import { CardSchedulerService } from "@interleave/scheduler";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { newReviewLogId } from "./ids";
 import { ReviewRepository } from "./review-repository";
+import { SourceRepository } from "./source-repository";
 import { createInMemoryDb } from "./test-db";
 
 let handle: DbHandle;
@@ -163,6 +166,226 @@ describe("createCardWithin — reviewSeed + sourceUri (T070)", () => {
 });
 
 describe("recordReview — timing and FSRS transition snapshot", () => {
+  it("pulls a source sooner when descendant card reviews add enough recent lapses", () => {
+    const sources = new SourceRepository(handle.db);
+    const review = new ReviewRepository(handle.db);
+    const reviewedAt = "2026-06-12T00:00:00.000Z";
+    const originalSourceDueAt = "2026-07-12T00:00:00.000Z";
+    const originalSourceUpdatedAt = "2026-05-01T00:00:00.000Z";
+    const { element: source } = sources.createWithDocument({
+      title: "Difficult source",
+      priority: 0.375,
+      status: "scheduled",
+      stage: "raw_source",
+      body: "One paragraph.\n\nAnother paragraph.",
+    });
+    handle.db
+      .update(elements)
+      .set({ dueAt: originalSourceDueAt, updatedAt: originalSourceUpdatedAt })
+      .where(eq(elements.id, source.id))
+      .run();
+
+    const seedCard = (title: string) =>
+      review.createCard({
+        kind: "qa",
+        title,
+        priority: 0.375,
+        prompt: "Q",
+        answer: "A",
+        sourceId: source.id,
+        reviewSeed: {
+          reps: 1,
+          lapses: 0,
+          stability: 10,
+          difficulty: 5,
+          scheduledDays: 10,
+          fsrsState: "review",
+          dueAt: reviewedAt,
+        },
+      }).element.id;
+
+    const recordLapse = (cardId: ElementId, minutes: number) =>
+      review.recordReview(cardId, {
+        rating: "again",
+        reviewedAt: new Date(Date.parse(reviewedAt) + minutes * 60_000).toISOString(),
+        responseMs: 900,
+        prevState: "review",
+        nextState: "relearning",
+        nextStability: 5,
+        nextDifficulty: 6,
+        nextDueAt: new Date(Date.parse(reviewedAt) + (minutes + 10) * 60_000).toISOString(),
+        elapsedDays: 10,
+        scheduledDays: 0,
+        reps: 2,
+        lapses: 1,
+        nextLearningSteps: 1,
+      });
+
+    const cardA = seedCard("A");
+    const cardB = seedCard("B");
+    const cardC = seedCard("C");
+
+    recordLapse(cardA, 0);
+    recordLapse(cardB, 1);
+    expect(new SourceRepository(handle.db).findById(source.id)?.element.dueAt).toBe(
+      originalSourceDueAt,
+    );
+
+    recordLapse(cardC, 2);
+
+    const sourceAfter = new SourceRepository(handle.db).findById(source.id)?.element;
+    expect(sourceAfter?.dueAt).toBe("2026-06-24T00:02:00.000Z");
+    expect(sourceAfter?.status).toBe("scheduled");
+    expect(sourceAfter?.updatedAt).toBe(originalSourceUpdatedAt);
+    const sourceOps = handle.db
+      .select()
+      .from(operationLog)
+      .where(eq(operationLog.elementId, source.id))
+      .all()
+      .filter((op) => op.opType === "reschedule_element")
+      .map((op) => JSON.parse(op.payload) as Record<string, unknown>);
+    expect(sourceOps).toHaveLength(1);
+    expect(sourceOps[0]).toMatchObject({
+      action: "descendantHealth",
+      scheduledAt: "2026-06-12T00:02:00.000Z",
+      scheduleReason: {
+        kind: "descendant_lapses",
+        descendantLapseCount: 3,
+        affectedCardCount: 3,
+        descendantCardCount: 3,
+        descendantLapseRate: 1,
+        intervalAfterDescendantDays: 23,
+        finalIntervalDays: 12,
+      },
+    });
+    expect(
+      handle.db.select().from(reviewStates).where(eq(reviewStates.elementId, source.id)).get(),
+    ).toBeUndefined();
+  });
+
+  it("rolls back descendant source rescheduling when a later review write fails", () => {
+    const sources = new SourceRepository(handle.db);
+    const review = new ReviewRepository(handle.db);
+    const reviewedAt = "2026-06-12T00:00:00.000Z";
+    const originalSourceDueAt = "2026-07-12T00:00:00.000Z";
+    const { element: source } = sources.createWithDocument({
+      title: "Atomic source",
+      priority: 0.375,
+      status: "scheduled",
+      stage: "raw_source",
+      body: "One paragraph.\n\nAnother paragraph.",
+    });
+    handle.db
+      .update(elements)
+      .set({ dueAt: originalSourceDueAt, updatedAt: reviewedAt })
+      .where(eq(elements.id, source.id))
+      .run();
+
+    const seedCard = (title: string, lapses = 0) =>
+      review.createCard({
+        kind: "qa",
+        title,
+        priority: 0.375,
+        prompt: "Q",
+        answer: "A",
+        sourceId: source.id,
+        reviewSeed: {
+          reps: 1,
+          lapses,
+          stability: 10,
+          difficulty: 5,
+          scheduledDays: 10,
+          fsrsState: "review",
+          dueAt: reviewedAt,
+        },
+      }).element.id;
+
+    const seedHistoricalLapse = (cardId: ElementId, minutesBefore: number) => {
+      const at = new Date(Date.parse(reviewedAt) - minutesBefore * 60_000).toISOString();
+      handle.db
+        .insert(reviewLogs)
+        .values({
+          id: newReviewLogId(),
+          elementId: cardId,
+          rating: "again",
+          reviewedAt: at,
+          responseMs: 900,
+          prevState: "review",
+          nextState: "relearning",
+          nextStability: 5,
+          nextDifficulty: 6,
+          nextDueAt: at,
+          prevLapses: 0,
+          nextLapses: 1,
+        })
+        .run();
+    };
+
+    const cardA = seedCard("Rollback A");
+    const cardB = seedCard("Rollback B");
+    const reviewedCard = seedCard("Rollback C", 3);
+    seedHistoricalLapse(cardA, 60);
+    seedHistoricalLapse(cardB, 30);
+
+    const stateBefore = review.findReviewState(reviewedCard);
+    const reviewedLogsBefore = handle.db
+      .select()
+      .from(reviewLogs)
+      .where(eq(reviewLogs.elementId, reviewedCard))
+      .all().length;
+    const sourceOpsBefore = handle.db
+      .select()
+      .from(operationLog)
+      .where(eq(operationLog.elementId, source.id))
+      .all()
+      .filter((op) => op.opType === "reschedule_element").length;
+
+    handle.sqlite.exec(`
+      CREATE TRIGGER abort_leech_update
+      BEFORE UPDATE OF is_leech ON cards
+      WHEN NEW.is_leech = 1
+      BEGIN
+        SELECT RAISE(ABORT, 'abort leech update');
+      END;
+    `);
+
+    expect(() =>
+      review.recordReview(reviewedCard, {
+        rating: "again",
+        reviewedAt,
+        responseMs: 900,
+        prevState: "review",
+        nextState: "relearning",
+        nextStability: 5,
+        nextDifficulty: 6,
+        nextDueAt: "2026-06-12T00:10:00.000Z",
+        elapsedDays: 10,
+        scheduledDays: 0,
+        reps: 2,
+        lapses: 4,
+        nextLearningSteps: 1,
+      }),
+    ).toThrow(/abort leech update/);
+
+    expect(review.findReviewState(reviewedCard)).toEqual(stateBefore);
+    expect(new SourceRepository(handle.db).findById(source.id)?.element.dueAt).toBe(
+      originalSourceDueAt,
+    );
+    expect(review.isCardLeech(reviewedCard)).toBe(false);
+    expect(
+      handle.db.select().from(reviewLogs).where(eq(reviewLogs.elementId, reviewedCard)).all()
+        .length,
+    ).toBe(reviewedLogsBefore);
+    expect(
+      handle.db
+        .select()
+        .from(operationLog)
+        .where(eq(operationLog.elementId, source.id))
+        .all()
+        .filter((op) => op.opType === "reschedule_element").length,
+    ).toBe(sourceOpsBefore);
+  });
+
   it("persists prompt time plus the full pre/post FSRS transition on the review log", () => {
     const review = new ReviewRepository(handle.db);
     const { element } = review.createCard({

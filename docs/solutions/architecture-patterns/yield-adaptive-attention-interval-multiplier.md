@@ -35,7 +35,9 @@ until UI explainability exists, compute changes from command-scoped yield deltas
 
 T113 completed the explanation path and flipped adaptive attention intervals on by default. Keep
 the T112 persistence pattern paired with the T113 trusted schedule-reason projection before making
-new learned scheduler behavior default-on.
+new learned scheduler behavior default-on. T114 adds descendant health as a transient review-log
+input beside persisted yield adaptation: descendant-card lapse evidence can shorten a parent source
+return without mutating the source's adaptive multiplier or any card's FSRS schedule.
 
 The implementation touches four boundaries:
 
@@ -127,6 +129,11 @@ Do not apply this pattern to FSRS card scheduling, renderer-only heuristics, rea
 views, lifetime rollups treated as one visit, or ungated behavior changes that would alter existing
 scheduling by default.
 
+When review-derived descendant health influences a source, keep that input transient and
+evidence-gated rather than folding it into the adaptive multiplier. The multiplier still represents
+learned cadence from source/extract processing yield; descendant health is a bounded pressure on one
+schedule decision.
+
 ## Examples
 
 Source extraction captures a baseline before creating the extract, then reschedules the source
@@ -168,6 +175,7 @@ Verification for T112 passed:
 
 - [Attention scheduler recency needs separate last-seen and action clocks](../logic-errors/attention-scheduler-last-seen-clock-semantics.md) is the predecessor learning for T111 clock semantics.
 - [Trust schedule reasons only from the governing reschedule operation](./trusted-schedule-reasons-from-governing-reschedule-ops.md) is the T113 follow-on that explains learned and heuristic schedule changes safely enough to make adaptive intervals default-on.
+- [Use descendant-card lapse evidence to transiently reschedule parent sources](./review-triggered-descendant-health-source-rescheduling.md) documents the T114 review-log input that stays transient instead of mutating adaptive cadence.
 - [Track source block processing as durable source-scoped state](./durable-source-block-processing-state.md) defines durable source-processing inputs that scheduler adaptation can consume.
 - [Model honorable non-card extract fates as first-class value output](./extract-fates-value-model-v2-source-yield-stagnation.md) defines yield semantics beyond card creation.
 - [Chronic postpone reckoning from operation-log reset markers](./chronic-postpone-reckoning-from-operation-log-reset-markers.md) documents operation-log-derived scheduler state.

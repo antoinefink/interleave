@@ -32,6 +32,7 @@ import {
 } from "@interleave/scheduler";
 import { eq } from "drizzle-orm";
 import { BlockProcessingService } from "./block-processing-service";
+import { type DescendantHealth, DescendantHealthQuery } from "./descendant-health-query";
 import { ElementRepository } from "./element-repository";
 import { nowIso } from "./ids";
 import { rowToElement } from "./mappers";
@@ -178,6 +179,7 @@ export class SchedulerService {
     element: Element,
     lastAction?: SchedulerAction,
     visitYield?: AttentionVisitYieldInput | null,
+    descendantHealth?: DescendantHealth | null,
   ): Schedulable {
     const defaultTopicIntervalDays =
       element.type === "topic" ? this.settings.getAppSettings().defaultTopicIntervalDays : null;
@@ -209,6 +211,15 @@ export class SchedulerService {
             adaptiveAttentionIntervals: true,
             attentionIntervalMultiplier: attentionIntervalMultiplierOf(element),
             visitYield,
+          }
+        : {}),
+      ...(descendantHealth
+        ? {
+            descendantHealth: {
+              descendantLapseCount: descendantHealth.descendantLapseCount,
+              affectedCardCount: descendantHealth.affectedCardCount,
+              descendantCardCount: descendantHealth.descendantCardCount,
+            },
           }
         : {}),
     };
@@ -313,6 +324,59 @@ export class SchedulerService {
           ? { attentionIntervalMultiplier: decision.attentionIntervalMultiplier }
           : {}),
       },
+    );
+    return {
+      element: rescheduled,
+      intervalDays: decision.intervalDays,
+      ...(decision.retirementSuggestion
+        ? { retirementSuggestion: decision.retirementSuggestion }
+        : {}),
+    };
+  }
+
+  /**
+   * Review-triggered source reschedule for T114 descendant health. This is deliberately
+   * transaction-composable so the just-written review log is visible to the evidence
+   * query and the source reschedule op commits atomically with the card review.
+   */
+  rescheduleSourceForDescendantHealthWithin(
+    tx: TransactionClient,
+    sourceId: ElementId,
+    now: IsoTimestamp = nowIso(),
+  ): ScheduleResult | null {
+    const row = tx.select().from(elementsTable).where(eq(elementsTable.id, sourceId)).get();
+    const source = row ? rowToElement(row) : null;
+    if (
+      !source ||
+      source.deletedAt ||
+      source.type !== "source" ||
+      (source.status !== "active" && source.status !== "scheduled") ||
+      !source.dueAt
+    ) {
+      return null;
+    }
+
+    const descendantHealth = new DescendantHealthQuery(tx).getSourceDescendantHealth({
+      sourceId,
+      asOf: now,
+    });
+    if (!descendantHealth) return null;
+
+    const decision = nextDueAt(this.toSchedulable(source, undefined, null, descendantHealth), now);
+    if (decision.scheduleReason?.kind !== "descendant_lapses") return null;
+    if (Date.parse(decision.dueAt) >= Date.parse(source.dueAt)) return null;
+
+    const rescheduled = this.elements.rescheduleWithin(
+      tx,
+      source.id,
+      decision.dueAt,
+      source.status,
+      {
+        action: "descendantHealth",
+        scheduledAt: now,
+        scheduleReason: decision.scheduleReason,
+      },
+      { updatedAt: source.updatedAt },
     );
     return {
       element: rescheduled,

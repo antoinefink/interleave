@@ -732,40 +732,230 @@ describe("nextDueAt (heuristic + action override)", () => {
     });
   });
 
-  it("does not emit the reserved descendant-lapse reason in T113 scheduler paths", () => {
-    const decisions = [
-      nextDueAt({ type: "source", priority: B }, NOW),
-      nextDueAt({ type: "source", priority: B, lastSeenAt: addDays(NOW, -3) }, NOW),
-      nextDueAt({ type: "source", priority: B, lastAction: "postpone", postponeCount: 1 }, NOW),
-      nextDueAt(
-        {
-          type: "source",
-          priority: B,
-          sourceProcessing: {
-            unresolvedRatio: 0.5,
-            terminalRatio: 0.5,
-            ignoredRatio: 0,
-            extractedOutputCount: 1,
-          },
+  it("shortens struggling sources within the descendant-pressure cap and emits the reason", () => {
+    const decision = nextDueAt(
+      {
+        type: "source",
+        priority: C,
+        descendantHealth: {
+          descendantLapseCount: 4,
+          affectedCardCount: 2,
+          descendantCardCount: 5,
         },
-        NOW,
-      ),
-      nextDueAt(
-        {
-          type: "extract",
-          stage: "clean_extract",
-          priority: C,
-          adaptiveAttentionIntervals: true,
-          attentionIntervalMultiplier: 1,
-          visitYield: { synthesisOutputsCreated: 1 },
-        },
-        NOW,
-      ),
-    ];
-
-    expect(decisions.map((decision) => decision.scheduleReason?.kind)).not.toContain(
-      "descendant_lapses",
+      },
+      NOW,
     );
+
+    expect(decision.intervalDays).toBe(23);
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "descendant_lapses",
+      baseIntervalDays: 30,
+      intervalAfterDescendantDays: 23,
+      finalIntervalDays: 23,
+      descendantLapseCount: 4,
+      affectedCardCount: 2,
+      descendantCardCount: 5,
+      descendantLapseRate: 0.8,
+    });
+  });
+
+  it("does not compound descendant pressure below the adaptive multiplier floor", () => {
+    const decision = nextDueAt(
+      {
+        type: "source",
+        priority: C,
+        adaptiveAttentionIntervals: true,
+        attentionIntervalMultiplier: MIN_ATTENTION_INTERVAL_MULTIPLIER,
+        visitYield: { childExtractsCreated: 1 },
+        descendantHealth: {
+          descendantLapseCount: 4,
+          affectedCardCount: 2,
+          descendantCardCount: 5,
+        },
+      },
+      NOW,
+    );
+
+    expect(decision.intervalDays).toBe(15);
+    expect(daysBetween(NOW, decision.dueAt)).toBe(15);
+    expect(decision.attentionIntervalMultiplier).toBe(MIN_ATTENTION_INTERVAL_MULTIPLIER);
+    expect(decision.adaptiveReason).toMatchObject({
+      reasonKind: "yield_shortened",
+      baseIntervalDays: 30,
+      intervalAfterMultiplierDays: 15,
+      finalIntervalDays: 15,
+    });
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "yield_shortened",
+      baseIntervalDays: 30,
+      intervalAfterMultiplierDays: 15,
+      finalIntervalDays: 15,
+    });
+  });
+
+  it.each([
+    [
+      "below lapse floor",
+      { descendantLapseCount: 2, affectedCardCount: 2, descendantCardCount: 5 },
+    ],
+    [
+      "one affected card",
+      { descendantLapseCount: 3, affectedCardCount: 1, descendantCardCount: 5 },
+    ],
+    [
+      "below rate floor",
+      { descendantLapseCount: 3, affectedCardCount: 2, descendantCardCount: 31 },
+    ],
+    [
+      "zero descendant cards",
+      { descendantLapseCount: 3, affectedCardCount: 2, descendantCardCount: 0 },
+    ],
+    [
+      "non-integer counts",
+      { descendantLapseCount: 3.5, affectedCardCount: 2, descendantCardCount: 5 },
+    ],
+    [
+      "affected exceeds total",
+      { descendantLapseCount: 4, affectedCardCount: 3, descendantCardCount: 2 },
+    ],
+  ])("treats %s as a no-op", (_, descendantHealth) => {
+    const withSignal = nextDueAt(
+      {
+        type: "source",
+        priority: C,
+        descendantHealth,
+      },
+      NOW,
+    );
+    const baseline = nextDueAt({ type: "source", priority: C }, NOW);
+
+    expect(withSignal).toEqual(baseline);
+  });
+
+  it("applies stronger pressure for denser lapse rates and caps at 25%", () => {
+    const dense = nextDueAt(
+      {
+        type: "source",
+        priority: C,
+        descendantHealth: {
+          descendantLapseCount: 3,
+          affectedCardCount: 2,
+          descendantCardCount: 3,
+        },
+      },
+      NOW,
+    );
+    const sparse = nextDueAt(
+      {
+        type: "source",
+        priority: C,
+        descendantHealth: {
+          descendantLapseCount: 3,
+          affectedCardCount: 2,
+          descendantCardCount: 20,
+        },
+      },
+      NOW,
+    );
+
+    expect(dense.intervalDays).toBe(23);
+    expect(sparse.intervalDays).toBe(26);
+    expect(dense.intervalDays).toBeLessThan(sparse.intervalDays);
+  });
+
+  it("never lengthens a source already at the 1-day interval floor", () => {
+    const decision = nextDueAt(
+      {
+        type: "source",
+        priority: A,
+        descendantHealth: {
+          descendantLapseCount: 4,
+          affectedCardCount: 2,
+          descendantCardCount: 4,
+        },
+      },
+      NOW,
+    );
+
+    expect(decision.intervalDays).toBe(1);
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "band_base",
+      finalIntervalDays: 1,
+    });
+  });
+
+  it("applies descendant pressure before recency and reports the earlier final due date", () => {
+    const decision = nextDueAt(
+      {
+        type: "source",
+        priority: C,
+        lastSeenAt: addDays(NOW, -3),
+        descendantHealth: {
+          descendantLapseCount: 4,
+          affectedCardCount: 2,
+          descendantCardCount: 5,
+        },
+      },
+      NOW,
+    );
+
+    expect(decision.intervalDays).toBe(20);
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "descendant_lapses",
+      baseIntervalDays: 30,
+      intervalAfterDescendantDays: 23,
+      finalIntervalDays: 20,
+    });
+  });
+
+  it("keeps the stronger existing reason when descendant pressure does not beat the baseline", () => {
+    const decision = nextDueAt(
+      {
+        type: "source",
+        priority: B,
+        sourceProcessing: {
+          unresolvedRatio: 0.5,
+          terminalRatio: 0.5,
+          ignoredRatio: 0,
+          extractedOutputCount: 1,
+        },
+        descendantHealth: {
+          descendantLapseCount: 3,
+          affectedCardCount: 2,
+          descendantCardCount: 20,
+        },
+      },
+      NOW,
+    );
+
+    expect(decision.intervalDays).toBe(3);
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "source_unresolved_shortened",
+      baseIntervalDays: 7,
+      finalIntervalDays: 3,
+    });
+  });
+
+  it("ignores descendant health for non-source inputs", () => {
+    const decision = nextDueAt(
+      {
+        type: "extract",
+        stage: "clean_extract",
+        priority: C,
+        descendantHealth: {
+          descendantLapseCount: 4,
+          affectedCardCount: 2,
+          descendantCardCount: 5,
+        },
+      },
+      NOW,
+    );
+
+    expect(decision.scheduleReason).toMatchObject({
+      kind: "band_base",
+      baseIntervalDays: 10,
+      finalIntervalDays: 10,
+    });
   });
 
   it.each([

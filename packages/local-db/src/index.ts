@@ -135,6 +135,15 @@ export {
   pickSourceKeeper,
 } from "./dedup-report-query";
 export {
+  DESCENDANT_HEALTH_WINDOW_DAYS,
+  type DescendantHealth,
+  DescendantHealthQuery,
+  type DescendantHealthQueryInput,
+  MIN_DESCENDANT_AFFECTED_CARD_COUNT,
+  MIN_DESCENDANT_LAPSE_COUNT,
+  MIN_DESCENDANT_LAPSE_RATE,
+} from "./descendant-health-query";
+export {
   type AddMarkInput,
   type DocumentBlockInput,
   type DocumentMark,

@@ -42,6 +42,7 @@ import { ElementRepository } from "./element-repository";
 import { newReviewLogId, nowIso } from "./ids";
 import { rowToElement, rowToReviewLog, rowToReviewState } from "./mappers";
 import { OperationLogRepository } from "./operation-log-repository";
+import { SchedulerService } from "./scheduler-service";
 import type { DbClient } from "./types";
 
 /** Arguments to create a card (Q&A or cloze). */
@@ -520,29 +521,6 @@ export class ReviewRepository {
         payload: { reviewLogId: id, rating: outcome.rating, nextDueAt: outcome.nextDueAt },
       });
 
-      // Leech detection (T040): only when THIS grade added a lapse (the running
-      // count increased) AND the card is at/over the threshold AND it is not already
-      // flagged — set the durable leech flag + log `update_element`, inside this same
-      // review transaction. Gating on "added a lapse" respects a manual un-leech: a
-      // remediated card with a high cumulative lapse count is NOT re-flagged on a
-      // passing grade, only if it fails again.
-      const addedLapse = outcome.lapses > before.lapses;
-      if (addedLapse && isLeech({ lapses: outcome.lapses })) {
-        const cardRow = tx
-          .select({ isLeech: cards.isLeech })
-          .from(cards)
-          .where(eq(cards.elementId, cardElementId))
-          .get();
-        if (cardRow && !cardRow.isLeech) {
-          tx.update(cards).set({ isLeech: true }).where(eq(cards.elementId, cardElementId)).run();
-          new OperationLogRepository(tx).append(tx, {
-            opType: "update_element",
-            elementId: cardElementId,
-            payload: { id: cardElementId, isLeech: true, lapses: outcome.lapses },
-          });
-        }
-      }
-
       // First-review activation (T036): promote a still-draft card to active rotation
       // in this same transaction (idempotent — only when actually a card_draft).
       if (options?.promoteFromDraft) {
@@ -572,6 +550,44 @@ export class ReviewRepository {
               // marks this op so UndoService skips it (see UndoService.isInvertible).
               reviewPromote: true,
             },
+          });
+        }
+      }
+
+      // Leech detection (T040): only when THIS grade added a lapse (the running
+      // count increased) AND the card is at/over the threshold AND it is not already
+      // flagged — set the durable leech flag + log `update_element`, inside this same
+      // review transaction. Gating on "added a lapse" respects a manual un-leech: a
+      // remediated card with a high cumulative lapse count is NOT re-flagged on a
+      // passing grade, only if it fails again.
+      const addedLapse = outcome.lapses > before.lapses;
+      if (addedLapse) {
+        const cardElement = tx
+          .select({ sourceId: elements.sourceId })
+          .from(elements)
+          .where(eq(elements.id, cardElementId))
+          .get();
+        if (cardElement?.sourceId) {
+          new SchedulerService(this.db).rescheduleSourceForDescendantHealthWithin(
+            tx,
+            cardElement.sourceId as ElementId,
+            outcome.reviewedAt,
+          );
+        }
+      }
+
+      if (addedLapse && isLeech({ lapses: outcome.lapses })) {
+        const cardRow = tx
+          .select({ isLeech: cards.isLeech })
+          .from(cards)
+          .where(eq(cards.elementId, cardElementId))
+          .get();
+        if (cardRow && !cardRow.isLeech) {
+          tx.update(cards).set({ isLeech: true }).where(eq(cards.elementId, cardElementId)).run();
+          new OperationLogRepository(tx).append(tx, {
+            opType: "update_element",
+            elementId: cardElementId,
+            payload: { id: cardElementId, isLeech: true, lapses: outcome.lapses },
           });
         }
       }
