@@ -50,6 +50,10 @@ import type {
   ConceptsCreateRequest,
   ConceptsMembersRequest,
   ConceptsUnassignRequest,
+  ConversionCreateCardRequest,
+  ConversionPrefetchDraftsRequest,
+  ConversionSessionPreviewRequest,
+  ConversionSetFateRequest,
   DailyWorkGraduationAckRequest,
   DailyWorkSummaryRequest,
   DailyWorkUndoAutoPostponeReceiptRequest,
@@ -229,6 +233,16 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.queueVacation, request),
     vacationApply: (request: QueueVacationRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.queueVacationApply, request),
+  },
+  conversion: {
+    sessionPreview: (request?: ConversionSessionPreviewRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.conversionSessionPreview, request ?? {}),
+    prefetchDrafts: (request: ConversionPrefetchDraftsRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.conversionPrefetchDrafts, request),
+    createCard: (request: ConversionCreateCardRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.conversionCreateCard, request),
+    setFate: (request: ConversionSetFateRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.conversionSetFate, request),
   },
   lineage: {
     get: (request: LineageGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.lineageGet, request),

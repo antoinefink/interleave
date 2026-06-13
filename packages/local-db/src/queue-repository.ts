@@ -31,6 +31,7 @@ import {
   asc,
   eq,
   gte,
+  inArray,
   isNotNull,
   isNull,
   lte,
@@ -59,6 +60,14 @@ export const QUEUE_EXCLUDED_STATUSES: readonly ElementStatus[] = [
 /** True when the lifecycle status can still put an element into today's work queue. */
 export function isQueueActionableStatus(status: ElementStatus): boolean {
   return !QUEUE_EXCLUDED_STATUSES.includes(status);
+}
+
+function attentionTypeCondition(types?: readonly ElementType[]) {
+  const attentionTypes = types?.filter((type) => type !== "card") ?? [];
+  if (types && attentionTypes.length === 0) return null;
+  return attentionTypes.length > 0
+    ? inArray(elements.type, attentionTypes as ElementType[])
+    : notInArray(elements.type, ["card"]);
 }
 
 export class QueueRepository {
@@ -145,13 +154,19 @@ export class QueueRepository {
    * Sources/topics/extracts due for re-processing at or before `asOf` (attention
    * scheduler), soonest first. Excludes cards (those use {@link dueCards}).
    */
-  dueAttentionItems(asOf: IsoTimestamp, limit?: number): Element[] {
+  dueAttentionItems(
+    asOf: IsoTimestamp,
+    limit?: number,
+    options: { readonly types?: readonly ElementType[] } = {},
+  ): Element[] {
+    const typeCondition = attentionTypeCondition(options.types);
+    if (!typeCondition) return [];
     const base = this.db
       .select()
       .from(elements)
       .where(
         and(
-          notInArray(elements.type, ["card"]),
+          typeCondition,
           isNull(elements.deletedAt),
           notInArray(elements.status, QUEUE_EXCLUDED_STATUSES as ElementStatus[]),
           isNotNull(elements.dueAt),
@@ -211,13 +226,18 @@ export class QueueRepository {
    * Count of attention items (sources/topics/extracts) due at or before `asOf` — the
    * cheap SQL `COUNT(*)` counterpart of {@link dueAttentionItems} (T100), same filter.
    */
-  dueAttentionCount(asOf: IsoTimestamp): number {
+  dueAttentionCount(
+    asOf: IsoTimestamp,
+    options: { readonly types?: readonly ElementType[] } = {},
+  ): number {
+    const typeCondition = attentionTypeCondition(options.types);
+    if (!typeCondition) return 0;
     const row = this.db
       .select({ n: sqlCount() })
       .from(elements)
       .where(
         and(
-          notInArray(elements.type, ["card"]),
+          typeCondition,
           isNull(elements.deletedAt),
           notInArray(elements.status, QUEUE_EXCLUDED_STATUSES as ElementStatus[]),
           isNotNull(elements.dueAt),

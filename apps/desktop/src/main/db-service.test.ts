@@ -1235,6 +1235,60 @@ describe("DbService", () => {
     return { extractId: extract.id, sourceId };
   }
 
+  function seedDueAtomicStatement(svc: DbService): {
+    extractId: string;
+    sourceId: string;
+    blockId: string;
+  } {
+    const { id: sourceId } = svc.importManualSource({
+      title: "Batch conversion source",
+      priority: "A",
+      body: "Atomic statement source text.\n\nAnother paragraph.",
+    });
+    const blockId = (
+      svc.raw.sqlite
+        .prepare("SELECT stable_block_id AS b FROM document_blocks WHERE document_id = ? LIMIT 1")
+        .get(sourceId) as { b: string }
+    ).b;
+    const { element } = svc.repos.sources.createExtract({
+      sourceElementId: sourceId as never,
+      title: "Atomic statement",
+      priority: priorityFromLabel("A"),
+      stage: "atomic_statement",
+      selectedText: "Atomic statement source text.",
+      blockIds: [blockId as never],
+      startOffset: 0,
+      endOffset: 29,
+      label: "¶1",
+    });
+    svc.repos.elements.update(element.id, {
+      status: "active",
+      dueAt: "2026-01-01T00:00:00.000Z" as IsoTimestamp,
+    });
+    return { extractId: element.id, sourceId, blockId };
+  }
+
+  function seedAiCardDraft(
+    svc: DbService,
+    input: { extractId: string; sourceId: string; blockId: string },
+  ): string {
+    return svc.repos.aiSuggestions.create({
+      owningElementId: input.extractId as never,
+      action: "suggest_qa",
+      kind: "card_qa",
+      providerKind: "anthropic",
+      suggestionText: "MODEL: a Q&A draft",
+      cards: [{ kind: "qa", prompt: "Draft prompt?", answer: "Draft answer." }],
+      grounding: {
+        sourceElementId: input.sourceId as never,
+        blockIds: [input.blockId as never],
+        startOffset: 0,
+        endOffset: 29,
+        selectedText: "Atomic statement source text.",
+      },
+    }).id;
+  }
+
   function blockRowsFor(svc: DbService, sourceId: string): { id: string; order: number }[] {
     return svc.raw.sqlite
       .prepare(
@@ -1572,6 +1626,337 @@ describe("DbService", () => {
     expect(graded.reviewState.reps).toBe(1);
     expect(graded.reviewState.fsrsState).not.toBe("new");
     expect(svc.repos.review.listReviewLogs(card.id as never).length).toBe(before + 1);
+
+    svc.close();
+  });
+
+  it("conversion sessions create cards with lineage, consume used drafts, and reject stale duplicates (T120)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const seeded = seedDueAtomicStatement(svc);
+    const suggestionId = seedAiCardDraft(svc, seeded);
+
+    const preview = svc.previewConversionSession({ limit: 25 });
+    expect(preview.items.map((item) => item.id)).toContain(seeded.extractId);
+    expect(preview.items[0]?.drafts.map((draft) => draft.id)).toContain(suggestionId);
+
+    const created = svc.createConversionCard({
+      sessionId: preview.sessionId,
+      suggestionId,
+      extractId: seeded.extractId,
+      kind: "qa",
+      prompt: "Manual prompt?",
+      answer: "Manual answer.",
+    });
+    expect(created.card.parentId).toBe(seeded.extractId);
+    expect(created.card.sourceId).toBe(seeded.sourceId);
+    expect(created.sourceLocationId).toBeTruthy();
+    expect(created.consumedSuggestionId).toBe(suggestionId);
+    expect(svc.repos.aiSuggestions.findById(suggestionId)?.status).toBe("dismissed");
+
+    expect(() =>
+      svc.createConversionCard({
+        sessionId: preview.sessionId,
+        extractId: seeded.extractId,
+        kind: "qa",
+        prompt: "Duplicate?",
+        answer: "No.",
+      }),
+    ).toThrow(/stale/);
+
+    svc.close();
+  });
+
+  it("conversion card creation rejects foreign or no-longer-draft suggestions (T120)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const first = seedDueAtomicStatement(svc);
+    const second = seedDueAtomicStatement(svc);
+    const foreignSuggestionId = seedAiCardDraft(svc, second);
+    const dismissedSuggestionId = seedAiCardDraft(svc, first);
+    svc.repos.aiSuggestions.softDismiss(dismissedSuggestionId);
+
+    const preview = svc.previewConversionSession({ limit: 25 });
+
+    expect(() =>
+      svc.createConversionCard({
+        sessionId: preview.sessionId,
+        suggestionId: foreignSuggestionId,
+        extractId: first.extractId,
+        kind: "qa",
+        prompt: "Foreign?",
+        answer: "No.",
+      }),
+    ).toThrow(/suggestion is not a live draft/);
+    expect(() =>
+      svc.createConversionCard({
+        sessionId: preview.sessionId,
+        suggestionId: dismissedSuggestionId,
+        extractId: first.extractId,
+        kind: "qa",
+        prompt: "Dismissed?",
+        answer: "No.",
+      }),
+    ).toThrow(/suggestion is not a live draft/);
+
+    svc.close();
+  });
+
+  it("conversion draft consumption rolls back with card creation when dismissal fails (T120)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const seeded = seedDueAtomicStatement(svc);
+    const suggestionId = seedAiCardDraft(svc, seeded);
+    const preview = svc.previewConversionSession({ limit: 25 });
+    const beforeCards = svc.raw.sqlite.prepare("SELECT COUNT(*) AS count FROM cards").get() as {
+      count: number;
+    };
+    vi.spyOn(svc.repos.aiSuggestions, "consumeDraftWithin").mockImplementationOnce(() => {
+      throw new Error("forced suggestion dismissal failure");
+    });
+
+    expect(() =>
+      svc.createConversionCard({
+        sessionId: preview.sessionId,
+        suggestionId,
+        extractId: seeded.extractId,
+        kind: "qa",
+        prompt: "Draft prompt?",
+        answer: "Draft answer.",
+      }),
+    ).toThrow("forced suggestion dismissal failure");
+
+    const afterCards = svc.raw.sqlite.prepare("SELECT COUNT(*) AS count FROM cards").get() as {
+      count: number;
+    };
+    expect(afterCards.count).toBe(beforeCards.count);
+    expect(svc.repos.aiSuggestions.findById(suggestionId)?.status).toBe("draft");
+
+    svc.close();
+  });
+
+  it("conversion refresh keeps a lower-ranked snapshot item when a newer candidate outranks it (T120)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const first = seedDueAtomicStatement(svc);
+    svc.repos.elements.update(first.extractId as never, { priority: priorityFromLabel("C") });
+
+    const preview = svc.previewConversionSession({ limit: 1 });
+    expect(preview.items.map((item) => item.id)).toEqual([first.extractId]);
+
+    const newer = seedDueAtomicStatement(svc);
+    svc.repos.elements.update(newer.extractId as never, { priority: priorityFromLabel("A") });
+
+    const refreshed = svc.previewConversionSession({ sessionId: preview.sessionId, limit: 1 });
+    expect(refreshed.sessionId).toBe(preview.sessionId);
+    expect(refreshed.items.map((item) => item.id)).toEqual([first.extractId]);
+    expect(refreshed.staleItemIds).toEqual([]);
+
+    svc.close();
+  });
+
+  it("conversion card creation rejects a snapshot whose source span changed (T120)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const seeded = seedDueAtomicStatement(svc);
+    const preview = svc.previewConversionSession({ limit: 25 });
+
+    svc.raw.sqlite
+      .prepare("UPDATE source_locations SET selected_text = ? WHERE element_id = ?")
+      .run("Changed source span.", seeded.extractId);
+
+    const refreshed = svc.previewConversionSession({ sessionId: preview.sessionId, limit: 25 });
+    expect(refreshed.items.map((item) => item.id)).not.toContain(seeded.extractId);
+    expect(refreshed.staleItemIds).toContain(seeded.extractId);
+
+    expect(() =>
+      svc.createConversionCard({
+        sessionId: preview.sessionId,
+        extractId: seeded.extractId,
+        kind: "qa",
+        prompt: "Changed?",
+        answer: "No.",
+      }),
+    ).toThrow(/stale/);
+
+    svc.close();
+  });
+
+  it("conversion refresh preserves the frozen snapshot and reports stale consumed items (T120)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const first = seedDueAtomicStatement(svc);
+    const second = seedDueAtomicStatement(svc);
+
+    const preview = svc.previewConversionSession({ limit: 25 });
+    expect(preview.items.map((item) => item.id)).toContain(first.extractId);
+    expect(preview.items.map((item) => item.id)).toContain(second.extractId);
+
+    svc.createConversionCard({
+      sessionId: preview.sessionId,
+      extractId: first.extractId,
+      kind: "qa",
+      prompt: "What changed?",
+      answer: "The first item was converted.",
+    });
+
+    const refreshed = svc.previewConversionSession({ sessionId: preview.sessionId, limit: 25 });
+    expect(refreshed.sessionId).toBe(preview.sessionId);
+    expect(refreshed.items.map((item) => item.id)).toEqual(
+      preview.items.map((item) => item.id).filter((id) => id !== first.extractId),
+    );
+    expect(refreshed.staleItemIds).toContain(first.extractId);
+    expect(refreshed.items.map((item) => item.id)).not.toContain(first.extractId);
+    expect(refreshed.items.map((item) => item.id)).toContain(second.extractId);
+
+    svc.close();
+  });
+
+  it("conversion AI prefetch skips already drafted session items without enqueueing another job (T120)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const seeded = seedDueAtomicStatement(svc);
+    seedAiCardDraft(svc, seeded);
+
+    const preview = svc.previewConversionSession({ limit: 25 });
+    const result = svc.prefetchConversionDrafts({
+      sessionId: preview.sessionId,
+      action: "suggest_qa",
+      consentedAt: "2026-06-13T08:00:00.000Z",
+    });
+
+    expect(result.queued).toBe(0);
+    expect(result.alreadyDrafted).toBe(1);
+    expect(result.skipped).toEqual([{ id: seeded.extractId, reason: "already_drafted" }]);
+
+    svc.close();
+  });
+
+  it("conversion AI prefetch skips a repeated request while draft jobs are still pending (T120)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const seeded = seedDueAtomicStatement(svc);
+    const enqueued: unknown[] = [];
+    svc.updateAppSettings({ aiEnabled: true });
+    svc.setRunner({
+      enqueue: (_type: unknown, payload: unknown) => {
+        enqueued.push(payload);
+        return { id: `job-${enqueued.length}` };
+      },
+    } as never);
+
+    const preview = svc.previewConversionSession({ limit: 25 });
+    const first = svc.prefetchConversionDrafts({
+      sessionId: preview.sessionId,
+      action: "suggest_qa",
+      consentedAt: "2026-06-13T08:00:00.000Z",
+    });
+    const second = svc.prefetchConversionDrafts({
+      sessionId: preview.sessionId,
+      action: "suggest_qa",
+      consentedAt: "2026-06-13T08:01:00.000Z",
+    });
+
+    expect(first).toMatchObject({ queued: 1, alreadyDrafted: 0, skipped: [] });
+    expect(second).toEqual({
+      queued: 0,
+      alreadyDrafted: 0,
+      skipped: [{ id: seeded.extractId, reason: "already_queued" }],
+    });
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]).toMatchObject({
+      consent: {
+        sessionId: preview.sessionId,
+        consentedAt: "2026-06-13T08:00:00.000Z",
+      },
+    });
+
+    svc.close();
+  });
+
+  it("conversion AI prefetch suppresses duplicate pending draft jobs across snapshots (T120)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const seeded = seedDueAtomicStatement(svc);
+    const enqueued: unknown[] = [];
+    svc.updateAppSettings({ aiEnabled: true });
+    svc.setRunner({
+      enqueue: (_type: unknown, payload: unknown) => {
+        enqueued.push(payload);
+        return { id: `job-${enqueued.length}` };
+      },
+    } as never);
+
+    const firstSnapshot = svc.previewConversionSession({ limit: 25 });
+    expect(
+      svc.prefetchConversionDrafts({
+        sessionId: firstSnapshot.sessionId,
+        action: "suggest_qa",
+        consentedAt: "2026-06-13T08:00:00.000Z",
+      }),
+    ).toMatchObject({ queued: 1, skipped: [] });
+
+    const secondSnapshot = svc.previewConversionSession({ limit: 25 });
+    expect(
+      svc.prefetchConversionDrafts({
+        sessionId: secondSnapshot.sessionId,
+        action: "suggest_qa",
+        consentedAt: "2026-06-13T08:01:00.000Z",
+      }),
+    ).toEqual({
+      queued: 0,
+      alreadyDrafted: 0,
+      skipped: [{ id: seeded.extractId, reason: "already_queued" }],
+    });
+    expect(enqueued).toHaveLength(1);
+
+    svc.close();
+  });
+
+  it("conversion AI prefetch does not swallow runner enqueue failures as disabled skips (T120)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    seedDueAtomicStatement(svc);
+    svc.updateAppSettings({ aiEnabled: true });
+    svc.setRunner({
+      enqueue: () => {
+        throw new Error("runner enqueue failed");
+      },
+    } as never);
+
+    const preview = svc.previewConversionSession({ limit: 25 });
+    expect(() =>
+      svc.prefetchConversionDrafts({
+        sessionId: preview.sessionId,
+        action: "suggest_qa",
+        consentedAt: "2026-06-13T08:00:00.000Z",
+      }),
+    ).toThrow("runner enqueue failed");
+
+    svc.close();
+  });
+
+  it("conversion fates require the extract to remain current in the frozen session (T120)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const seeded = seedDueAtomicStatement(svc);
+    const preview = svc.previewConversionSession({ limit: 25 });
+
+    const fated = svc.setConversionFate({
+      sessionId: preview.sessionId,
+      id: seeded.extractId,
+      fate: "reference",
+    });
+    expect(fated.extract.id).toBe(seeded.extractId);
+    expect(svc.repos.elements.findById(seeded.extractId as never)?.extractFate).toBe("reference");
+
+    expect(() =>
+      svc.setConversionFate({
+        sessionId: preview.sessionId,
+        id: seeded.extractId,
+        fate: "done_without_card",
+      }),
+    ).toThrow(/stale/);
 
     svc.close();
   });

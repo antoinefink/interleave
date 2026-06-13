@@ -589,6 +589,42 @@ export class ConceptRepository {
   }
 
   /**
+   * Scoped counterpart of {@link firstConceptNameMap}. Keeps hot candidate reads
+   * bounded by the caller's member-id universe while preserving the same
+   * first-live-membership semantics.
+   */
+  firstConceptNameMapForMembers(memberIds: readonly ElementId[]): Map<ElementId, string> {
+    const uniqueMemberIds = [...new Set(memberIds)];
+    if (uniqueMemberIds.length === 0) return new Map();
+
+    const memberList = sql.join(
+      uniqueMemberIds.map((id) => sql`${id}`),
+      sql`, `,
+    );
+    const rows = this.db.all<{ memberId: string; title: string }>(sql`
+      SELECT er.from_element_id AS memberId, ce.title AS title
+      FROM element_relations er
+      JOIN elements me
+        ON me.id = er.from_element_id
+        AND me.deleted_at IS NULL
+      JOIN elements ce
+        ON ce.id = er.to_element_id
+        AND ce.deleted_at IS NULL
+        AND ce.type = 'concept'
+      WHERE er.relation_type = 'concept_membership'
+        AND er.from_element_id IN (${memberList})
+      ORDER BY er.rowid
+    `);
+
+    const firstName = new Map<ElementId, string>();
+    for (const row of rows) {
+      const memberId = row.memberId as ElementId;
+      if (!firstName.has(memberId)) firstName.set(memberId, row.title);
+    }
+    return firstName;
+  }
+
+  /**
    * The LIVE element ids that are members of a concept (feeds concept filtering +
    * counts). Reads the `concept_membership` edges (`to = concept`) and keeps only
    * members whose element is not soft-deleted, deduped, in first-seen edge order.

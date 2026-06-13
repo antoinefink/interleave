@@ -6,6 +6,7 @@
  *   /                    home (daily queue / command center landing)
  *   /inbox               import & triage
  *   /queue               due queue
+ *   /convert             batch conversion session for due atomic statements (T120)
  *   /process             focused one-at-a-time process session (T031)
  *   /weekly              weekly ledger & integrity session (T110)
  *   /source/$id          source reader (typed dynamic param)
@@ -41,6 +42,7 @@ import { LeechRemediation } from "./maintenance/LeechRemediation";
 import { MaintenanceScreen } from "./maintenance/MaintenanceScreen";
 import { RetiredCards } from "./maintenance/RetiredCards";
 import { StagnantExtracts } from "./maintenance/StagnantExtracts";
+import { ConversionSession } from "./pages/convert/ConversionSession";
 import { HomeScreen } from "./pages/home/HomeScreen";
 import { InboxScreen } from "./pages/inbox/InboxScreen";
 import { ProcessQueue } from "./pages/queue/ProcessQueue";
@@ -82,6 +84,18 @@ const queueRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/queue",
   component: QueueScreen,
+});
+
+/**
+ * Batch conversion session (T120) — a frozen, keyboard-first work surface for due
+ * atomic statements. It previews a trusted conversion snapshot, lets the user
+ * author Q&A/cloze cards through `conversion.createCard`, and keeps AI suggestions
+ * inert until copied into the builder and submitted.
+ */
+const convertRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/convert",
+  component: ConversionSession,
 });
 
 /**
@@ -336,6 +350,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   inboxRoute,
   queueRoute,
+  convertRoute,
   processRoute,
   weeklyRoute,
   sourceRoute,

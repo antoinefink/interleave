@@ -3640,6 +3640,105 @@ export interface CardsCreateResult {
 }
 
 // ---------------------------------------------------------------------------
+// conversion.*  (T120 — batch conversion sessions)
+// ---------------------------------------------------------------------------
+
+const CONVERSION_SESSION_LIMIT_MAX = 100;
+export const ConversionSessionIdSchema = z.string().min(1).max(128);
+
+export const ConversionSessionPreviewRequestSchema = z
+  .object({
+    sessionId: ConversionSessionIdSchema.optional(),
+    limit: z.number().int().min(1).max(CONVERSION_SESSION_LIMIT_MAX).optional(),
+  })
+  .optional()
+  .default({});
+export type ConversionSessionPreviewRequest = z.infer<typeof ConversionSessionPreviewRequestSchema>;
+
+export const ConversionPrefetchDraftsRequestSchema = z.object({
+  sessionId: ConversionSessionIdSchema,
+  action: z.enum(["suggest_qa", "suggest_cloze"]),
+  consentedAt: z.string().datetime({ offset: true }),
+});
+export type ConversionPrefetchDraftsRequest = z.infer<typeof ConversionPrefetchDraftsRequestSchema>;
+
+export const ConversionCreateCardRequestSchema = CardsCreateRequestSchema.extend({
+  sessionId: ConversionSessionIdSchema,
+  suggestionId: z.string().min(1).max(128).optional(),
+});
+export type ConversionCreateCardRequest = z.infer<typeof ConversionCreateCardRequestSchema>;
+
+export const ConversionSetFateRequestSchema = ExtractsSetFateRequestSchema.extend({
+  sessionId: ConversionSessionIdSchema,
+});
+export type ConversionSetFateRequest = z.infer<typeof ConversionSetFateRequestSchema>;
+
+export interface ConversionAiGrounding {
+  readonly sourceElementId: string;
+  readonly blockIds: readonly string[];
+  readonly startOffset: number | null;
+  readonly endOffset: number | null;
+  readonly selectedText: string;
+  readonly context: string | null;
+}
+
+export interface ConversionDraftSummary {
+  readonly id: string;
+  readonly action: AiActionType;
+  readonly kind: AiSuggestionKind;
+  readonly providerKind: string;
+  readonly suggestionText: string;
+  readonly cards: readonly AiDraftCard[];
+  readonly createdAt: string;
+}
+
+export interface ConversionSessionItem {
+  readonly id: string;
+  readonly title: string;
+  readonly priority: number;
+  readonly dueAt: string | null;
+  readonly schedulerSignals: QueueSchedulerSignals;
+  readonly sourceRef: SourceRef;
+  readonly aiGrounding: ConversionAiGrounding;
+  readonly plainText: string;
+  readonly excerpt: string;
+  readonly drafts: readonly ConversionDraftSummary[];
+}
+
+export type ConversionPrefetchSkipReason =
+  | "stale_item"
+  | "already_queued"
+  | "already_drafted"
+  | "ai_disabled";
+
+export interface ConversionPrefetchSkippedItem {
+  readonly id: string;
+  readonly reason: ConversionPrefetchSkipReason;
+}
+
+export interface ConversionSessionPreviewResult {
+  readonly sessionId: string;
+  readonly expiresAt: string;
+  readonly asOf: string;
+  readonly limit: number;
+  readonly items: readonly ConversionSessionItem[];
+  readonly staleItemIds: readonly string[];
+  readonly candidateCount: number;
+}
+
+export interface ConversionPrefetchDraftsResult {
+  readonly queued: number;
+  readonly skipped: readonly ConversionPrefetchSkippedItem[];
+  readonly alreadyDrafted: number;
+}
+
+export interface ConversionCreateCardResult extends CardsCreateResult {
+  readonly consumedSuggestionId?: string;
+}
+
+export type ConversionSetFateResult = ExtractsSetFateResult;
+
+// ---------------------------------------------------------------------------
 // cards.generateOcclusion()  (T071 — image-occlusion card generation)
 // ---------------------------------------------------------------------------
 
@@ -6764,6 +6863,20 @@ export interface AppApi {
      * vacation resumes) as one. Returns the moved + suspended counts + the batch id.
      */
     vacationApply(request: QueueVacationRequest): Promise<RecoveryApplyResult>;
+  };
+  readonly conversion: {
+    /** Start/read a frozen batch-conversion session over due atomic statements (T120). */
+    sessionPreview(
+      request?: ConversionSessionPreviewRequest,
+    ): Promise<ConversionSessionPreviewResult>;
+    /** Enqueue AI draft jobs for the trusted session snapshot after explicit consent. */
+    prefetchDrafts(
+      request: ConversionPrefetchDraftsRequest,
+    ): Promise<ConversionPrefetchDraftsResult>;
+    /** Create an active conversion card after conversion-specific eligibility preflight. */
+    createCard(request: ConversionCreateCardRequest): Promise<ConversionCreateCardResult>;
+    /** Apply an honorable fate after conversion-specific session preflight. */
+    setFate(request: ConversionSetFateRequest): Promise<ConversionSetFateResult>;
   };
   readonly lineage: {
     /** The full, depth-tagged lineage tree for one element (read-only) (T023). */

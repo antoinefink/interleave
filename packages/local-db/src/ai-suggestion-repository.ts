@@ -33,7 +33,7 @@ import type {
 } from "@interleave/core";
 import { EMPTY_SOURCE_REF } from "@interleave/core";
 import { aiSuggestions, type InterleaveDatabase } from "@interleave/db";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { newRowId, nowIso } from "./ids";
 import { deriveSourceLocationLabel } from "./source-location-label";
 import { resolveSourceRef } from "./source-ref-query";
@@ -220,6 +220,33 @@ export class AiSuggestionRepository {
       .map(rowToSuggestion);
   }
 
+  /**
+   * Live DRAFT suggestions for a bounded set of owning elements, grouped by owner
+   * and newest first. This is the batch seam used by session-style read models so
+   * they can decorate N visible items without issuing N `listForElement` reads.
+   */
+  listLiveForElements(owningElementIds: readonly ElementId[]): Map<ElementId, AiSuggestion[]> {
+    const ids = [...new Set(owningElementIds)];
+    const byOwner = new Map<ElementId, AiSuggestion[]>();
+    if (ids.length === 0) return byOwner;
+
+    const rows = this.db
+      .select()
+      .from(aiSuggestions)
+      .where(and(inArray(aiSuggestions.owningElementId, ids), eq(aiSuggestions.status, "draft")))
+      .orderBy(desc(aiSuggestions.createdAt))
+      .all()
+      .map(rowToSuggestion);
+
+    for (const suggestion of rows) {
+      const ownerId = suggestion.owningElementId;
+      const list = byOwner.get(ownerId);
+      if (list) list.push(suggestion);
+      else byOwner.set(ownerId, [suggestion]);
+    }
+    return byOwner;
+  }
+
   /** Flip a suggestion's status (`draft` → `approved` | `dismissed`). NO op. */
   setStatus(id: string, status: AiSuggestionStatus): { updated: boolean } {
     const result = this.db
@@ -233,6 +260,35 @@ export class AiSuggestionRepository {
   /** Flip a suggestion's status within an existing transaction (the approve seam). */
   setStatusWithin(tx: DbClient, id: string, status: AiSuggestionStatus): void {
     tx.update(aiSuggestions).set({ status }).where(eq(aiSuggestions.id, id)).run();
+  }
+
+  /**
+   * Consume one live draft inside a larger transaction, constrained by owner and
+   * current draft status. Throws when the row is missing/stale/foreign so callers
+   * can roll back the enclosing mutation.
+   */
+  consumeDraftWithin(
+    tx: DbClient,
+    input: {
+      readonly id: string;
+      readonly owningElementId: ElementId;
+      readonly status: AiSuggestionStatus;
+    },
+  ): void {
+    const result = tx
+      .update(aiSuggestions)
+      .set({ status: input.status })
+      .where(
+        and(
+          eq(aiSuggestions.id, input.id),
+          eq(aiSuggestions.owningElementId, input.owningElementId),
+          eq(aiSuggestions.status, "draft"),
+        ),
+      )
+      .run();
+    if (result.changes !== 1) {
+      throw new Error("AiSuggestionRepository.consumeDraftWithin: draft is not live");
+    }
   }
 
   /** Soft-dismiss a draft (status → `dismissed`); it leaves any queue (it was never in one). */

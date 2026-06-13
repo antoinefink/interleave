@@ -148,6 +148,64 @@ describe("AiSuggestionRepository — CRUD + grounding round-trip", () => {
     expect(repos.aiSuggestions.listForElement(extractId, { includeAll: true }).length).toBe(1);
   });
 
+  it("lists live drafts for multiple elements in one grouped read", () => {
+    const first = seedSourceAndExtract();
+    const second = seedSourceAndExtract();
+    const firstDraft = repos.aiSuggestions.create({
+      owningElementId: first.extractId,
+      action: "suggest_qa",
+      kind: "card_qa",
+      providerKind: "anthropic",
+      suggestionText: "first live",
+      cards: [{ kind: "qa", prompt: "Q1?", answer: "A1." }],
+      grounding: {
+        sourceElementId: first.sourceId,
+        blockIds: [first.blockId],
+        startOffset: null,
+        endOffset: null,
+        selectedText: "quote 1",
+      },
+    });
+    const dismissed = repos.aiSuggestions.create({
+      owningElementId: first.extractId,
+      action: "suggest_cloze",
+      kind: "card_cloze",
+      providerKind: "anthropic",
+      suggestionText: "dismissed",
+      cards: [{ kind: "cloze", cloze: "{{c1::dismissed}}" }],
+      grounding: {
+        sourceElementId: first.sourceId,
+        blockIds: [first.blockId],
+        startOffset: null,
+        endOffset: null,
+        selectedText: "quote 1",
+      },
+    });
+    const secondDraft = repos.aiSuggestions.create({
+      owningElementId: second.extractId,
+      action: "suggest_qa",
+      kind: "card_qa",
+      providerKind: "openai",
+      suggestionText: "second live",
+      cards: [{ kind: "qa", prompt: "Q2?", answer: "A2." }],
+      grounding: {
+        sourceElementId: second.sourceId,
+        blockIds: [second.blockId],
+        startOffset: null,
+        endOffset: null,
+        selectedText: "quote 2",
+      },
+    });
+    repos.aiSuggestions.softDismiss(dismissed.id);
+
+    const grouped = repos.aiSuggestions.listLiveForElements([first.extractId, second.extractId]);
+
+    expect(grouped.get(first.extractId)?.map((s) => s.id)).toEqual([firstDraft.id]);
+    expect(grouped.get(second.extractId)?.map((s) => s.id)).toEqual([secondDraft.id]);
+    expect([...grouped.values()].flat().map((s) => s.id)).not.toContain(dismissed.id);
+    expect(repos.aiSuggestions.listLiveForElements([]).size).toBe(0);
+  });
+
   it("appends NO operation_log entry for a suggestion row (transient draft/infra)", () => {
     const { sourceId, extractId, blockId } = seedSourceAndExtract();
     const opsBefore = handle.db.select().from(operationLog).all().length;

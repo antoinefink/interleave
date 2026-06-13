@@ -791,6 +791,99 @@ export interface QueueSessionPlanResult {
 }
 
 // ---------------------------------------------------------------------------
+// conversion.*  (T120 — batch conversion sessions)
+// ---------------------------------------------------------------------------
+
+export interface ConversionSessionPreviewRequest {
+  readonly limit?: number;
+}
+
+export interface ConversionAiGrounding {
+  readonly sourceElementId: string;
+  readonly blockIds: readonly string[];
+  readonly startOffset: number | null;
+  readonly endOffset: number | null;
+  readonly selectedText: string;
+  readonly context: string | null;
+}
+
+export interface ConversionDraftSummary {
+  readonly id: string;
+  readonly action: AiActionType;
+  readonly kind: AiSuggestionKind;
+  readonly providerKind: string;
+  readonly suggestionText: string;
+  readonly cards: readonly AiDraftCard[];
+  readonly createdAt: string;
+}
+
+export interface ConversionSessionItem {
+  readonly id: string;
+  readonly title: string;
+  readonly priority: number;
+  readonly dueAt: string | null;
+  readonly plainText: string;
+  readonly excerpt: string;
+  readonly sourceRef: SourceRef;
+  readonly aiGrounding: ConversionAiGrounding;
+  readonly schedulerSignals: QueueSchedulerSignals;
+  readonly drafts: readonly ConversionDraftSummary[];
+}
+
+export interface ConversionSessionPreviewResult {
+  readonly sessionId: string;
+  readonly asOf: string;
+  readonly expiresAt: string;
+  readonly limit: number;
+  readonly candidateCount: number;
+  readonly items: readonly ConversionSessionItem[];
+  readonly staleItemIds: readonly string[];
+}
+
+export interface ConversionSessionPreviewRequest {
+  readonly sessionId?: string;
+  readonly limit?: number;
+}
+
+export interface ConversionPrefetchDraftsRequest {
+  readonly sessionId: string;
+  readonly action: Extract<AiActionType, "suggest_qa" | "suggest_cloze">;
+  readonly consentedAt: string;
+}
+
+export type ConversionPrefetchSkipReason =
+  | "stale_item"
+  | "already_queued"
+  | "already_drafted"
+  | "ai_disabled";
+
+export interface ConversionPrefetchSkippedItem {
+  readonly id: string;
+  readonly reason: ConversionPrefetchSkipReason;
+}
+
+export interface ConversionPrefetchDraftsResult {
+  readonly queued: number;
+  readonly skipped: readonly ConversionPrefetchSkippedItem[];
+  readonly alreadyDrafted: number;
+}
+
+export interface ConversionCreateCardRequest extends CardsCreateRequest {
+  readonly sessionId: string;
+  readonly suggestionId?: string;
+}
+
+export interface ConversionSetFateRequest extends ExtractsSetFateRequest {
+  readonly sessionId: string;
+}
+
+export type ConversionSetFateResult = ExtractsSetFateResult;
+
+export interface ConversionCreateCardResult extends CardsCreateResult {
+  readonly consumedSuggestionId?: string;
+}
+
+// ---------------------------------------------------------------------------
 // queue.autoPostpone() / queue.autoPostponeApply()  (T077 — the overload valve)
 // ---------------------------------------------------------------------------
 
@@ -4476,6 +4569,16 @@ export interface AppApi {
     vacation(request: QueueVacationRequest): Promise<VacationPreview>;
     vacationApply(request: QueueVacationRequest): Promise<RecoveryApplyResult>;
   };
+  readonly conversion: {
+    sessionPreview(
+      request?: ConversionSessionPreviewRequest,
+    ): Promise<ConversionSessionPreviewResult>;
+    prefetchDrafts(
+      request: ConversionPrefetchDraftsRequest,
+    ): Promise<ConversionPrefetchDraftsResult>;
+    createCard(request: ConversionCreateCardRequest): Promise<ConversionCreateCardResult>;
+    setFate(request: ConversionSetFateRequest): Promise<ConversionSetFateResult>;
+  };
   readonly lineage: {
     get(request: LineageGetRequest): Promise<LineageGetResult>;
   };
@@ -4952,6 +5055,35 @@ export const appApi = {
    */
   applyVacation(request: QueueVacationRequest): Promise<RecoveryApplyResult> {
     return requireAppApi().queue.vacationApply(request);
+  },
+  /**
+   * Preview a frozen, short-lived batch conversion session over due atomic statements (T120).
+   * Read-only: card creation still goes through `createConversionCard`.
+   */
+  previewConversionSession(
+    request?: ConversionSessionPreviewRequest,
+  ): Promise<ConversionSessionPreviewResult> {
+    return requireAppApi().conversion.sessionPreview(request);
+  },
+  /**
+   * Queue optional AI card drafts for the current conversion session after explicit consent.
+   * Drafts remain suggestions until the user authors a card from one.
+   */
+  prefetchConversionDrafts(
+    request: ConversionPrefetchDraftsRequest,
+  ): Promise<ConversionPrefetchDraftsResult> {
+    return requireAppApi().conversion.prefetchDrafts(request);
+  },
+  /**
+   * Create a card from a conversion session item after main revalidates session freshness,
+   * source lineage, and duplicate-card preconditions.
+   */
+  createConversionCard(request: ConversionCreateCardRequest): Promise<ConversionCreateCardResult> {
+    return requireAppApi().conversion.createCard(request);
+  },
+  /** Apply an honorable fate through the conversion session preflight. */
+  setConversionFate(request: ConversionSetFateRequest): Promise<ConversionSetFateResult> {
+    return requireAppApi().conversion.setFate(request);
   },
   /** The full, depth-tagged lineage tree for one element (read-only) (T023). */
   getLineage(request: LineageGetRequest): Promise<LineageGetResult> {

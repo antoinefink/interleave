@@ -68,6 +68,10 @@ export interface AiJobPayload {
   readonly action: AiActionType;
   readonly providerKind: AiProviderKind;
   readonly owningElementId: ElementId;
+  readonly consent?: {
+    readonly sessionId?: string;
+    readonly consentedAt: string;
+  };
   readonly request: {
     readonly action: AiActionType;
     readonly sourceText: string;
@@ -130,7 +134,12 @@ export class AiService {
    * returns the enqueued job id so the renderer observes progress via `jobs.subscribe`.
    * The API key is NOT in the payload — it was baked into the worker fork env.
    */
-  enqueue(input: { owningElementId: ElementId; action: AiActionType; sourceRef: AiSourceRef }): {
+  enqueue(input: {
+    owningElementId: ElementId;
+    action: AiActionType;
+    sourceRef: AiSourceRef;
+    consent?: { readonly sessionId?: string; readonly consentedAt: string };
+  }): {
     jobId: string;
   } {
     const settings = this.getSettings();
@@ -142,6 +151,7 @@ export class AiService {
       action: input.action,
       providerKind: settings.aiProviderKind,
       owningElementId: input.owningElementId,
+      ...(input.consent ? { consent: input.consent } : {}),
       request: {
         action: input.action,
         sourceText: sourceRef.selectedText,

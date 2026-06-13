@@ -16,6 +16,7 @@
  * through the repository seam.
  */
 
+import { createHash, randomUUID } from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import type {
@@ -38,6 +39,7 @@ import type {
   SourceLocationId,
 } from "@interleave/core";
 import {
+  AiDisabledError,
   canonicalizeUrl,
   deriveExpiryStatus,
   type FactLifetime,
@@ -66,6 +68,8 @@ import {
   CardRetirementService,
   CardService,
   type ChronicPostponeDecision,
+  type ConversionSessionItem,
+  ConversionSessionQuery,
   cardRowToLifetime,
   createRepositories,
   DailyWorkQuery,
@@ -193,6 +197,14 @@ import type {
   ConceptsMembersResult,
   ConceptsUnassignRequest,
   ConceptsUnassignResult,
+  ConversionCreateCardRequest,
+  ConversionCreateCardResult,
+  ConversionPrefetchDraftsRequest,
+  ConversionPrefetchDraftsResult,
+  ConversionSessionPreviewRequest,
+  ConversionSessionPreviewResult,
+  ConversionSetFateRequest,
+  ConversionSetFateResult,
   DailyWorkGraduationAckRequest,
   DailyWorkGraduationAckResult,
   DailyWorkSummaryRequest,
@@ -509,6 +521,36 @@ export interface DbServiceOpenOptions {
   readonly mediaFetchImpl?: typeof fetch | undefined;
 }
 
+interface ConversionSessionSnapshot {
+  readonly id: string;
+  readonly asOf: IsoTimestamp;
+  readonly expiresAt: IsoTimestamp;
+  readonly limit: number;
+  readonly itemIds: readonly ElementId[];
+  readonly fingerprints: ReadonlyMap<ElementId, string>;
+}
+
+const CONVERSION_SESSION_TTL_MS = 15 * 60 * 1000;
+
+function conversionDraftRequestKey(
+  elementId: string,
+  action: ConversionPrefetchDraftsRequest["action"],
+): string {
+  return `${elementId}:${action}`;
+}
+
+function conversionItemFingerprint(item: ConversionSessionItem): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        blocks: [...item.aiGrounding.blockIds],
+        selectedText: item.aiGrounding.selectedText,
+        plainText: item.plainText,
+      }),
+    )
+    .digest("hex");
+}
+
 export class DbService {
   private handle: DbHandle | null = null;
   private dbPath: string | null = null;
@@ -518,6 +560,9 @@ export class DbService {
   private lineage: LineageQuery | null = null;
   private queue: QueueQuery | null = null;
   private sessionPlan: SessionPlanQuery | null = null;
+  private conversionSession: ConversionSessionQuery | null = null;
+  private conversionSnapshots = new Map<string, ConversionSessionSnapshot>();
+  private conversionDraftRequests = new Map<string, number>();
   private timeCost: TimeCostQuery | null = null;
   private dailyWork: DailyWorkQuery | null = null;
   private library: LibraryQuery | null = null;
@@ -815,6 +860,7 @@ export class DbService {
     this.queue = new QueueQuery(this.repositories);
     this.timeCost = new TimeCostQuery(this.handle.db);
     this.sessionPlan = new SessionPlanQuery(this.handle.db, this.repositories);
+    this.conversionSession = new ConversionSessionQuery(this.handle.db, this.repositories);
     // The facet-driven browse-all read behind `/library` (distinct from search):
     // lists ALL live elements narrowed by type/concept/priority/status facets,
     // including topic/synthesis_note/task which the FTS index never covers.
@@ -893,6 +939,9 @@ export class DbService {
     this.lineage = null;
     this.queue = null;
     this.sessionPlan = null;
+    this.conversionSession = null;
+    this.conversionSnapshots.clear();
+    this.conversionDraftRequests.clear();
     this.timeCost = null;
     this.dailyWork = null;
     this.library = null;
@@ -1264,6 +1313,14 @@ export class DbService {
     return this.sessionPlan;
   }
 
+  /** Read-only batch-conversion session query layer (T120), bound to the open database. */
+  private get conversionSessionQuery(): ConversionSessionQuery {
+    if (!this.conversionSession) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.conversionSession;
+  }
+
   /**
    * The unified, sorted, filtered due queue (T029). The {@link QueueQuery} merges
    * the two DISTINCT due reads (due cards via the FSRS `review_states.due_at` join;
@@ -1374,6 +1431,228 @@ export class DbService {
         byType: plan.cutByType,
       },
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // conversion.*  (T120 — batch conversion sessions)
+  // -------------------------------------------------------------------------
+
+  /** Read a frozen, bounded batch-conversion session over due atomic statements. */
+  previewConversionSession(
+    request: ConversionSessionPreviewRequest = {},
+  ): ConversionSessionPreviewResult {
+    this.materializeStandingAutoPostponeToday();
+    if (request.sessionId) {
+      const snapshot = this.requireConversionSnapshot(request.sessionId);
+      const current = this.currentConversionItems(snapshot);
+      const items = snapshot.itemIds.flatMap((id) => {
+        const item = current.get(id);
+        return item ? [item] : [];
+      });
+      return {
+        sessionId: snapshot.id,
+        expiresAt: snapshot.expiresAt,
+        asOf: snapshot.asOf,
+        limit: snapshot.limit,
+        items,
+        staleItemIds: snapshot.itemIds.filter((id) => !current.has(id)),
+        candidateCount: snapshot.itemIds.length,
+      };
+    }
+
+    const asOf = nowIso() as IsoTimestamp;
+    const preview = this.conversionSessionQuery.preview({
+      asOf,
+      ...(request.limit !== undefined ? { limit: request.limit } : {}),
+    });
+    const sessionId = randomUUID();
+    const expiresAt = new Date(Date.parse(asOf) + CONVERSION_SESSION_TTL_MS).toISOString();
+    this.conversionSnapshots.set(sessionId, {
+      id: sessionId,
+      asOf,
+      expiresAt: expiresAt as IsoTimestamp,
+      limit: preview.limit,
+      itemIds: preview.items.map((item) => item.id),
+      fingerprints: new Map(
+        preview.items.map((item) => [item.id, conversionItemFingerprint(item)] as const),
+      ),
+    });
+    this.pruneExpiredConversionSnapshots();
+    return {
+      sessionId,
+      expiresAt,
+      asOf: preview.asOf,
+      limit: preview.limit,
+      items: preview.items,
+      staleItemIds: [],
+      candidateCount: preview.candidateCount,
+    };
+  }
+
+  /** Enqueue AI draft jobs only for the still-current trusted conversion snapshot. */
+  prefetchConversionDrafts(
+    request: ConversionPrefetchDraftsRequest,
+  ): ConversionPrefetchDraftsResult {
+    const snapshot = this.requireConversionSnapshot(request.sessionId);
+    const current = this.currentConversionItems(snapshot);
+    const skipped: {
+      id: string;
+      reason: ConversionPrefetchDraftsResult["skipped"][number]["reason"];
+    }[] = [];
+    let queued = 0;
+    let alreadyDrafted = 0;
+
+    for (const id of snapshot.itemIds) {
+      let item: ConversionSessionItem;
+      try {
+        item = this.requireCurrentConversionItem(snapshot, current, id, "prefetchConversionDrafts");
+      } catch {
+        skipped.push({ id, reason: "stale_item" });
+        continue;
+      }
+      if (item.drafts.some((draft) => draft.action === request.action)) {
+        alreadyDrafted++;
+        skipped.push({ id, reason: "already_drafted" });
+        continue;
+      }
+      const draftRequestKey = conversionDraftRequestKey(id, request.action);
+      const draftRequestExpiresAt = this.conversionDraftRequests.get(draftRequestKey);
+      if (draftRequestExpiresAt && draftRequestExpiresAt > Date.now()) {
+        skipped.push({ id, reason: "already_queued" });
+        continue;
+      }
+      if (draftRequestExpiresAt) this.conversionDraftRequests.delete(draftRequestKey);
+
+      try {
+        this.aiService.enqueue({
+          owningElementId: id,
+          action: request.action,
+          consent: { sessionId: snapshot.id, consentedAt: request.consentedAt },
+          sourceRef: {
+            sourceElementId: item.aiGrounding.sourceElementId,
+            blockIds: [...item.aiGrounding.blockIds],
+            startOffset: item.aiGrounding.startOffset,
+            endOffset: item.aiGrounding.endOffset,
+            selectedText: item.aiGrounding.selectedText,
+            ...(item.aiGrounding.context ? { context: item.aiGrounding.context } : {}),
+          },
+        });
+        this.conversionDraftRequests.set(draftRequestKey, Date.parse(snapshot.expiresAt));
+        queued++;
+      } catch (err) {
+        if (err instanceof AiDisabledError) {
+          skipped.push({ id, reason: "ai_disabled" });
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    return { queued, skipped, alreadyDrafted };
+  }
+
+  /**
+   * Create an active card from a conversion session item after revalidating that the
+   * item still belongs to the trusted snapshot and is still eligible for conversion.
+   */
+  createConversionCard(request: ConversionCreateCardRequest): ConversionCreateCardResult {
+    const snapshot = this.requireConversionSnapshot(request.sessionId);
+    const current = this.currentConversionItems(snapshot);
+    const item = this.requireCurrentConversionItem(
+      snapshot,
+      current,
+      request.extractId as ElementId,
+      "createConversionCard",
+    );
+    if (request.suggestionId) {
+      const suggestion = this.repos.aiSuggestions.findById(request.suggestionId);
+      if (suggestion?.status !== "draft" || suggestion.owningElementId !== item.id) {
+        throw new Error("DbService.createConversionCard: suggestion is not a live draft");
+      }
+    }
+
+    const { sessionId: _sessionId, suggestionId, ...cardRequest } = request;
+    const created = this.createCard(cardRequest, {
+      ...(suggestionId
+        ? {
+            onWithin: (tx) =>
+              this.repos.aiSuggestions.consumeDraftWithin(tx, {
+                id: suggestionId,
+                owningElementId: item.id,
+                status: "dismissed",
+              }),
+          }
+        : {}),
+    });
+    return {
+      ...created,
+      ...(suggestionId ? { consumedSuggestionId: suggestionId } : {}),
+    };
+  }
+
+  setConversionFate(request: ConversionSetFateRequest): ConversionSetFateResult {
+    const snapshot = this.requireConversionSnapshot(request.sessionId);
+    const current = this.currentConversionItems(snapshot);
+    const item = this.requireCurrentConversionItem(
+      snapshot,
+      current,
+      request.id as ElementId,
+      "setConversionFate",
+    );
+    return this.setExtractFate({ id: item.id, fate: request.fate });
+  }
+
+  private requireConversionSnapshot(sessionId: string): ConversionSessionSnapshot {
+    this.pruneExpiredConversionSnapshots();
+    const snapshot = this.conversionSnapshots.get(sessionId);
+    if (!snapshot) {
+      throw new Error("DbService: conversion session expired");
+    }
+    return snapshot;
+  }
+
+  private pruneExpiredConversionSnapshots(): void {
+    const now = Date.now();
+    for (const [id, snapshot] of this.conversionSnapshots) {
+      if (Date.parse(snapshot.expiresAt) <= now) {
+        this.conversionSnapshots.delete(id);
+      }
+    }
+    for (const [key, expiresAt] of this.conversionDraftRequests) {
+      if (expiresAt <= now) this.conversionDraftRequests.delete(key);
+    }
+  }
+
+  private currentConversionItems(
+    snapshot: ConversionSessionSnapshot,
+  ): Map<ElementId, ConversionSessionItem> {
+    const allowed = new Set(snapshot.itemIds);
+    const current = this.conversionSessionQuery.previewByIds(snapshot.itemIds, {
+      asOf: snapshot.asOf,
+    });
+    return new Map(
+      current.items
+        .filter(
+          (item) =>
+            allowed.has(item.id) &&
+            snapshot.fingerprints.get(item.id) === conversionItemFingerprint(item),
+        )
+        .map((item) => [item.id, item] as const),
+    );
+  }
+
+  private requireCurrentConversionItem(
+    snapshot: ConversionSessionSnapshot,
+    current: ReadonlyMap<ElementId, ConversionSessionItem>,
+    id: ElementId,
+    context: string,
+  ): ConversionSessionItem {
+    const item = current.get(id);
+    const fingerprint = item ? conversionItemFingerprint(item) : null;
+    if (!item || snapshot.fingerprints.get(id) !== fingerprint) {
+      throw new Error(`DbService.${context}: conversion item is stale`);
+    }
+    return item;
   }
 
   /** The per-row queue ACT seam (T030), bound to the open database. */
@@ -3422,7 +3701,12 @@ export class DbService {
    * already validated against the contract schema (incl. the coarse Q&A/cloze
    * non-empty check) at the IPC boundary.
    */
-  createCard(request: CardsCreateRequest): CardsCreateResult {
+  createCard(
+    request: CardsCreateRequest,
+    options: {
+      readonly onWithin?: Parameters<CardService["createFromExtract"]>[0]["onWithin"];
+    } = {},
+  ): CardsCreateResult {
     const extractId = request.extractId as ElementId;
     const extract = this.repos.elements.findById(extractId);
     if (!extract || extract.deletedAt) {
@@ -3453,6 +3737,7 @@ export class DbService {
         : request.mediaRef === null
           ? { mediaRef: null }
           : {}),
+      ...(options.onWithin ? { onWithin: options.onWithin } : {}),
     });
     // T087 auto-embed the new card (post-commit, fire-and-forget, gated on the setting).
     this.autoEmbed(element.id);

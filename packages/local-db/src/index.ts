@@ -115,6 +115,17 @@ export {
   type CreateConceptInput,
 } from "./concept-repository";
 export {
+  type ConversionSessionAiGrounding,
+  type ConversionSessionDraftSummary,
+  type ConversionSessionItem,
+  type ConversionSessionPreview,
+  ConversionSessionQuery,
+  type ConversionSessionSkippedCandidate,
+  type ConversionSessionSkipReason,
+  DEFAULT_CONVERSION_SESSION_LIMIT,
+  MAX_CONVERSION_SESSION_LIMIT,
+} from "./conversion-session-query";
+export {
   type DailyWorkGraduationAckRequest,
   type DailyWorkGraduationAckResult,
   DailyWorkQuery,

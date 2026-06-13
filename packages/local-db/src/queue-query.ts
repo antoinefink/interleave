@@ -533,25 +533,49 @@ export class QueueQuery {
    * process that ritual through generic queue actions.
    */
   sessionPlanCandidates(
-    options: { asOf?: IsoTimestamp; filters?: QueueFilters; mode?: SessionMode } = {},
+    options: {
+      asOf?: IsoTimestamp;
+      filters?: QueueFilters;
+      mode?: SessionMode;
+      candidateLimit?: number;
+    } = {},
   ): QueueSessionPlanCandidateData {
-    return this.fullDueCandidates(options, { excludeWeeklyReview: true });
+    return this.fullDueCandidates(
+      options,
+      options.candidateLimit === undefined
+        ? { excludeWeeklyReview: true }
+        : { excludeWeeklyReview: true, attentionLimit: options.candidateLimit },
+    );
   }
 
   private fullDueCandidates(
     options: { asOf?: IsoTimestamp; filters?: QueueFilters; mode?: SessionMode } = {},
-    candidateOptions: { excludeWeeklyReview?: boolean } = {},
+    candidateOptions: { excludeWeeklyReview?: boolean; attentionLimit?: number } = {},
   ): QueueAutoPostponeCandidateData {
     const asOfIso = options.asOf ?? (new Date().toISOString() as IsoTimestamp);
     const asOfMs = Date.parse(asOfIso);
     const filters = options.filters ?? {};
     const mode = options.mode ?? "full";
-    const dueCardsFull = this.repos.queue.dueCardsWithState(asOfIso);
-    const dueAttention = this.repos.queue.dueAttentionItems(asOfIso);
+    const requestedTypes = filters.types;
+    const wantsCards = !requestedTypes || requestedTypes.includes("card");
+    const attentionTypes = requestedTypes ? requestedTypes.filter((type) => type !== "card") : [];
+    const wantsAttention = !requestedTypes || attentionTypes.length > 0;
+    const dueCardsFull = wantsCards ? this.repos.queue.dueCardsWithState(asOfIso) : [];
+    const dueAttention = wantsAttention
+      ? this.repos.queue.dueAttentionItems(
+          asOfIso,
+          candidateOptions.attentionLimit,
+          requestedTypes ? { types: attentionTypes } : {},
+        )
+      : [];
     const conceptMatch = filters.concept ? this.buildConceptMatcher(filters.concept) : null;
+    const candidateIds = [
+      ...dueCardsFull.map(({ element }) => element.id),
+      ...dueAttention.map((element) => element.id),
+    ];
     const batch: BatchContext = {
-      siblingGroups: this.repos.elements.liveSiblingGroupMap(),
-      conceptNames: this.repos.concepts.firstConceptNameMap(),
+      siblingGroups: wantsCards ? this.repos.elements.liveSiblingGroupMap() : new Map(),
+      conceptNames: this.repos.concepts.firstConceptNameMapForMembers(candidateIds),
     };
 
     let timeCostSummary = createEmptyQueueTimeCostSummary();

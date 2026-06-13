@@ -80,6 +80,29 @@ function installAppApi(overrides: Partial<AppApi> = {}): AppApi {
       vacation: vi.fn(async (request: unknown) => request),
       vacationApply: vi.fn(async (request: unknown) => request),
     },
+    conversion: {
+      sessionPreview: vi.fn(async (request?: unknown) => ({
+        sessionId: "session-1",
+        asOf: "2026-06-13T08:00:00.000Z",
+        expiresAt: "2026-06-13T08:15:00.000Z",
+        limit: request && typeof request === "object" ? (request as { limit?: number }).limit : 25,
+        candidateCount: 0,
+        items: [],
+        staleItemIds: [],
+      })),
+      prefetchDrafts: vi.fn(async (request: unknown) => ({
+        request,
+        queued: 1,
+        skipped: [],
+        alreadyDrafted: 0,
+      })),
+      createCard: vi.fn(async (request: unknown) => ({
+        request,
+        card: { id: "card-1" },
+        sourceLocationId: "loc-1",
+      })),
+      setFate: vi.fn(async (request: unknown) => ({ extract: request })),
+    },
     sources: {
       importManual: vi.fn(async (request: unknown) => request),
       dismissRetirementSuggestion: vi.fn(async (request: unknown) => request),
@@ -464,6 +487,37 @@ describe("renderer appApi wrapper", () => {
       mode: "review",
     });
 
+    await appApi.previewConversionSession({ limit: 10 });
+    expect(bridge.conversion.sessionPreview).toHaveBeenCalledWith({ limit: 10 });
+
+    await appApi.prefetchConversionDrafts({
+      sessionId: "session-1",
+      action: "suggest_qa",
+      consentedAt: "2026-06-13T08:00:00.000Z",
+    });
+    expect(bridge.conversion.prefetchDrafts).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      action: "suggest_qa",
+      consentedAt: "2026-06-13T08:00:00.000Z",
+    });
+
+    await appApi.createConversionCard({
+      sessionId: "session-1",
+      suggestionId: "suggestion-1",
+      extractId: "ex-1",
+      kind: "qa",
+      prompt: "Q?",
+      answer: "A.",
+    });
+    expect(bridge.conversion.createCard).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      suggestionId: "suggestion-1",
+      extractId: "ex-1",
+      kind: "qa",
+      prompt: "Q?",
+      answer: "A.",
+    });
+
     await appApi.dismissSourceRetirementSuggestion({
       sourceElementId: "src-1",
       signalHash: "hash-1",
@@ -511,6 +565,17 @@ describe("renderer appApi wrapper", () => {
 
     await appApi.setExtractFate({ id: "ex-1", fate: "reference" });
     expect(bridge.extracts.setFate).toHaveBeenCalledWith({ id: "ex-1", fate: "reference" });
+
+    await appApi.setConversionFate({
+      sessionId: "session-1",
+      id: "ex-1",
+      fate: "reference",
+    });
+    expect(bridge.conversion.setFate).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      id: "ex-1",
+      fate: "reference",
+    });
 
     await appApi.reactivateExtractFate({ id: "ex-1" });
     expect(bridge.extracts.reactivateFate).toHaveBeenCalledWith({ id: "ex-1" });

@@ -531,6 +531,15 @@ export function HomeScreen() {
             <Icon name="queue" size={14} />
             Open queue
           </button>
+          <button
+            type="button"
+            className="home-sessionbar__link"
+            data-testid="home-open-convert"
+            onClick={() => void navigate({ to: "/convert" })}
+          >
+            <Icon name="target" size={14} />
+            Convert statements
+          </button>
           {/* Gated on `hasAnalytics` (not just `> 0`): when the analytics read FAILS the
               due-card count is unknown, not a real zero, so the Review affordance hides as
               "unknown" rather than silently vanishing as if there were genuinely no cards —

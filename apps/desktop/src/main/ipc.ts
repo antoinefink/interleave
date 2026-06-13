@@ -51,6 +51,10 @@ import {
   ConceptsListRequestSchema,
   ConceptsMembersRequestSchema,
   ConceptsUnassignRequestSchema,
+  ConversionCreateCardRequestSchema,
+  ConversionPrefetchDraftsRequestSchema,
+  ConversionSessionPreviewRequestSchema,
+  ConversionSetFateRequestSchema,
   DailyWorkGraduationAckRequestSchema,
   DailyWorkSummaryRequestSchema,
   DailyWorkUndoAutoPostponeReceiptRequestSchema,
@@ -755,6 +759,27 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   // Download / warm the local AI model — flips `aiModelDownloaded`.
   ipcMain.handle(IPC_CHANNELS.aiDownloadModel, () => {
     return dbService.downloadAiModel();
+  });
+
+  // Batch conversion sessions (T120). Preview is read-only; prefetch enqueues AI
+  // draft jobs for a trusted session snapshot; create preflights conversion
+  // eligibility before delegating to the normal cards.create path.
+  ipcMain.handle(IPC_CHANNELS.conversionSessionPreview, (_event, rawRequest: unknown) => {
+    const request = ConversionSessionPreviewRequestSchema.parse(rawRequest ?? {});
+    return dbService.previewConversionSession(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.conversionPrefetchDrafts, (_event, rawRequest: unknown) => {
+    requireRunner();
+    const request = ConversionPrefetchDraftsRequestSchema.parse(rawRequest);
+    return dbService.prefetchConversionDrafts(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.conversionCreateCard, (_event, rawRequest: unknown) => {
+    const request = ConversionCreateCardRequestSchema.parse(rawRequest);
+    return dbService.createConversionCard(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.conversionSetFate, (_event, rawRequest: unknown) => {
+    const request = ConversionSetFateRequestSchema.parse(rawRequest);
+    return dbService.setConversionFate(request);
   });
 
   // Browser-capture pairing (T062). The TRUSTED desktop renderer reads the

@@ -47,6 +47,10 @@ import {
   ConceptsCreateRequestSchema,
   ConceptsMembersRequestSchema,
   ConceptsUnassignRequestSchema,
+  ConversionCreateCardRequestSchema,
+  ConversionPrefetchDraftsRequestSchema,
+  ConversionSessionPreviewRequestSchema,
+  ConversionSetFateRequestSchema,
   DailyWorkGraduationAckRequestSchema,
   DocumentBlockInputSchema,
   DocumentMarksAddRequestSchema,
@@ -238,6 +242,10 @@ describe("IPC channels", () => {
         "ai:dismiss",
         "ai:status",
         "ai:downloadModel",
+        "conversion:sessionPreview",
+        "conversion:prefetchDrafts",
+        "conversion:createCard",
+        "conversion:setFate",
         "capture:getPairing",
         "capture:regenerateToken",
         "capture:setEnabled",
@@ -1553,6 +1561,83 @@ describe("CardsCreateRequestSchema (T032)", () => {
     if (!result.success) {
       expect(result.error.issues.some((i) => i.path.includes("answer"))).toBe(true);
     }
+  });
+});
+
+describe("conversion.* schemas (T120)", () => {
+  it("accepts an omitted or bounded conversion session preview limit", () => {
+    expect(ConversionSessionPreviewRequestSchema.parse(undefined)).toEqual({});
+    expect(ConversionSessionPreviewRequestSchema.parse({ limit: 50 })).toEqual({ limit: 50 });
+    expect(
+      ConversionSessionPreviewRequestSchema.parse({ sessionId: "session-1", limit: 25 }),
+    ).toEqual({ sessionId: "session-1", limit: 25 });
+
+    expect(() => ConversionSessionPreviewRequestSchema.parse({ limit: 0 })).toThrow();
+    expect(() => ConversionSessionPreviewRequestSchema.parse({ limit: 101 })).toThrow();
+    expect(() => ConversionSessionPreviewRequestSchema.parse({ limit: 1.5 })).toThrow();
+  });
+
+  it("requires explicit consent and a card-draft action before prefetching AI drafts", () => {
+    const parsed = ConversionPrefetchDraftsRequestSchema.parse({
+      sessionId: "session-1",
+      action: "suggest_qa",
+      consentedAt: "2026-06-13T08:00:00.000Z",
+    });
+
+    expect(parsed.action).toBe("suggest_qa");
+    expect(() =>
+      ConversionPrefetchDraftsRequestSchema.parse({
+        sessionId: "session-1",
+        action: "summarize",
+        consentedAt: "2026-06-13T08:00:00.000Z",
+      }),
+    ).toThrow();
+    expect(() =>
+      ConversionPrefetchDraftsRequestSchema.parse({
+        sessionId: "session-1",
+        action: "suggest_qa",
+        consentedAt: "not-a-date",
+      }),
+    ).toThrow();
+  });
+
+  it("extends cards.create with a session id and optional consumed suggestion id", () => {
+    const parsed = ConversionCreateCardRequestSchema.parse({
+      sessionId: "session-1",
+      suggestionId: "suggestion-1",
+      extractId: "el_1",
+      kind: "qa",
+      prompt: "Q?",
+      answer: "A.",
+    });
+
+    expect(parsed.sessionId).toBe("session-1");
+    expect(parsed.suggestionId).toBe("suggestion-1");
+    expect(() =>
+      ConversionCreateCardRequestSchema.parse({
+        extractId: "el_1",
+        kind: "qa",
+        prompt: "Q?",
+        answer: "A.",
+      }),
+    ).toThrow();
+  });
+
+  it("extends extracts.setFate with a session id and rejects synthesized fate", () => {
+    const parsed = ConversionSetFateRequestSchema.parse({
+      sessionId: "session-1",
+      id: "el_1",
+      fate: "reference",
+    });
+
+    expect(parsed).toEqual({ sessionId: "session-1", id: "el_1", fate: "reference" });
+    expect(() =>
+      ConversionSetFateRequestSchema.parse({
+        sessionId: "session-1",
+        id: "el_1",
+        fate: "synthesized",
+      }),
+    ).toThrow();
   });
 });
 

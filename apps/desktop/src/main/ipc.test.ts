@@ -90,6 +90,27 @@ function fakeDbService() {
     applyCatchUp: vi.fn(),
     previewVacation: vi.fn(),
     applyVacation: vi.fn(),
+    previewConversionSession: vi.fn((request?: unknown) => ({
+      sessionId: "session-1",
+      asOf: "2026-06-13T08:00:00.000Z",
+      expiresAt: "2026-06-13T08:15:00.000Z",
+      limit:
+        request &&
+        typeof request === "object" &&
+        typeof (request as { limit?: unknown }).limit === "number"
+          ? (request as { limit: number }).limit
+          : 25,
+      candidateCount: 0,
+      items: [],
+      staleItemIds: [],
+    })),
+    prefetchConversionDrafts: vi.fn(() => ({ queued: 1, skipped: [], alreadyDrafted: 0 })),
+    createConversionCard: vi.fn(() => ({
+      card: { id: "card-1" },
+      sourceLocationId: "loc-1",
+      consumedSuggestionId: "suggestion-1",
+    })),
+    setConversionFate: vi.fn((request?: unknown) => ({ extract: request })),
     setExtractFate: vi.fn(),
     reactivateExtractFate: vi.fn(),
     dismissRetirementSuggestion: vi.fn(() => ({ dismissed: true, stale: false, suggestion: null })),
@@ -262,6 +283,91 @@ describe("registerIpcHandlers", () => {
 
     expect(() => handler?.({}, { targetMinutes: -1 })).toThrow();
     expect(db.previewSessionPlan).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates and forwards conversion.sessionPreview payloads with the default request", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+    const handler = electron.handlers.get(IPC_CHANNELS.conversionSessionPreview);
+
+    expect(handler?.({}, undefined)).toMatchObject({
+      sessionId: "session-1",
+      limit: 25,
+      items: [],
+    });
+    expect(db.previewConversionSession).toHaveBeenCalledWith({});
+
+    expect(handler?.({}, { limit: 50 })).toMatchObject({ limit: 50 });
+    expect(db.previewConversionSession).toHaveBeenLastCalledWith({ limit: 50 });
+    expect(() => handler?.({}, { limit: 101 })).toThrow();
+  });
+
+  it("validates and forwards conversion.prefetchDrafts only when a runner is available", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never, { runner: { observe: vi.fn(() => vi.fn()) } } as never);
+    const handler = electron.handlers.get(IPC_CHANNELS.conversionPrefetchDrafts);
+    const request = {
+      sessionId: "session-1",
+      action: "suggest_qa",
+      consentedAt: "2026-06-13T08:00:00.000Z",
+    };
+
+    expect(handler?.({}, request)).toEqual({ queued: 1, skipped: [], alreadyDrafted: 0 });
+    expect(db.prefetchConversionDrafts).toHaveBeenCalledWith(request);
+    expect(() => handler?.({}, { ...request, action: "summarize" })).toThrow();
+    expect(db.prefetchConversionDrafts).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects conversion.prefetchDrafts before the DB service when no runner is registered", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+    const handler = electron.handlers.get(IPC_CHANNELS.conversionPrefetchDrafts);
+
+    expect(() =>
+      handler?.(
+        {},
+        {
+          sessionId: "session-1",
+          action: "suggest_qa",
+          consentedAt: "2026-06-13T08:00:00.000Z",
+        },
+      ),
+    ).toThrow("background runner");
+    expect(db.prefetchConversionDrafts).not.toHaveBeenCalled();
+  });
+
+  it("validates and forwards conversion.createCard payloads", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+    const handler = electron.handlers.get(IPC_CHANNELS.conversionCreateCard);
+    const request = {
+      sessionId: "session-1",
+      suggestionId: "suggestion-1",
+      extractId: "ex-1",
+      kind: "qa",
+      prompt: "Q?",
+      answer: "A.",
+    };
+
+    expect(handler?.({}, request)).toMatchObject({
+      card: { id: "card-1" },
+      consumedSuggestionId: "suggestion-1",
+    });
+    expect(db.createConversionCard).toHaveBeenCalledWith(request);
+    expect(() => handler?.({}, { ...request, sessionId: "" })).toThrow();
+    expect(db.createConversionCard).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates and forwards conversion.setFate payloads through the frozen session", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+    const handler = electron.handlers.get(IPC_CHANNELS.conversionSetFate);
+    const request = { sessionId: "session-1", id: "ex-1", fate: "reference" };
+
+    expect(handler?.({}, request)).toEqual({ extract: request });
+    expect(db.setConversionFate).toHaveBeenCalledWith(request);
+    expect(() => handler?.({}, { ...request, fate: "synthesized" })).toThrow();
+    expect(db.setConversionFate).toHaveBeenCalledTimes(1);
   });
 
   describe("lineage-aware delete IPC boundary (T135)", () => {

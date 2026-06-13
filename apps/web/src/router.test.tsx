@@ -12,6 +12,7 @@ describe("application router", () => {
       "/analytics/sources",
       "/card/$id",
       "/concepts",
+      "/convert",
       "/extract/$id",
       "/inbox",
       "/library",

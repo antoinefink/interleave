@@ -120,6 +120,14 @@ export interface CreateCardFromExtractInput {
    * graded; this just makes it reviewable rather than parked forever un-due.
    */
   readonly asOf?: IsoTimestamp;
+  /**
+   * Optional caller hook run INSIDE the same card-creation transaction. Conversion
+   * uses this to consume a copied AI suggestion atomically with the card mint.
+   */
+  readonly onWithin?: (
+    tx: TransactionClient,
+    minted: { readonly cardElementId: ElementId },
+  ) => void;
 }
 
 /** The authored card element + its `cards` row + the sibling group it joined. */
@@ -290,6 +298,8 @@ export class CardService {
       if (input.kind === "cloze" && cloze != null) {
         this.seedClozeBodyWithin(tx, created.element.id, cloze);
       }
+
+      input.onWithin?.(tx, { cardElementId: created.element.id });
 
       return created;
     });

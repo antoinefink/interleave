@@ -1004,6 +1004,15 @@ export function QueueScreen() {
             <Icon name={primaryIcon} size={14} />
             {primaryLabel}
           </button>
+          <button
+            type="button"
+            className="sessionbar__start sessionbar__start--secondary"
+            data-testid="queue-open-convert"
+            onClick={() => void navigate({ to: "/convert" })}
+          >
+            <Icon name="target" size={14} />
+            Convert statements
+          </button>
           <span className="sessionbar__note">{sessionNote}</span>
         </div>
 

@@ -85,7 +85,8 @@ small floor of extract/statement work per day — card production never starves 
 # T120 — Batch conversion sessions
 
 - **Milestone:** M25 — Extract-pipeline flow control
-- **Status:** `[ ]` not started
+- **Status:** `[x]` complete
+- **Commit:** `this commit`
 - **Depends on:** T024, T032, T093
 - **Roadmap line:** a session view gathers card-ready atomic statements across sources for
   keyboard-first batch card authoring, with optional AI pre-drafts (existing `ai_suggestions`
@@ -112,17 +113,17 @@ approve/edit/skip with the keyboard, optionally pre-drafted by AI.
 
 ## Deliverables
 
-- [ ] Session source: a read model gathering due + card-ready atomic statements (and optionally
+- [x] Session source: a read model gathering due + card-ready atomic statements (and optionally
       stagnant clean extracts) across sources, ordered by priority.
-- [ ] Conversion surface: one statement at a time with source context; keyboard-first
+- [x] Conversion surface: one statement at a time with source context; keyboard-first
       create-Q&A / create-cloze / skip / honorable-fate (T104 verbs if landed); quality checks
       inline; each creation transactional + op-logged.
-- [ ] Optional AI pre-drafting: a per-session opt-in that enqueues draft generation (runner `ai`
+- [x] Optional AI pre-drafting: a per-session opt-in that enqueues draft generation (runner `ai`
       job → `ai_suggestions`) for the session's items; UI shows approve/edit/dismiss on arrival;
       a batch "N drafts awaiting review" entry point.
-- [ ] Processing actions update attention schedules exactly as the one-at-a-time path does (no
+- [x] Processing actions update attention schedules exactly as the one-at-a-time path does (no
       bypass).
-- [ ] Tests: unit (session gathering, draft linkage); e2e — run a session over a fixture
+- [x] Tests: unit (session gathering, draft linkage); e2e — run a session over a fixture
       backlog, author two cards (one from an AI draft), lineage intact, restart-safe.
 
 ## Done when
@@ -136,6 +137,24 @@ approve/edit/skip with the keyboard, optionally pre-drafted by AI.
 
 - The drafts-only invariant is load-bearing for trust in the whole AI surface — test the
   negative (an unapproved draft never gains a review state) explicitly.
+- Completion notes: T120 adds a trusted `ConversionSessionQuery` over due `atomic_statement`
+  extracts, reusing `QueueQuery.sessionPlanCandidates` so priority order, due semantics, and
+  de-clumping stay consistent with the daily queue. The first version intentionally excludes
+  stagnant clean extracts; those remain a follow-on policy choice because clean extracts are not
+  reliably card-ready. The Electron main process freezes a short-lived session snapshot, validates
+  every create/prefetch against live state, and keeps all card creation on the existing
+  transactional `CardService` path. AI pre-drafting is explicit per session, queues only existing
+  `ai` jobs, stores output in `ai_suggestions`, and never schedules a card unless the user edits
+  or approves through the conversion builder. The `/convert` renderer surface is reachable from
+  Home and Queue, supports keyboard-first Q&A/cloze authoring, live quality warnings, source
+  context, draft prefill, skip, and existing honorable fate actions through typed IPC.
+- Verification: `pnpm lint`; `pnpm typecheck`; `pnpm test`;
+  `pnpm e2e tests/electron/conversion-session.spec.ts`.
+- Learning captured in
+  [`docs/solutions/architecture-patterns/frozen-conversion-session-revalidation.md`](../solutions/architecture-patterns/frozen-conversion-session-revalidation.md).
+- Downstream notes: T121 can link stale extract pressure to this conversion session as the
+  "drain now" alternative before demotion. T122 can send atomic-born extracts directly into the
+  same session source once the shape heuristic lands.
 
 ---
 

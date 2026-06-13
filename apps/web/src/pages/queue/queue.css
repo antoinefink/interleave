@@ -251,6 +251,11 @@
 .sessionbar__start:hover {
   opacity: 0.92;
 }
+.sessionbar__start--secondary {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
 .sessionbar__note {
   color: var(--text-3);
   font-size: var(--t-sm);

@@ -296,6 +296,12 @@ A card that has left drafting and participates in active recall review.
 
 The authoring surface that turns selected source or extract material into a draft Q&A or cloze card while keeping recall preview, priority, scheduling, and quality feedback in one flow.
 
+### Conversion session
+
+A short-lived batch authoring flow that presents a frozen ordered set of due atomic statements for card creation while revalidating each item against current source lineage before any durable mutation.
+
+The session snapshot stabilizes navigation, not authorization: card creation, AI draft prefetch, and fate changes must still prove the item is live, grounded, and unchanged at the desktop service boundary.
+
 ### Card quality check
 
 A live guardrail in the card builder that evaluates whether a draft card is blocked, advisory, or ready without changing card creation semantics.

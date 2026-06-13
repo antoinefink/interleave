@@ -85,6 +85,50 @@ describe("preload bridge", () => {
       id: "ex-1",
     });
 
+    await api().conversion.sessionPreview({ limit: 10 });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.conversionSessionPreview, {
+      limit: 10,
+    });
+
+    await api().conversion.prefetchDrafts({
+      sessionId: "session-1",
+      action: "suggest_qa",
+      consentedAt: "2026-06-13T08:00:00.000Z",
+    });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.conversionPrefetchDrafts, {
+      sessionId: "session-1",
+      action: "suggest_qa",
+      consentedAt: "2026-06-13T08:00:00.000Z",
+    });
+
+    await api().conversion.createCard({
+      sessionId: "session-1",
+      suggestionId: "suggestion-1",
+      extractId: "ex-1",
+      kind: "qa",
+      prompt: "Q?",
+      answer: "A.",
+    });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.conversionCreateCard, {
+      sessionId: "session-1",
+      suggestionId: "suggestion-1",
+      extractId: "ex-1",
+      kind: "qa",
+      prompt: "Q?",
+      answer: "A.",
+    });
+
+    await api().conversion.setFate({
+      sessionId: "session-1",
+      id: "ex-1",
+      fate: "reference",
+    });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.conversionSetFate, {
+      sessionId: "session-1",
+      id: "ex-1",
+      fate: "reference",
+    });
+
     await api().backups.list();
     expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.backupsList);
 
