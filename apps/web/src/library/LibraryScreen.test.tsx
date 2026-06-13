@@ -278,6 +278,12 @@ beforeEach(() => {
     embedded: 0,
     total: 0,
     modelId: "",
+    modelState: "fallback",
+    indexHealth: "degraded",
+    coverageRatio: 0,
+    failedCount: 0,
+    lastError: null,
+    etaSeconds: null,
   });
   h.semanticSearch.mockResolvedValue({
     results: [],
@@ -493,6 +499,12 @@ describe("LibraryScreen", () => {
       embedded: 1,
       total: 3,
       modelId: DEFAULT_EMBEDDING_MODEL_ID,
+      modelState: "ready",
+      indexHealth: "stale",
+      coverageRatio: 1 / 3,
+      failedCount: 0,
+      lastError: null,
+      etaSeconds: null,
     });
     render(<LibraryScreen />);
 
@@ -515,6 +527,12 @@ describe("LibraryScreen", () => {
       embedded: 3,
       total: 3,
       modelId: DEFAULT_EMBEDDING_MODEL_ID,
+      modelState: "ready",
+      indexHealth: "healthy",
+      coverageRatio: 1,
+      failedCount: 0,
+      lastError: null,
+      etaSeconds: null,
     });
     render(<LibraryScreen />);
     // The no-query prompt is shown, but with the index complete there is no button.
@@ -619,6 +637,12 @@ describe("LibraryScreen", () => {
       embedded: 2,
       total: 2,
       modelId: "test-model",
+      modelState: "ready",
+      indexHealth: "healthy",
+      coverageRatio: 1,
+      failedCount: 0,
+      lastError: null,
+      etaSeconds: null,
     });
     h.semanticSearch.mockResolvedValue({
       results: [
@@ -655,6 +679,72 @@ describe("LibraryScreen", () => {
     ).toBeTruthy();
   });
 
+  it("shows a reassuring 'Indexing…' hint while the index is actively building (U6)", async () => {
+    h.semanticStatus.mockResolvedValue({
+      enabled: true,
+      vecAvailable: true,
+      modelDownloaded: true,
+      embedded: 2,
+      total: 10,
+      modelId: "test-model",
+      modelState: "ready",
+      indexHealth: "building",
+      coverageRatio: 0.2,
+      failedCount: 0,
+      lastError: null,
+      etaSeconds: null,
+    });
+    h.semanticSearch.mockResolvedValue({
+      results: [{ ...h.sourceHit, semantic: true, vecDistance: 0.12 }],
+      mode: "semantic",
+      counts: {
+        byType: { source: 1, extract: 0, card: 0 },
+        byConcept: {},
+        byPriority: { A: 1, B: 0, C: 0, D: 0 },
+      },
+    });
+    render(<LibraryScreen />);
+    await waitFor(() => expect(h.semanticStatus).toHaveBeenCalled());
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+    expect(await screen.findByTestId("library-semantic-building")).toHaveTextContent(/indexing/i);
+  });
+
+  it("shows an honest 'partial coverage' hint when the index is stale and idle (U6)", async () => {
+    h.semanticStatus.mockResolvedValue({
+      enabled: true,
+      vecAvailable: true,
+      modelDownloaded: true,
+      embedded: 1,
+      total: 10,
+      modelId: "test-model",
+      modelState: "ready",
+      indexHealth: "stale",
+      coverageRatio: 0.1,
+      failedCount: 0,
+      lastError: null,
+      etaSeconds: null,
+    });
+    h.semanticSearch.mockResolvedValue({
+      results: [{ ...h.sourceHit, semantic: true, vecDistance: 0.12 }],
+      mode: "semantic",
+      counts: {
+        byType: { source: 1, extract: 0, card: 0 },
+        byConcept: {},
+        byPriority: { A: 1, B: 0, C: 0, D: 0 },
+      },
+    });
+    render(<LibraryScreen />);
+    await waitFor(() => expect(h.semanticStatus).toHaveBeenCalled());
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+    expect(await screen.findByTestId("library-semantic-partial")).toHaveTextContent(
+      /partial coverage/i,
+    );
+  });
+
   it("keeps semantic byType counts populated when a type filter is active", async () => {
     h.semanticStatus.mockResolvedValue({
       enabled: true,
@@ -663,6 +753,12 @@ describe("LibraryScreen", () => {
       embedded: 2,
       total: 2,
       modelId: "test-model",
+      modelState: "ready",
+      indexHealth: "healthy",
+      coverageRatio: 1,
+      failedCount: 0,
+      lastError: null,
+      etaSeconds: null,
     });
     h.semanticSearch.mockResolvedValue({
       results: [{ ...h.sourceHit, semantic: true, vecDistance: 0.12 }],

@@ -17,6 +17,11 @@ const h = vi.hoisted(() => ({
   regenerateCaptureToken: vi.fn(),
   aiStatus: vi.fn(),
   downloadAiModel: vi.fn(),
+  semanticStatus: vi.fn(),
+  semanticReindex: vi.fn(),
+  semanticRetryFailed: vi.fn(),
+  semanticDownloadModel: vi.fn(),
+  subscribeJobs: vi.fn(),
   setRetentionBandEnabled: vi.fn(),
   setRetentionBand: vi.fn(),
   health: vi.fn(),
@@ -53,6 +58,11 @@ vi.mock("../lib/appApi", async () => {
       regenerateCaptureToken: h.regenerateCaptureToken,
       aiStatus: h.aiStatus,
       downloadAiModel: h.downloadAiModel,
+      semanticStatus: h.semanticStatus,
+      semanticReindex: h.semanticReindex,
+      semanticRetryFailed: h.semanticRetryFailed,
+      semanticDownloadModel: h.semanticDownloadModel,
+      subscribeJobs: h.subscribeJobs,
       setRetentionBandEnabled: h.setRetentionBandEnabled,
       setRetentionBand: h.setRetentionBand,
       health: h.health,
@@ -125,6 +135,24 @@ beforeEach(() => {
     if (typeof mock === "function" && "mockReset" in mock) mock.mockReset();
   }
   h.getAppSettings.mockResolvedValue({ settings });
+  h.semanticStatus.mockResolvedValue({
+    enabled: true,
+    vecAvailable: true,
+    modelDownloaded: true,
+    embedded: 10,
+    total: 10,
+    modelId: "onnx-community/embeddinggemma-300m-ONNX",
+    modelState: "ready",
+    indexHealth: "healthy",
+    coverageRatio: 1,
+    failedCount: 0,
+    lastError: null,
+    etaSeconds: null,
+  });
+  h.subscribeJobs.mockReturnValue(() => {});
+  h.semanticReindex.mockResolvedValue({ enqueued: 0 });
+  h.semanticRetryFailed.mockResolvedValue({ retried: 0 });
+  h.semanticDownloadModel.mockResolvedValue({ downloaded: true });
   h.updateAppSettings.mockImplementation(({ patch }) => ({
     settings: { ...settings, ...patch },
   }));
@@ -842,5 +870,147 @@ describe("System section", () => {
 
     expect(await findByTestId("desktop-status-error")).toHaveTextContent("db unavailable");
     expect(getByTestId("health-status")).toHaveTextContent("Unavailable");
+  });
+});
+
+describe("Settings — Search Intelligence panel (U5)", () => {
+  it("renders the index-health headline + coverage from semanticStatus", async () => {
+    const { findByTestId } = render(<Settings />);
+    expect(await findByTestId("semantic-index-health")).toHaveTextContent("Search index ready");
+    expect(await findByTestId("semantic-progress")).toHaveTextContent("10 of 10");
+    expect(await findByTestId("semantic-model-ready")).toHaveTextContent("Model ready");
+  });
+
+  it("shows a fallback (degraded) state with human copy — never a raw enum token", async () => {
+    h.semanticStatus.mockResolvedValue({
+      enabled: true,
+      vecAvailable: true,
+      modelDownloaded: false,
+      embedded: 5,
+      total: 10,
+      modelId: "local:embeddinggemma-hash-768",
+      modelState: "fallback",
+      indexHealth: "degraded",
+      coverageRatio: 0.5,
+      failedCount: 0,
+      lastError: null,
+      etaSeconds: null,
+    });
+    const { findByTestId } = render(<Settings />);
+    const chip = await findByTestId("semantic-model-fallback");
+    expect(chip).toHaveTextContent(/keyword fallback/i);
+    // Human sentence, not the bare enum token.
+    expect(chip.textContent?.trim()).not.toBe("fallback");
+    expect(await findByTestId("semantic-recheck-model")).toBeInTheDocument();
+  });
+
+  it("surfaces failures in plain language and retries on click", async () => {
+    h.semanticStatus.mockResolvedValue({
+      enabled: true,
+      vecAvailable: true,
+      modelDownloaded: true,
+      embedded: 8,
+      total: 10,
+      modelId: "onnx-community/embeddinggemma-300m-ONNX",
+      modelState: "ready",
+      indexHealth: "stale",
+      coverageRatio: 0.8,
+      failedCount: 2,
+      lastError: "OVERSIZED: element text too large",
+      etaSeconds: null,
+    });
+    const { findByTestId, getByText } = render(<Settings />);
+    expect(await findByTestId("semantic-failed")).toHaveTextContent("2 failed");
+    // The raw "OVERSIZED: …" string is translated to plain language, never shown verbatim.
+    expect(getByText("An item was too large to index.")).toBeInTheDocument();
+    fireEvent.click(await findByTestId("semantic-retry-failed"));
+    await waitFor(() => expect(h.semanticRetryFailed).toHaveBeenCalledTimes(1));
+  });
+
+  it("rebuild calls semanticReindex", async () => {
+    const { findByTestId } = render(<Settings />);
+    fireEvent.click(await findByTestId("semantic-reindex"));
+    await waitFor(() => expect(h.semanticReindex).toHaveBeenCalledWith({ onlyMissing: false }));
+  });
+
+  it("renders a neutral empty state for an empty vault (no false 'partial coverage')", async () => {
+    h.semanticStatus.mockResolvedValue({
+      enabled: true,
+      vecAvailable: true,
+      modelDownloaded: true,
+      embedded: 0,
+      total: 0,
+      modelId: "onnx-community/embeddinggemma-300m-ONNX",
+      modelState: "ready",
+      indexHealth: "healthy",
+      coverageRatio: 0,
+      failedCount: 0,
+      lastError: null,
+      etaSeconds: null,
+    });
+    const { findByTestId, queryByTestId } = render(<Settings />);
+    expect(await findByTestId("semantic-empty")).toHaveTextContent("Nothing to index yet");
+    expect(queryByTestId("semantic-progress")).toBeNull();
+  });
+
+  it("collapses to an unavailable message when the vector engine is down", async () => {
+    h.semanticStatus.mockResolvedValue({
+      enabled: true,
+      vecAvailable: false,
+      modelDownloaded: false,
+      embedded: 0,
+      total: 10,
+      modelId: "",
+      modelState: "fallback",
+      indexHealth: "degraded",
+      coverageRatio: 0,
+      failedCount: 0,
+      lastError: null,
+      etaSeconds: null,
+    });
+    const { findByTestId, queryByTestId } = render(<Settings />);
+    expect(await findByTestId("semantic-unavailable")).toBeInTheDocument();
+    expect(queryByTestId("semantic-reindex")).toBeNull();
+  });
+});
+
+describe("Settings — Search Intelligence building/loading states (U5)", () => {
+  it("shows a building headline + ETA while indexing", async () => {
+    h.semanticStatus.mockResolvedValue({
+      enabled: true,
+      vecAvailable: true,
+      modelDownloaded: true,
+      embedded: 4,
+      total: 10,
+      modelId: "onnx-community/embeddinggemma-300m-ONNX",
+      modelState: "ready",
+      indexHealth: "building",
+      coverageRatio: 0.4,
+      failedCount: 0,
+      lastError: null,
+      etaSeconds: 42,
+    });
+    const { findByTestId, getByText } = render(<Settings />);
+    expect(await findByTestId("semantic-index-health")).toHaveTextContent("Building search index…");
+    expect(getByText("about 42s remaining")).toBeInTheDocument();
+  });
+
+  it("shows a 'Loading model…' chip (not a raw token) while the model loads", async () => {
+    h.semanticStatus.mockResolvedValue({
+      enabled: true,
+      vecAvailable: true,
+      modelDownloaded: false,
+      embedded: 0,
+      total: 5,
+      modelId: "onnx-community/embeddinggemma-300m-ONNX",
+      modelState: "loading",
+      indexHealth: "building",
+      coverageRatio: 0,
+      failedCount: 0,
+      lastError: null,
+      etaSeconds: null,
+    });
+    const { findByTestId } = render(<Settings />);
+    expect(await findByTestId("semantic-model-loading")).toHaveTextContent("Loading model…");
   });
 });

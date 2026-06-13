@@ -92,6 +92,7 @@ test("the semantic.* bridge surface exists (no raw SQL)", async () => {
         search?: unknown;
         status?: unknown;
         reindex?: unknown;
+        retryFailed?: unknown;
         downloadModel?: unknown;
       };
       db?: { query?: unknown };
@@ -100,6 +101,7 @@ test("the semantic.* bridge surface exists (no raw SQL)", async () => {
       hasSearch: typeof api?.semantic?.search === "function",
       hasStatus: typeof api?.semantic?.status === "function",
       hasReindex: typeof api?.semantic?.reindex === "function",
+      hasRetryFailed: typeof api?.semantic?.retryFailed === "function",
       hasDownloadModel: typeof api?.semantic?.downloadModel === "function",
       hasRawQuery: typeof api?.db?.query === "function",
     };
@@ -107,6 +109,7 @@ test("the semantic.* bridge surface exists (no raw SQL)", async () => {
   expect(surface.hasSearch).toBe(true);
   expect(surface.hasStatus).toBe(true);
   expect(surface.hasReindex).toBe(true);
+  expect(surface.hasRetryFailed).toBe(true);
   expect(surface.hasDownloadModel).toBe(true);
   expect(surface.hasRawQuery).toBe(false);
 

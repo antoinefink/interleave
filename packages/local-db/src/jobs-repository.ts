@@ -56,6 +56,14 @@ export interface JobListFilter {
 /** Default retry cap for an enqueued job (start + up to 2 retries). */
 export const DEFAULT_MAX_ATTEMPTS = 3;
 
+/**
+ * Cap on how many element ids {@link JobsRepository.activeOrFailedEmbedElementIds}
+ * returns, so the downstream `NOT IN (...)` exclusion stays well under SQLite's
+ * bound-parameter limit even under a pathological mass-failure. Safe to cap: a few
+ * uncovered elements just get re-enqueued (idempotent UPSERT), not corrupted.
+ */
+const EXCLUDE_IDS_CAP = 500;
+
 /** Clamp a 0–1 ratio to an integer percent 0–100 for storage. */
 function ratioToPercent(ratio: number): number {
   if (!Number.isFinite(ratio)) return 0;
@@ -298,6 +306,97 @@ export class JobsRepository {
       .orderBy(sql`${jobs.createdAt} DESC`);
     const rows = filter.limit != null ? base.limit(filter.limit).all() : base.all();
     return rows.map(rowToJob);
+  }
+
+  /**
+   * Aggregate `embed` job state for the semantic status surface (U2). Returns how
+   * many embed jobs are `queued`/`running` (the index is "building") and `failed`
+   * (retries exhausted, surfaced + retryable), plus the most recent failed embed's
+   * raw error text (the UI renders it in plain language). Pure read; no op-log.
+   */
+  embedJobStats(): {
+    queued: number;
+    running: number;
+    failed: number;
+    lastError: string | null;
+  } {
+    const counts = this.db.get<{ queued: number; running: number; failed: number }>(sql`
+      SELECT
+        COALESCE(SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END), 0) AS queued,
+        COALESCE(SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END), 0) AS running,
+        COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+      FROM jobs
+      WHERE type = 'embed'
+    `);
+    const errRow = this.db.get<{ error: string | null }>(sql`
+      SELECT error FROM jobs
+      WHERE type = 'embed' AND status = 'failed' AND error IS NOT NULL
+      ORDER BY finished_at DESC
+      LIMIT 1
+    `);
+    return {
+      queued: counts?.queued ?? 0,
+      running: counts?.running ?? 0,
+      failed: counts?.failed ?? 0,
+      lastError: errRow?.error ?? null,
+    };
+  }
+
+  /**
+   * Element ids that already have an in-flight (`queued`/`running`) OR `failed`
+   * `embed` index job (U4). Reindex excludes these so it never (a) double-queues an
+   * element whose embed job is still draining — closing the gap where a manual
+   * "Rebuild"/"Build index" runs concurrently with a supervisor batch — nor
+   * (b) re-enqueues a deterministically-failing element every catch-up pass (it stays
+   * failed + visible until the user explicitly retries, which clears the failed rows).
+   * Query jobs (no `elementId`) contribute nothing. Capped at {@link EXCLUDE_IDS_CAP}
+   * to stay under SQLite's bound-parameter limit when the set is pathologically large
+   * — the cap is safe because re-enqueue is idempotent (UPSERT by element).
+   */
+  activeOrFailedEmbedElementIds(): string[] {
+    const rows = this.db.all<{ element_id: string | null }>(sql`
+      SELECT DISTINCT json_extract(payload, '$.elementId') AS element_id FROM jobs
+      WHERE type = 'embed'
+        AND status IN ('queued', 'running', 'failed')
+        AND json_extract(payload, '$.elementId') IS NOT NULL
+      LIMIT ${EXCLUDE_IDS_CAP}
+    `);
+    const ids: string[] = [];
+    for (const row of rows) {
+      if (typeof row.element_id === "string" && row.element_id.length > 0) {
+        ids.push(row.element_id);
+      }
+    }
+    return ids;
+  }
+
+  /**
+   * Clear all FAILED `embed` jobs and return the distinct element ids they targeted
+   * (U4 — the "retry failed" path). A failed row has already spent its attempt budget,
+   * so re-queueing the SAME row would re-fail immediately; the caller instead enqueues
+   * FRESH embed jobs (full budget) for the returned element ids. Deleting the stale
+   * rows keeps `failedCount` honest after the retry. Jobs are infra (no op-log).
+   */
+  clearFailedEmbedJobs(): string[] {
+    return this.db.transaction((tx) => {
+      const rows = tx
+        .select()
+        .from(jobs)
+        .where(and(eq(jobs.type, "embed"), eq(jobs.status, "failed")))
+        .all();
+      const ids = new Set<string>();
+      for (const row of rows) {
+        const payload = parseJson(row.payload);
+        if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+          const id = (payload as Record<string, unknown>).elementId;
+          if (typeof id === "string" && id.length > 0) ids.add(id);
+        }
+      }
+      tx.delete(jobs)
+        .where(and(eq(jobs.type, "embed"), eq(jobs.status, "failed")))
+        .run();
+      return [...ids];
+    });
   }
 
   /**

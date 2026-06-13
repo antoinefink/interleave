@@ -17,7 +17,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import type { ElementId } from "@interleave/core";
 import type { NativeImage } from "electron";
-import { app, BrowserWindow, nativeImage } from "electron";
+import { app, BrowserWindow, nativeImage, powerMonitor } from "electron";
 import { IPC_CHANNELS } from "../shared/channels";
 import {
   registerArticleImageProtocol,
@@ -28,6 +28,7 @@ import { CaptureController } from "./capture-controller";
 import { setCaptureEnabled } from "./capture-pairing";
 import type { CaptureOpenSourceInput, CaptureOpenSourceResult } from "./capture-server";
 import { DbService } from "./db-service";
+import { EmbeddingMaintenanceService } from "./embedding-maintenance-service";
 import { registerIpcHandlers } from "./ipc";
 import { createJobApplyHandlers } from "./job-apply-handlers";
 import { JobRunner } from "./job-runner";
@@ -53,6 +54,7 @@ let captureController: CaptureController | null = null;
 let jobRunner: JobRunner | null = null;
 /** The main-side rolling backup scheduler, held for the will-quit stop. */
 let automaticBackupService: AutomaticBackupService | null = null;
+let embeddingMaintenanceService: EmbeddingMaintenanceService | null = null;
 
 /** The compiled-main directory (preload sits alongside the entry). */
 const distDir = __dirname;
@@ -371,12 +373,53 @@ function bootstrap(): void {
   dbService.setRunner(jobRunner);
   jobRunner.start();
 
+  // 3b-bis) Self-healing semantic index supervisor (U3). A main-process lifecycle
+  // service (mirroring AutomaticBackupService): after launch it auto-indexes any
+  // unembedded elements once the real model is ready, and scrubs orphan vectors on a
+  // poll. Gated by env for E2E determinism; the startup delay is overridable so an
+  // E2E can opt into a fast triage. Registered in the restore/reset drain path + the
+  // will-quit teardown below so it never writes to a store being swapped or closed.
+  if (process.env.INTERLEAVE_DISABLE_EMBEDDING_MAINTENANCE !== "1") {
+    const startupMs = Number.parseInt(
+      process.env.INTERLEAVE_EMBEDDING_MAINTENANCE_STARTUP_MS ?? "",
+      10,
+    );
+    embeddingMaintenanceService = new EmbeddingMaintenanceService(
+      {
+        isAvailable: () => dbService.embeddingService.available,
+        probeModelState: () => dbService.embeddingService.probeModelState(),
+        reindex: () => dbService.semanticReindex({ onlyMissing: false }),
+        pruneOrphans: () => dbService.repos.embeddings.pruneOrphanVectors(),
+        stats: () => {
+          const s = dbService.semanticStatus();
+          return { embedded: s.embedded, total: s.total };
+        },
+        embedJobStats: () => {
+          const j = dbService.repos.jobs.embedJobStats();
+          return { queued: j.queued, running: j.running };
+        },
+        isReplacingLocalData: () => dbService.localDataRestartRequired,
+        isOnBattery: () => {
+          try {
+            return powerMonitor.onBatteryPower === true;
+          } catch {
+            return false;
+          }
+        },
+        log: (message) => console.warn(message),
+      },
+      Number.isFinite(startupMs) && startupMs >= 0 ? { startupDelayMs: startupMs } : {},
+    );
+    embeddingMaintenanceService.start();
+  }
+
   disposeIpc = registerIpcHandlers(dbService, {
     paths,
     migrationsDir,
     nativeBinding,
     captureController,
     runner: jobRunner,
+    embeddingMaintenance: embeddingMaintenanceService ?? undefined,
   });
 
   // 3c) Automatic local rolling backups. This is a main-process lifecycle service:
@@ -471,6 +514,9 @@ if (!gotLock) {
     // Stop the loopback capture server (T062) before closing the DB. Fire-and-
     // forget the async close — the process is exiting and the socket is local.
     void captureController?.stop();
+    // Stop the semantic index supervisor (U3) BEFORE the runner/DB close so no tick
+    // enqueues a reindex into a stopping runner or writes to a closing DB.
+    embeddingMaintenanceService?.stop();
     // Stop the background runner (T058) BEFORE closing the DB so no apply handler
     // writes to a closed connection. The persisted queue is left intact — pending
     // jobs resume on the next launch. Mirrors the capture-controller stop ordering.

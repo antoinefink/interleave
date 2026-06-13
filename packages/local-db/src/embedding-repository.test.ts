@@ -73,6 +73,39 @@ describe.skipIf(!VEC_OK)("EmbeddingRepository (sqlite-vec, T087)", () => {
     return row?.n ?? 0;
   }
 
+  it("listNeedingEmbedding returns unembedded + model-mismatched rows, never current ones (U3/R11)", () => {
+    const current = sources.create({ title: "current model", priority: 0.5 }).element;
+    const stale = sources.create({ title: "old model", priority: 0.5 }).element;
+    const missing = sources.create({ title: "never embedded", priority: 0.5 }).element;
+
+    embeddings.upsert({
+      elementId: current.id,
+      elementType: "source",
+      modelId: MODEL,
+      dim: EMBEDDING_DIM,
+      contentHash: "h-current",
+      vector: embed("current model"),
+    });
+    embeddings.upsert({
+      elementId: stale.id,
+      elementType: "source",
+      modelId: "local:embeddinggemma-hash-768",
+      dim: EMBEDDING_DIM,
+      contentHash: "h-stale",
+      vector: embed("old model"),
+    });
+
+    const ids = embeddings.listNeedingEmbedding(MODEL, 100).map((r) => r.id);
+    expect(ids).toContain(missing.id);
+    expect(ids).toContain(stale.id);
+    expect(ids).not.toContain(current.id);
+
+    // excludeIds skips flagged elements (U4: those with a currently-failed embed job).
+    const excluded = embeddings.listNeedingEmbedding(MODEL, 100, [missing.id]).map((r) => r.id);
+    expect(excluded).not.toContain(missing.id);
+    expect(excluded).toContain(stale.id);
+  });
+
   it("upserts the vector + bookkeeping row in one tx and is idempotent (reuses vec_rowid)", () => {
     const { element } = sources.create({ title: "Spaced repetition", priority: 0.5 });
     embeddings.upsert({

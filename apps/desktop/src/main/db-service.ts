@@ -336,6 +336,7 @@ import type {
   SemanticRelatedItem,
   SemanticRelatedRequest,
   SemanticRelatedResult,
+  SemanticRetryFailedResult,
   SemanticSearchMode,
   SemanticSearchRequest,
   SemanticSearchResult,
@@ -474,6 +475,7 @@ import { MediaImportService } from "./media-import-service";
 import { OcrService } from "./ocr-service";
 import { PdfImportService } from "./pdf-import-service";
 import { PdfRegionService } from "./pdf-region-service";
+import { assembleSemanticStatus } from "./semantic-status";
 import { UrlImportService } from "./url-import-service";
 
 function queueFiltersFromRequest(
@@ -2970,18 +2972,29 @@ export class DbService {
     return { results, mode, counts };
   }
 
-  /** Index-coverage + state for the Settings toggle + the library "N of M embedded" affordance. */
+  /**
+   * Index-coverage + health for the Settings "Search Intelligence" panel + the
+   * library "N of M embedded" / coverage affordance (U2). Gathers repo stats, embed
+   * job state, the cached model-probe state, and the throughput ETA, then derives the
+   * expanded result via the pure {@link assembleSemanticStatus}.
+   */
   semanticStatus(): SemanticStatusResult {
     const settings = this.repos.settings.getAppSettings();
     const stats = this.repos.embeddings.stats();
-    return {
-      enabled: true,
+    const jobStats = this.repos.jobs.embedJobStats();
+    return assembleSemanticStatus({
       vecAvailable: this.vecAvailable,
       modelDownloaded: settings.embeddingModelDownloaded,
       embedded: stats.embedded,
       total: stats.total,
       modelId: stats.modelId ?? settings.embeddingModelId,
-    };
+      cachedModelState: this.embeddingService.cachedModelState,
+      queued: jobStats.queued,
+      running: jobStats.running,
+      failed: jobStats.failed,
+      lastError: jobStats.lastError,
+      etaSeconds: this.embeddingService.etaSeconds(stats.total - stats.embedded),
+    });
   }
 
   /**
@@ -2993,6 +3006,23 @@ export class DbService {
     return this.embeddingService.reindexAll({
       ...(request.onlyMissing !== undefined ? { onlyMissing: request.onlyMissing } : {}),
     });
+  }
+
+  /**
+   * Retry failed embed jobs (U4): clear the FAILED `embed` rows — a failed row has
+   * already spent its attempt budget, so re-queueing it would re-fail immediately —
+   * and re-enqueue FRESH embed jobs (full budget) for the elements they targeted, so
+   * `failedCount` reflects reality afterward. A no-op (0) when `vec0` is absent.
+   */
+  semanticRetryFailed(): SemanticRetryFailedResult {
+    if (!this.vecAvailable) return { retried: 0 };
+    const elementIds = this.repos.jobs.clearFailedEmbedJobs();
+    let retried = 0;
+    for (const elementId of elementIds) {
+      const result = this.embeddingService.enqueueElement(elementId as ElementId);
+      if ("jobId" in result) retried += 1;
+    }
+    return { retried };
   }
 
   /**

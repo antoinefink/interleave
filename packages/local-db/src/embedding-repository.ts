@@ -329,6 +329,44 @@ export class EmbeddingRepository {
   }
 
   /**
+   * Live source/extract/card elements that still need embedding for `modelId`
+   * (U3/R11): those with NO `embeddings` row OR a row produced by a DIFFERENT model.
+   * Ordered by `rowid` and capped at `limit`. Unlike a blind `LIMIT` over ALL
+   * elements, this never returns an all-embedded page, so repeated reindex passes
+   * converge even on a corpus larger than the batch cap — without re-selecting rows
+   * that are already current. (Content drift on a same-model row is caught by the
+   * per-mutation auto-embed, not this scan.) Empty when `vecAvailable` is `false`.
+   */
+  listNeedingEmbedding(
+    modelId: string,
+    limit: number,
+    excludeIds: readonly string[] = [],
+  ): { id: ElementId; type: EmbeddableType }[] {
+    if (!this.vecAvailable) return [];
+    // Skip elements the caller flagged (U4: those with a currently-failed embed job,
+    // so a deterministically-failing element is not auto-re-enqueued forever).
+    const exclude =
+      excludeIds.length > 0
+        ? sql`AND e.id NOT IN (${sql.join(
+            excludeIds.map((id) => sql`${id}`),
+            sql`, `,
+          )})`
+        : sql``;
+    const rows = this.db.all<{ id: string; type: EmbeddableType }>(sql`
+      SELECT e.id AS id, e.type AS type
+      FROM elements e
+      LEFT JOIN embeddings b ON b.element_id = e.id
+      WHERE e.deleted_at IS NULL
+        AND e.type IN ('source', 'extract', 'card')
+        AND (b.element_id IS NULL OR b.model_id != ${modelId})
+        ${exclude}
+      ORDER BY e.rowid
+      LIMIT ${limit}
+    `);
+    return rows.map((r) => ({ id: r.id as ElementId, type: r.type }));
+  }
+
+  /**
    * Backstop sweep (belt-and-braces for the `vault_gc`-adjacent cleanup): the count
    * of `element_vectors` rowids with no surviving `embeddings` row would indicate a
    * drift the explicit `delete` should have prevented. Returns the pruned count.

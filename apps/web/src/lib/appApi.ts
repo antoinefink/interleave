@@ -3668,6 +3668,13 @@ export interface SemanticSearchResult {
 /** `semantic.status()` takes no payload. */
 export type SemanticStatusRequest = Record<string, never>;
 
+/** Honest model-readiness state (U1) — mirrors the desktop contract enum. */
+export type SemanticModelState = "ready" | "loading" | "fallback";
+/** Index-health rollup driving the Settings panel headline (U2). */
+export type SemanticIndexHealth = "healthy" | "building" | "stale" | "degraded";
+/** Coverage at/above which semantic search is reliable — mirrors the desktop constant. */
+export const SEMANTIC_COVERAGE_THRESHOLD = 0.8;
+
 export interface SemanticStatusResult {
   readonly enabled: boolean;
   readonly vecAvailable: boolean;
@@ -3675,6 +3682,12 @@ export interface SemanticStatusResult {
   readonly embedded: number;
   readonly total: number;
   readonly modelId: string;
+  readonly modelState: SemanticModelState;
+  readonly indexHealth: SemanticIndexHealth;
+  readonly coverageRatio: number;
+  readonly failedCount: number;
+  readonly lastError: string | null;
+  readonly etaSeconds: number | null;
 }
 
 export interface SemanticReindexRequest {
@@ -3683,6 +3696,12 @@ export interface SemanticReindexRequest {
 
 export interface SemanticReindexResult {
   readonly enqueued: number;
+}
+
+export type SemanticRetryFailedRequest = Record<string, never>;
+
+export interface SemanticRetryFailedResult {
+  readonly retried: number;
 }
 
 export type SemanticDownloadModelRequest = Record<string, never>;
@@ -4874,6 +4893,7 @@ export interface AppApi {
     search(request: SemanticSearchRequest): Promise<SemanticSearchResult>;
     status(request?: SemanticStatusRequest): Promise<SemanticStatusResult>;
     reindex(request?: SemanticReindexRequest): Promise<SemanticReindexResult>;
+    retryFailed(request?: SemanticRetryFailedRequest): Promise<SemanticRetryFailedResult>;
     downloadModel(request?: SemanticDownloadModelRequest): Promise<SemanticDownloadModelResult>;
     related(request: SemanticRelatedRequest): Promise<SemanticRelatedResult>;
     contradictions(request: SemanticContradictionsRequest): Promise<SemanticContradictionsResult>;
@@ -5893,6 +5913,12 @@ export const appApi = {
         embedded: 0,
         total: 0,
         modelId: "",
+        modelState: "fallback",
+        indexHealth: "degraded",
+        coverageRatio: 0,
+        failedCount: 0,
+        lastError: null,
+        etaSeconds: null,
       });
     }
     return window.appApi.semantic.status(request);
@@ -5903,6 +5929,13 @@ export const appApi = {
       return Promise.resolve({ enqueued: 0 });
     }
     return window.appApi.semantic.reindex(request);
+  },
+  /** Retry failed embed jobs (U4) — clear failed rows + re-enqueue fresh. No-op outside desktop. */
+  semanticRetryFailed(request?: SemanticRetryFailedRequest): Promise<SemanticRetryFailedResult> {
+    if (!isDesktop() || !window.appApi?.semantic) {
+      return Promise.resolve({ retried: 0 });
+    }
+    return window.appApi.semantic.retryFailed(request);
   },
   /**
    * Pre-warm the local EmbeddingGemma ONNX model (T087) and flip

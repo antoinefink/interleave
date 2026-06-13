@@ -128,7 +128,12 @@ export type {
 } from "./element";
 // On-device embedding primitives — vector dim, the local embedder, the row type (./embedding).
 export type { EmbeddableType, Embedding } from "./embedding";
-export { EMBEDDABLE_TYPES, EMBEDDING_DIM, embedTextLocal } from "./embedding";
+export {
+  EMBEDDABLE_TYPES,
+  EMBEDDING_DIM,
+  embedTextLocal,
+  FALLBACK_EMBEDDING_MODEL_ID,
+} from "./embedding";
 // Canonical enums — derived union types (./enums).
 export type {
   AssetKind,

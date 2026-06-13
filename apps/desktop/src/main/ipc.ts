@@ -143,6 +143,7 @@ import {
   SemanticDownloadModelRequestSchema,
   SemanticReindexRequestSchema,
   SemanticRelatedRequestSchema,
+  SemanticRetryFailedRequestSchema,
   SemanticSearchRequestSchema,
   SettingsGetAllRequestSchema,
   SettingsGetRequestSchema,
@@ -208,6 +209,7 @@ import { BackupService } from "./backup-service";
 import type { CaptureController } from "./capture-controller";
 import type { DbService } from "./db-service";
 import { DocumentImportError } from "./document-import-service";
+import type { EmbeddingMaintenanceService } from "./embedding-maintenance-service";
 import { EpubImportError } from "./epub-import-service";
 import { HighlightImportError } from "./highlight-import-service";
 import type { UrlImportJobPayload } from "./job-apply-handlers";
@@ -239,6 +241,12 @@ export interface IpcHandlerContext {
    * the non-runner handlers alone; a runner-requiring handler then throws clearly.
    */
   readonly runner?: JobRunner;
+  /**
+   * The self-healing embedding index supervisor (U3). The restore/reset drain path
+   * stops it BEFORE `runner.stopAndDrain()` so no maintenance tick writes to a store
+   * about to be swapped. Optional so contract-only tests register without it.
+   */
+  readonly embeddingMaintenance?: EmbeddingMaintenanceService | undefined;
 }
 
 /** Project a domain {@link Job} to the renderer-safe {@link JobSummary}. */
@@ -1372,6 +1380,10 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
     const request = SemanticReindexRequestSchema.parse(rawRequest ?? {});
     return dbService.semanticReindex(request);
   });
+  ipcMain.handle(IPC_CHANNELS.semanticRetryFailed, (_event, rawRequest: unknown) => {
+    SemanticRetryFailedRequestSchema.parse(rawRequest ?? {});
+    return dbService.semanticRetryFailed();
+  });
   ipcMain.handle(IPC_CHANNELS.semanticDownloadModel, (_event, rawRequest: unknown) => {
     SemanticDownloadModelRequestSchema.parse(rawRequest ?? {});
     return dbService.semanticDownloadModel();
@@ -1546,6 +1558,9 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
       ...(withReplaceHooks
         ? {
             beforeReplaceLocalData: async () => {
+              // Stop the index supervisor FIRST so no maintenance tick enqueues a
+              // reindex (or prunes) into the store that is about to be swapped.
+              context?.embeddingMaintenance?.stop();
               await context?.runner?.stopAndDrain();
               await context?.captureController?.stop();
             },

@@ -296,7 +296,7 @@ An Embedding belongs to the model that produced it. Equal vector length is not e
 
 The rebuildable on-device index that stores embeddings for nearest-neighbor semantic retrieval while the canonical knowledge data remains in the local database and asset vault.
 
-The Local vector index is derived state, not source lineage or user-authored content. If its shape no longer matches the active embedding model, it can be cleared and rebuilt from canonical elements.
+The Local vector index is derived state, not source lineage or user-authored content. If its shape no longer matches the active embedding model, it can be cleared and rebuilt from canonical elements. It is self-maintaining: a background supervisor brings it up to date after launch and keeps it healthy without user action. When the real embedding model cannot load, the producer runs in a degraded fallback mode whose vectors are never persisted into the index (so the index never silently fills with meaningless results), and its coverage and health are surfaced honestly rather than reported only as a count.
 
 ### Related item
 

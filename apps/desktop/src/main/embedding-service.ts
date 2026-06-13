@@ -35,11 +35,17 @@
 
 import { createHash } from "node:crypto";
 import type { ElementId } from "@interleave/core";
-import { type AppSettings, DEFAULT_EMBEDDING_MODEL_ID, EMBEDDING_DIM } from "@interleave/core";
+import {
+  type AppSettings,
+  DEFAULT_EMBEDDING_MODEL_ID,
+  EMBEDDING_DIM,
+  FALLBACK_EMBEDDING_MODEL_ID,
+} from "@interleave/core";
 import type { InterleaveDatabase } from "@interleave/db";
 import { cards, documents, elements, sourceLocations } from "@interleave/db";
 import type { EmbeddableType, Repositories } from "@interleave/local-db";
-import { eq, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+import type { SemanticModelState } from "../shared/contract";
 import type { JobRunner } from "./job-runner";
 
 /** Max characters of text fed to the embedder (≈512 tokens) so a huge source is bounded. */
@@ -48,8 +54,21 @@ const MAX_EMBED_CHARS = 2_000;
 const REINDEX_BATCH_LIMIT = 5_000;
 /** How long `embedQuery` waits for the transient embed job before falling back to FTS-only. */
 const QUERY_EMBED_TIMEOUT_MS = 800;
+/**
+ * How long the model PROBE waits — deliberately NOT the 800ms query timeout. A cold
+ * EmbeddingGemma load takes seconds, so a short timeout would misread a healthy model
+ * as `fallback`/`loading`. The probe runs off the hot path (launch/supervisor), so a
+ * generous ceiling is fine.
+ */
+const PROBE_EMBED_TIMEOUT_MS = 60_000;
+/** The fixed text used to probe / warm up the on-device model. */
+const PROBE_TEXT = "warm up the on-device embedding model";
 /** Belt-and-braces cap on the pending-query map so a pathological run can't grow it unbounded. */
 const PENDING_QUERY_MAX = 64;
+/** Rolling window of recent embed completions kept for the ETA estimate. */
+const ETA_WINDOW = 20;
+/** Minimum completion samples before an ETA is meaningful (else `null`). */
+const ETA_MIN_SAMPLES = 3;
 
 /**
  * The `embed` job payload MAIN enqueues + persists. `persist:false` marks the
@@ -99,6 +118,15 @@ export class EmbeddingService {
   private readonly pendingQueryVectors = new Map<string, QueryEmbeddingResult>();
   /** Query jobIds whose waiter timed out — their late result is DROPPED, not stashed. */
   private readonly abandonedQueries = new Set<string>();
+  /** Cached terminal model state from the last probe (`ready`/`fallback`); undefined until probed. */
+  private modelStateCache: SemanticModelState | undefined;
+  /** Recent index-embed completion epoch-ms (rolling window) — the in-memory ETA source (U2). */
+  private readonly completionTimestamps: number[] = [];
+
+  /** The last probed model state, or `null` if not probed yet (cheap read for the status surface). */
+  get cachedModelState(): SemanticModelState | null {
+    return this.modelStateCache ?? null;
+  }
 
   constructor(deps: EmbeddingServiceDeps) {
     this.db = deps.db;
@@ -196,17 +224,25 @@ export class EmbeddingService {
   reindexAll(_options: { onlyMissing?: boolean } = {}): { enqueued: number } {
     if (!this.available) return { enqueued: 0 };
 
-    const rows = this.db
-      .select({ id: elements.id, type: elements.type })
-      .from(elements)
-      .where(isNull(elements.deletedAt))
-      .limit(REINDEX_BATCH_LIMIT)
-      .all()
-      .filter((r) => r.type === "source" || r.type === "extract" || r.type === "card");
+    // Select rows that actually NEED embedding (missing or model-mismatched), capped
+    // at the batch limit. This is progress-guaranteed (R11): unlike a blind LIMIT over
+    // all elements, a corpus larger than the cap converges across successive passes
+    // because already-current rows are never re-selected.
+    const settings = this.getSettings();
+    // Exclude elements that already have an in-flight (queued/running) or failed embed
+    // job (U4): never double-queue a draining element (e.g. a manual Rebuild racing a
+    // supervisor batch), and never auto-re-enqueue a deterministically-failing element
+    // every pass — it stays visible/failed until the user explicitly retries.
+    const excludeElementIds = this.repositories.jobs.activeOrFailedEmbedElementIds();
+    const rows = this.repositories.embeddings.listNeedingEmbedding(
+      settings.embeddingModelId,
+      REINDEX_BATCH_LIMIT,
+      excludeElementIds,
+    );
 
     let enqueued = 0;
     for (const row of rows) {
-      const result = this.enqueueElement(row.id as ElementId);
+      const result = this.enqueueElement(row.id);
       if ("jobId" in result) enqueued += 1;
     }
     return { enqueued };
@@ -240,6 +276,15 @@ export class EmbeddingService {
     if (!payload.elementId || !payload.elementType || !payload.contentHash) {
       throw new Error("EmbeddingService.applyResult: index payload missing element fields");
     }
+    // R10 — the no-poison guard. The worker decides real-vs-fallback PER JOB, so a job
+    // enqueued while the model was ready can still come back from the deterministic hash
+    // embedder (model evicted/failed mid-session). NEVER persist a fallback vector into the
+    // index: skip the upsert and leave the element unembedded so a later pass re-embeds it
+    // once the real model is back. This makes index poisoning structurally impossible,
+    // independent of the launch-time gate.
+    if (result.modelId === FALLBACK_EMBEDDING_MODEL_ID) {
+      return { elementId: payload.elementId, modelId: result.modelId };
+    }
     if (result.vector.length !== result.dim || result.dim !== EMBEDDING_DIM) {
       throw new Error(
         `EmbeddingService.applyResult: vector dim ${result.vector.length}/${result.dim} ` +
@@ -254,7 +299,35 @@ export class EmbeddingService {
       contentHash: payload.contentHash,
       vector: result.vector,
     });
+    this.recordEmbedCompletion();
     return { elementId: payload.elementId, modelId: result.modelId };
+  }
+
+  /** Record a successful index-embed completion for the rolling ETA estimate (U2). */
+  private recordEmbedCompletion(): void {
+    this.completionTimestamps.push(Date.now());
+    if (this.completionTimestamps.length > ETA_WINDOW) this.completionTimestamps.shift();
+  }
+
+  /**
+   * Estimate seconds-to-complete for `remaining` unembedded elements from the
+   * observed completion rate (U2). Returns `null` until there are enough samples
+   * (the estimate would be noise before then). The observed rate already reflects
+   * runner concurrency, so no concurrency division is needed.
+   */
+  etaSeconds(remaining: number): number | null {
+    if (remaining <= 0) return 0;
+    const ts = this.completionTimestamps;
+    const n = ts.length;
+    if (n < ETA_MIN_SAMPLES) return null;
+    const first = ts[0];
+    const last = ts[n - 1];
+    if (first === undefined || last === undefined) return null;
+    const spanMs = last - first;
+    if (spanMs <= 0) return null;
+    const ratePerMs = (n - 1) / spanMs;
+    if (ratePerMs <= 0) return null;
+    return Math.max(0, Math.round(remaining / ratePerMs / 1000));
   }
 
   /**
@@ -273,7 +346,10 @@ export class EmbeddingService {
     return result?.vector ?? null;
   }
 
-  async embedQueryResult(text: string): Promise<QueryEmbeddingResult | null> {
+  async embedQueryResult(
+    text: string,
+    timeoutMs: number = QUERY_EMBED_TIMEOUT_MS,
+  ): Promise<QueryEmbeddingResult | null> {
     const settings = this.getSettings();
     if (!this.available) return null;
     if (text.trim().length === 0) return null;
@@ -289,7 +365,7 @@ export class EmbeddingService {
 
     const terminal = await Promise.race([
       this.getRunner().waitForTerminal(job.id as never),
-      delay(QUERY_EMBED_TIMEOUT_MS).then(() => "timeout" as const),
+      delay(timeoutMs).then(() => "timeout" as const),
     ]);
 
     if (terminal === "timeout" || terminal.status !== "succeeded") {
@@ -304,44 +380,79 @@ export class EmbeddingService {
   }
 
   /**
-   * Pre-warm the local embedding model on first enable.
+   * Probe the true on-device model state with an HONEST signal (U1, R4) — not a flag
+   * set by a warm-up that can't tell real from fallback.
    *
-   * The spec (`docs/tasks/M18-semantic.md`) pins two ACCEPTABLE first-run mechanisms
-   * and asks us to pick one and document the tradeoff: the model lives ONLY in the
-   * DB-free worker, which resolves it from the local Transformers.js cache/staged
-   * model directory. A tiny transient warm-up job proves the local path can produce
-   * a vector and flips `embeddingModelDownloaded`; if the model is not present the
-   * worker degrades to the deterministic local fallback.
+   * The model lives only in the DB-free worker, so the one reliable signal of "is the
+   * REAL model in use" is the `modelId` a probe embed comes back with: the real
+   * EmbeddingGemma id ({@link DEFAULT_EMBEDDING_MODEL_ID}) vs the deterministic hash
+   * fallback ({@link FALLBACK_EMBEDDING_MODEL_ID}). We run a transient `persist:false`
+   * embed with a GENEROUS timeout ({@link PROBE_EMBED_TIMEOUT_MS}) — deliberately NOT the
+   * 800ms query timeout, because a cold model load takes seconds and a short race would
+   * misreport a healthy model as `fallback`/`loading`.
    *
-   * Concretely: this enqueues a tiny TRANSIENT (`persist:false`) `embed` job for a
-   * fixed warm-up string and waits for it — a success means the worker loaded the
-   * model (fetched + cached on first run, or already on disk), so we flip
-   * `embeddingModelDownloaded = true` in settings in one transaction (idempotent —
-   * re-running with the model present just re-flips). The worker falls back to the
-   * deterministic embedder if the model genuinely cannot be fetched (offline), so
-   * this never hangs the UI; it races a bounded timeout (inside {@link embedQuery})
-   * and returns the resulting `downloaded` state either way, leaving search FTS-only
-   * until the warm-up resolves.
+   * Maps to {@link SemanticModelState}: a real result → `ready`; a fallback result →
+   * `fallback`; a timeout (still loading) → `loading`. Terminal states (`ready`/
+   * `fallback`) are cached for the session so this isn't re-run every launch, and
+   * `embeddingModelDownloaded` is reconciled to the truth (true only on `ready`).
    */
-  async downloadModel(): Promise<{ downloaded: boolean }> {
-    if (!this.available) return { downloaded: false };
+  async probeModelState(opts?: {
+    force?: boolean;
+    timeoutMs?: number;
+  }): Promise<SemanticModelState> {
+    if (!this.available) return "fallback";
+    if (!opts?.force && this.modelStateCache) return this.modelStateCache;
 
     let result: QueryEmbeddingResult | null = null;
     try {
-      // A transient warm-up embed — forces the worker's first local model load.
-      result = await this.embedQueryResult("warm up the on-device embedding model");
+      result = await this.embedQueryResult(PROBE_TEXT, opts?.timeoutMs ?? PROBE_EMBED_TIMEOUT_MS);
     } catch {
-      // Never block enabling the feature on a warm-up failure — the index path
-      // re-attempts the load per job and degrades to FTS-only meanwhile.
+      // A probe failure is treated as "still loading / unknown" — never throws to the caller.
     }
-    const downloaded = result?.modelId === DEFAULT_EMBEDDING_MODEL_ID;
-    if (downloaded) {
+
+    let state: SemanticModelState;
+    if (result === null) {
+      state = "loading";
+    } else if (result.modelId === DEFAULT_EMBEDDING_MODEL_ID) {
+      state = "ready";
+    } else {
+      state = "fallback";
+    }
+
+    if (state !== "loading") {
+      // Only cache + reconcile on a terminal answer; a `loading` probe is retried later.
+      this.modelStateCache = state;
+      this.reconcileModelDownloaded(state === "ready");
+    }
+    return state;
+  }
+
+  /** Reconcile the persisted `embeddingModelDownloaded` flag to the probed truth. */
+  private reconcileModelDownloaded(ready: boolean): void {
+    const settings = this.getSettings();
+    if (ready && !settings.embeddingModelDownloaded) {
       this.repositories.settings.updateAppSettings({
         embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
         embeddingModelDownloaded: true,
       });
+    } else if (!ready && settings.embeddingModelDownloaded) {
+      this.repositories.settings.updateAppSettings({ embeddingModelDownloaded: false });
     }
-    return { downloaded };
+  }
+
+  /**
+   * Ensure/repair the local model and report whether it is truly ready (U1, KTD5).
+   *
+   * This is no longer a "warm-up that flips a flag" — it forces an honest
+   * {@link probeModelState} and returns `downloaded: true` only when the REAL model
+   * answered. There is no resumable downloader: release builds bundle the model and
+   * runtime remote fetching is disabled, so the only "repair" is re-probing the local
+   * path. The UI gates the user-facing action so it never promises a fetch it cannot do.
+   */
+  async downloadModel(): Promise<{ downloaded: boolean }> {
+    if (!this.available) return { downloaded: false };
+    const state = await this.probeModelState({ force: true });
+    return { downloaded: state === "ready" };
   }
 
   /** Build the INDEX-path embed payload (the element to UPSERT). */

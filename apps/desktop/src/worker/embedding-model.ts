@@ -10,7 +10,12 @@
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { DEFAULT_EMBEDDING_MODEL_ID, EMBEDDING_DIM, embedTextLocal } from "@interleave/core";
+import {
+  DEFAULT_EMBEDDING_MODEL_ID,
+  EMBEDDING_DIM,
+  embedTextLocal,
+  FALLBACK_EMBEDDING_MODEL_ID,
+} from "@interleave/core";
 
 const nodeRequire = createRequire(__filename);
 
@@ -25,7 +30,7 @@ export const EMBEDDINGGEMMA_MODEL_REPO = DEFAULT_EMBEDDING_MODEL_ID;
 export const REAL_MODEL_ID = DEFAULT_EMBEDDING_MODEL_ID;
 
 /** Distinct fallback id so lexical fallback vectors are never KNN-mixed with real vectors. */
-export const FALLBACK_MODEL_ID = "local:embeddinggemma-hash-768";
+export const FALLBACK_MODEL_ID = FALLBACK_EMBEDDING_MODEL_ID;
 
 /** A computed embedding + the model id + dim it was produced with. */
 export interface EmbeddingResult {

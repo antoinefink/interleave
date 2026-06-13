@@ -46,6 +46,55 @@ describe("JobsRepository", () => {
     expect(repo.findById(job.id)?.payload).toEqual({ url: "https://x.test" });
   });
 
+  it("embedJobStats aggregates queued/running/failed embed jobs + the last embed error (U2)", () => {
+    // Two embed jobs: one queued, one failed (with an error). A non-embed failed
+    // job must NOT be counted, and its error must NOT leak into lastError.
+    repo.enqueue({ type: "embed", payload: { elementId: "el_q" } });
+    const toFail = repo.enqueue({ type: "embed", payload: { elementId: "el_f" } });
+    repo.fail(toFail.id, "OVERSIZED: element text too large");
+    const otherFail = repo.enqueue({ type: "ocr", payload: { elementId: "el_o" } });
+    repo.fail(otherFail.id, "ocr boom");
+
+    const stats = repo.embedJobStats();
+    expect(stats.queued).toBe(1);
+    expect(stats.running).toBe(0);
+    expect(stats.failed).toBe(1);
+    expect(stats.lastError).toBe("OVERSIZED: element text too large");
+  });
+
+  it("embedJobStats is all-zero / null with no embed jobs", () => {
+    repo.enqueue({ type: "ocr", payload: {} });
+    const stats = repo.embedJobStats();
+    expect(stats).toEqual({ queued: 0, running: 0, failed: 0, lastError: null });
+  });
+
+  it("activeOrFailedEmbedElementIds + clearFailedEmbedJobs surface/clear embed work (U4)", () => {
+    const a = repo.enqueue({ type: "embed", payload: { elementId: "el_a", persist: true } });
+    repo.fail(a.id, "OVERSIZED: element text too large");
+    const b = repo.enqueue({ type: "embed", payload: { elementId: "el_b", persist: true } });
+    repo.fail(b.id, "WORKER_CRASH: utility process died");
+    // A still-queued embed (in-flight) is ALSO excluded so a manual reindex can't double-queue it.
+    repo.enqueue({ type: "embed", payload: { elementId: "el_queued", persist: true } });
+    // A query embed (no elementId) contributes no element id.
+    const q = repo.enqueue({ type: "embed", payload: { persist: false } });
+    repo.fail(q.id, "timeout");
+    // A non-embed failed job is ignored entirely.
+    const ocr = repo.enqueue({ type: "ocr", payload: { elementId: "el_o" } });
+    repo.fail(ocr.id, "ocr boom");
+
+    // queued + running + failed embed elements are all excluded from reindex.
+    expect(repo.activeOrFailedEmbedElementIds().sort()).toEqual(["el_a", "el_b", "el_queued"]);
+
+    // clearFailedEmbedJobs only clears FAILED rows (not the still-queued one).
+    expect(repo.clearFailedEmbedJobs().sort()).toEqual(["el_a", "el_b"]);
+    // After clearing, no failed embed jobs remain — failedCount is honest post-retry.
+    expect(repo.embedJobStats().failed).toBe(0);
+    // Only the still-queued element remains excluded (the failed ones were cleared).
+    expect(repo.activeOrFailedEmbedElementIds()).toEqual(["el_queued"]);
+    // The non-embed failed job is untouched.
+    expect(repo.findById(ocr.id)?.status).toBe("failed");
+  });
+
   it("accepts the fsrs_optimize job type (T080 — the widened jobs_type_check CHECK)", () => {
     // The 0019 table-rebuild migration widened the `jobs.type` CHECK to include
     // `fsrs_optimize`; enqueuing it must NOT throw a CHECK-constraint error.

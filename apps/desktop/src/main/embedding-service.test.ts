@@ -12,7 +12,11 @@
  * `waitForTerminal` resolves and WHEN the apply result arrives.
  */
 
-import { DEFAULT_EMBEDDING_MODEL_ID, EMBEDDING_DIM } from "@interleave/core";
+import {
+  DEFAULT_EMBEDDING_MODEL_ID,
+  EMBEDDING_DIM,
+  FALLBACK_EMBEDDING_MODEL_ID,
+} from "@interleave/core";
 import { describe, expect, it, vi } from "vitest";
 import { EmbeddingService } from "./embedding-service";
 
@@ -240,7 +244,7 @@ describe("EmbeddingService.embedQuery (T087 leak guard)", () => {
       },
       {
         vector: new Array(EMBEDDING_DIM).fill(0.5),
-        modelId: "local:embeddinggemma-hash-768",
+        modelId: FALLBACK_EMBEDDING_MODEL_ID,
         dim: EMBEDDING_DIM,
       },
       job.id,
@@ -249,5 +253,186 @@ describe("EmbeddingService.embedQuery (T087 leak guard)", () => {
 
     await expect(promise).resolves.toEqual({ downloaded: false });
     expect(updateAppSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe("EmbeddingService.probeModelState (U1 honest probe)", () => {
+  /** Drive a probe to a terminal result by stashing the apply result then resolving. */
+  function settleProbe(
+    runner: ReturnType<typeof makeFakeRunner>,
+    service: EmbeddingService,
+    modelId: string,
+  ): void {
+    const job = runner.enqueued.at(-1);
+    if (!job) throw new Error("expected a probe job to be enqueued");
+    service.applyResult(
+      { text: "probe", modelId, provider: "local", dim: EMBEDDING_DIM, persist: false },
+      { vector: new Array(EMBEDDING_DIM).fill(0.4), modelId, dim: EMBEDDING_DIM },
+      job.id,
+    );
+    runner.resolveSucceeded(job.id);
+  }
+
+  it("returns 'ready' when the real model answers and reconciles downloaded=true", async () => {
+    const runner = makeFakeRunner();
+    const { service, updateAppSettings } = makeServiceWithSettingsUpdate(runner);
+    const promise = service.probeModelState({ force: true });
+    settleProbe(runner, service, DEFAULT_EMBEDDING_MODEL_ID);
+    await expect(promise).resolves.toBe("ready");
+    expect(updateAppSettings).toHaveBeenCalledWith({
+      embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
+      embeddingModelDownloaded: true,
+    });
+  });
+
+  it("returns 'fallback' when the worker fell back and leaves downloaded false", async () => {
+    const runner = makeFakeRunner();
+    const { service, updateAppSettings } = makeServiceWithSettingsUpdate(runner);
+    const promise = service.probeModelState({ force: true });
+    settleProbe(runner, service, FALLBACK_EMBEDDING_MODEL_ID);
+    await expect(promise).resolves.toBe("fallback");
+    expect(updateAppSettings).not.toHaveBeenCalled();
+  });
+
+  it("returns 'loading' on a slow cold load instead of a false 'fallback'", async () => {
+    const runner = makeFakeRunner();
+    const { service } = makeServiceWithSettingsUpdate(runner);
+    // The terminal never resolves; a short probe timeout simulates the in-flight window.
+    // The 800ms query timeout is NOT used — the probe owns its own (here: tiny) timeout.
+    await expect(service.probeModelState({ force: true, timeoutMs: 20 })).resolves.toBe("loading");
+  });
+
+  it("caches a terminal result so it is not re-probed within the session", async () => {
+    const runner = makeFakeRunner();
+    const { service } = makeServiceWithSettingsUpdate(runner);
+    const promise = service.probeModelState();
+    settleProbe(runner, service, DEFAULT_EMBEDDING_MODEL_ID);
+    await expect(promise).resolves.toBe("ready");
+
+    const enqueuedBefore = runner.enqueued.length;
+    await expect(service.probeModelState()).resolves.toBe("ready");
+    expect(runner.enqueued).toHaveLength(enqueuedBefore);
+  });
+});
+
+describe("EmbeddingService.applyResult (U1 R10 no-poison guard)", () => {
+  function makeIndexService(upsert = vi.fn()) {
+    const runner = makeFakeRunner();
+    const service = new EmbeddingService({
+      db: {} as never,
+      repositories: { embeddings: { available: true, upsert } } as never,
+      getRunner: () => runner as never,
+      getSettings: () => ({ embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID }) as never,
+    });
+    return { service, upsert };
+  }
+  const indexPayload = (modelId: string) =>
+    ({
+      text: "t",
+      modelId,
+      provider: "local",
+      dim: EMBEDDING_DIM,
+      elementId: "el_1",
+      elementType: "extract",
+      contentHash: "h",
+      persist: true,
+    }) as const;
+
+  it("does NOT upsert a fallback (hash) vector — leaves the element unembedded", () => {
+    const { service, upsert } = makeIndexService();
+    const out = service.applyResult(
+      indexPayload(FALLBACK_EMBEDDING_MODEL_ID),
+      {
+        vector: new Array(EMBEDDING_DIM).fill(0.1),
+        modelId: FALLBACK_EMBEDDING_MODEL_ID,
+        dim: EMBEDDING_DIM,
+      },
+      "j-1",
+    );
+    expect(upsert).not.toHaveBeenCalled();
+    expect(out.modelId).toBe(FALLBACK_EMBEDDING_MODEL_ID);
+    expect(out.elementId).toBe("el_1");
+  });
+
+  it("upserts a real-model vector", () => {
+    const { service, upsert } = makeIndexService();
+    service.applyResult(
+      indexPayload(DEFAULT_EMBEDDING_MODEL_ID),
+      {
+        vector: new Array(EMBEDDING_DIM).fill(0.1),
+        modelId: DEFAULT_EMBEDDING_MODEL_ID,
+        dim: EMBEDDING_DIM,
+      },
+      "j-2",
+    );
+    expect(upsert).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("EmbeddingService.etaSeconds (U2)", () => {
+  function svcWith(timestamps: number[]) {
+    const service = makeService(makeFakeRunner());
+    (service as unknown as { completionTimestamps: number[] }).completionTimestamps.push(
+      ...timestamps,
+    );
+    return service;
+  }
+
+  it("returns 0 when nothing remains", () => {
+    expect(svcWith([]).etaSeconds(0)).toBe(0);
+  });
+
+  it("returns null with fewer than 3 samples", () => {
+    expect(svcWith([1000, 2000]).etaSeconds(10)).toBeNull();
+  });
+
+  it("returns null when all samples share a timestamp (zero span)", () => {
+    expect(svcWith([5000, 5000, 5000]).etaSeconds(10)).toBeNull();
+  });
+
+  it("returns a positive estimate from the observed completion rate", () => {
+    // 3 samples over 2000ms -> 0.001 completions/ms -> 10 remaining ~= 10s.
+    expect(svcWith([1000, 2000, 3000]).etaSeconds(10)).toBe(10);
+  });
+});
+
+describe("EmbeddingService.probeModelState reconcile (U1)", () => {
+  it("flips downloaded=false when a previously-ready model degrades to fallback", async () => {
+    const runner = makeFakeRunner();
+    const updateAppSettings = vi.fn();
+    const service = new EmbeddingService({
+      db: {} as never,
+      repositories: { embeddings: { available: true }, settings: { updateAppSettings } } as never,
+      getRunner: () => runner as never,
+      getSettings: () =>
+        ({
+          semanticSearchEnabled: true,
+          embeddingProvider: "local",
+          embeddingApiKey: "",
+          embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
+          embeddingModelDownloaded: true,
+        }) as never,
+    });
+    const promise = service.probeModelState({ force: true });
+    const job = runner.enqueued.at(-1);
+    if (!job) throw new Error("expected a probe job");
+    service.applyResult(
+      {
+        text: "x",
+        modelId: FALLBACK_EMBEDDING_MODEL_ID,
+        provider: "local",
+        dim: EMBEDDING_DIM,
+        persist: false,
+      },
+      {
+        vector: new Array(EMBEDDING_DIM).fill(0.5),
+        modelId: FALLBACK_EMBEDDING_MODEL_ID,
+        dim: EMBEDDING_DIM,
+      },
+      job.id,
+    );
+    runner.resolveSucceeded(job.id);
+    await expect(promise).resolves.toBe("fallback");
+    expect(updateAppSettings).toHaveBeenCalledWith({ embeddingModelDownloaded: false });
   });
 });

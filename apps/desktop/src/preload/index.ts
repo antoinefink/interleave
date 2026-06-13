@@ -128,6 +128,7 @@ import type {
   SemanticDownloadModelRequest,
   SemanticReindexRequest,
   SemanticRelatedRequest,
+  SemanticRetryFailedRequest,
   SemanticSearchRequest,
   SemanticStatusRequest,
   // review.leeches() / concepts.list() / tags.list() take no request payload.
@@ -481,6 +482,8 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.semanticStatus, request ?? {}),
     reindex: (request?: SemanticReindexRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.semanticReindex, request ?? {}),
+    retryFailed: (request?: SemanticRetryFailedRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.semanticRetryFailed, request ?? {}),
     downloadModel: (request?: SemanticDownloadModelRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.semanticDownloadModel, request ?? {}),
     related: (request: SemanticRelatedRequest) =>

@@ -5415,6 +5415,34 @@ export interface SemanticSearchResult {
   readonly counts: SearchCounts;
 }
 
+/**
+ * Honest model-readiness state (U1). Derived from a probe embed, NOT a warm-up flag:
+ *  - `ready`    — the real EmbeddingGemma model loaded and produced a vector.
+ *  - `loading`  — a probe embed is in flight (cold model load not yet resolved).
+ *  - `fallback` — the deterministic hash embedder is in use (no real model / load failed);
+ *                 search quality is reduced. The supervisor never auto-builds the index in
+ *                 this state, and fallback vectors are never persisted (the no-poison guard).
+ */
+export const SemanticModelStateSchema = z.enum(["ready", "loading", "fallback"]);
+export type SemanticModelState = z.infer<typeof SemanticModelStateSchema>;
+
+/**
+ * Index-health rollup that drives the Settings panel headline (U2):
+ *  - `healthy`  — real model in use, fully (or near-fully) covered (or nothing to index).
+ *  - `building` — embed jobs are in flight (coverage rising).
+ *  - `stale`    — below the reliability threshold and idle (no embed jobs running).
+ *  - `degraded` — the real model isn't in use (fallback / vec unavailable) — quality reduced.
+ */
+export const SemanticIndexHealthSchema = z.enum(["healthy", "building", "stale", "degraded"]);
+export type SemanticIndexHealth = z.infer<typeof SemanticIndexHealthSchema>;
+
+/**
+ * Coverage fraction at/above which semantic search is treated as reliable. Drives
+ * the `stale` health state AND the Library "partial coverage" label so the two
+ * surfaces never disagree — one source of truth, shared by main and the renderer.
+ */
+export const SEMANTIC_COVERAGE_THRESHOLD = 0.8;
+
 export const SemanticStatusRequestSchema = z.object({});
 export type SemanticStatusRequest = z.infer<typeof SemanticStatusRequestSchema>;
 
@@ -5428,6 +5456,18 @@ export interface SemanticStatusResult {
   /** The total live searchable corpus (the "N of M embedded" denominator). */
   readonly total: number;
   readonly modelId: string;
+  /** Honest model-readiness (U1) — `ready` / `loading` / `fallback`. */
+  readonly modelState: SemanticModelState;
+  /** Health rollup driving the panel headline (U2). */
+  readonly indexHealth: SemanticIndexHealth;
+  /** `embedded / total`, in `0..1` (`0` when `total === 0`). */
+  readonly coverageRatio: number;
+  /** Embed jobs that exhausted their retries — visible + retryable (U4). */
+  readonly failedCount: number;
+  /** Most recent failed-embed error (raw `"code: message"`); the UI renders plain language. */
+  readonly lastError: string | null;
+  /** Seconds-to-complete estimate while building, or `null` until enough samples exist. */
+  readonly etaSeconds: number | null;
 }
 
 export const SemanticReindexRequestSchema = z.object({
@@ -5438,6 +5478,14 @@ export type SemanticReindexRequest = z.infer<typeof SemanticReindexRequestSchema
 export interface SemanticReindexResult {
   /** How many `embed` jobs were enqueued (observe progress via `jobs.subscribe`). */
   readonly enqueued: number;
+}
+
+export const SemanticRetryFailedRequestSchema = z.object({});
+export type SemanticRetryFailedRequest = z.infer<typeof SemanticRetryFailedRequestSchema>;
+
+export interface SemanticRetryFailedResult {
+  /** How many elements were re-enqueued (fresh budget) from cleared failed embed jobs. */
+  readonly retried: number;
 }
 
 export const SemanticDownloadModelRequestSchema = z.object({});
@@ -7510,8 +7558,14 @@ export interface AppApi {
     /** Build the index — enqueue `embed` jobs; observe progress via `jobs.subscribe`. */
     reindex(request?: SemanticReindexRequest): Promise<SemanticReindexResult>;
     /**
-     * Pre-warm the local EmbeddingGemma ONNX model (T087) and flip
-     * `embeddingModelDownloaded = true`; search stays FTS-only until it resolves.
+     * Retry failed embed jobs (U4) — clear the failed rows and re-enqueue fresh embed
+     * jobs (full attempt budget) for the elements they targeted. Observe via
+     * `jobs.subscribe`; the failed count drops once the cleared rows are gone.
+     */
+    retryFailed(request?: SemanticRetryFailedRequest): Promise<SemanticRetryFailedResult>;
+    /**
+     * Ensure/repair the local EmbeddingGemma ONNX model (T087/U1) via an honest probe;
+     * reconciles `embeddingModelDownloaded` to the truth. Search stays FTS-only until ready.
      */
     downloadModel(request?: SemanticDownloadModelRequest): Promise<SemanticDownloadModelResult>;
     /**

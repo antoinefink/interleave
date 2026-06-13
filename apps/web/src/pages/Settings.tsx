@@ -32,6 +32,10 @@ import {
   RESET_LOCAL_DATA_CONFIRMATION_PHRASE,
   RESTORE_BACKUP_CONFIRMATION_PHRASE,
   type RendererSettings,
+  SEMANTIC_COVERAGE_THRESHOLD,
+  type SemanticIndexHealth,
+  type SemanticModelState,
+  type SemanticStatusResult,
   type SettingValue,
   type ThemePreference,
 } from "../lib/appApi";
@@ -513,6 +517,319 @@ function Token({ testid, children }: { testid: string; children: string }) {
     >
       {children}
     </span>
+  );
+}
+
+/** A soft status chip with an ok / warn / danger tint (uniform shape, full tint). */
+function StatusChip({
+  testid,
+  icon,
+  tone,
+  children,
+}: {
+  testid: string;
+  icon: IconName;
+  tone: "ok" | "warn" | "danger";
+  children: string;
+}) {
+  const tint =
+    tone === "ok"
+      ? "bg-ok-soft text-ok"
+      : tone === "warn"
+        ? "bg-warn-soft text-warn"
+        : "bg-danger-soft text-danger";
+  return (
+    <span
+      data-testid={testid}
+      className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs ${tint}`}
+    >
+      <Icon name={icon} size={13} />
+      {children}
+    </span>
+  );
+}
+
+/** A single readiness-checklist line (pass = check, fail = warning, muted-to-warn). */
+function ChecklistItem({ ok, label }: { ok: boolean; label: string }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 text-sm ${ok ? "text-text-2" : "text-warn"}`}
+    >
+      <Icon name={ok ? "check" : "warning"} size={13} />
+      {label}
+    </span>
+  );
+}
+
+/** The reliability threshold as a whole percent (mirrors the desktop constant). */
+const SEMANTIC_THRESHOLD_PCT = Math.round(SEMANTIC_COVERAGE_THRESHOLD * 100);
+
+/** Human copy + chip tone for the honest model state (U1/U5) — never a raw enum token. */
+function modelStateChip(state: SemanticModelState): {
+  testid: string;
+  icon: IconName;
+  tone: "ok" | "warn";
+  text: string;
+} {
+  switch (state) {
+    case "ready":
+      return { testid: "semantic-model-ready", icon: "check", tone: "ok", text: "Model ready" };
+    case "loading":
+      return {
+        testid: "semantic-model-loading",
+        icon: "hourglass",
+        tone: "warn",
+        text: "Loading model…",
+      };
+    default:
+      return {
+        testid: "semantic-model-fallback",
+        icon: "warning",
+        tone: "warn",
+        text: "Using basic keyword fallback — quality reduced",
+      };
+  }
+}
+
+/** Human headline for the index-health rollup (U2/U5). */
+function indexHealthHeadline(health: SemanticIndexHealth): string {
+  switch (health) {
+    case "healthy":
+      return "Search index ready";
+    case "building":
+      return "Building search index…";
+    case "stale":
+      return "Search index incomplete";
+    default:
+      return "Search running in reduced mode";
+  }
+}
+
+/** Translate a raw embed-job error ("code: message") into plain language (U4/U5). */
+function plainEmbedError(raw: string): string {
+  const lower = raw.toLowerCase();
+  if (lower.includes("too large") || lower.includes("oversiz"))
+    return "An item was too large to index.";
+  if (lower.includes("dim")) return "An item produced an unexpected result and was skipped.";
+  if (lower.includes("crash") || lower.includes("worker")) return "The background indexer crashed.";
+  if (lower.includes("timeout") || lower.includes("timed out")) return "Indexing timed out.";
+  if (lower.includes("model")) return "The search model failed to load.";
+  return "Some items couldn't be indexed.";
+}
+
+/** Friendly remaining-time copy from an ETA in seconds. */
+function formatEta(seconds: number): string {
+  if (seconds <= 0) return "almost done";
+  if (seconds < 60) return `about ${seconds}s remaining`;
+  return `about ${Math.round(seconds / 60)} min remaining`;
+}
+
+/**
+ * Search Intelligence panel (U5) — the always-accessible observability surface for
+ * the embedding lifecycle. Mirrors {@link AiAssistancePanel}: reads `semanticStatus`
+ * on mount, refreshes on `embed` job events + window focus, and renders honest,
+ * human-readable states (never raw enum tokens) for model readiness, index health +
+ * coverage + ETA, a readiness checklist, failures with a retry, and a rebuild action.
+ * Collapses to a single message when the vector engine is unavailable, and shows a
+ * neutral state for an empty vault — no false "partial coverage".
+ */
+function SearchIntelligencePanel() {
+  const [status, setStatus] = useState<SemanticStatusResult | null>(null);
+  const [busy, setBusy] = useState<"reindex" | "retry" | "model" | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (!isDesktop()) return;
+    try {
+      setStatus(await appApi.semanticStatus());
+    } catch {
+      setStatus(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    if (!isDesktop()) return;
+    const unsubscribe = appApi.subscribeJobs((job) => {
+      if (job.type === "embed") void refresh();
+    });
+    const onFocus = () => void refresh();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      unsubscribe();
+    };
+  }, [refresh]);
+
+  const run = useCallback(
+    (kind: "reindex" | "retry" | "model", action: () => Promise<unknown>) => () => {
+      setBusy(kind);
+      void (async () => {
+        try {
+          await action();
+          await refresh();
+        } finally {
+          setBusy(null);
+        }
+      })();
+    },
+    [refresh],
+  );
+
+  // Pre-load: a skeleton, never a flash of 0 / 0.
+  if (!status) {
+    return (
+      <SectionPanel title="Search intelligence">
+        <SettingRow label="Semantic search" hint="Checking status…">
+          <span data-testid="semantic-loading" className="text-sm text-text-3">
+            Loading…
+          </span>
+        </SettingRow>
+      </SectionPanel>
+    );
+  }
+
+  // Vector engine unavailable on this install → one honest message, no controls.
+  if (!status.vecAvailable) {
+    return (
+      <SectionPanel title="Search intelligence">
+        <SettingRow
+          label="Semantic search"
+          hint="Semantic search isn't available on this install — search uses keywords only."
+        >
+          <StatusChip testid="semantic-unavailable" icon="info" tone="warn">
+            Unavailable
+          </StatusChip>
+        </SettingRow>
+      </SectionPanel>
+    );
+  }
+
+  const modelChip = modelStateChip(status.modelState);
+  const isFallback = status.modelState === "fallback";
+  const pct = status.total > 0 ? Math.round(status.coverageRatio * 100) : 0;
+  const healthIcon: IconName =
+    status.indexHealth === "healthy"
+      ? "check"
+      : status.indexHealth === "degraded"
+        ? "warning"
+        : "hourglass";
+  const healthTone: "ok" | "warn" | "danger" =
+    status.indexHealth === "healthy" ? "ok" : status.indexHealth === "degraded" ? "danger" : "warn";
+
+  return (
+    <SectionPanel title="Search intelligence">
+      <SettingRow label="Search index" hint="Find related material by meaning, not just keywords.">
+        <StatusChip testid="semantic-index-health" icon={healthIcon} tone={healthTone}>
+          {indexHealthHeadline(status.indexHealth)}
+        </StatusChip>
+      </SettingRow>
+
+      {status.total === 0 ? (
+        <SettingRow
+          label="Indexed"
+          hint="Nothing to index yet — add sources to enable semantic search."
+        >
+          <span data-testid="semantic-empty" className="text-sm text-text-3">
+            Nothing to index yet
+          </span>
+        </SettingRow>
+      ) : (
+        <SettingRow
+          label="Indexed"
+          hint={
+            status.etaSeconds != null
+              ? formatEta(status.etaSeconds)
+              : status.indexHealth === "building"
+                ? "estimating…"
+                : pct < SEMANTIC_THRESHOLD_PCT
+                  ? "Partial — semantic search improves as more items are indexed."
+                  : "Fully indexed."
+          }
+        >
+          <div className="flex items-center gap-2" data-testid="semantic-progress">
+            <div className="h-1.5 w-32 overflow-hidden rounded-full bg-surface">
+              <div
+                className="h-full rounded-full bg-accent transition-[width]"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <span className="text-sm text-text-2">
+              {status.embedded} of {status.total}
+            </span>
+          </div>
+        </SettingRow>
+      )}
+
+      <SettingRow
+        label="Search model"
+        hint={
+          isFallback
+            ? "The on-device model isn't loaded — reinstall the app to repair it if this persists."
+            : "Runs entirely on-device — no content leaves your machine."
+        }
+      >
+        <div className="flex items-center gap-2">
+          <StatusChip testid={modelChip.testid} icon={modelChip.icon} tone={modelChip.tone}>
+            {modelChip.text}
+          </StatusChip>
+          {isFallback ? (
+            <button
+              type="button"
+              data-testid="semantic-recheck-model"
+              disabled={busy === "model"}
+              onClick={run("model", () => appApi.semanticDownloadModel())}
+              className="rounded-md border border-border bg-surface px-3 py-1 text-sm text-text hover:bg-surface-2 disabled:opacity-40"
+            >
+              {busy === "model" ? "Checking…" : "Recheck"}
+            </button>
+          ) : null}
+        </div>
+      </SettingRow>
+
+      <SettingRow label="Readiness" hint="What semantic search needs to run.">
+        <div data-testid="semantic-checklist" className="flex flex-col items-end gap-1">
+          <ChecklistItem ok label="Search engine ready" />
+          <ChecklistItem ok={status.modelState === "ready"} label="Model verified" />
+          <ChecklistItem ok={!isFallback} label="Vectors compatible" />
+        </div>
+      </SettingRow>
+
+      {status.failedCount > 0 ? (
+        <SettingRow
+          label="Couldn't index"
+          hint={
+            status.lastError ? plainEmbedError(status.lastError) : "Some items couldn't be indexed."
+          }
+        >
+          <div className="flex items-center gap-2">
+            <StatusChip testid="semantic-failed" icon="warning" tone="danger">
+              {`${status.failedCount} failed`}
+            </StatusChip>
+            <button
+              type="button"
+              data-testid="semantic-retry-failed"
+              disabled={busy === "retry"}
+              onClick={run("retry", () => appApi.semanticRetryFailed())}
+              className="rounded-md border border-border bg-surface px-3 py-1 text-sm text-text hover:bg-surface-2 disabled:opacity-40"
+            >
+              {busy === "retry" ? "Retrying…" : "Retry failed"}
+            </button>
+          </div>
+        </SettingRow>
+      ) : null}
+
+      <SettingRow label="Rebuild index" hint="Re-embed anything missing or out of date.">
+        <button
+          type="button"
+          data-testid="semantic-reindex"
+          disabled={busy === "reindex"}
+          onClick={run("reindex", () => appApi.semanticReindex({ onlyMissing: false }))}
+          className="rounded-md border border-border bg-surface px-3 py-1 text-sm text-text hover:bg-surface-2 disabled:opacity-40"
+        >
+          {busy === "reindex" ? "Rebuilding…" : "Rebuild"}
+        </button>
+      </SettingRow>
+    </SectionPanel>
   );
 }
 
@@ -1439,6 +1756,8 @@ export function Settings() {
       <OptimizationPanel />
 
       <AiAssistancePanel settings={s} patch={patch} />
+
+      <SearchIntelligencePanel />
 
       <SectionPanel title="Interface">
         <SettingRow

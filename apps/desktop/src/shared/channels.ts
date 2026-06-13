@@ -189,6 +189,7 @@ export const IPC_CHANNELS = {
   semanticSearch: "semantic:search",
   semanticStatus: "semantic:status",
   semanticReindex: "semantic:reindex",
+  semanticRetryFailed: "semantic:retryFailed",
   semanticDownloadModel: "semantic:downloadModel",
   // Related-item suggestions (T088) — DERIVED similar/duplicate/prereq/sibling reads.
   semanticRelated: "semantic:related",

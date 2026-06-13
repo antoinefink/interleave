@@ -328,6 +328,7 @@ describe("IPC channels", () => {
         "semantic:search",
         "semantic:status",
         "semantic:reindex",
+        "semantic:retryFailed",
         "semantic:downloadModel",
         "semantic:related",
         "semantic:contradictions",

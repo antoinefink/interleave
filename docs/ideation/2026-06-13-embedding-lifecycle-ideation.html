@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ideation: Embedding Lifecycle — Background Readiness, Gradual Reindexing, Observable Status</title>
+<style>
+  :root {
+    --bg: #fbfaf8;
+    --surface: #ffffff;
+    --surface-2: #f4f2ee;
+    --text: #1d1b18;
+    --muted: #5f5b54;
+    --border: #e4e0d8;
+    --accent: #2f6f6a;
+    --accent-text: #235753;
+    --accent-soft: #e3f0ee;
+    --ok: #3f7d52; --ok-soft: #e4f1e7; --ok-text: #2f6340;
+    --warn: #9a6b18; --warn-soft: #f6ecd6; --warn-text: #7d5712;
+    --danger: #ad4a37; --danger-soft: #f6e3de; --danger-text: #8c3a2b;
+    --info: #3a6ea5; --info-soft: #e3ecf5; --info-text: #2c577f;
+    --radius: 10px;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15140f; --surface: #1e1c17; --surface-2: #26241d;
+      --text: #ece8df; --muted: #a8a296; --border: #34312a;
+      --accent: #6fc0b8; --accent-text: #8fd2cb; --accent-soft: #1f322f;
+      --ok: #76b88a; --ok-soft: #1d2c22; --ok-text: #95cda6;
+      --warn: #d6a94e; --warn-soft: #312918; --warn-text: #e0bd72;
+      --danger: #e08673; --danger-soft: #33211c; --danger-text: #ec9d8b;
+      --info: #7ba9d6; --info-soft: #1c2733; --info-text: #9cc1e6;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--sans); font-size: 16px; line-height: 1.6;
+    font-feature-settings: "kern", "liga", "calt";
+  }
+  .page { max-width: 940px; margin-inline: auto; padding: 3rem 1.5rem 5rem; }
+  .prose { max-width: 72ch; }
+  h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 .4rem; letter-spacing: -0.01em; }
+  h2 { font-size: 1.4rem; margin: 3rem 0 1rem; padding-bottom: .4rem; border-bottom: 2px solid var(--border); letter-spacing: -0.01em; }
+  h3 { font-size: 1.2rem; margin: 0 0 .25rem; letter-spacing: -0.005em; }
+  p { margin: .6rem 0; }
+  a { color: var(--accent-text); }
+  code { font-family: var(--mono); font-size: 0.86em; background: var(--surface-2); padding: .1em .35em; border-radius: 5px; border: 1px solid var(--border); }
+  strong { color: inherit; }
+  .eyebrow { text-transform: uppercase; letter-spacing: .12em; font-size: .72rem; font-weight: 700; color: var(--accent-text); margin: 0 0 .3rem; }
+  .sub { color: var(--muted); font-size: 1.02rem; margin-top: .2rem; }
+
+  .meta { display: flex; flex-wrap: wrap; gap: .5rem .9rem; margin: 1.2rem 0 0; font-size: .85rem; color: var(--muted); }
+  .meta b { color: var(--text); font-weight: 600; }
+
+  .stats { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1.6rem 0 0; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: .7rem 1rem; min-width: 110px; }
+  .stat .n { font-size: 1.5rem; font-weight: 700; line-height: 1; }
+  .stat .l { font-size: .76rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-top: .3rem; }
+
+  .callout { border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.2rem; margin: 1.4rem 0; background: var(--surface); }
+  .callout.key { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+  .callout .tag { display: inline-block; text-transform: uppercase; letter-spacing: .1em; font-size: .7rem; font-weight: 700; color: var(--accent-text); margin-bottom: .35rem; }
+
+  section { }
+  .ground p, .ground li { max-width: 74ch; }
+  ul.tight { margin: .5rem 0; padding-left: 1.2rem; }
+  ul.tight li { margin: .3rem 0; }
+
+  .axes { display: grid; grid-template-columns: 1fr; gap: .6rem; margin-top: 1rem; }
+  @media (min-width: 680px) { .axes { grid-template-columns: 1fr 1fr; } }
+  .axis { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: .7rem .9rem; }
+  .axis .k { font-family: var(--mono); font-size: .78rem; color: var(--accent-text); font-weight: 700; }
+  .axis .d { font-size: .9rem; color: var(--muted); margin-top: .15rem; }
+
+  .jump { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: .8rem 1rem; margin: 1rem 0 1.6rem; }
+  .jump ol { margin: .3rem 0 0; padding-left: 1.3rem; }
+  .jump li { margin: .25rem 0; }
+  .jump a { text-decoration: none; }
+  .jump a:hover { text-decoration: underline; }
+
+  article.idea { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 1.4rem 1.5rem; margin: 1.2rem 0; }
+  article.idea .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .6rem; }
+  article.idea .rank { font-family: var(--mono); font-weight: 700; color: var(--accent-text); font-size: 1.05rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: .4rem; margin: .7rem 0 0; }
+  .chip { font-size: .74rem; font-weight: 600; padding: .22em .6em; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); white-space: nowrap; }
+  .chip.axis-c { background: var(--accent-soft); color: var(--accent-text); border-color: color-mix(in srgb, var(--accent) 25%, var(--border)); }
+  .chip.conf-hi { background: var(--ok-soft); color: var(--ok-text); border-color: color-mix(in srgb, var(--ok) 25%, var(--border)); }
+  .chip.conf-mid { background: var(--warn-soft); color: var(--warn-text); border-color: color-mix(in srgb, var(--warn) 25%, var(--border)); }
+  .chip.cx { background: var(--info-soft); color: var(--info-text); border-color: color-mix(in srgb, var(--info) 25%, var(--border)); }
+  dl.fields { margin: 1rem 0 0; display: grid; grid-template-columns: max-content 1fr; gap: .4rem 1rem; }
+  dl.fields dt { font-size: .74rem; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 700; padding-top: .15rem; }
+  dl.fields dd { margin: 0; }
+  dl.fields dd.basis code { background: var(--surface-2); }
+  .basis-tag { font-family: var(--mono); font-weight: 700; font-size: .82rem; }
+  .basis-direct { color: var(--ok-text); }
+  .basis-external { color: var(--info-text); }
+  .basis-reasoned { color: var(--warn-text); }
+  @media (max-width: 560px) { dl.fields { grid-template-columns: 1fr; gap: .15rem; } dl.fields dt { margin-top: .6rem; } }
+
+  figure { margin: 1.2rem 0 .4rem; }
+  figure svg { width: 100%; height: auto; display: block; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); }
+  figcaption { font-size: .82rem; color: var(--muted); margin-top: .4rem; }
+
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: .92rem; }
+  th, td { text-align: left; padding: .55rem .7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: .76rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  td.id { font-family: var(--mono); color: var(--muted); white-space: nowrap; }
+
+  footer.composition-signal { margin-top: 4rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: .8rem; color: var(--muted); }
+  footer.composition-signal code { font-size: .82em; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <p class="eyebrow">Ideation · Compound Engineering</p>
+  <h1>The Embedding Lifecycle: Make Search Self-Heal, Tell the Truth, and Prove It Works</h1>
+  <p class="sub prose">A gold-standard plan for how Interleave acquires the embedding model, indexes everything in the background, and shows you exactly what is happening — turning today's silent, half-built state into a system that fixes itself and earns trust.</p>
+
+  <div class="meta">
+    <span><b>Date</b> <time datetime="2026-06-13">2026-06-13</time></span>
+    <span><b>Topic</b> embedding-lifecycle</span>
+    <span><b>Focus</b> background model readiness · gradual reindexing · observable status surface</span>
+    <span><b>Mode</b> repo-grounded</span>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="n">5</div><div class="l">Topic axes</div></div>
+    <div class="stat"><div class="n">7</div><div class="l">Ranked ideas</div></div>
+    <div class="stat"><div class="n">21</div><div class="l">Candidates considered</div></div>
+    <div class="stat"><div class="n">14</div><div class="l">Cut or folded</div></div>
+  </div>
+
+  <!-- ===================== GROUNDING ===================== -->
+  <h2 id="grounding">Grounding Context</h2>
+  <section class="ground prose">
+
+    <div class="callout key">
+      <span class="tag">The finding that reframes everything</span>
+      <p>The headline worry — "the model isn't downloaded" — is mostly a <strong>development-build illusion</strong>. A fresh-context verifier confirmed that <strong>release builds already bundle the model inside the app</strong>: <code>embedding-model.ts</code> checks the packaged model directory <em>first</em>, so a shipped Interleave has a working model even though <code>&lt;userData&gt;/models</code> is empty. The verified reason a real install shows <strong>0 of 25 embedded is that nothing ever starts indexing</strong> — pre-existing items never fire the per-item embed hook, the only reindex path is a manual "Build index" button, and startup just re-queues crashed jobs. On top of that, the "model ready" flag is set by a throwaway warm-up rather than an honest check, and embed-job <em>failures are never shown anywhere</em>.</p>
+      <p style="margin-bottom:0;">So the gold-standard work is not "build a downloader." It is three things: <strong>(1) make indexing start and heal itself automatically</strong>, <strong>(2) make status honest and visible</strong>, and <strong>(3) prove the vectors are actually meaningful</strong> — because today a 100%-complete count can be 100% wrong.</p>
+    </div>
+
+    <p><strong>What already exists</strong> (the ideas below build on it, they do not reinvent it):</p>
+    <ul class="tight">
+      <li><strong>A real background job system.</strong> A single Electron <code>utilityProcess</code> worker runs jobs at concurrency 2, with exponential backoff, crash recovery, and a persistent <code>jobs</code> table that survives restart. <code>embed</code> is already a registered job type.</li>
+      <li><strong>An embedding service.</strong> <code>enqueueElement()</code> skips unchanged text via a content hash; <code>reindexAll()</code> can enqueue the whole corpus; results upsert transactionally into a <code>sqlite-vec</code> vector table. New extracts/cards/documents auto-enqueue an embed right after they're saved.</li>
+      <li><strong>Solid storage.</strong> An <code>embeddings</code> bookkeeping table (with per-row <code>model_id</code>, <code>content_hash</code>, <code>dim</code>) plus a <code>vec0</code> virtual table; nearest-neighbour search is filtered by model id; a real round-trip "is the vector engine actually working" smoke test guards against silent extension failures.</li>
+      <li><strong>The model:</strong> EmbeddingGemma-300M (768-dim) run locally via transformers.js. Vendored into the app at build time; loaded offline at runtime. If it is ever absent, the code falls back to a deterministic hash-based embedder — which produces real-looking but <em>meaningless</em> vectors.</li>
+    </ul>
+
+    <p><strong>The verified gaps</strong> — what is missing today:</p>
+    <ul class="tight">
+      <li>Nothing auto-starts indexing on launch, and there is no "download / acquire" path that isn't really just a warm-up. So a corpus that predates the feature stays at 0% forever.</li>
+      <li>No status surface in Settings. The only indicator is a "Build index (N of M)" hint on the Library screen that vanishes once you type a search.</li>
+      <li>Job failures are invisible — the error text is captured but never displayed, so indexing can be permanently stuck at "23 of 25" with no explanation.</li>
+      <li>No quality signal. Counts say "done"; nothing says "and the vectors are good." The hash fallback can fill the count to 100% while being semantically worthless.</li>
+      <li>No automatic re-embed when the model changes; the orphan/drift cleanup exists but is never scheduled; the runner ignores battery/idle state.</li>
+    </ul>
+
+    <figure>
+      <svg viewBox="0 0 920 300" role="img" aria-label="Diagram contrasting today's silent broken lifecycle with the gold-standard self-healing lifecycle.">
+        <style>
+          .lbl { font: 600 13px var(--sans, sans-serif); fill: #1d1b18; paint-order: stroke fill; stroke: var(--surface-2,#f4f2ee); stroke-width: 3px; }
+          .lbl-w { font: 700 13px sans-serif; }
+          .small { font: 500 11px sans-serif; fill: #5f5b54; }
+          .ttl { font: 700 13px sans-serif; letter-spacing: .04em; }
+          @media (prefers-color-scheme: dark) {
+            .lbl { fill: #ece8df; stroke: #26241d; }
+            .small { fill: #a8a296; }
+          }
+        </style>
+        <!-- TODAY row -->
+        <text x="20" y="30" class="ttl" fill="#8c3a2b">TODAY — silent &amp; broken</text>
+        <g>
+          <rect x="20" y="44" width="150" height="46" rx="8" fill="#f6e3de" stroke="#ad4a37"/>
+          <text x="95" y="72" text-anchor="middle" class="lbl">App opens</text>
+          <rect x="210" y="44" width="180" height="46" rx="8" fill="#f6e3de" stroke="#ad4a37"/>
+          <text x="300" y="66" text-anchor="middle" class="lbl">Nothing triggers</text>
+          <text x="300" y="82" text-anchor="middle" class="small">indexing</text>
+          <rect x="430" y="44" width="170" height="46" rx="8" fill="#f6e3de" stroke="#ad4a37"/>
+          <text x="515" y="66" text-anchor="middle" class="lbl">0 / 25 embedded</text>
+          <text x="515" y="82" text-anchor="middle" class="small">no signal anywhere</text>
+          <rect x="640" y="44" width="200" height="46" rx="8" fill="#f6e3de" stroke="#ad4a37"/>
+          <text x="740" y="66" text-anchor="middle" class="lbl">Search silently</text>
+          <text x="740" y="82" text-anchor="middle" class="small">drops to keyword-only</text>
+          <!-- arrows -->
+          <line x1="170" y1="67" x2="206" y2="67" stroke="#ad4a37" stroke-width="2"/>
+          <polygon points="206,67 198,63 198,71" fill="#ad4a37"/>
+          <line x1="390" y1="67" x2="426" y2="67" stroke="#ad4a37" stroke-width="2"/>
+          <polygon points="426,67 418,63 418,71" fill="#ad4a37"/>
+          <line x1="600" y1="67" x2="636" y2="67" stroke="#ad4a37" stroke-width="2"/>
+          <polygon points="636,67 628,63 628,71" fill="#ad4a37"/>
+        </g>
+        <!-- GOLD row -->
+        <text x="20" y="166" class="ttl" fill="#2f6340">GOLD-STANDARD — self-healing &amp; honest</text>
+        <g>
+          <rect x="20" y="180" width="150" height="56" rx="8" fill="#e4f1e7" stroke="#3f7d52"/>
+          <text x="95" y="204" text-anchor="middle" class="lbl">App opens</text>
+          <text x="95" y="220" text-anchor="middle" class="small">supervisor starts</text>
+          <rect x="210" y="180" width="180" height="56" rx="8" fill="#e4f1e7" stroke="#3f7d52"/>
+          <text x="300" y="204" text-anchor="middle" class="lbl">Probe model ✓</text>
+          <text x="300" y="220" text-anchor="middle" class="small">drip-embed the gap</text>
+          <rect x="430" y="180" width="170" height="56" rx="8" fill="#e4f1e7" stroke="#3f7d52"/>
+          <text x="515" y="204" text-anchor="middle" class="lbl">Coverage climbs</text>
+          <text x="515" y="220" text-anchor="middle" class="small">visible in Settings</text>
+          <rect x="640" y="180" width="200" height="56" rx="8" fill="#e4f1e7" stroke="#3f7d52"/>
+          <text x="740" y="204" text-anchor="middle" class="lbl">Semantic search</text>
+          <text x="740" y="220" text-anchor="middle" class="small">verified green</text>
+          <line x1="170" y1="208" x2="206" y2="208" stroke="#3f7d52" stroke-width="2"/>
+          <polygon points="206,208 198,204 198,212" fill="#3f7d52"/>
+          <line x1="390" y1="208" x2="426" y2="208" stroke="#3f7d52" stroke-width="2"/>
+          <polygon points="426,208 418,204 418,212" fill="#3f7d52"/>
+          <line x1="600" y1="208" x2="636" y2="208" stroke="#3f7d52" stroke-width="2"/>
+          <polygon points="636,208 628,204 628,212" fill="#3f7d52"/>
+        </g>
+        <text x="20" y="280" class="small">The same machinery exists in both rows — the difference is a supervisor that starts the work, a surface that shows it, and a check that proves it.</text>
+      </svg>
+      <figcaption>Today vs. the gold-standard lifecycle. Illustrative — the moves that close the gap are ideas 1–5 below.</figcaption>
+    </figure>
+  </section>
+
+  <!-- ===================== AXES ===================== -->
+  <h2 id="axes">Topic Axes</h2>
+  <p class="prose sub" style="margin-top:.4rem;">The embedding lifecycle decomposed into five orthogonal surfaces. Each idea below targets one.</p>
+  <div class="axes">
+    <div class="axis"><div class="k">model-acquisition</div><div class="d">Getting the model present &amp; loadable: bundling vs download, integrity, offline, "ready" state.</div></div>
+    <div class="axis"><div class="k">indexing-pipeline</div><div class="d">Turning content into vectors in the background: triggering, batching, throttling, prioritization.</div></div>
+    <div class="axis"><div class="k">index-health-migration</div><div class="d">Keeping the index correct over time: idempotency, model-version changes, orphans, drift.</div></div>
+    <div class="axis"><div class="k">observability-surface</div><div class="d">What the user can see &amp; do: counts, ETA, model state, errors, actions — the Settings panel.</div></div>
+    <div class="axis"><div class="k">quality-eval</div><div class="d">Proving the vectors are meaningful: smoke tests, drift checks — green/red confidence, not just counts.</div></div>
+  </div>
+
+  <!-- ===================== RANKED IDEAS ===================== -->
+  <h2 id="ideas">Ranked Ideas</h2>
+
+  <div class="jump prose">
+    <strong>Jump to an idea</strong>
+    <ol>
+      <li><a href="#i1">Self-Healing Index Supervisor</a> — <em>the fix for "0 of 25"</em></li>
+      <li><a href="#i2">Honest Model-Ready Probe &amp; Status Contract</a></li>
+      <li><a href="#i3">"Search Intelligence" Health Panel in Settings</a></li>
+      <li><a href="#i4">Make Failures Visible &amp; Recoverable</a></li>
+      <li><a href="#i5">Prove It Works: Quality Canary + Fallback Quarantine</a></li>
+      <li><a href="#i6">Safe, Observable Model Upgrades (Re-Embed Campaign)</a></li>
+      <li><a href="#i7">Scale-Ready Indexing: Power-Aware Throttle + Priority Order</a></li>
+    </ol>
+  </div>
+
+  <!-- IDEA 1 -->
+  <article class="idea" id="i1">
+    <div class="head"><span class="rank">1.</span><h3>Self-Healing Index Supervisor</h3></div>
+    <div class="chips">
+      <span class="chip axis-c">indexing-pipeline</span>
+      <span class="chip conf-hi">Confidence 92%</span>
+      <span class="chip cx">Complexity Medium</span>
+      <span class="chip">Recommended first</span>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 920 220" role="img" aria-label="Flow of the index supervisor: on start, probe readiness, then if there is a gap, drip-embed missing items; a periodic scrub loops back to fix orphans, drift, and model mismatches.">
+        <style>
+          .s-box { fill: var(--surface,#fff); stroke: #2f6f6a; stroke-width: 1.6px; }
+          .s-lbl { font: 600 13px sans-serif; fill: #1d1b18; paint-order: stroke fill; stroke: var(--surface,#fff); stroke-width: 3px; }
+          .s-sub { font: 500 11px sans-serif; fill: #5f5b54; }
+          .s-arr { stroke: #2f6f6a; stroke-width: 2px; fill: none; }
+          @media (prefers-color-scheme: dark){ .s-lbl{fill:#ece8df; stroke:#1e1c17;} .s-sub{fill:#a8a296;} .s-box{fill:#1e1c17; stroke:#6fc0b8;} .s-arr{stroke:#6fc0b8;} }
+        </style>
+        <rect x="16" y="40" width="120" height="50" rx="9" class="s-box"/>
+        <text x="76" y="62" text-anchor="middle" class="s-lbl">App start</text>
+        <text x="76" y="78" text-anchor="middle" class="s-sub">after DB/IPC ready</text>
+
+        <rect x="176" y="40" width="150" height="50" rx="9" class="s-box"/>
+        <text x="251" y="62" text-anchor="middle" class="s-lbl">Probe readiness</text>
+        <text x="251" y="78" text-anchor="middle" class="s-sub">model? vec0 ok?</text>
+
+        <rect x="366" y="40" width="160" height="50" rx="9" class="s-box"/>
+        <text x="446" y="62" text-anchor="middle" class="s-lbl">Gap? embedded &lt; total</text>
+        <text x="446" y="78" text-anchor="middle" class="s-sub">+ stale model rows</text>
+
+        <rect x="566" y="40" width="160" height="50" rx="9" class="s-box"/>
+        <text x="646" y="62" text-anchor="middle" class="s-lbl">Drip-embed missing</text>
+        <text x="646" y="78" text-anchor="middle" class="s-sub">reuse reindexAll()</text>
+
+        <rect x="766" y="40" width="138" height="50" rx="9" class="s-box"/>
+        <text x="835" y="62" text-anchor="middle" class="s-lbl">Search ready</text>
+        <text x="835" y="78" text-anchor="middle" class="s-sub">grows live</text>
+
+        <!-- straight arrows along the top row -->
+        <path class="s-arr" d="M136 65 H172"/><polygon points="172,65 164,61 164,69" fill="#2f6f6a"/>
+        <path class="s-arr" d="M326 65 H362"/><polygon points="362,65 354,61 354,69" fill="#2f6f6a"/>
+        <path class="s-arr" d="M526 65 H562"/><polygon points="562,65 554,61 554,69" fill="#2f6f6a"/>
+        <path class="s-arr" d="M726 65 H762"/><polygon points="762,65 754,61 754,69" fill="#2f6f6a"/>
+
+        <!-- scrub loop -->
+        <rect x="366" y="150" width="360" height="46" rx="9" fill="#e3f0ee" stroke="#2f6f6a" stroke-width="1.4"/>
+        <text x="546" y="171" text-anchor="middle" class="s-lbl" style="stroke:#e3f0ee">Periodic scrub: orphans · content drift · model mismatch</text>
+        <text x="546" y="187" text-anchor="middle" class="s-sub">low-priority, registered in the backup drain path</text>
+        <path class="s-arr" d="M646 90 V150" stroke-dasharray="5 4"/><polygon points="646,150 642,142 650,142" fill="#2f6f6a"/>
+        <path class="s-arr" d="M446 150 V90" stroke-dasharray="5 4"/><polygon points="446,90 442,98 450,98" fill="#2f6f6a"/>
+      </svg>
+      <figcaption>The supervisor is the spine: it starts the existing machinery on launch and keeps the index correct on a loop.</figcaption>
+    </figure>
+
+    <p>A small <strong>maintenance service in the Electron main process</strong> that owns the whole index "staying healthy" job. On launch (after the database, IPC, and job runner are up) it probes readiness, and if there are elements without an up-to-date embedding it quietly calls the existing <code>reindexAll()</code> — no button, no ceremony. It also runs a periodic low-priority <strong>scrub</strong> that prunes orphaned vectors, re-embeds items whose text changed, and re-embeds rows left on an old model. It registers in the backup restore/reset drain path so it never writes to a database that's about to be swapped out.</p>
+    <dl class="fields">
+      <dt>Axis</dt><dd>indexing-pipeline</dd>
+      <dt>Basis</dt><dd class="basis"><span class="basis-tag basis-direct">direct:</span> startup <code>start()</code> calls only <code>recoverRunning()</code> (re-queues crashed jobs), never a reindex sweep; <code>reindexAll()</code> exists but is manual-only. Pre-existing elements never fire the per-item auto-embed, so a corpus that predates the feature stays at 0%. <code>pruneOrphanVectors()</code> exists but is wired only to a manual cleanup, never scheduled. The "background maintenance lives in main + register in the backup drain path" pattern is already documented in <code>docs/solutions/</code>.</dd>
+      <dt>Rationale</dt><dd>This is the single change that converts "0 of 25, forever, silently" from the <em>default</em> state into a <em>temporary</em> state. Almost all the parts already exist; what's missing is the supervisor that starts and repeats them.</dd>
+      <dt>Downsides</dt><dd>Background CPU right after launch (mitigated by idea 7's throttle); must be carefully ordered against backup/restore and app shutdown so it never writes to a torn-down store.</dd>
+      <dt>Confidence</dt><dd>92%</dd>
+      <dt>Complexity</dt><dd>Medium</dd>
+    </dl>
+  </article>
+
+  <!-- IDEA 2 -->
+  <article class="idea" id="i2">
+    <div class="head"><span class="rank">2.</span><h3>Honest Model-Ready Probe &amp; Status Contract</h3></div>
+    <div class="chips">
+      <span class="chip axis-c">model-acquisition</span>
+      <span class="chip conf-hi">Confidence 90%</span>
+      <span class="chip cx">Complexity Low</span>
+    </div>
+    <p>Replace the "did a warm-up embed succeed?" heuristic with a <strong>real probe</strong>: on launch, check whether the bundled model directory exists, whether its <code>.interleave-model-ready.json</code> marker matches the active model id, and whether a one-shot embed actually returns the <em>real</em> model (not the hash fallback). Set the <code>modelDownloaded</code> state from that truth. Document the reality that <strong>release builds bundle the model</strong>, so the runtime "download" becomes a rare <em>repair</em> path (re-acquire only if the bundled copy is missing or corrupt) rather than the everyday mechanism the original premise assumed.</p>
+    <dl class="fields">
+      <dt>Axis</dt><dd>model-acquisition</dd>
+      <dt>Basis</dt><dd class="basis"><span class="basis-tag basis-direct">direct:</span> <code>embeddingModelDownloaded</code> is flipped only by a transient warm-up embed result, never by probing the marker file that the build step writes; the loader checks the packaged bundle dir <em>first</em>, so packaged builds already have a working model. <span class="basis-tag basis-external">external:</span> Obsidian Smart Connections ships the model in the bundle (zero download) — the same posture this idea formalizes.</dd>
+      <dt>Rationale</dt><dd>The status surface (idea 3) is only as trustworthy as this flag. Fixing the probe is the cheapest change that makes "model: ready" actually mean ready, and it prevents over-investing in a downloader for a problem that mostly doesn't exist in shipped builds.</dd>
+      <dt>Downsides</dt><dd>A one-shot probe embed adds a little startup work (cache it, don't repeat every launch); the repair-download path still needs <em>some</em> minimal implementation for the rare corrupt-bundle case.</dd>
+      <dt>Confidence</dt><dd>90%</dd>
+      <dt>Complexity</dt><dd>Low</dd>
+    </dl>
+  </article>
+
+  <!-- IDEA 3 -->
+  <article class="idea" id="i3">
+    <div class="head"><span class="rank">3.</span><h3>"Search Intelligence" Health Panel in Settings</h3></div>
+    <div class="chips">
+      <span class="chip axis-c">observability-surface</span>
+      <span class="chip conf-hi">Confidence 88%</span>
+      <span class="chip cx">Complexity Medium</span>
+    </div>
+    <p>The centerpiece you asked for: a dedicated section in Settings, modeled on the existing AI Assistance panel (which already has a toggle, status chips, and a download button). It shows, in one always-accessible place: <strong>model state</strong> (bundled / ready / repairing, real model vs. fallback); <strong>indexed / total</strong> with a progress bar and an <strong>ETA</strong> ("~4 min remaining") derived from recent job throughput; a small <strong>readiness checklist</strong> (vector engine OK · model verified · dimensions match) instead of one opaque "enabled" boolean; a <strong>coverage-with-threshold</strong> reading that honestly labels results "partial coverage — keyword-weighted" below a reliability line; and <strong>actions</strong> (reindex, retry failed, prune, re-acquire model).</p>
+    <dl class="fields">
+      <dt>Axis</dt><dd>observability-surface</dd>
+      <dt>Basis</dt><dd class="basis"><span class="basis-tag basis-direct">direct:</span> Settings has no semantic panel today; the AI Assistance panel is a working analogue, and the UI primitives (status chips, progress bar, "OK" chip) already exist. The status payload already returns <code>enabled / vecAvailable / modelDownloaded / embedded / total / modelId</code> — most fields the panel needs exist; only ETA, the checklist breakdown, and coverage framing are new.</dd>
+      <dt>Rationale</dt><dd>This is the literal request ("see status, problems, what's downloaded, whether reindexing is happening"). Because the contract and primitives already exist, it is mostly a renderer addition, not new plumbing.</dd>
+      <dt>Downsides</dt><dd>ETA is noisy until a few jobs complete (show "estimating…" first); a status screen that updates live needs to subscribe to job events without re-querying on every tick.</dd>
+      <dt>Confidence</dt><dd>88%</dd>
+      <dt>Complexity</dt><dd>Medium</dd>
+    </dl>
+  </article>
+
+  <!-- IDEA 4 -->
+  <article class="idea" id="i4">
+    <div class="head"><span class="rank">4.</span><h3>Make Failures Visible &amp; Recoverable</h3></div>
+    <div class="chips">
+      <span class="chip axis-c">observability-surface</span>
+      <span class="chip conf-hi">Confidence 90%</span>
+      <span class="chip cx">Complexity Low</span>
+    </div>
+    <p>Every embed job already carries an <code>error</code> field — it is simply never shown. Surface it: a <strong>failed-jobs count</strong>, the human-readable error text grouped by kind (model load failed, oversized item, worker crash, timeout), and a one-click <strong>"retry failed."</strong> Distinguish <em>transient</em> failures (retried automatically) from <em>permanent</em> ones (e.g. an item too large to embed) so the panel can say "3 items couldn't be indexed: [reason]" instead of stalling at "23 of 25" with no explanation.</p>
+    <dl class="fields">
+      <dt>Axis</dt><dd>observability-surface</dd>
+      <dt>Basis</dt><dd class="basis"><span class="basis-tag basis-direct">direct:</span> the job summary type has an <code>error: string | null</code> field that is populated by the runner but never rendered in the UI; after max retries a job is marked failed and effectively forgotten, with no surface.</dd>
+      <dt>Rationale</dt><dd>You explicitly asked the surface to show "problems." A permanently stuck count with no reason is exactly the confusing half-state to escape. The data already exists; only the routing to the UI is missing — which is why this is high-confidence, low-complexity.</dd>
+      <dt>Downsides</dt><dd>Needs a clear taxonomy of transient vs. permanent so "retry" isn't offered for things that will always fail; raw error strings must be translated to plain language for a non-technical reader.</dd>
+      <dt>Confidence</dt><dd>90%</dd>
+      <dt>Complexity</dt><dd>Low</dd>
+    </dl>
+  </article>
+
+  <!-- IDEA 5 -->
+  <article class="idea" id="i5">
+    <div class="head"><span class="rank">5.</span><h3>Prove It Works: Quality Canary + Fallback Quarantine</h3></div>
+    <div class="chips">
+      <span class="chip axis-c">quality-eval</span>
+      <span class="chip conf-hi">Confidence 85%</span>
+      <span class="chip cx">Complexity Medium</span>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 920 200" role="img" aria-label="Two index states that look identical by count but differ in quality: real embeddings pass the canary green; hash-fallback embeddings fill the same count but fail the canary red.">
+        <style>
+          .q-lbl { font: 600 13px sans-serif; fill: #1d1b18; paint-order: stroke fill; stroke: var(--surface-2,#f4f2ee); stroke-width: 3px; }
+          .q-sub { font: 500 11px sans-serif; fill: #5f5b54; }
+          @media (prefers-color-scheme: dark){ .q-lbl{fill:#ece8df; stroke:#26241d;} .q-sub{fill:#a8a296;} }
+        </style>
+        <text x="20" y="28" class="q-lbl" style="stroke:none">Both say “25 / 25 embedded.” Only one is actually working.</text>
+
+        <!-- Left: real -->
+        <rect x="20" y="48" width="420" height="120" rx="10" fill="#e4f1e7" stroke="#3f7d52"/>
+        <text x="40" y="76" class="q-lbl" style="stroke:#e4f1e7">Real model · 25 / 25</text>
+        <rect x="40" y="92" width="380" height="16" rx="8" fill="#3f7d52"/>
+        <text x="40" y="132" class="q-sub">Canary: “spaced repetition” ≈ “memory practice” → 0.81 ✓</text>
+        <text x="40" y="150" class="q-sub">vs “invoice payment” → 0.12 ✓</text>
+        <circle cx="400" cy="140" r="14" fill="#3f7d52"/>
+        <text x="400" y="145" text-anchor="middle" style="font:700 14px sans-serif; fill:#fff;">✓</text>
+
+        <!-- Right: fallback -->
+        <rect x="480" y="48" width="420" height="120" rx="10" fill="#f6e3de" stroke="#ad4a37"/>
+        <text x="500" y="76" class="q-lbl" style="stroke:#f6e3de">Hash fallback · 25 / 25</text>
+        <rect x="500" y="92" width="380" height="16" rx="8" fill="#ad4a37"/>
+        <text x="500" y="132" class="q-sub">Canary: similar pair → 0.04 ✗ (looks random)</text>
+        <text x="500" y="150" class="q-sub">Count is full; meaning is gone.</text>
+        <circle cx="860" cy="140" r="14" fill="#ad4a37"/>
+        <text x="860" y="145" text-anchor="middle" style="font:700 14px sans-serif; fill:#fff;">!</text>
+      </svg>
+      <figcaption>Counts measure quantity; the canary measures meaning. This is the only signal that tells the two apart.</figcaption>
+    </figure>
+
+    <p>Two paired moves. <strong>The canary:</strong> after the model loads (or changes), embed a few known <em>similar</em> and <em>dissimilar</em> sentence pairs and assert similar pairs score high (≈≥0.75) and dissimilar pairs score low (≈≤0.30); show a green "embeddings verified" or red "degraded" badge. A cheap norm-distribution check over stored vectors catches corruption or mixed-model contamination. <strong>The quarantine:</strong> never present hash-fallback vectors as "related by meaning" (fall back to keyword search instead) and tag those rows provisional so they're re-embedded the moment the real model is ready.</p>
+    <dl class="fields">
+      <dt>Axis</dt><dd>quality-eval</dd>
+      <dt>Basis</dt><dd class="basis"><span class="basis-tag basis-direct">direct:</span> the fallback embedder is pure hash-bucketing — it returns valid-looking, unit-normalized 768-dim vectors with no semantic content, stored under a distinct fallback model id. The existing engine smoke test proves the <em>vector store</em> works, but nothing proves the <em>model</em> produces meaningful vectors. <span class="basis-tag basis-external">external:</span> known-pair similarity smoke tests (≥0.75 / ≤0.30) and norm-distribution drift checks are standard lightweight embedding-quality signals.</dd>
+      <dt>Rationale</dt><dd>This is the subtle, high-value insight: a "fully indexed" badge can be a false green. For a knowledge tool, silently meaningless "related by meaning" results are the worst possible failure — they destroy trust in the core feature. The canary turns the status surface from a progress bar into a trust signal.</dd>
+      <dt>Downsides</dt><dd>The reference pairs are language/model specific (start with English, a handful of pairs); thresholds need tuning to avoid false "degraded" alarms.</dd>
+      <dt>Confidence</dt><dd>85%</dd>
+      <dt>Complexity</dt><dd>Medium</dd>
+    </dl>
+  </article>
+
+  <!-- IDEA 6 -->
+  <article class="idea" id="i6">
+    <div class="head"><span class="rank">6.</span><h3>Safe, Observable Model Upgrades (Re-Embed Campaign)</h3></div>
+    <div class="chips">
+      <span class="chip axis-c">index-health-migration</span>
+      <span class="chip conf-hi">Confidence 84%</span>
+      <span class="chip cx">Complexity Medium</span>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 920 180" role="img" aria-label="A re-embed campaign: the old generation keeps serving search while the new generation builds in the background, then the system promotes the new generation and sweeps the old.">
+        <style>
+          .c-lbl { font: 600 12.5px sans-serif; fill: #1d1b18; paint-order: stroke fill; stroke: var(--surface,#fff); stroke-width: 3px; }
+          .c-sub { font: 500 11px sans-serif; fill: #5f5b54; }
+          @media (prefers-color-scheme: dark){ .c-lbl{fill:#ece8df; stroke:#1e1c17;} .c-sub{fill:#a8a296;} }
+        </style>
+        <!-- lane A: serving -->
+        <text x="20" y="44" class="c-sub">SERVING</text>
+        <rect x="90" y="28" width="430" height="34" rx="8" fill="#e3ecf5" stroke="#3a6ea5"/>
+        <text x="305" y="50" text-anchor="middle" class="c-lbl" style="stroke:#e3ecf5">Generation A (old model) answers every search</text>
+        <rect x="560" y="28" width="320" height="34" rx="8" fill="#e4f1e7" stroke="#3f7d52"/>
+        <text x="720" y="50" text-anchor="middle" class="c-lbl" style="stroke:#e4f1e7">Generation B serves — A swept</text>
+
+        <!-- lane B: building -->
+        <text x="20" y="116" class="c-sub">BUILDING</text>
+        <rect x="90" y="100" width="430" height="34" rx="8" fill="#f6ecd6" stroke="#9a6b18"/>
+        <text x="305" y="122" text-anchor="middle" class="c-lbl" style="stroke:#f6ecd6">Generation B (new model) re-embeds in background</text>
+
+        <!-- promote arrow -->
+        <path d="M520 117 C545 117 545 45 558 45" fill="none" stroke="#3f7d52" stroke-width="2"/>
+        <polygon points="560,45 552,41 552,49" fill="#3f7d52"/>
+        <text x="430" y="158" class="c-sub">Promote when B reaches coverage threshold, then delete old-model rows.</text>
+      </svg>
+      <figcaption>Like building a database index without taking the old one offline — search never silently loses recall mid-upgrade.</figcaption>
+    </figure>
+
+    <p>When the embedding model id changes (a future better model, or escaping the hash fallback), automatically start a <strong>tracked, resumable re-embed campaign</strong> instead of waiting for someone to click a button. Nearest-neighbour search keeps serving the old generation's vectors until the new generation reaches a coverage threshold, then the system promotes the new generation and sweeps the old rows. Optionally, fold the model + text-pipeline version into the content hash so a change to <em>how</em> text is prepared also invalidates stale embeddings.</p>
+    <dl class="fields">
+      <dt>Axis</dt><dd>index-health-migration</dd>
+      <dt>Basis</dt><dd class="basis"><span class="basis-tag basis-direct">direct:</span> per-row <code>model_id</code> makes a model switch re-embeddable, and nearest-neighbour queries are already filtered by model id — but the only trigger is a manual reindex, so a model change leaves old vectors serving a silently shrinking subset until the user discovers the button. <span class="basis-tag basis-external">external:</span> Postgres <code>CREATE INDEX CONCURRENTLY</code> — build the new index without blocking reads, swap at the end.</dd>
+      <dt>Rationale</dt><dd>This is what makes future model upgrades shippable at all. Without it, the day you ship a better model, users sit on a half-migrated, mixed-quality index with no signal — the same silent-corruption class the team already hit once with a migration.</dd>
+      <dt>Downsides</dt><dd>Briefly stores two generations of vectors (more disk during the campaign); the promote/sweep step must be transactional and crash-safe.</dd>
+      <dt>Confidence</dt><dd>84%</dd>
+      <dt>Complexity</dt><dd>Medium</dd>
+    </dl>
+  </article>
+
+  <!-- IDEA 7 -->
+  <article class="idea" id="i7">
+    <div class="head"><span class="rank">7.</span><h3>Scale-Ready Indexing: Power-Aware Throttle + Priority Order</h3></div>
+    <div class="chips">
+      <span class="chip axis-c">indexing-pipeline</span>
+      <span class="chip conf-mid">Confidence 70%</span>
+      <span class="chip cx">Complexity Medium</span>
+      <span class="chip">Do later — when the corpus grows</span>
+    </div>
+    <p>Two improvements that are nearly irrelevant at 25 elements but become mandatory at thousands. <strong>Power/idle awareness:</strong> have the job runner watch Electron's power monitor — pause or slow background embedding on battery, burst when plugged in and idle — while foreground search-query embeds always run immediately. <strong>Priority ordering:</strong> have a full reindex embed the user's active working set first (recently opened, recently reviewed, due for review) so semantic search becomes useful for what they're touching <em>now</em>, with the cold archive backfilling behind it.</p>
+    <dl class="fields">
+      <dt>Axis</dt><dd>indexing-pipeline</dd>
+      <dt>Basis</dt><dd class="basis"><span class="basis-tag basis-direct">direct:</span> the runner uses a fixed concurrency with no power/idle awareness; the reindex query has no ordering (plain select up to a limit). <span class="basis-tag basis-external">external:</span> Spotlight and Lightroom keep search usable <em>while</em> indexing and throttle on battery; search engines spend a finite "crawl budget" on high-value items first.</dd>
+      <dt>Rationale</dt><dd>You invited "super big / 1M-element" thinking. At that scale, a flat-out indexer is a hot, loud, battery-draining experience during reading, and FIFO ordering means the items you care about embed last. Designing the throttle/priority seam early is cheaper than retrofitting it. <strong>Honest caveat:</strong> at your current ~25 elements this is premature — sequence it after ideas 1–5.</dd>
+      <dt>Downsides</dt><dd>Adds a scheduling policy to tune (battery thresholds, idle windows); priority ordering couples the embedding pipeline to the attention scheduler, a cross-package dependency.</dd>
+      <dt>Confidence</dt><dd>70% (value certain; timing is "later")</dd>
+      <dt>Complexity</dt><dd>Medium</dd>
+    </dl>
+  </article>
+
+  <!-- ===================== REJECTION ===================== -->
+  <h2 id="rejected">Rejection Summary</h2>
+  <p class="prose sub" style="margin-top:.3rem;">Considered and cut or folded into a stronger survivor. All five axes have survivors — no coverage gaps.</p>
+  <table>
+    <thead><tr><th>#</th><th>Idea</th><th>Reason</th></tr></thead>
+    <tbody>
+      <tr><td class="id">R1</td><td>Full resumable background downloader (chunked fetch, SHA-256, single-owner lock, disk pre-check)</td><td>Over-engineered for an edge case: release builds bundle the model, so this only covers a rare corrupt-bundle repair. A minimal repair path folds into idea 2.</td></tr>
+      <tr><td class="id">R2</td><td>Generic "DerivedIndexService" framework to reuse the embed pattern for OCR/AI</td><td>YAGNI — no confirmed second consumer yet; OCR has its own pipeline. Premature abstraction at this stage.</td></tr>
+      <tr><td class="id">R3</td><td>Pipeline-version content hash (re-embed when text-prep logic changes)</td><td>Marginal on its own; the per-row model id already handles model changes. Folded as an option into idea 6.</td></tr>
+      <tr><td class="id">R4</td><td>Binary-quantize mature/cold vectors (~32× storage)</td><td>sqlite-vec support for the quantization function isn't verified in the current version, and float storage is trivial at 25 elements. Revisit at large-corpus scale.</td></tr>
+      <tr><td class="id">R5</td><td>Ship the vector index inside backups (skip re-embedding on restore)</td><td>Exporting/importing the vec0 virtual table is nontrivial, and re-embedding takes seconds at current scale. Reconsider once re-embedding a restore becomes expensive.</td></tr>
+      <tr><td class="id">R6</td><td>Norm-distribution drift detector as a standalone feature</td><td>Real but overlaps the canary; folded into ideas 3 and 5 as a cheap supporting check rather than its own surface.</td></tr>
+      <tr><td class="id">R7</td><td>Recall@k against a bundled labeled test set after each reindex</td><td>A hardcoded labeled corpus is model- and language-specific overhead; the canary (idea 5) answers the binary "real vs. poisoned" question at a fraction of the cost. Folded into idea 5.</td></tr>
+    </tbody>
+  </table>
+
+  <footer class="composition-signal">
+    Composed 2026-06-13 by ce-ideate · repo-grounded ideation on the Interleave embedding lifecycle · 21 candidates from a 5-agent fleet, fresh-context verified, 7 ranked.
+  </footer>
+
+</div>
+</body>
+</html>

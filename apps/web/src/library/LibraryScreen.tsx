@@ -35,9 +35,11 @@ import {
   isDesktop,
   type LibraryBrowseRequest,
   type LibraryBrowseResult,
+  SEMANTIC_COVERAGE_THRESHOLD,
   type SearchableType,
   type SearchCounts,
   type SearchResult,
+  type SemanticIndexHealth,
   type SemanticSearchMode,
 } from "../lib/appApi";
 import { ReviewModeButton } from "../review/ReviewModeButton";
@@ -169,6 +171,9 @@ export function LibraryScreen() {
   // The live "N of M embedded" index progress (drives the available-but-incomplete
   // "Build index" affordance, per the T087 spec) + an in-flight reindex guard.
   const [semanticIndex, setSemanticIndex] = useState({ embedded: 0, total: 0 });
+  // Index-health rollup (U6) — distinguishes actively-building from stale-and-idle so
+  // a user watching the index self-heal isn't told search is broken.
+  const [indexHealth, setIndexHealth] = useState<SemanticIndexHealth>("healthy");
   const [reindexing, setReindexing] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -177,6 +182,16 @@ export function LibraryScreen() {
   const hasActiveFacet = typeFilter !== null || conceptFilter !== null || priorityFilter !== null;
   const showSemanticBuildIndex =
     !hasQuery && semanticAvailable && semanticIndex.embedded < semanticIndex.total;
+  // U6 — honest coverage states. `coverageRatio` is 1 on an empty corpus so an empty
+  // vault never reads as "partial". `building` is a reassuring "Indexing…" signal;
+  // `partial` (stale + idle, below threshold) is the honest keyword-weighted warning.
+  const coverageRatio = semanticIndex.total > 0 ? semanticIndex.embedded / semanticIndex.total : 1;
+  const indexBuilding = semanticAvailable && indexHealth === "building";
+  const partialCoverage =
+    semanticAvailable &&
+    !indexBuilding &&
+    semanticIndex.total > 0 &&
+    coverageRatio < SEMANTIC_COVERAGE_THRESHOLD;
   const pendingFilterLabels = useMemo(() => {
     const labels: string[] = [];
     if (typeFilter) {
@@ -248,6 +263,7 @@ export function LibraryScreen() {
       const status = await appApi.semanticStatus();
       setSemanticAvailable(status.vecAvailable);
       setSemanticIndex({ embedded: status.embedded, total: status.total });
+      setIndexHealth(status.indexHealth);
     } catch {
       setSemanticAvailable(false);
     }
@@ -627,10 +643,22 @@ export function LibraryScreen() {
                 {/* Semantic-search affordance (T087): a calm one-liner telling the
                     user which retrieval ran. Only shown once there is a query. */}
                 {hasQuery ? (
-                  searchMode === "semantic" ? (
-                    <div className="lib-hint" data-testid="library-semantic-on">
-                      Semantic search on — results include conceptually related items.
+                  indexBuilding ? (
+                    <div className="lib-hint" data-testid="library-semantic-building">
+                      Indexing… {semanticIndex.embedded} of {semanticIndex.total}. Semantic results
+                      improve as it finishes.
                     </div>
+                  ) : searchMode === "semantic" ? (
+                    partialCoverage ? (
+                      <div className="lib-hint" data-testid="library-semantic-partial">
+                        Partial coverage — newer items may only match by keyword until indexing
+                        finishes.
+                      </div>
+                    ) : (
+                      <div className="lib-hint" data-testid="library-semantic-on">
+                        Semantic search on — results include conceptually related items.
+                      </div>
+                    )
                   ) : searchMode === "fts" || searchMode === "disabled" ? (
                     <div className="lib-hint" data-testid="library-semantic-off">
                       {keywordFallbackHint}

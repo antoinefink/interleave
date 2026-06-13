@@ -44,6 +44,15 @@
  */
 export const EMBEDDING_DIM = 768;
 
+/**
+ * The model id recorded for the deterministic FALLBACK embedder ({@link embedTextLocal}).
+ * Distinct from any real model id so fallback (hash) vectors are NEVER KNN-mixed with
+ * real semantic vectors, and so main can recognize a fallback result at the persistence
+ * boundary and refuse to index it (the no-poison guard). Lives here (dependency-free) so
+ * the worker, main, and tests share one source of truth.
+ */
+export const FALLBACK_EMBEDDING_MODEL_ID = "local:embeddinggemma-hash-768";
+
 /** A bookkeeping row mapping an embedded element to its `vec0` rowid + model + hash. */
 export interface Embedding {
   /** The embedded element (PK; FK → `elements.id`). */
