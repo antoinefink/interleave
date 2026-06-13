@@ -932,6 +932,7 @@ export function QueueScreen() {
             used={data?.minuteBudget?.usedMinutes ?? data?.budget.used ?? 0}
             target={data?.minuteBudget?.targetMinutes ?? data?.budget.target ?? 0}
             confidence={data?.minuteBudget?.confidence ?? "learned"}
+            composition={data?.dayComposition}
           />
           <div className="q-overload__div" />
           <div className="q-metrics">

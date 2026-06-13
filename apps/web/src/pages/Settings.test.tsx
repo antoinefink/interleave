@@ -90,6 +90,7 @@ function deferred<T>() {
 
 const settings: RendererSettings = {
   dailyBudgetMinutes: 60,
+  distillationQuotaPercent: 15,
   overloadPolicy: "suggest",
   dailyReviewBudget: 60,
   defaultDesiredRetention: 0.9,
@@ -232,6 +233,7 @@ describe("Settings", () => {
     const { getByTestId, findByTestId, queryByTestId } = render(<Settings />);
 
     expect(await findByTestId("setting-budget-value")).toHaveTextContent("60 min");
+    expect(getByTestId("setting-distillation-quota-value")).toHaveTextContent("15%");
     fireEvent.change(getByTestId("setting-budget"), { target: { value: "75" } });
 
     await waitFor(() =>
@@ -239,6 +241,14 @@ describe("Settings", () => {
     );
     expect(queryByTestId("settings-saved")).not.toBeInTheDocument();
     expect(getByTestId("setting-budget-value")).toHaveTextContent("75 min");
+
+    fireEvent.change(getByTestId("setting-distillation-quota"), { target: { value: "25" } });
+    await waitFor(() =>
+      expect(h.updateAppSettings).toHaveBeenCalledWith({
+        patch: { distillationQuotaPercent: 25 },
+      }),
+    );
+    expect(getByTestId("setting-distillation-quota-value")).toHaveTextContent("25%");
 
     fireEvent.click(getByTestId("setting-budget-preset-option-120"));
     await waitFor(() =>
@@ -272,6 +282,16 @@ describe("Settings", () => {
         patch: { weeklyReviewEnabled: false },
       }),
     );
+  });
+
+  it("renders the distillation floor off state", async () => {
+    h.getAppSettings.mockResolvedValue({
+      settings: { ...settings, distillationQuotaPercent: 0 },
+    });
+
+    const { findByTestId } = render(<Settings />);
+
+    expect(await findByTestId("setting-distillation-quota-value")).toHaveTextContent("Off");
   });
 
   it("persists the system theme preference from the theme segmented control", async () => {

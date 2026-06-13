@@ -204,6 +204,8 @@ export interface QueueListData {
   readonly budget: { readonly used: number; readonly target: number };
   /** Internal pricing summary for the due set after request filters; not returned across IPC. */
   readonly timeCostSummary: QueueTimeCostSummary;
+  /** Full filtered due rows before display limiting; not returned across IPC. */
+  readonly timeCostItems: readonly QueueItemSummary[];
 }
 
 export interface QueueAutoPostponeCandidateData {
@@ -480,6 +482,7 @@ export class QueueQuery {
     // by the session `mode`). The renderer's seeded jitter still runs on top.
     let rows = all.filter((r) => this.matchesFilters(r, filters, conceptMatch));
     rows = scoreQueueItems(rows, { mode, asOf: asOfIso });
+    const timeCostItems = rows;
     if (options.limit !== undefined) rows = rows.slice(0, options.limit);
 
     // SECOND PASS (T100): now that the list is scored, filtered, and LIMITED, decorate
@@ -492,7 +495,7 @@ export class QueueQuery {
     const target = this.repos.settings.getAppSettings().dailyReviewBudget;
     const used = counts.all;
 
-    return { items: rows, counts, budget: { used, target }, timeCostSummary };
+    return { items: rows, counts, budget: { used, target }, timeCostSummary, timeCostItems };
   }
 
   /**

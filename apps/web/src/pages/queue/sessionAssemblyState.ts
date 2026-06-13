@@ -1,5 +1,6 @@
 import type {
   QueueItemSummary,
+  QueueQuotaComposition,
   QueueSessionMode,
   QueueSessionPlanCutItem,
   QueueSessionPlanResult,
@@ -31,6 +32,7 @@ export interface AcceptedSessionAssembly {
   readonly plannedMinutes: number;
   readonly confidence: "learned" | "default";
   readonly usesDefaultEstimate: boolean;
+  readonly composition: QueueQuotaComposition | null;
   readonly cut: {
     readonly detailedItems: readonly QueueSessionPlanCutItem[];
     readonly totalCount: number;
@@ -62,6 +64,7 @@ export function acceptSessionAssembly(input: {
     plannedMinutes: input.plan.plannedMinutes,
     confidence: input.plan.confidence,
     usesDefaultEstimate: input.plan.usesDefaultEstimate,
+    composition: input.plan.composition ?? null,
     cut: {
       detailedItems: input.plan.cut.items,
       totalCount: input.plan.cut.totalCount,

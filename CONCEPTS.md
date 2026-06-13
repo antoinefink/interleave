@@ -176,6 +176,12 @@ The user's intended amount of Due queue work for a day, expressed as estimated m
 
 The Daily budget is a soft overload boundary, not a hard eligibility rule: it informs gauges, session planning, and postponement suggestions while the Due queue remains the source of what is actionable.
 
+### Distillation quota
+
+The protected share of a Daily budget reserved for due Extract distillation work before card-heavy fill or overload trimming can consume the whole day.
+
+The quota changes daily composition, not due dates or priority scores. When no due Extract distillation work exists, the share returns to other Due queue work instead of creating make-work.
+
 ### Session assembly
 
 The read-only process that selects a bounded deck of current Due queue work to fit a target amount of estimated time before handing that exact deck to the processing loop.

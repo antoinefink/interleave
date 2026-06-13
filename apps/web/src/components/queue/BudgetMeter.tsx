@@ -12,14 +12,18 @@
  * `window.appApi.queue.list` budget payload.
  */
 
+import type { QueueQuotaComposition } from "../../lib/appApi";
+
 export function BudgetMeter({
   used,
   target,
   confidence = "learned",
+  composition,
 }: {
   used: number;
   target: number;
   confidence?: "learned" | "default";
+  composition?: QueueQuotaComposition | undefined;
 }) {
   const over = Math.max(0, used - target);
   const within = Math.min(used, target);
@@ -28,8 +32,18 @@ export function BudgetMeter({
   const usedLabel = Math.round(used);
   const targetLabel = Math.round(target);
   const overLabel = Math.max(0, usedLabel - targetLabel);
+  const compositionLabel = compositionText(composition);
+  const splitLabel = compositionSplitLabel(composition);
+  const ariaLabel = [
+    `${approximate}${usedLabel} of ${targetLabel} minutes today`,
+    overLabel > 0 ? `${overLabel} minutes over budget` : null,
+    compositionLabel,
+    splitLabel,
+  ]
+    .filter(Boolean)
+    .join(". ");
   return (
-    <div className="budget" data-testid="budget-meter">
+    <section className="budget" data-testid="budget-meter" aria-label={ariaLabel}>
       <div className="budget__head">
         <span className="budget__num">
           {approximate}
@@ -59,6 +73,52 @@ export function BudgetMeter({
           </span>
         )}
       </div>
-    </div>
+      {composition && composition.status !== "unavailable_no_time_estimate" ? (
+        <div className="budget__composition" data-testid="budget-composition">
+          <span>{compositionLabel}</span>
+          <span className="budget__chips">
+            {compositionChips(composition).map((chip) => (
+              <span className="badge" key={chip.label}>
+                {chip.label} {chip.minutes} min
+              </span>
+            ))}
+          </span>
+        </div>
+      ) : null}
+    </section>
   );
+}
+
+function compositionText(composition: QueueQuotaComposition | undefined): string | null {
+  if (!composition) return null;
+  if (composition.status === "active") {
+    return `Distillation floor active: ${composition.quotaFloorMinutes} min reserved.`;
+  }
+  if (composition.status === "returned_empty_backlog") {
+    return "Distillation share returned: no due extracts.";
+  }
+  if (composition.status === "inactive_filtered_out") {
+    return "Current filter: distillation quota inactive.";
+  }
+  if (composition.status === "inactive_zero_target") return "Distillation floor off.";
+  return null;
+}
+
+function compositionChips(
+  composition: QueueQuotaComposition,
+): readonly { readonly label: string; readonly minutes: number }[] {
+  const chips = [
+    { label: "Cards", minutes: Math.round(composition.cardMinutes) },
+    { label: "Distillation", minutes: Math.round(composition.distillationMinutes) },
+    { label: "Other", minutes: Math.round(composition.otherMinutes) },
+  ];
+  const visible = chips.filter((chip) => chip.minutes > 0);
+  return visible.length > 0 ? visible : chips;
+}
+
+function compositionSplitLabel(composition: QueueQuotaComposition | undefined): string | null {
+  if (!composition || composition.status === "unavailable_no_time_estimate") return null;
+  return compositionChips(composition)
+    .map((chip) => `${chip.label} ${chip.minutes} minutes`)
+    .join(", ");
 }

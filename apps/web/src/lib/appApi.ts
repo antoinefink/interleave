@@ -78,6 +78,7 @@ export type OverloadPolicy = "off" | "suggest" | "automatic";
  */
 export interface AppSettings {
   readonly dailyBudgetMinutes: number;
+  readonly distillationQuotaPercent: number;
   readonly overloadPolicy: OverloadPolicy;
   readonly dailyReviewBudget: number;
   readonly defaultDesiredRetention: number;
@@ -717,11 +718,30 @@ export interface QueueMinuteBudget {
   readonly confidence: QueueTimeEstimateConfidence;
 }
 
+export type DistillationQuotaStatus =
+  | "active"
+  | "returned_empty_backlog"
+  | "inactive_filtered_out"
+  | "inactive_zero_target"
+  | "unavailable_no_time_estimate";
+
+export interface QueueQuotaComposition {
+  readonly status: DistillationQuotaStatus;
+  readonly quotaFloorMinutes: number;
+  readonly eligibleDistillationMinutes: number;
+  readonly selectedDistillationMinutes: number;
+  readonly returnedQuotaMinutes: number;
+  readonly cardMinutes: number;
+  readonly distillationMinutes: number;
+  readonly otherMinutes: number;
+}
+
 export interface QueueListResult {
   readonly items: readonly QueueItemSummary[];
   readonly counts: QueueCounts;
   readonly budget: { readonly used: number; readonly target: number };
   readonly minuteBudget?: QueueMinuteBudget;
+  readonly dayComposition?: QueueQuotaComposition;
   readonly timeEstimate?: QueueTimeEstimate;
 }
 
@@ -758,6 +778,7 @@ export interface QueueSessionPlanResult {
   readonly overTarget: boolean;
   readonly confidence: QueueTimeEstimateConfidence;
   readonly usesDefaultEstimate: boolean;
+  readonly composition: QueueQuotaComposition;
   readonly items: readonly QueueSessionPlanItem[];
   readonly cut: {
     readonly totalCount: number;
@@ -793,6 +814,14 @@ export interface AutoPostponePreviewRow {
   readonly estimateConfidence: QueueTimeEstimateConfidence;
 }
 
+export interface AutoPostponeDistillationFloor {
+  readonly quotaFloorMinutes: number;
+  readonly dueDistillationMinutes: number;
+  readonly postponedDistillationMinutes: number;
+  readonly remainingDueDistillationMinutesAfter: number;
+  readonly protectedDistillationMinutes: number;
+}
+
 /** The read-only auto-postpone preview shown BEFORE committing. */
 export interface AutoPostponePreview {
   readonly overBudget: number;
@@ -805,6 +834,7 @@ export interface AutoPostponePreview {
   readonly willPostpone: readonly AutoPostponePreviewRow[];
   readonly remainingAfter: number;
   readonly remainingMinutesAfter: number;
+  readonly distillationFloor?: AutoPostponeDistillationFloor;
 }
 
 /** The result of applying the auto-postpone sweep. */
@@ -812,6 +842,7 @@ export interface AutoPostponeApplyResult {
   readonly postponed: number;
   readonly postponedMinutes: number;
   readonly remainingMinutesAfter: number;
+  readonly distillationFloor?: AutoPostponeDistillationFloor;
   readonly batchId: string;
 }
 
@@ -4089,6 +4120,7 @@ export interface AutoPostponeReceipt {
   readonly postponed: number;
   readonly postponedMinutes: number;
   readonly remainingMinutesAfter: number;
+  readonly distillationFloor?: AutoPostponeDistillationFloor;
   readonly priorityBands: readonly string[];
   readonly createdAt: string;
   readonly undoneAt?: string;

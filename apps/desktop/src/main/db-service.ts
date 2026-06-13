@@ -116,6 +116,7 @@ import {
   type IntervalPreview,
   type OptimizationSuggestionParts,
   optimizationSuggestionFromParts,
+  planSession,
   type WorkloadChange,
 } from "@interleave/scheduler";
 import {
@@ -465,6 +466,10 @@ function queueFiltersFromRequest(
     ...(request.protectedOnly ? { protectedOnly: true } : {}),
   };
   return Object.keys(filters).length > 0 ? { filters } : {};
+}
+
+function distillationQuotaAppliesForRequest(request: Pick<QueueListRequest, "types">): boolean {
+  return !request.types || request.types.length === 0 || request.types.includes("extract");
 }
 
 /**
@@ -1273,20 +1278,49 @@ export class DbService {
   listQueue(request: QueueListRequest): QueueListResult {
     this.materializeStandingAutoPostponeToday();
     const asOf = (request.asOf as IsoTimestamp | undefined) ?? nowIso();
+    const settings = this.repos.settings.getAppSettings();
     const data = this.queueQuery.list({
       asOf,
       ...(request.mode ? { mode: request.mode } : {}),
       ...queueFiltersFromRequest(request),
     });
-    const timeEstimate = request.includeTimeEstimate
+    const fullTimeEstimate = request.includeTimeEstimate
       ? this.timeCostQuery.estimateQueue(data.timeCostSummary, {
           asOf,
-          visibleItems: data.items.map((item) => ({
+          visibleItems: data.timeCostItems.map((item) => ({
             id: item.id,
             type: item.type,
             stage: item.stage,
           })),
         })
+      : undefined;
+    const visibleIds = new Set(data.items.map((item) => item.id));
+    const timeEstimate = fullTimeEstimate
+      ? {
+          ...fullTimeEstimate,
+          items: fullTimeEstimate.items.filter((item) => visibleIds.has(item.id)),
+        }
+      : undefined;
+    const estimatesById = new Map(fullTimeEstimate?.items.map((item) => [item.id, item]) ?? []);
+    const dayComposition = fullTimeEstimate
+      ? planSession(
+          data.timeCostItems.map((row) => {
+            const item = estimatesById.get(row.id);
+            return {
+              id: row.id,
+              type: row.type,
+              stage: row.stage,
+              estimatedMinutes: item?.estimatedMinutes ?? 0,
+              estimateConfidence: item?.confidence ?? fullTimeEstimate.confidence,
+              estimateBasis: item?.basis ?? "time-cost:missing-estimate",
+            };
+          }),
+          {
+            targetMinutes: settings.dailyBudgetMinutes,
+            distillationQuotaPercent: settings.distillationQuotaPercent,
+            distillationQuotaApplies: distillationQuotaAppliesForRequest(request),
+          },
+        ).composition
       : undefined;
     return {
       items: data.items,
@@ -1296,9 +1330,10 @@ export class DbService {
         ? {
             minuteBudget: {
               usedMinutes: timeEstimate.totalMinutes,
-              targetMinutes: this.repos.settings.getAppSettings().dailyBudgetMinutes,
+              targetMinutes: settings.dailyBudgetMinutes,
               confidence: timeEstimate.confidence,
             },
+            ...(dayComposition ? { dayComposition } : {}),
             timeEstimate,
           }
         : {}),
@@ -1328,6 +1363,7 @@ export class DbService {
       overTarget: plan.overTarget,
       confidence: plan.confidence,
       usesDefaultEstimate: plan.hasDefaultEstimates,
+      composition: plan.composition,
       items: plan.plannedItems,
       cut: {
         totalCount: plan.cutCount,

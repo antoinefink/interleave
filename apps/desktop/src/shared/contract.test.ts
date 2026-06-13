@@ -1999,6 +1999,7 @@ describe("SettingsPatchSchema (T011)", () => {
   it("accepts a valid partial patch", () => {
     const parsed = SettingsPatchSchema.parse({
       dailyBudgetMinutes: 60,
+      distillationQuotaPercent: 15,
       overloadPolicy: "automatic",
       dailyReviewBudget: 60,
       theme: "system",
@@ -2008,6 +2009,7 @@ describe("SettingsPatchSchema (T011)", () => {
     });
     expect(parsed).toEqual({
       dailyBudgetMinutes: 60,
+      distillationQuotaPercent: 15,
       overloadPolicy: "automatic",
       dailyReviewBudget: 60,
       theme: "system",
@@ -2028,6 +2030,14 @@ describe("SettingsPatchSchema (T011)", () => {
   it("rejects an out-of-range daily budget", () => {
     expect(() => SettingsPatchSchema.parse({ dailyBudgetMinutes: 301 })).toThrow();
     expect(() => SettingsPatchSchema.parse({ dailyBudgetMinutes: 4 })).toThrow();
+    expect(SettingsPatchSchema.parse({ distillationQuotaPercent: 0 })).toEqual({
+      distillationQuotaPercent: 0,
+    });
+    expect(SettingsPatchSchema.parse({ distillationQuotaPercent: 100 })).toEqual({
+      distillationQuotaPercent: 100,
+    });
+    expect(() => SettingsPatchSchema.parse({ distillationQuotaPercent: -1 })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ distillationQuotaPercent: 101 })).toThrow();
     expect(() => SettingsPatchSchema.parse({ dailyReviewBudget: 9999 })).toThrow();
     expect(() => SettingsPatchSchema.parse({ dailyReviewBudget: 1 })).toThrow();
   });
@@ -2040,6 +2050,7 @@ describe("SettingsPatchSchema (T011)", () => {
 
   it("rejects a non-integer budget / topic interval", () => {
     expect(() => SettingsPatchSchema.parse({ dailyBudgetMinutes: 60.5 })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ distillationQuotaPercent: 12.5 })).toThrow();
     expect(() => SettingsPatchSchema.parse({ dailyReviewBudget: 60.5 })).toThrow();
     expect(() => SettingsPatchSchema.parse({ defaultTopicIntervalDays: 0 })).toThrow();
     expect(() => SettingsPatchSchema.parse({ chronicPostponeThreshold: 1 })).toThrow();

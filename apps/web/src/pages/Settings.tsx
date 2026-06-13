@@ -67,6 +67,7 @@ function formatBackupArtifactLabel(artifact: BackupArtifact): string {
  */
 const FALLBACK_SETTINGS: RendererSettings = {
   dailyBudgetMinutes: 60,
+  distillationQuotaPercent: 15,
   overloadPolicy: "suggest",
   dailyReviewBudget: 60,
   defaultDesiredRetention: 0.9,
@@ -1326,6 +1327,31 @@ export function Settings() {
                 {s.dailyBudgetMinutes} min
               </span>
             </div>
+          </div>
+        </SettingRow>
+
+        <SettingRow
+          label="Distillation floor"
+          hint="Reserve this share of each day and planned session for due extract distillation. Unused share returns to normal queue work."
+        >
+          <div className="flex items-center gap-2.5">
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={s.distillationQuotaPercent}
+              aria-label="Distillation floor percent"
+              data-testid="setting-distillation-quota"
+              onChange={(e) => void patch({ distillationQuotaPercent: Number(e.target.value) })}
+              className="w-40 accent-accent"
+            />
+            <span
+              data-testid="setting-distillation-quota-value"
+              className="w-16 text-right font-mono font-semibold text-sm text-text"
+            >
+              {s.distillationQuotaPercent === 0 ? "Off" : `${s.distillationQuotaPercent}%`}
+            </span>
           </div>
         </SettingRow>
 

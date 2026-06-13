@@ -574,6 +574,16 @@ function acceptTestAssembly(
       overTarget: false,
       confidence: "default",
       usesDefaultEstimate: true,
+      composition: {
+        status: "inactive_zero_target",
+        quotaFloorMinutes: 0,
+        eligibleDistillationMinutes: 0,
+        selectedDistillationMinutes: 0,
+        returnedQuotaMinutes: 0,
+        cardMinutes: 0,
+        distillationMinutes: 0,
+        otherMinutes: 0,
+      },
       items: rows.map((row) => ({
         item: row.item,
         estimatedMinutes: row.estimatedMinutes,

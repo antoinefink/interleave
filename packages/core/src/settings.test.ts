@@ -22,6 +22,8 @@ import {
   DEFAULT_APP_SETTINGS,
   DESIRED_RETENTION_MAX,
   DESIRED_RETENTION_MIN,
+  DISTILLATION_QUOTA_PERCENT_MAX,
+  DISTILLATION_QUOTA_PERCENT_MIN,
   isKeyboardLayout,
   isThemePreference,
   PARKED_RESURFACE_AFTER_DAYS_MAX,
@@ -42,6 +44,7 @@ describe("AppSettings defaults", () => {
   it("has stable, namespaced storage keys", () => {
     expect(SETTINGS_KEYS).toEqual({
       dailyBudgetMinutes: "review.dailyBudgetMinutes",
+      distillationQuotaPercent: "review.distillationQuotaPercent",
       overloadPolicy: "review.overloadPolicy",
       dailyReviewBudget: "review.dailyBudget",
       defaultDesiredRetention: "review.defaultDesiredRetention",
@@ -117,6 +120,19 @@ describe("coerceSettingValue", () => {
     expect(coerceSettingValue("overloadPolicy", "off")).toBe("off");
     expect(coerceSettingValue("overloadPolicy", "automatic")).toBe("automatic");
     expect(coerceSettingValue("overloadPolicy", "always")).toBe("suggest");
+  });
+
+  it("clamps + rounds the distillation quota percent into range", () => {
+    expect(DEFAULT_APP_SETTINGS.distillationQuotaPercent).toBe(15);
+    expect(coerceSettingValue("distillationQuotaPercent", 0)).toBe(DISTILLATION_QUOTA_PERCENT_MIN);
+    expect(coerceSettingValue("distillationQuotaPercent", 14.6)).toBe(15);
+    expect(coerceSettingValue("distillationQuotaPercent", 999)).toBe(
+      DISTILLATION_QUOTA_PERCENT_MAX,
+    );
+    expect(coerceSettingValue("distillationQuotaPercent", -1)).toBe(DISTILLATION_QUOTA_PERCENT_MIN);
+    expect(coerceSettingValue("distillationQuotaPercent", "nope")).toBe(
+      DEFAULT_APP_SETTINGS.distillationQuotaPercent,
+    );
   });
 
   it("clamps desired retention into the FSRS-sane band", () => {
@@ -281,6 +297,7 @@ describe("stored ↔ model round-trip", () => {
   it("reads custom stored values and coerces them", () => {
     const stored = {
       [SETTINGS_KEYS.dailyBudgetMinutes]: 90,
+      [SETTINGS_KEYS.distillationQuotaPercent]: 20,
       [SETTINGS_KEYS.dailyReviewBudget]: 120,
       [SETTINGS_KEYS.defaultDesiredRetention]: 0.95,
       [SETTINGS_KEYS.defaultTopicIntervalDays]: 30,
@@ -300,6 +317,7 @@ describe("stored ↔ model round-trip", () => {
     };
     expect(appSettingsFromStored(stored)).toEqual({
       dailyBudgetMinutes: 90,
+      distillationQuotaPercent: 20,
       overloadPolicy: "suggest",
       dailyReviewBudget: 120,
       defaultDesiredRetention: 0.95,
@@ -368,6 +386,7 @@ describe("stored ↔ model round-trip", () => {
   it("a model patch maps back to stable storage keys", () => {
     const stored = settingsPatchToStored({
       dailyBudgetMinutes: 100,
+      distillationQuotaPercent: 25,
       dailyReviewBudget: 100,
       parkedResurfaceAfterDays: 120,
       chronicPostponeThreshold: 6,
@@ -378,6 +397,7 @@ describe("stored ↔ model round-trip", () => {
     });
     expect(stored).toEqual({
       [SETTINGS_KEYS.dailyBudgetMinutes]: 100,
+      [SETTINGS_KEYS.distillationQuotaPercent]: 25,
       [SETTINGS_KEYS.dailyReviewBudget]: 100,
       [SETTINGS_KEYS.parkedResurfaceAfterDays]: 120,
       [SETTINGS_KEYS.chronicPostponeThreshold]: 6,
@@ -405,6 +425,7 @@ describe("stored ↔ model round-trip", () => {
   it("survives a full round-trip through stored representation", () => {
     const original = {
       dailyBudgetMinutes: 80,
+      distillationQuotaPercent: 20,
       overloadPolicy: "suggest" as const,
       dailyReviewBudget: 80,
       defaultDesiredRetention: 0.92,
@@ -449,12 +470,14 @@ describe("coerceSettingsPatch", () => {
   it("drops unknown keys and coerces known ones", () => {
     const patch = coerceSettingsPatch({
       dailyBudgetMinutes: 9999,
+      distillationQuotaPercent: 125,
       dailyReviewBudget: 9999,
       bogus: "x",
       theme: "system",
     });
     expect(patch).toEqual({
       dailyBudgetMinutes: DAILY_BUDGET_MINUTES_MAX,
+      distillationQuotaPercent: DISTILLATION_QUOTA_PERCENT_MAX,
       dailyReviewBudget: DAILY_REVIEW_BUDGET_MAX,
       theme: "system",
     });

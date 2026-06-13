@@ -467,6 +467,7 @@ export function HomeScreen() {
             used={queue?.minuteBudget?.usedMinutes ?? queue?.budget.used ?? 0}
             target={queue?.minuteBudget?.targetMinutes ?? queue?.budget.target ?? 0}
             confidence={queue?.minuteBudget?.confidence ?? "learned"}
+            composition={queue?.dayComposition}
           />
           <div className="q-overload__div" />
           <div className="q-metrics">

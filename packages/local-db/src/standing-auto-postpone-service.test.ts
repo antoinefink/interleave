@@ -1,4 +1,4 @@
-import type { ElementId, IsoTimestamp, Priority } from "@interleave/core";
+import type { BlockId, ElementId, IsoTimestamp, Priority } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
 import { operationLog, reviewStates } from "@interleave/db";
 import { eq } from "drizzle-orm";
@@ -49,6 +49,27 @@ function seedTopic(priority: Priority, title = "low source"): ElementId {
   });
   new ElementRepository(handle.db).reschedule(element.id, OVERDUE);
   return element.id;
+}
+
+function seedExtract(priority: Priority, title = "extract"): ElementId {
+  const r = repos();
+  const { element: source } = r.sources.create({
+    title: `${title} source`,
+    priority,
+    status: "active",
+    stage: "raw_source",
+  });
+  const extract = r.sources.createExtract({
+    sourceElementId: source.id,
+    title,
+    priority,
+    selectedText: "Selected text",
+    blockIds: ["block-1" as BlockId],
+    label: "p1",
+  });
+  r.elements.update(extract.element.id, { status: "active", stage: "clean_extract" });
+  r.elements.reschedule(extract.element.id, OVERDUE);
+  return extract.element.id;
 }
 
 function seedCard(
@@ -145,6 +166,32 @@ describe("StandingAutoPostponeService", () => {
 
     const summary = new DailyWorkQuery(repos(), new BlockProcessingService(handle.db)).summary(NOW);
     expect(summary.autoPostponeReceipt?.batchId).toBe(batchId);
+  });
+
+  it("persists distillation floor metadata in the automatic receipt", () => {
+    configure("automatic");
+    repos().settings.updateAppSettings({ distillationQuotaPercent: 50 });
+    seedExtract(0.375, "protected extract");
+    seedTopic(0.375, "low source");
+    seedProtectedFiller(9);
+
+    const first = service().materializeToday();
+    expect(first.receipt?.distillationFloor).toMatchObject({
+      quotaFloorMinutes: 10,
+      dueDistillationMinutes: 6,
+      postponedDistillationMinutes: 0,
+      remainingDueDistillationMinutesAfter: 6,
+    });
+
+    const batchId = first.receipt?.batchId ?? "";
+    const second = service().materializeToday();
+    expect(second.receipt?.batchId).toBe(batchId);
+    expect(second.receipt?.distillationFloor).toEqual(first.receipt?.distillationFloor);
+
+    const summary = new DailyWorkQuery(repos(), new BlockProcessingService(handle.db)).summary(NOW);
+    expect(summary.autoPostponeReceipt?.distillationFloor).toEqual(
+      first.receipt?.distillationFloor,
+    );
   });
 
   it("does not mutate schedules in suggest or off mode", () => {

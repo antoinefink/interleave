@@ -31,10 +31,12 @@ function attention(
   type = "topic",
   dueAt: string | null = "2027-05-01T12:00:00.000Z",
   estimatedMinutes = 1,
+  stage: string | null = null,
 ): AutoPostponeInput {
   return {
     id,
     type,
+    stage,
     priority,
     dueAt,
     scheduler: "attention",
@@ -290,5 +292,65 @@ describe("planAutoPostpone", () => {
     const plan1 = planAutoPostpone(items, { budget: 1, asOf: NOW, reserveRatio: 1 });
     const plan2 = planAutoPostpone(items, { budget: 1, asOf: NOW, reserveRatio: 1 });
     expect(plan2).toEqual(plan1);
+  });
+
+  it("protects due extract distillation from auto-postpone until the floor is met", () => {
+    const items = [
+      attention("extract-a", 0.375, "extract", "2027-05-01T12:00:00.000Z", 6, "clean_extract"),
+      attention("topic-a", 0.375, "topic", "2027-05-01T12:00:00.000Z", 6),
+      attention("topic-b", 0.375, "topic", "2027-05-01T12:00:00.000Z", 6),
+    ];
+    const plan = planAutoPostpone(items, {
+      budget: 10,
+      asOf: NOW,
+      reserveRatio: 0.9,
+      distillationQuotaPercent: 50,
+    });
+
+    expect(plan.distillationFloor).toMatchObject({
+      quotaFloorMinutes: 5,
+      dueDistillationMinutes: 6,
+      postponedDistillationMinutes: 0,
+      remainingDueDistillationMinutesAfter: 6,
+    });
+    expect(plan.items.map((p) => p.id)).not.toContain("extract-a");
+  });
+
+  it("can postpone low-priority distillation minutes above the protected floor", () => {
+    const items = [
+      attention("extract-a", 0.375, "extract", "2027-05-01T12:00:00.000Z", 6, "clean_extract"),
+      attention("extract-b", 0.375, "extract", "2027-05-01T12:00:00.000Z", 6, "raw_extract"),
+      attention("topic-a", 0.375, "topic", "2027-05-01T12:00:00.000Z", 6),
+    ];
+    const plan = planAutoPostpone(items, {
+      budget: 10,
+      asOf: NOW,
+      reserveRatio: 0.9,
+      distillationQuotaPercent: 50,
+    });
+
+    expect(plan.items.map((p) => p.id)).toContain("extract-a");
+    expect(plan.distillationFloor).toMatchObject({
+      quotaFloorMinutes: 5,
+      dueDistillationMinutes: 12,
+      postponedDistillationMinutes: 6,
+      remainingDueDistillationMinutesAfter: 6,
+    });
+  });
+
+  it("does not count non-extract rows with extract stages toward the protected floor", () => {
+    const items = [
+      attention("task-a", 0.375, "task", "2027-05-01T12:00:00.000Z", 6, "clean_extract"),
+      attention("topic-a", 0.375, "topic", "2027-05-01T12:00:00.000Z", 6),
+    ];
+    const plan = planAutoPostpone(items, {
+      budget: 5,
+      asOf: NOW,
+      reserveRatio: 1,
+      distillationQuotaPercent: 50,
+    });
+
+    expect(plan.distillationFloor.dueDistillationMinutes).toBe(0);
+    expect(plan.items.map((p) => p.id)).toContain("task-a");
   });
 });

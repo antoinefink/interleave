@@ -12,6 +12,7 @@ import {
   type CutSessionItem,
   type PlannedSessionItem,
   planSession,
+  type SessionPlanComposition,
   type SessionPlanCutReason,
 } from "@interleave/scheduler";
 import type { Repositories } from "./index";
@@ -51,6 +52,7 @@ export interface SessionPlanPreview {
   readonly cutItems: readonly SessionPlanCutRow[];
   readonly plannedMinutes: number;
   readonly cutMinutes: number;
+  readonly composition: SessionPlanComposition;
   readonly cutCount: number;
   readonly candidateCount: number;
   readonly totalCandidateMinutes: number;
@@ -73,8 +75,10 @@ type PricedSessionCandidate = QueueItemSummary & {
 export class SessionPlanQuery {
   private readonly queue: QueueQuery;
   private readonly timeCost: TimeCostQuery;
+  private readonly repos: Repositories;
 
   constructor(db: InterleaveDatabase, repos: Repositories) {
+    this.repos = repos;
     this.queue = new QueueQuery(repos);
     this.timeCost = new TimeCostQuery(db);
   }
@@ -88,8 +92,13 @@ export class SessionPlanQuery {
       ...(options.mode ? { mode: options.mode } : {}),
     });
     const priced = this.priceCandidates(candidates, asOf);
-    const plan = planSession(priced, { targetMinutes: options.targetMinutes });
-    const cutReasons = { did_not_fit: plan.cutCount };
+    const settings = this.repos.settings.getAppSettings();
+    const plan = planSession(priced, {
+      targetMinutes: options.targetMinutes,
+      distillationQuotaPercent: settings.distillationQuotaPercent,
+      distillationQuotaApplies: distillationQuotaApplies(options.filters),
+    });
+    const cutReasons = aggregateCutReasons(plan.cutItems);
     const cutByType = aggregateCutByType(plan.cutItems);
     const cutItems = plan.cutItems.slice(0, cutDetailLimit).map((row) => ({
       ...toSessionPlanItemRow(row),
@@ -102,6 +111,7 @@ export class SessionPlanQuery {
       cutItems,
       plannedMinutes: plan.plannedMinutes,
       cutMinutes: plan.cutMinutes,
+      composition: plan.composition,
       cutCount: plan.cutCount,
       candidateCount: priced.length,
       totalCandidateMinutes: plan.plannedMinutes + plan.cutMinutes,
@@ -167,4 +177,17 @@ function aggregateCutByType(
     aggregate[type] = { count: prev.count + 1, minutes: prev.minutes + row.estimatedMinutes };
   }
   return aggregate;
+}
+
+function aggregateCutReasons(
+  rows: readonly CutSessionItem<PricedSessionCandidate>[],
+): Readonly<Record<SessionPlanCutReason, number>> {
+  const out: Record<SessionPlanCutReason, number> = { did_not_fit: 0 };
+  for (const row of rows) out[row.reason] = (out[row.reason] ?? 0) + 1;
+  return out;
+}
+
+function distillationQuotaApplies(filters: QueueFilters | undefined): boolean {
+  const types = filters?.types;
+  return !types || types.length === 0 || types.includes("extract");
 }

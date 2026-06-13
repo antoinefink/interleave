@@ -32,6 +32,7 @@ import {
   queueItemScore,
   type SessionMode,
 } from "./queue-score";
+import { distillationQuotaFloorMinutes, isDistillationQuotaCandidate } from "./session-plan";
 
 /**
  * The FSRS/leech signals the planner reads off a card row — a structural superset of the
@@ -56,6 +57,7 @@ export interface AutoPostponeSignals {
  * `QueueQuery`'s enriched `QueueItemSummary` (so the planner needs no DB).
  */
 export interface AutoPostponeInput extends QueueScoreInput {
+  readonly stage?: string | null;
   /** The richer FSRS/leech signals used for the fragile↔mature + leech classification. */
   readonly schedulerSignals: QueueScoreInput["schedulerSignals"] & AutoPostponeSignals;
   /** True for an A-priority / user-protected row — never auto-postponed. */
@@ -114,6 +116,16 @@ export interface AutoPostponePlan {
   readonly reserveTargetMinutes: number;
   /** Estimated due minutes remaining after applying the plan. */
   readonly remainingMinutesAfter: number;
+  /** Distillation floor protection applied while selecting victims. */
+  readonly distillationFloor: AutoPostponeDistillationFloor;
+}
+
+export interface AutoPostponeDistillationFloor {
+  readonly quotaFloorMinutes: number;
+  readonly dueDistillationMinutes: number;
+  readonly postponedDistillationMinutes: number;
+  readonly remainingDueDistillationMinutesAfter: number;
+  readonly protectedDistillationMinutes: number;
 }
 
 /** Options for {@link planAutoPostpone}. */
@@ -136,6 +148,8 @@ export interface AutoPostponeOptions {
    * so late-day reviews/imports do not immediately put the user back over budget).
    */
   readonly reserveRatio?: number;
+  /** Minimum due extract-distillation share to leave in the day after trimming. */
+  readonly distillationQuotaPercent?: number;
 }
 
 /** Band-A threshold (mirrors `@interleave/core` `priorityToLabel`: A ≥ 0.75). */
@@ -214,6 +228,13 @@ export function planAutoPostpone(
   const reserveRatio = Math.min(1, Math.max(0, options.reserveRatio ?? 0.9));
   const reserveTargetMinutes = targetMinutes * reserveRatio;
   const usedMinutes = items.reduce((sum, item) => sum + finiteMinutes(item.estimatedMinutes), 0);
+  const quotaFloorMinutes = distillationQuotaFloorMinutes(
+    targetMinutes,
+    options.distillationQuotaPercent,
+  );
+  const dueDistillationMinutes = items
+    .filter(isDistillationQuotaCandidate)
+    .reduce((sum, item) => sum + finiteMinutes(item.estimatedMinutes), 0);
   // Rank victims by the SAME value reasoning as T076's auto-sort (reusing its default
   // weights), so "least valuable right now" is one consistent notion across both.
   const score = (item: AutoPostponeInput): number =>
@@ -228,6 +249,13 @@ export function planAutoPostpone(
       targetMinutes,
       reserveTargetMinutes,
       remainingMinutesAfter: usedMinutes,
+      distillationFloor: {
+        quotaFloorMinutes,
+        dueDistillationMinutes,
+        postponedDistillationMinutes: 0,
+        remainingDueDistillationMinutesAfter: dueDistillationMinutes,
+        protectedDistillationMinutes: Math.min(quotaFloorMinutes, dueDistillationMinutes),
+      },
     };
   }
 
@@ -268,8 +296,18 @@ export function planAutoPostpone(
   const plan: PostponePlanItem[] = [];
   let remainingCount = items.length;
   let remainingMinutes = usedMinutes;
+  let remainingDistillationMinutes = dueDistillationMinutes;
+  let postponedDistillationMinutes = 0;
   for (const item of ordered) {
     if (remainingMinutes <= reserveTargetMinutes) break;
+    const itemMinutes = finiteMinutes(item.estimatedMinutes);
+    if (
+      quotaFloorMinutes > 0 &&
+      isDistillationQuotaCandidate(item) &&
+      remainingDistillationMinutes - itemMinutes < quotaFloorMinutes
+    ) {
+      continue;
+    }
     plan.push({
       id: item.id,
       type: item.type,
@@ -278,7 +316,11 @@ export function planAutoPostpone(
       reason: item.type === "card" ? "low-priority-mature-card" : "low-priority-topic",
     });
     remainingCount -= 1;
-    remainingMinutes = Math.max(0, remainingMinutes - finiteMinutes(item.estimatedMinutes));
+    remainingMinutes = Math.max(0, remainingMinutes - itemMinutes);
+    if (isDistillationQuotaCandidate(item)) {
+      remainingDistillationMinutes = Math.max(0, remainingDistillationMinutes - itemMinutes);
+      postponedDistillationMinutes += itemMinutes;
+    }
   }
 
   return {
@@ -289,5 +331,12 @@ export function planAutoPostpone(
     targetMinutes,
     reserveTargetMinutes,
     remainingMinutesAfter: remainingMinutes,
+    distillationFloor: {
+      quotaFloorMinutes,
+      dueDistillationMinutes,
+      postponedDistillationMinutes,
+      remainingDueDistillationMinutesAfter: remainingDistillationMinutes,
+      protectedDistillationMinutes: Math.min(quotaFloorMinutes, remainingDistillationMinutes),
+    },
   };
 }

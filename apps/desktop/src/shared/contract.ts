@@ -37,6 +37,8 @@ import {
   DESIRED_RETENTION_MAX,
   DESIRED_RETENTION_MIN,
   DISPLAY_NAME_MAX,
+  DISTILLATION_QUOTA_PERCENT_MAX,
+  DISTILLATION_QUOTA_PERCENT_MIN,
   ELEMENT_STATUSES,
   ELEMENT_TYPES,
   EMBEDDING_API_KEY_MAX,
@@ -231,6 +233,11 @@ export const SettingsPatchSchema = z
       .int()
       .min(DAILY_BUDGET_MINUTES_MIN)
       .max(DAILY_BUDGET_MINUTES_MAX),
+    distillationQuotaPercent: z
+      .number()
+      .int()
+      .min(DISTILLATION_QUOTA_PERCENT_MIN)
+      .max(DISTILLATION_QUOTA_PERCENT_MAX),
     overloadPolicy: z.enum(OVERLOAD_POLICIES),
     dailyReviewBudget: z.number().int().min(DAILY_REVIEW_BUDGET_MIN).max(DAILY_REVIEW_BUDGET_MAX),
     defaultDesiredRetention: z.number().min(DESIRED_RETENTION_MIN).max(DESIRED_RETENTION_MAX),
@@ -887,6 +894,24 @@ export interface QueueMinuteBudget {
   readonly confidence: QueueTimeEstimateConfidence;
 }
 
+export type DistillationQuotaStatus =
+  | "active"
+  | "returned_empty_backlog"
+  | "inactive_filtered_out"
+  | "inactive_zero_target"
+  | "unavailable_no_time_estimate";
+
+export interface QueueQuotaComposition {
+  readonly status: DistillationQuotaStatus;
+  readonly quotaFloorMinutes: number;
+  readonly eligibleDistillationMinutes: number;
+  readonly selectedDistillationMinutes: number;
+  readonly returnedQuotaMinutes: number;
+  readonly cardMinutes: number;
+  readonly distillationMinutes: number;
+  readonly otherMinutes: number;
+}
+
 export interface QueueListResult {
   readonly items: readonly QueueItemSummary[];
   readonly counts: QueueCounts;
@@ -894,6 +919,8 @@ export interface QueueListResult {
   readonly budget: { readonly used: number; readonly target: number };
   /** Minute-denominated daily budget gauge, included when `includeTimeEstimate` is requested. */
   readonly minuteBudget?: QueueMinuteBudget;
+  /** Trusted daily minute composition, included when `includeTimeEstimate` is requested. */
+  readonly dayComposition?: QueueQuotaComposition;
   /** Full filtered due-set time estimate, priced on the trusted side when requested. */
   readonly timeEstimate?: QueueTimeEstimate;
 }
@@ -942,6 +969,7 @@ export interface QueueSessionPlanResult {
   readonly overTarget: boolean;
   readonly confidence: QueueTimeEstimateConfidence;
   readonly usesDefaultEstimate: boolean;
+  readonly composition: QueueQuotaComposition;
   readonly items: readonly QueueSessionPlanItem[];
   readonly cut: {
     readonly totalCount: number;
@@ -1162,6 +1190,14 @@ export interface AutoPostponePreviewRow {
   readonly estimateConfidence: QueueTimeEstimateConfidence;
 }
 
+export interface AutoPostponeDistillationFloor {
+  readonly quotaFloorMinutes: number;
+  readonly dueDistillationMinutes: number;
+  readonly postponedDistillationMinutes: number;
+  readonly remainingDueDistillationMinutesAfter: number;
+  readonly protectedDistillationMinutes: number;
+}
+
 /** The read-only auto-postpone preview the renderer shows BEFORE committing. */
 export interface AutoPostponePreview {
   /** Legacy count overflow (`used - target`, clamped at 0). Minute consumers use `overBudgetMinutes`. */
@@ -1184,6 +1220,8 @@ export interface AutoPostponePreview {
   readonly remainingAfter: number;
   /** Estimated due minutes remaining after applying the plan. */
   readonly remainingMinutesAfter: number;
+  /** Distillation floor protection applied while selecting victims. */
+  readonly distillationFloor?: AutoPostponeDistillationFloor;
 }
 
 /** The result of applying the auto-postpone sweep. */
@@ -1194,6 +1232,8 @@ export interface AutoPostponeApplyResult {
   readonly postponedMinutes: number;
   /** Estimated due minutes remaining after applying the plan. */
   readonly remainingMinutesAfter: number;
+  /** Distillation floor protection applied while selecting victims. */
+  readonly distillationFloor?: AutoPostponeDistillationFloor;
   /** The shared batch id (the whole sweep undoes as one via `undo.last`). */
   readonly batchId: string;
 }
@@ -6136,6 +6176,7 @@ export interface AutoPostponeReceipt {
   readonly postponed: number;
   readonly postponedMinutes: number;
   readonly remainingMinutesAfter: number;
+  readonly distillationFloor?: AutoPostponeDistillationFloor;
   readonly priorityBands: readonly string[];
   readonly createdAt: string;
   readonly undoneAt?: string;

@@ -66,6 +66,7 @@ export {
   sourceRetirementSuggestion,
 } from "./attention-scheduler";
 export {
+  type AutoPostponeDistillationFloor,
   type AutoPostponeInput,
   type AutoPostponeOptions,
   type AutoPostponePlan,
@@ -148,10 +149,14 @@ export {
 } from "./retention";
 export {
   type CutSessionItem,
+  type DistillationQuotaStatus,
+  distillationQuotaFloorMinutes,
+  isDistillationQuotaCandidate,
   type PlannedSessionItem,
   planSession,
   type SessionPlan,
   type SessionPlanCandidate,
+  type SessionPlanComposition,
   type SessionPlanCutReason,
   type SessionPlanEstimateConfidence,
   type SessionPlanOptions,

@@ -28,6 +28,7 @@
 import type { ElementId, IsoTimestamp } from "@interleave/core";
 import type { InterleaveDatabase } from "@interleave/db";
 import {
+  type AutoPostponeDistillationFloor,
   type AutoPostponeInput,
   type AutoPostponePlan,
   type PostponeReason,
@@ -86,6 +87,8 @@ export interface AutoPostponePreview {
   readonly remainingAfter: number;
   /** Estimated due minutes remaining after applying the plan. */
   readonly remainingMinutesAfter: number;
+  /** Distillation quota protection applied while selecting victims. */
+  readonly distillationFloor: AutoPostponeDistillationFloor;
 }
 
 /** The result of applying the auto-postpone sweep. */
@@ -96,6 +99,8 @@ export interface AutoPostponeApplyResult {
   readonly postponedMinutes: number;
   /** Estimated due minutes remaining after applying the plan. */
   readonly remainingMinutesAfter: number;
+  /** Distillation quota protection applied while selecting victims. */
+  readonly distillationFloor: AutoPostponeDistillationFloor;
   /** The shared batch id, so the whole sweep undoes as one (T044). */
   readonly batchId: string;
 }
@@ -229,6 +234,7 @@ export class AutoPostponeService {
       budget: budgetMinutes,
       asOf,
       ...(mode ? { mode } : {}),
+      distillationQuotaPercent: this.repos.settings.getAppSettings().distillationQuotaPercent,
     });
   }
 
@@ -273,6 +279,7 @@ export class AutoPostponeService {
       willPostpone,
       remainingAfter: plan.remainingAfter,
       remainingMinutesAfter: plan.remainingMinutesAfter,
+      distillationFloor: plan.distillationFloor,
     };
   }
 
@@ -380,6 +387,7 @@ export class AutoPostponeService {
       postponed,
       postponedMinutes,
       remainingMinutesAfter: plan.remainingMinutesAfter,
+      distillationFloor: plan.distillationFloor,
       batchId: options.batchId,
     };
   }

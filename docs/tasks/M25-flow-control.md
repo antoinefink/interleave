@@ -26,7 +26,8 @@
 # T119 — Protected distillation quota
 
 - **Milestone:** M25 — Extract-pipeline flow control
-- **Status:** `[ ]` not started
+- **Status:** `[x]` complete
+- **Commit:** `this commit`
 - **Depends on:** T076, T115
 - **Roadmap line:** day composition guarantees a configurable minimum share for distillation
   work so conversion throughput never silently drops to zero under card load — the share is
@@ -50,12 +51,12 @@ small floor of extract/statement work per day — card production never starves 
 
 ## Deliverables
 
-- [ ] Composition rule in the queue/day plan: a configurable minimum share (setting, default
+- [x] Composition rule in the queue/day plan: a configurable minimum share (setting, default
       ~15% of budget or ~10 min) reserved for due extract/statement processing before pure card
       fill; trim paths (T077/T117) treat the floor as protected.
-- [ ] Visibility: the gauge/day plan shows the split ("~38 min cards · ~10 min distillation");
+- [x] Visibility: the gauge/day plan shows the split ("~38 min cards · ~10 min distillation");
       the share setting lives with the budget setting.
-- [ ] Tests: unit — an overloaded all-types fixture still surfaces distillation items up to the
+- [x] Tests: unit — an overloaded all-types fixture still surfaces distillation items up to the
       floor; an empty-distillation fixture gives the share back; trim never eats the floor.
       E2e — overloaded day shows mixed composition.
 
@@ -69,6 +70,15 @@ small floor of extract/statement work per day — card production never starves 
 
 - Interplay with T076 scoring: implement as a composition constraint on top of the score (fill
   share-buckets by score) rather than mutating the score function — keep the score pure.
+- Completion notes: T119 keeps `queue-score` pure and implements quota as planner composition.
+  `planSession` now returns required composition metadata; queue/day composition uses the full
+  time-estimated due universe while trimming only displayed estimate rows for the visible list.
+  Auto-postpone and standing auto-postpone share the same protected floor metadata. The setting is
+  persisted as `review.distillationQuotaPercent` and surfaced next to the Daily budget setting.
+- Verification: `pnpm lint`; `pnpm typecheck`; `pnpm test`;
+  `pnpm e2e tests/electron/auto-postpone.spec.ts tests/electron/process-queue.spec.ts`.
+- Learning captured in
+  [`docs/solutions/architecture-patterns/protected-distillation-quota-daily-workload-share.md`](../solutions/architecture-patterns/protected-distillation-quota-daily-workload-share.md).
 
 ---
 

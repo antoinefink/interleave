@@ -14,7 +14,7 @@
  *  - the two-scheduler split is never crossed (a card never lands on `scheduled`).
  */
 
-import type { ElementId, IsoTimestamp, Priority } from "@interleave/core";
+import type { BlockId, ElementId, IsoTimestamp, Priority } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
 import { operationLog, reviewLogs, reviewStates } from "@interleave/db";
 import { eq } from "drizzle-orm";
@@ -45,6 +45,27 @@ function seedTopic(priority: Priority, title = "topic"): ElementId {
   });
   new ElementRepository(handle.db).reschedule(element.id, OVERDUE);
   return element.id;
+}
+
+function seedExtract(priority: Priority, title = "extract"): ElementId {
+  const repos = createRepositories(handle.db);
+  const { element: source } = repos.sources.create({
+    title: `${title} source`,
+    priority,
+    status: "active",
+    stage: "raw_source",
+  });
+  const extract = repos.sources.createExtract({
+    sourceElementId: source.id,
+    title,
+    priority,
+    selectedText: "Selected text",
+    blockIds: ["block-1" as BlockId],
+    label: "p1",
+  });
+  repos.elements.update(extract.element.id, { status: "active", stage: "clean_extract" });
+  repos.elements.reschedule(extract.element.id, OVERDUE);
+  return extract.element.id;
 }
 
 /**
@@ -117,6 +138,10 @@ const BUDGET_MINUTES = 20;
 /** Set the daily review budget in estimated minutes. */
 function setBudget(n: number): void {
   createRepositories(handle.db).settings.updateAppSettings({ dailyBudgetMinutes: n });
+}
+
+function setDistillationQuotaPercent(n: number): void {
+  createRepositories(handle.db).settings.updateAppSettings({ distillationQuotaPercent: n });
 }
 
 beforeEach(() => {
@@ -199,6 +224,24 @@ describe("AutoPostponeService.preview", () => {
     expect(preview.usedMinutes).toBeLessThan(BUDGET_MINUTES);
     expect(preview.willPostpone).toEqual([]);
   });
+
+  it("does not postpone due extract distillation below the protected floor", () => {
+    setBudget(BUDGET_MINUTES);
+    setDistillationQuotaPercent(50);
+    const extract = seedExtract(0.375, "protected extract");
+    seedTopic(0.375, "low source");
+    seedProtectedFiller(9);
+
+    const preview = service().preview({ asOf: NOW });
+
+    expect(preview.distillationFloor).toMatchObject({
+      quotaFloorMinutes: 10,
+      dueDistillationMinutes: 6,
+      postponedDistillationMinutes: 0,
+      remainingDueDistillationMinutesAfter: 6,
+    });
+    expect(preview.willPostpone.map((row) => row.id)).not.toContain(extract);
+  });
 });
 
 describe("AutoPostponeService.apply", () => {
@@ -238,6 +281,27 @@ describe("AutoPostponeService.apply", () => {
     const due = dueIds();
     expect(due.has(topicLow)).toBe(false);
     expect(due.has(cardMature)).toBe(false);
+  });
+
+  it("keeps protected extract distillation due after applying the sweep", () => {
+    setBudget(BUDGET_MINUTES);
+    setDistillationQuotaPercent(50);
+    const extract = seedExtract(0.375, "protected extract");
+    const source = seedTopic(0.375, "low source");
+    seedProtectedFiller(9);
+
+    const result = service().apply({ asOf: NOW });
+
+    expect(result.distillationFloor).toMatchObject({
+      quotaFloorMinutes: 10,
+      dueDistillationMinutes: 6,
+      postponedDistillationMinutes: 0,
+      remainingDueDistillationMinutesAfter: 6,
+    });
+    expect(result.postponed).toBe(1);
+    const due = dueIds();
+    expect(due.has(extract)).toBe(true);
+    expect(due.has(source)).toBe(false);
   });
 
   it("defers a card on review_states.due_at WITHOUT touching FSRS memory state or writing a review log", () => {

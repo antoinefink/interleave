@@ -1503,6 +1503,13 @@ export function ProcessQueue() {
                       assembledSession.usesDefaultEstimate,
                     )}
                   </span>
+                  {assembledSession.composition &&
+                  assembledSession.composition.status !== "unavailable_no_time_estimate" ? (
+                    <span>
+                      Distillation{" "}
+                      {sessionMinuteLabel(assembledSession.composition.distillationMinutes, false)}
+                    </span>
+                  ) : null}
                   <span>Completed {sessionMinuteLabel(completedEstimatedMinutes, false)}</span>
                   <span>Elapsed {elapsedMinutes} min</span>
                   <span>

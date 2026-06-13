@@ -238,6 +238,16 @@ const h = vi.hoisted(() => {
     },
     budget: { used: 4, target: 30 },
     minuteBudget: { usedMinutes: 19, targetMinutes: 30, confidence: "default" },
+    dayComposition: {
+      status: "active",
+      quotaFloorMinutes: 5,
+      eligibleDistillationMinutes: 6,
+      selectedDistillationMinutes: 6,
+      returnedQuotaMinutes: 0,
+      cardMinutes: 2,
+      distillationMinutes: 6,
+      otherMinutes: 11,
+    },
     timeEstimate: {
       confidence: "default",
       totalMinutes: 19,
@@ -1064,6 +1074,9 @@ describe("QueueScreen", () => {
     await screen.findByTestId("budget-meter");
     expect(screen.getByTestId("budget-meter")).toHaveTextContent("19");
     expect(screen.getByTestId("budget-meter")).toHaveTextContent("30 min today");
+    expect(screen.getByTestId("budget-composition")).toHaveTextContent(
+      "Distillation floor active: 5 min reserved.",
+    );
   });
 
   it("marks the row matching the shell selection with the active highlight (aria-current + qitem--active)", async () => {

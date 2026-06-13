@@ -195,6 +195,11 @@ export function SessionAssemblyPreview({
               {sessionMinuteLabel(plan.plannedMinutes, approximate)}
             </strong>
           </div>
+          {sessionCompositionCopy(plan) ? (
+            <p className="q-session-preview__note" data-testid="session-composition">
+              {sessionCompositionCopy(plan)}
+            </p>
+          ) : null}
           {plan.overTarget ? (
             <p className="q-session-preview__note">
               The first item is larger than the target, so this session starts with that one item.
@@ -281,4 +286,26 @@ export function SessionAssemblyPreview({
       </div>
     </section>
   );
+}
+
+function sessionCompositionCopy(plan: QueueSessionPlanResult): string | null {
+  const { composition } = plan;
+  if (!composition) return null;
+  if (composition.status === "unavailable_no_time_estimate") return null;
+  let first: string;
+  if (composition.status === "active") {
+    first = `Distillation floor active: ${composition.quotaFloorMinutes} min reserved.`;
+  } else if (composition.status === "returned_empty_backlog") {
+    first = "Distillation share returned: no due extracts.";
+  } else if (composition.status === "inactive_filtered_out") {
+    return "Current filter: distillation quota inactive.";
+  } else {
+    return "Distillation floor off.";
+  }
+  const other = composition.otherMinutes
+    ? `, ${Math.round(composition.otherMinutes)} min other work`
+    : "";
+  return `${first} Planned ${Math.round(composition.distillationMinutes)} min distillation, ${Math.round(
+    composition.cardMinutes,
+  )} min cards${other}.`;
 }

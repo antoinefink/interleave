@@ -207,6 +207,19 @@
   margin-right: 4px;
   vertical-align: -1px;
 }
+.budget__composition {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-2);
+  font-size: var(--t-2xs);
+}
+.budget__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
 
 /* ---------- Session bar ---------- */
 .sessionbar {

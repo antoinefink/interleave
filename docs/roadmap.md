@@ -459,8 +459,9 @@ Detailed specs: [`tasks/M24-ambient-overload.md`](./tasks/M24-ambient-overload.m
 ## M25 — Extract-pipeline flow control (T119–T122)
 Detailed specs: [`tasks/M25-flow-control.md`](./tasks/M25-flow-control.md)
 
-- [ ] **T119 — Protected distillation quota** · _deps: T076, T115_
+- [x] **T119 — Protected distillation quota** · done · _deps: T076, T115_ · commit: this commit
   Done when: day composition guarantees a configurable minimum share for distillation work (extract/statement processing) so conversion throughput never silently drops to zero under card load — the share is visible, and an overloaded fixture provably still surfaces distillation items.
+  T119 is complete: `distillationQuotaPercent` is a typed persisted setting next to the minute budget; `planSession` reserves due extract-distillation minutes before normal score-order fill and returns the share when the backlog is empty; manual and standing auto-postpone protect the same floor and expose receipt metadata; Queue/Home/session previews and accepted-session summaries render trusted composition from the backend, not visible-row inference. Verification: `pnpm lint`, `pnpm typecheck`, `pnpm test`, and `pnpm e2e tests/electron/auto-postpone.spec.ts tests/electron/process-queue.spec.ts`. Learning captured in [`docs/solutions/architecture-patterns/protected-distillation-quota-daily-workload-share.md`](./solutions/architecture-patterns/protected-distillation-quota-daily-workload-share.md). Downstream: T120 can build batch conversion sessions on top of a daily pipeline that now preserves extract throughput under card pressure; T121 can reuse the receipt/protected-floor pattern when aging policies demote stale extracts.
 - [ ] **T120 — Batch conversion sessions** · _deps: T024, T032, T093_
   Done when: a session view gathers card-ready atomic statements across sources for keyboard-first batch card authoring, with optional AI pre-drafts (existing `ai_suggestions` path, drafts-only invariant, explicit per-session consent); produced cards keep full lineage.
 - [ ] **T121 — Extract aging policy** · _deps: T084, T104_
@@ -523,6 +524,7 @@ Detailed specs: [`plans/2026-06-12-004-feat-lineage-aware-deletion-plan.md`](./p
 
 Record notable completions / decisions here as tasks land (newest first).
 
+- 2026-06-13 - T119 Protected distillation quota - done. Commit: `this commit`. Adds typed `distillationQuotaPercent` settings, scheduler composition metadata, protected auto-postpone floor metadata, and queue/session UI split rendering. Verification: `pnpm lint`; `pnpm typecheck`; `pnpm test`; `pnpm e2e tests/electron/auto-postpone.spec.ts tests/electron/process-queue.spec.ts`. Learning captured in [`docs/solutions/architecture-patterns/protected-distillation-quota-daily-workload-share.md`](./solutions/architecture-patterns/protected-distillation-quota-daily-workload-share.md).
 - 2026-06-12 - T114 Descendant-health input - done. Commit: `feat: T114 descendant health input`. `descendant_lapses` is no
   longer reserved: it is emitted after review-triggered source reschedules when live descendant
   cards have at least 3 true lapse increments across at least 2 affected active/scheduled

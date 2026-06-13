@@ -218,6 +218,16 @@ const h = vi.hoisted(() => {
     },
     budget: { used: 4, target: 30 },
     minuteBudget: { usedMinutes: 19, targetMinutes: 30, confidence: "default" },
+    dayComposition: {
+      status: "active",
+      quotaFloorMinutes: 5,
+      eligibleDistillationMinutes: 6,
+      selectedDistillationMinutes: 6,
+      returnedQuotaMinutes: 0,
+      cardMinutes: 2,
+      distillationMinutes: 6,
+      otherMinutes: 11,
+    },
     timeEstimate: {
       confidence: "default",
       totalMinutes: 19,
@@ -404,6 +414,9 @@ describe("HomeScreen", () => {
     // The budget gauge renders used / target from the read.
     expect(screen.getByTestId("budget-meter").textContent).toContain("19");
     expect(screen.getByTestId("budget-meter").textContent).toContain("30 min");
+    expect(screen.getByTestId("budget-composition")).toHaveTextContent(
+      "Distillation floor active: 5 min reserved.",
+    );
   });
 
   it("does not invent estimated minutes before the queue read resolves", () => {

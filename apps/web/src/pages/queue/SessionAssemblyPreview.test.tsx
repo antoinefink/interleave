@@ -1,6 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { QueueItemSummary, QueueSessionPlanResult } from "../../lib/appApi";
+import type {
+  QueueItemSummary,
+  QueueQuotaComposition,
+  QueueSessionPlanResult,
+} from "../../lib/appApi";
 import { SessionAssemblyPreview } from "./SessionAssemblyPreview";
 import { clearAcceptedSessionAssembly } from "./sessionAssemblyState";
 
@@ -76,7 +80,20 @@ function item(id: string, title: string): QueueItemSummary {
   };
 }
 
-function plan(targetMinutes: number, row: QueueItemSummary): QueueSessionPlanResult {
+function plan(
+  targetMinutes: number,
+  row: QueueItemSummary,
+  composition: QueueQuotaComposition = {
+    status: "active",
+    quotaFloorMinutes: 4,
+    eligibleDistillationMinutes: 6,
+    selectedDistillationMinutes: 6,
+    returnedQuotaMinutes: 0,
+    cardMinutes: 2,
+    distillationMinutes: 6,
+    otherMinutes: 0,
+  },
+): QueueSessionPlanResult {
   return {
     targetMinutes,
     plannedMinutes: 2,
@@ -86,6 +103,7 @@ function plan(targetMinutes: number, row: QueueItemSummary): QueueSessionPlanRes
     overTarget: false,
     confidence: "learned",
     usesDefaultEstimate: false,
+    composition,
     items: [
       {
         item: row,
@@ -144,6 +162,12 @@ describe("SessionAssemblyPreview", () => {
       await second.promise;
     });
     await screen.findByText("New plan");
+    expect(screen.getByTestId("session-composition")).toHaveTextContent(
+      "Distillation floor active: 4 min reserved.",
+    );
+    expect(screen.getByTestId("session-composition")).toHaveTextContent(
+      "Planned 6 min distillation, 2 min cards.",
+    );
     expect(screen.getByTestId("session-preview-start")).toBeEnabled();
 
     fireEvent.click(screen.getByTestId("session-preview-start"));
@@ -151,5 +175,91 @@ describe("SessionAssemblyPreview", () => {
       to: "/process",
       search: { assembled: 1 },
     });
+  });
+
+  it("renders returned quota copy", async () => {
+    h.previewSessionPlan.mockResolvedValue(
+      plan(15, item("returned", "Returned plan"), {
+        status: "returned_empty_backlog",
+        quotaFloorMinutes: 4,
+        eligibleDistillationMinutes: 0,
+        selectedDistillationMinutes: 0,
+        returnedQuotaMinutes: 4,
+        cardMinutes: 2,
+        distillationMinutes: 0,
+        otherMinutes: 0,
+      }),
+    );
+
+    render(
+      <SessionAssemblyPreview
+        open
+        origin="queue"
+        defaultTargetMinutes={15}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(await screen.findByTestId("session-composition")).toHaveTextContent(
+      "Distillation share returned: no due extracts.",
+    );
+    expect(screen.getByTestId("session-composition")).toHaveTextContent(
+      "Planned 0 min distillation, 2 min cards.",
+    );
+  });
+
+  it("renders filtered-out quota copy", async () => {
+    h.previewSessionPlan.mockResolvedValue(
+      plan(15, item("filtered", "Filtered plan"), {
+        status: "inactive_filtered_out",
+        quotaFloorMinutes: 4,
+        eligibleDistillationMinutes: 0,
+        selectedDistillationMinutes: 0,
+        returnedQuotaMinutes: 0,
+        cardMinutes: 2,
+        distillationMinutes: 0,
+        otherMinutes: 0,
+      }),
+    );
+
+    render(
+      <SessionAssemblyPreview
+        open
+        origin="queue"
+        defaultTargetMinutes={15}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(await screen.findByTestId("session-composition")).toHaveTextContent(
+      "Current filter: distillation quota inactive.",
+    );
+  });
+
+  it("omits composition copy when estimates are unavailable", async () => {
+    h.previewSessionPlan.mockResolvedValue(
+      plan(15, item("unavailable", "Unavailable plan"), {
+        status: "unavailable_no_time_estimate",
+        quotaFloorMinutes: 0,
+        eligibleDistillationMinutes: 0,
+        selectedDistillationMinutes: 0,
+        returnedQuotaMinutes: 0,
+        cardMinutes: 0,
+        distillationMinutes: 0,
+        otherMinutes: 0,
+      }),
+    );
+
+    render(
+      <SessionAssemblyPreview
+        open
+        origin="queue"
+        defaultTargetMinutes={15}
+        onClose={() => undefined}
+      />,
+    );
+
+    await screen.findByText("Unavailable plan");
+    expect(screen.queryByTestId("session-composition")).not.toBeInTheDocument();
   });
 });

@@ -45,6 +45,9 @@ export type OverloadPolicy = (typeof OVERLOAD_POLICIES)[number];
  *
  * - `dailyBudgetMinutes` — soft cap on estimated minutes surfaced per day; overflow
  *   auto-postpones by priority (read by the queue/scheduler, T116).
+ * - `distillationQuotaPercent` — share of a daily/session minute target reserved
+ *   for due extract distillation work before card fill (T119). Unused share returns
+ *   to the normal queue/session fill.
  * - `dailyReviewBudget` — legacy item-count cap kept readable for one-release rollback
  *   and count-only consumers until they migrate to minute budgets.
  * - `defaultDesiredRetention` — FSRS target recall probability `0.0`–`1.0`
@@ -88,6 +91,7 @@ export type OverloadPolicy = (typeof OVERLOAD_POLICIES)[number];
  */
 export interface AppSettings {
   readonly dailyBudgetMinutes: number;
+  readonly distillationQuotaPercent: number;
   readonly overloadPolicy: OverloadPolicy;
   readonly dailyReviewBudget: number;
   readonly defaultDesiredRetention: Priority;
@@ -270,6 +274,7 @@ export function projectToRendererSettings(settings: AppSettings): RendererSettin
  */
 export const SETTINGS_KEYS = {
   dailyBudgetMinutes: "review.dailyBudgetMinutes",
+  distillationQuotaPercent: "review.distillationQuotaPercent",
   overloadPolicy: "review.overloadPolicy",
   dailyReviewBudget: "review.dailyBudget",
   defaultDesiredRetention: "review.defaultDesiredRetention",
@@ -348,6 +353,7 @@ export function coerceAiProviderKind(raw: unknown): AiProviderKind {
  */
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   dailyBudgetMinutes: 60,
+  distillationQuotaPercent: 15,
   overloadPolicy: "suggest",
   dailyReviewBudget: 60,
   defaultDesiredRetention: 0.9,
@@ -430,6 +436,10 @@ export function coerceFsrsParams(raw: unknown): number[] | null {
 export const DAILY_BUDGET_MINUTES_MIN = 5;
 export const DAILY_BUDGET_MINUTES_MAX = 300;
 export const DAILY_BUDGET_MINUTE_PRESETS = [15, 30, 60, 120] as const;
+
+/** Inclusive UI bounds for the distillation quota floor (T119). */
+export const DISTILLATION_QUOTA_PERCENT_MIN = 0;
+export const DISTILLATION_QUOTA_PERCENT_MAX = 100;
 
 /** Inclusive UI bounds for the legacy daily review budget slider. */
 export const DAILY_REVIEW_BUDGET_MIN = 10;
@@ -534,6 +544,12 @@ export function coerceSettingValue<K extends keyof AppSettings>(
       return (
         isFiniteNumber(raw)
           ? clampInt(raw, DAILY_BUDGET_MINUTES_MIN, DAILY_BUDGET_MINUTES_MAX)
+          : fallback
+      ) as AppSettings[K];
+    case "distillationQuotaPercent":
+      return (
+        isFiniteNumber(raw)
+          ? clampInt(raw, DISTILLATION_QUOTA_PERCENT_MIN, DISTILLATION_QUOTA_PERCENT_MAX)
           : fallback
       ) as AppSettings[K];
     case "dailyReviewBudget":
@@ -670,6 +686,10 @@ export function appSettingsFromStored(stored: Readonly<Record<string, unknown>>)
       hasMinuteBudget
         ? stored[SETTINGS_KEYS.dailyBudgetMinutes]
         : stored[SETTINGS_KEYS.dailyReviewBudget],
+    ),
+    distillationQuotaPercent: coerceSettingValue(
+      "distillationQuotaPercent",
+      stored[SETTINGS_KEYS.distillationQuotaPercent],
     ),
     dailyReviewBudget: legacyBudget,
     overloadPolicy: coerceSettingValue("overloadPolicy", stored[SETTINGS_KEYS.overloadPolicy]),

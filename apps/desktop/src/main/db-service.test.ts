@@ -505,6 +505,7 @@ describe("DbService", () => {
     const countOnly = svc.listQueue({ asOf });
     expect(countOnly.budget).toEqual({ used: 1, target: 11 });
     expect(countOnly.minuteBudget).toBeUndefined();
+    expect(countOnly.dayComposition).toBeUndefined();
 
     const priced = svc.listQueue({ asOf, includeTimeEstimate: true });
     expect(priced.budget).toEqual({ used: 1, target: 11 });
@@ -512,6 +513,12 @@ describe("DbService", () => {
       usedMinutes: priced.timeEstimate?.totalMinutes,
       targetMinutes: 25,
       confidence: priced.timeEstimate?.confidence,
+    });
+    expect(priced.dayComposition).toMatchObject({
+      status: "returned_empty_backlog",
+      quotaFloorMinutes: 4,
+      returnedQuotaMinutes: 4,
+      otherMinutes: 10,
     });
 
     svc.close();
@@ -524,6 +531,16 @@ describe("DbService", () => {
       cutItems: [],
       plannedMinutes: 0,
       cutMinutes: 0,
+      composition: {
+        status: "inactive_zero_target" as const,
+        quotaFloorMinutes: 0,
+        eligibleDistillationMinutes: 0,
+        selectedDistillationMinutes: 0,
+        returnedQuotaMinutes: 0,
+        cardMinutes: 0,
+        distillationMinutes: 0,
+        otherMinutes: 0,
+      },
       cutCount: 0,
       candidateCount: 0,
       totalCandidateMinutes: 0,
@@ -774,6 +791,7 @@ describe("DbService", () => {
     first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
     first.updateAppSettings({
       dailyBudgetMinutes: 90,
+      distillationQuotaPercent: 25,
       dailyReviewBudget: 90,
       defaultDesiredRetention: 0.95,
       defaultTopicIntervalDays: 30,
@@ -793,6 +811,7 @@ describe("DbService", () => {
     // the plaintext `aiApiKey`/`embeddingApiKey` are NEVER returned to the renderer.
     expect(settings).toEqual({
       dailyBudgetMinutes: 90,
+      distillationQuotaPercent: 25,
       dailyReviewBudget: 90,
       defaultDesiredRetention: 0.95,
       defaultTopicIntervalDays: 30,

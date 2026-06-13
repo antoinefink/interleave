@@ -102,6 +102,7 @@ function seedWeeklyReviewTask(): ElementId {
 
 describe("SessionPlanQuery.preview", () => {
   it("uses full session-plan candidates in queue score order and prices them with T115 estimates", () => {
+    repos.settings.updateAppSettings({ distillationQuotaPercent: 0 });
     const source = seedDueSource("High-value source", PRIORITY_LABEL_VALUE.A);
     const extract = seedDueExtract(source, "Clean extract");
     const card = seedDueCard("Review card", PRIORITY_LABEL_VALUE.B);
@@ -119,6 +120,63 @@ describe("SessionPlanQuery.preview", () => {
     expect(preview.plannedMinutes).toBe(18);
     expect(preview.confidence).toBe("default");
     expect(preview.hasDefaultEstimates).toBe(true);
+  });
+
+  it("surfaces due extract distillation inside a card-heavy planned session floor", () => {
+    repos.settings.updateAppSettings({ distillationQuotaPercent: 50 });
+    const source = seedDueSource("Quota source", PRIORITY_LABEL_VALUE.B);
+    const extract = seedDueExtract(source, "Quota extract");
+    const cardA = seedDueCard("Card A", PRIORITY_LABEL_VALUE.A);
+    const cardB = seedDueCard("Card B", PRIORITY_LABEL_VALUE.A);
+
+    const preview = query().preview({
+      asOf: NOW,
+      targetMinutes: 8,
+      filters: { types: ["card", "extract"] },
+    });
+
+    expect(preview.composition).toMatchObject({
+      status: "active",
+      quotaFloorMinutes: 4,
+      eligibleDistillationMinutes: 6,
+      distillationMinutes: 6,
+    });
+    const plannedIds = preview.plannedItems.map((row) => row.item.id);
+    const plannedCards = plannedIds.filter((id) => id === cardA || id === cardB);
+    expect(plannedIds).toContain(extract);
+    expect(plannedCards).toHaveLength(1);
+  });
+
+  it("returns the distillation share to cards when there is no due extract backlog", () => {
+    repos.settings.updateAppSettings({ distillationQuotaPercent: 50 });
+    seedDueCard("Card A", PRIORITY_LABEL_VALUE.A);
+    seedDueCard("Card B", PRIORITY_LABEL_VALUE.A);
+
+    const preview = query().preview({ asOf: NOW, targetMinutes: 4 });
+
+    expect(preview.composition).toMatchObject({
+      status: "returned_empty_backlog",
+      quotaFloorMinutes: 2,
+      returnedQuotaMinutes: 2,
+      distillationMinutes: 0,
+      cardMinutes: 4,
+    });
+  });
+
+  it("marks quota inactive when active filters exclude extract work", () => {
+    repos.settings.updateAppSettings({ distillationQuotaPercent: 50 });
+    const source = seedDueSource("Filtered source", PRIORITY_LABEL_VALUE.A);
+    seedDueExtract(source, "Filtered extract");
+    seedDueCard("Visible card", PRIORITY_LABEL_VALUE.A);
+
+    const preview = query().preview({
+      asOf: NOW,
+      targetMinutes: 4,
+      filters: { types: ["card"] },
+    });
+
+    expect(preview.composition.status).toBe("inactive_filtered_out");
+    expect(preview.plannedItems.every((row) => row.item.type === "card")).toBe(true);
   });
 
   it("plans from the full due universe even when the display queue is limited", () => {

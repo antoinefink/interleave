@@ -22,6 +22,7 @@ export interface StandingAutoPostponeReceipt {
   readonly postponed: number;
   readonly postponedMinutes: number;
   readonly remainingMinutesAfter: number;
+  readonly distillationFloor?: AutoPostponeApplyResult["distillationFloor"];
   readonly priorityBands: readonly string[];
   readonly createdAt: IsoTimestamp;
   readonly undoneAt?: IsoTimestamp;
@@ -230,6 +231,7 @@ function receiptFromApply(
     postponed: result.postponed,
     postponedMinutes: result.postponedMinutes,
     remainingMinutesAfter: result.remainingMinutesAfter,
+    distillationFloor: result.distillationFloor,
     priorityBands: bands,
     createdAt,
   };
