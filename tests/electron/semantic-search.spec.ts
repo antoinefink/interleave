@@ -3,19 +3,19 @@
  * `utilityProcess` background runner + the on-device embedder.
  *
  * On-device semantic search embeds each source/extract/card via the T058 runner
- * (the real `all-MiniLM-L6-v2` model via `fastembed`, downloaded once into the
- * app-data `models/` dir + cached on disk; the worker degrades to a deterministic
- * embedder if that fetch is unavailable offline) and fuses the `sqlite-vec` KNN with
- * the FTS hits, so `/search` finds conceptually related material WITHOUT a keyword
- * match. OFF BY DEFAULT, degrading to FTS-only.
+ * (the local EmbeddingGemma-300M ONNX model via Transformers.js, resolved from the
+ * app-data `models/` dir/cache; the worker degrades to a deterministic embedder if
+ * the model is unavailable offline) and fuses the `sqlite-vec` KNN with the FTS hits,
+ * so `/search` finds conceptually related material WITHOUT a keyword match. Semantic
+ * search is always enabled, degrading to FTS-only when sqlite-vec is unavailable.
  *
  * This spec launches the built desktop app against a fresh data dir seeded with
  * the shared demo collection ("intelligence" content), then:
  *   1. the `semantic.*` bridge surface exists (search/status/reindex), no raw SQL;
- *   2. with the feature enabled + the index built, a query that does NOT keyword-
+ *   2. with the local index built, a query that does NOT keyword-
  *      match a seeded element but is semantically near still surfaces it (labeled
  *      "related"), and the UI does not freeze during indexing (jobs run off-main);
- *   3. toggling the feature OFF returns FTS-only without an error;
+ *   3. legacy attempts to toggle the feature off are coerced back on;
  *   4. it SURVIVES AN APP RESTART — with the feature on again the embeddings are
  *      still present (no re-index) and the semantic result returns.
  *
@@ -45,8 +45,8 @@ async function openSearch(page: Page): Promise<void> {
   await expect(page.getByTestId("route-search")).toBeVisible();
 }
 
-/** Enable semantic search + build the index through the real bridge, then wait. */
-async function enableSemantic(page: Page): Promise<{ vecAvailable: boolean }> {
+/** Build the semantic index through the real bridge, then wait. */
+async function buildSemanticIndex(page: Page): Promise<{ vecAvailable: boolean }> {
   const status = await page.evaluate(async () => {
     const api = window.appApi as unknown as {
       settings: { updateMany(r: { patch: Record<string, unknown> }): Promise<unknown> };
@@ -55,9 +55,7 @@ async function enableSemantic(page: Page): Promise<{ vecAvailable: boolean }> {
         reindex(r: { onlyMissing: boolean }): Promise<{ enqueued: number }>;
       };
     };
-    await api.settings.updateMany({
-      patch: { semanticSearchEnabled: true, embeddingModelDownloaded: true },
-    });
+    await api.settings.updateMany({ patch: { embeddingModelDownloaded: true } });
     await api.semantic.reindex({ onlyMissing: false });
     return api.semantic.status();
   });
@@ -115,12 +113,12 @@ test("the semantic.* bridge surface exists (no raw SQL)", async () => {
   await app.close();
 });
 
-test("enabling semantic search builds the index and finds related material, off-main", async () => {
+test("semantic search builds the index and finds related material, off-main", async () => {
   const app = await launchApp(dataDir, { seedOnEmpty: true });
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
 
-  const enabled = await enableSemantic(page);
+  const enabled = await buildSemanticIndex(page);
   if (!enabled.vecAvailable) {
     // The host's sqlite-vec is non-functional (ABI mismatch) — assert the graceful
     // FTS-only state and stop (the unit/integration suites cover a functional host).
@@ -152,7 +150,7 @@ test("enabling semantic search builds the index and finds related material, off-
   await app.close();
 });
 
-test("toggling semantic search OFF returns keyword-only without error", async () => {
+test("legacy semantic-search OFF patches are coerced back on", async () => {
   const app = await launchApp(dataDir);
   const page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
@@ -165,11 +163,28 @@ test("toggling semantic search OFF returns keyword-only without error", async ()
     ).settings.updateMany({ patch: { semanticSearchEnabled: false } });
   });
 
+  const settings = await page.evaluate(() =>
+    (
+      window.appApi as unknown as {
+        settings: { getAll(): Promise<{ settings: { semanticSearchEnabled: boolean } }> };
+        semantic: { status(): Promise<{ enabled: boolean }> };
+      }
+    ).settings.getAll(),
+  );
+  const status = await page.evaluate(() =>
+    (
+      window.appApi as unknown as {
+        semantic: { status(): Promise<{ enabled: boolean }> };
+      }
+    ).semantic.status(),
+  );
+  expect(settings.settings.semanticSearchEnabled).toBe(true);
+  expect(status.enabled).toBe(true);
+
   await openSearch(page);
   await page.getByTestId("library-search-input").fill("intelligence");
-  // FTS still works — the seeded source surfaces; no semantic-on hint, no crash.
+  // Search still works and the legacy off patch does not crash or disable semantics.
   await expect(page.getByTestId("library-result").first()).toBeVisible({ timeout: 8000 });
-  await expect(page.getByTestId("library-semantic-on")).toHaveCount(0);
 
   await app.close();
 });
@@ -191,13 +206,6 @@ test("embeddings survive an app restart (no re-index needed)", async () => {
     // The embeddings built earlier persisted in the SQLite file across the restart.
     expect(status.embedded).toBeGreaterThan(0);
 
-    await page.evaluate(async () => {
-      await (
-        window.appApi as unknown as {
-          settings: { updateMany(r: { patch: Record<string, unknown> }): Promise<unknown> };
-        }
-      ).settings.updateMany({ patch: { semanticSearchEnabled: true } });
-    });
     await openSearch(page);
     await page.getByTestId("library-search-input").fill("cognition skill acquisition");
     await expect(page.getByTestId("library-result").first()).toBeVisible({ timeout: 8000 });

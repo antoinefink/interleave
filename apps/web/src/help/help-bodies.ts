@@ -2320,7 +2320,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
         "<b>Source</b> — every live card whose lineage traces back to a specific source. Launch from the source's Inspector.",
         "<b>Branch</b> — every live card in a lineage subtree rooted at a specific element.",
         "<b>Search</b> — every live card matching a keyword query. Launch from <code>/search</code> after a query with <b>Review N cards</b>.",
-        "<b>Semantic</b> — every live card semantically related to a query. Requires semantic search to be enabled in Settings.",
+        "<b>Semantic</b> — every live card semantically related to a query. Available when the local semantic index is ready.",
         "<b>Stale</b> — every live card whose fact lifetime has expired or is due for re-verification.",
         "<b>Leeches</b> — every active leech card. Launch from the leech remediation view.",
         "<b>Random audit</b> — a bounded random sample of live cards. Launch from Home with <b>Audit N random cards</b>.",
@@ -2891,7 +2891,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: "Once a query returns card results, a <code>Review N matching cards</code> button appears. It launches a targeted review session over exactly those cards — grades are real and advance FSRS, but the scope is limited to the search result. If on-device semantic search is enabled, a second button lets you <code>Review N related cards</code> from the semantic result set.",
+      text: "Once a query returns card results, a <code>Review N matching cards</code> button appears. It launches a targeted review session over exactly those cards — grades are real and advance FSRS, but the scope is limited to the search result. When the local semantic index is available, a second button lets you <code>Review N related cards</code> from the semantic result set.",
     },
     {
       type: "h2",
@@ -2904,7 +2904,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     {
       type: "callout",
       icon: "info",
-      text: "If on-device semantic search is enabled in Settings, the search screen fuses keyword and semantic results when no concept or priority facet is active. A hint below the results tells you which retrieval ran: <em>Semantic search on</em> or <em>Keyword search · enable semantic search in Settings to find related material.</em>",
+      text: "When the local semantic index is available, the search screen fuses keyword and semantic results when no concept or priority facet is active. A hint below the results tells you which retrieval ran, or whether search fell back to keyword mode because the vector index is unavailable, still building, or not used with the active facets.",
     },
   ],
   "library-browse": [
@@ -4387,28 +4387,20 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
   "semantic-search": [
     {
       type: "p",
-      text: "On-device semantic search finds items that are conceptually related to your query even when they share no keywords. It uses a local embedding model to compare meaning rather than matching text. The feature is <b>off by default</b> and requires a one-time setup.",
+      text: "On-device semantic search finds items that are conceptually related to your query even when they share no keywords. It uses a local embedding model to compare meaning rather than matching text. Semantic search is built in; it becomes useful once the local vector index is available and populated.",
     },
     {
       type: "callout",
       icon: "info",
-      text: 'Semantic search is available but requires enabling and an initial index build. On some machines the vector index (<code>sqlite-vec</code>) is unavailable; in that case the feature shows "The vector index is unavailable on this build" and search runs in keyword-only mode.',
+      text: "Semantic search is local-only and depends on the vector index (<code>sqlite-vec</code>) plus derived embeddings. On some machines the vector index is unavailable; in that case search runs in keyword-only mode and the UI says semantic indexing is unavailable.",
     },
     {
       type: "h2",
-      text: "Enabling it",
+      text: "Index state",
     },
     {
       type: "p",
-      text: "Open Settings (<kbd>g</kbd> then <kbd>s</kbd>) → <b>Semantic search</b> → toggle <b>On-device semantic search</b> on. On first enable, the app downloads the embedding model (a one-time download) and begins indexing your existing sources, extracts, and cards. The <b>Index</b> row shows <code>N of M items embedded</code> as the background worker progresses.",
-    },
-    {
-      type: "h2",
-      text: "Embedding provider",
-    },
-    {
-      type: "p",
-      text: "Two options: <code>Local</code> (the default — downloads a small model, computes on-device, fully offline) or <code>API key</code> (uses your own embedding provider key, stored in the vault only, never sent to Interleave). Select <code>API key</code>, paste your key, and click <b>Store key</b> to switch providers.",
+      text: "The app builds embeddings in the background for your sources, extracts, and cards. When coverage is incomplete, Library can show a <b>Build index</b> affordance with the current <code>N of M embedded</code> progress so you can request a full local reindex.",
     },
     {
       type: "h2",
@@ -4416,7 +4408,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: "The <b>Build index</b> button in Settings runs a full re-embed of all unindexed items. Use it after importing a large batch or if the coverage readout looks low. The background worker processes items in batches; progress updates live in the Settings row.",
+      text: "Use <b>Build index</b> after importing a large batch or if the coverage readout looks low. The background worker processes items in batches; progress updates as embed jobs finish.",
     },
     {
       type: "h2",
@@ -4424,7 +4416,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: "When semantic search is enabled, the Library and search screen can surface conceptually related items alongside keyword matches; results found only by vector similarity carry a <code>related</code> badge. The Inspector's <b>Related</b> section also shows <b>Similar extracts</b> and <b>Possible duplicates</b> derived from the vector index — these buckets are hidden when semantic search is off, though the concept and sibling-source buckets still appear from lineage alone.",
+      text: "When the semantic index is available, the Library and search screen can surface conceptually related items alongside keyword matches; results found only by vector similarity carry a <code>related</code> badge. The Inspector's <b>Related</b> section also shows <b>Similar extracts</b> and <b>Possible duplicates</b> derived from the vector index. Those buckets are hidden when the index is unavailable or not ready, though the concept and sibling-source buckets still appear from lineage alone.",
     },
   ],
   "related-duplicates-conflicts": [
@@ -4451,7 +4443,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: "The <b>Possible duplicates</b> and <b>Similar extracts</b> buckets require semantic search to be enabled (Settings → Semantic search). When semantic search is off, a calm hint replaces them; the concept and sibling-source buckets still resolve from lineage.",
+      text: "The <b>Possible duplicates</b> and <b>Similar extracts</b> buckets require the local semantic index. When the index is unavailable or not ready, a calm hint replaces them; the concept and sibling-source buckets still resolve from lineage.",
     },
     {
       type: "h2",

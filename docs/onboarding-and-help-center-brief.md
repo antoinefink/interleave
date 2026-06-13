@@ -1193,7 +1193,7 @@ Targets are help-article titles from Parts A/B; where an article has internal se
 | Workload simulator | always | help-link | "Preview how a change to retention, a big import, or a postpone would shift your daily load before you commit." | Simulating workload |
 | AI assistance → provider row when "Local" selected | on select | inline-hint | "The local AI model is experimental and not yet available — pick Anthropic or OpenAI and add your own key to use AI now." | Setting up AI: providers and your own API key |
 | AI assistance → Managed proxy confirm dialog | on toggle | help-link | "Learn what is sent." (proxy not yet available) | Your data and AI: the local-first trust model |
-| Semantic search toggle | first enable | first-run-callout | "Downloads a small model once, then runs offline. Build the index to make existing material searchable by meaning." | On-device semantic search |
+| Semantic index status | first index build | first-run-callout | "Uses the local EmbeddingGemma model, then runs offline. Build the index to make existing material searchable by meaning." | On-device semantic search |
 | Semantic "semantic-unavailable" notice | on render | help-link | "The on-device vector extension isn't available on this machine/build — search stays keyword-only." | (troubleshooting note) |
 | Bury siblings row (`setting-bury-siblings`) | hover | tooltip | "Why related cards aren't shown back-to-back, and what turning it off does." | Sibling burying and FSRS scheduling details |
 | Keyboard layout selector | always | inline-hint | "This preference does not yet remap shortcuts — bindings are fixed." | Customizing the keyboard layout (current limitations) |
@@ -1207,7 +1207,7 @@ Targets are help-article titles from Parts A/B; where an article has internal se
 | AiAssist first run / "Thinking…" | first | first-run-callout | "AI only drafts. Nothing is added to your review until you approve and then activate it." | Your data and AI: the local-first trust model |
 | AiAssist "Approve → card draft" button | hover | tooltip | "Creates a parked card draft with source lineage. It is NOT scheduled — activate it later to add it to review." | AI assistance: draft cards |
 | AI draft grounding RefBlock (jump-to-source) | hover | tooltip | "This suggestion was generated about this exact source text — click to jump there." | How AI suggestions stay grounded |
-| Library semantic hint line ("Keyword search · enable semantic search…") | always | help-link | Explains why results may be keyword-only (off / not downloaded / unavailable) | On-device semantic search |
+| Library semantic hint line ("Keyword search · semantic index unavailable…") | always | help-link | Explains why results may be keyword-only (not indexed / model not ready / unavailable) | On-device semantic search |
 | Library "Build index (N of M embedded)" | hover | tooltip | "Embeds your existing sources, extracts, and cards so semantic search can find them. Runs in the background." | On-device semantic search |
 | RelatedSection "possible duplicate" badge / ConflictSection "Possible conflict" chip | always | inline-hint | "What is this? Heuristic, read-only — never changes your cards. Dismissal is session-only." | Related items, possible duplicates, and possible conflicts |
 

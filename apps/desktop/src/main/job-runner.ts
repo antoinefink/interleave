@@ -70,14 +70,11 @@ export type JobApplyHandler = (
 export type JobApplyHandlers = Partial<Record<JobType, JobApplyHandler>>;
 
 /**
- * An out-of-band secret provider (T087). Returns a small JSON object of secret
+ * An out-of-band secret provider. Returns a small JSON object of secret
  * fields to MERGE into a job's payload AT POST TIME ONLY — these fields are NEVER
- * written to the persisted `jobs` row. This is the side-channel discipline the
- * fork-env vars (`INTERLEAVE_ASSETS_DIR`/`INTERLEAVE_MODEL_DIR`) use for absolute
- * paths, applied to the far-more-sensitive user embedding-API key: it is read LIVE
- * from SQLite settings on every post (so a runtime key change is picked up without
- * an app restart) and injected into the worker request, but the persisted payload
- * stays secret-free. Returns `{}` / `undefined` for a job that needs no secret.
+ * written to the persisted `jobs` row. Use it only for job-specific secrets that
+ * cannot ride a fork-env seam; most workers need no per-job secret. Returns `{}` /
+ * `undefined` for a job that needs no secret.
  */
 export type JobSecretsProvider = (job: Job) => Record<string, JobJsonValue> | undefined;
 
@@ -122,21 +119,17 @@ export interface JobRunnerDeps {
   readonly modelDir?: string;
   /**
    * The user's OWN AI-API key (T093), baked into the worker fork env as
-   * `INTERLEAVE_AI_API_KEY` when AI is enabled. Unlike the embedding key (which rides
-   * the per-job `getJobSecrets` out-of-band channel), the AI key uses the FORK-ENV seam
-   * because the single long-lived worker has no per-job env channel — so enabling AI /
-   * changing the key requires {@link restartWorker} to re-fork with the new env. NEVER
-   * written to a persisted `jobs` row. Optional: a runner built without it has no AI key.
+   * `INTERLEAVE_AI_API_KEY` when AI is enabled. Changing the key requires
+   * {@link restartWorker} to re-fork with the new env. NEVER written to a persisted
+   * `jobs` row. Optional: a runner built without it has no AI key.
    */
   readonly aiApiKey?: string;
   /** The AI provider kind (T093), baked into the worker fork env as `INTERLEAVE_AI_PROVIDER`. */
   readonly aiProviderKind?: string;
   /**
-   * Out-of-band per-job secret provider (T087). When set, the runner calls it at
+   * Out-of-band per-job secret provider. When set, the runner calls it at
    * POST time and merges the returned fields into the worker request payload — the
-   * persisted `jobs` row never holds them. Used to thread the user's embedding-API
-   * key to the DB-free worker WITHOUT writing it to a restart-safe job payload (the
-   * same secret-keeping discipline as the `INTERLEAVE_ASSETS_DIR` fork-env var).
+   * persisted `jobs` row never holds them.
    */
   readonly getJobSecrets?: JobSecretsProvider;
   /** Optional fork factory override (a fake worker for unit tests). */
@@ -454,7 +447,7 @@ export class JobRunner {
       if (!job) break;
       this.inFlight.add(job.id);
       this.emit(job);
-      // Merge any out-of-band secrets (e.g. the embedding-API key) into the payload
+      // Merge any out-of-band secrets into the payload
       // sent to the worker — read LIVE here, NEVER from / written back to the
       // persisted `jobs` row, so a runtime key change is picked up and the secret
       // never lands on disk.

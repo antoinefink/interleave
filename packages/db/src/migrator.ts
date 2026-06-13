@@ -129,9 +129,46 @@ function appliedMigrationCount(sqlite: SqliteDatabase): number {
  * migrator never runs it on a vec-absent host.
  */
 export function applyVecMigration(db: InterleaveDatabase): void {
+  const state = elementVectorsState(db.$client);
+  const hasEmbeddingsTable = tableExists(db.$client, "embeddings");
+  if (!state.exists) {
+    if (hasEmbeddingsTable) db.run(sql.raw("DELETE FROM embeddings"));
+  } else if (state.dim !== EMBEDDING_DIM) {
+    if (hasEmbeddingsTable) db.run(sql.raw("DELETE FROM embeddings"));
+    db.run(sql.raw("DROP TABLE IF EXISTS element_vectors"));
+  }
   db.run(
     sql.raw(
       `CREATE VIRTUAL TABLE IF NOT EXISTS element_vectors USING vec0(embedding float[${EMBEDDING_DIM}])`,
     ),
   );
+}
+
+function tableExists(sqlite: SqliteDatabase, name: string): boolean {
+  const row = sqlite
+    .prepare("SELECT 1 AS ok FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(name);
+  return row != null;
+}
+
+interface ElementVectorsState {
+  readonly exists: boolean;
+  readonly dim: number | null;
+}
+
+function elementVectorsState(sqlite: SqliteDatabase): ElementVectorsState {
+  const table = sqlite
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'element_vectors'")
+    .get() as { sql?: string } | undefined;
+  if (!table) return { exists: false, dim: null };
+  const ddlMatch = table.sql?.match(/embedding\s+float\[(\d+)\]/i);
+  if (ddlMatch?.[1]) return { exists: true, dim: Number(ddlMatch[1]) };
+
+  const rows = sqlite.prepare("PRAGMA table_info(element_vectors)").all() as Array<{
+    name?: string;
+    type?: string;
+  }>;
+  const embedding = rows.find((row) => row.name === "embedding");
+  const match = embedding?.type?.match(/float\[(\d+)\]/i);
+  return { exists: true, dim: match?.[1] ? Number(match[1]) : null };
 }

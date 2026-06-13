@@ -20,6 +20,7 @@ import {
   DAILY_REVIEW_BUDGET_MIN,
   DEFAULT_AI_LOCAL_MODEL_ID,
   DEFAULT_APP_SETTINGS,
+  DEFAULT_EMBEDDING_MODEL_ID,
   DESIRED_RETENTION_MAX,
   DESIRED_RETENTION_MIN,
   DISTILLATION_QUOTA_PERCENT_MAX,
@@ -86,9 +87,10 @@ describe("AppSettings defaults", () => {
     });
   });
 
-  it("ships semantic search OFF by default with the local provider", () => {
-    expect(DEFAULT_APP_SETTINGS.semanticSearchEnabled).toBe(false);
+  it("ships semantic search on by default with the local EmbeddingGemma provider", () => {
+    expect(DEFAULT_APP_SETTINGS.semanticSearchEnabled).toBe(true);
     expect(DEFAULT_APP_SETTINGS.embeddingProvider).toBe("local");
+    expect(DEFAULT_APP_SETTINGS.embeddingModelId).toBe(DEFAULT_EMBEDDING_MODEL_ID);
     expect(DEFAULT_APP_SETTINGS.embeddingModelDownloaded).toBe(false);
   });
 
@@ -310,6 +312,39 @@ describe("coerceSettingValue", () => {
       DEFAULT_APP_SETTINGS.retentionByBandEnabled,
     );
   });
+
+  it("coerces semantic settings to the always-on local EmbeddingGemma shape", () => {
+    expect(coerceSettingValue("semanticSearchEnabled", true)).toBe(true);
+    expect(coerceSettingValue("semanticSearchEnabled", false)).toBe(true);
+    expect(coerceSettingValue("semanticSearchEnabled", "false")).toBe(true);
+    expect(coerceSettingValue("embeddingProvider", "local")).toBe("local");
+    expect(coerceSettingValue("embeddingProvider", "api")).toBe("local");
+    expect(coerceSettingValue("embeddingProvider", "openai")).toBe("local");
+    expect(coerceSettingValue("embeddingModelId", DEFAULT_EMBEDDING_MODEL_ID)).toBe(
+      DEFAULT_EMBEDDING_MODEL_ID,
+    );
+    expect(coerceSettingValue("embeddingModelId", "local:all-MiniLM-L6-v2")).toBe(
+      DEFAULT_EMBEDDING_MODEL_ID,
+    );
+    expect(coerceSettingValue("embeddingModelId", "openai:text-embedding-3-small")).toBe(
+      DEFAULT_EMBEDDING_MODEL_ID,
+    );
+  });
+
+  it("resets downloaded state when a legacy embedding model id is stored", () => {
+    expect(
+      appSettingsFromStored({
+        [SETTINGS_KEYS.embeddingModelId]: "local:all-MiniLM-L6-v2",
+        [SETTINGS_KEYS.embeddingModelDownloaded]: true,
+      }).embeddingModelDownloaded,
+    ).toBe(false);
+    expect(
+      appSettingsFromStored({
+        [SETTINGS_KEYS.embeddingModelId]: DEFAULT_EMBEDDING_MODEL_ID,
+        [SETTINGS_KEYS.embeddingModelDownloaded]: true,
+      }).embeddingModelDownloaded,
+    ).toBe(true);
+  });
 });
 
 describe("type guards", () => {
@@ -376,11 +411,11 @@ describe("stored ↔ model round-trip", () => {
       retentionByBand: {},
       retentionByBandEnabled: false,
       fsrsParamsGlobal: null,
-      // Unset semantic keys fall back to the OFF-by-default local-provider defaults.
-      semanticSearchEnabled: false,
+      // Unset semantic keys fall back to the always-on local-provider defaults.
+      semanticSearchEnabled: true,
       embeddingProvider: "local",
       embeddingApiKey: "",
-      embeddingModelId: "local:all-MiniLM-L6-v2",
+      embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
       embeddingModelDownloaded: false,
       // Unset AI keys fall back to the OFF-by-default local-provider defaults (T093).
       aiEnabled: false,
@@ -494,11 +529,11 @@ describe("stored ↔ model round-trip", () => {
       retentionByBandEnabled: true,
       // A valid 21-number FSRS-6 `w` vector round-trips through the JSON store (T080).
       fsrsParamsGlobal: Array.from({ length: 21 }, (_, i) => 0.1 + i * 0.01),
-      // Semantic search settings (T087) round-trip through the JSON store too.
+      // Semantic search settings (T087) are local-only and always on.
       semanticSearchEnabled: true,
-      embeddingProvider: "api" as const,
-      embeddingApiKey: "sk-user-own-key",
-      embeddingModelId: "openai:text-embedding-3-small",
+      embeddingProvider: "local" as const,
+      embeddingApiKey: "",
+      embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
       embeddingModelDownloaded: true,
       // AI settings (T093) round-trip through the JSON store too.
       aiEnabled: true,
@@ -510,6 +545,22 @@ describe("stored ↔ model round-trip", () => {
     };
     const reloaded = appSettingsFromStored(settingsPatchToStored(original));
     expect(reloaded).toEqual(original);
+  });
+
+  it("coerces legacy semantic off/API settings back to always-on local EmbeddingGemma", () => {
+    const reloaded = appSettingsFromStored({
+      [SETTINGS_KEYS.semanticSearchEnabled]: false,
+      [SETTINGS_KEYS.embeddingProvider]: "api",
+      [SETTINGS_KEYS.embeddingApiKey]: "sk-legacy",
+      [SETTINGS_KEYS.embeddingModelId]: "openai:text-embedding-3-small",
+      [SETTINGS_KEYS.embeddingModelDownloaded]: true,
+    });
+
+    expect(reloaded.semanticSearchEnabled).toBe(true);
+    expect(reloaded.embeddingProvider).toBe("local");
+    expect(reloaded.embeddingModelId).toBe(DEFAULT_EMBEDDING_MODEL_ID);
+    expect(reloaded.embeddingModelDownloaded).toBe(false);
+    expect(reloaded.embeddingApiKey).toBe("sk-legacy");
   });
 });
 
@@ -543,6 +594,20 @@ describe("coerceSettingsPatch", () => {
   it("passes a boolean burySiblings patch through", () => {
     expect(coerceSettingsPatch({ burySiblings: false })).toEqual({ burySiblings: false });
     expect(coerceSettingsPatch({ burySiblings: true })).toEqual({ burySiblings: true });
+  });
+
+  it("coerces legacy semantic patch values before persistence", () => {
+    expect(
+      coerceSettingsPatch({
+        semanticSearchEnabled: false,
+        embeddingProvider: "api",
+        embeddingModelId: "local:all-MiniLM-L6-v2",
+      }),
+    ).toEqual({
+      semanticSearchEnabled: true,
+      embeddingProvider: "local",
+      embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
+    });
   });
 });
 
@@ -600,7 +665,7 @@ describe("AI settings (T093)", () => {
 });
 
 describe("projectToRendererSettings (T087/T093 own-key projection)", () => {
-  it("strips the plaintext own-keys and replaces them with *Configured booleans", () => {
+  it("strips plaintext keys and removes legacy embedding provider fields", () => {
     const full = {
       ...DEFAULT_APP_SETTINGS,
       embeddingApiKey: "sk-embed-secret",
@@ -611,9 +676,10 @@ describe("projectToRendererSettings (T087/T093 own-key projection)", () => {
     // The plaintext keys are GONE — never returned across the IPC boundary.
     expect(projected).not.toHaveProperty("aiApiKey");
     expect(projected).not.toHaveProperty("embeddingApiKey");
-    // …replaced with write-only configured flags derived from whether a key is set.
+    expect(projected).not.toHaveProperty("embeddingProvider");
+    expect(projected).not.toHaveProperty("embeddingApiKeyConfigured");
+    // AI key is replaced with a configured flag derived from whether a key is set.
     expect(projected.aiKeyConfigured).toBe(true);
-    expect(projected.embeddingApiKeyConfigured).toBe(true);
     // Every non-key field is carried through untouched.
     expect(projected.dailyReviewBudget).toBe(DEFAULT_APP_SETTINGS.dailyReviewBudget);
     expect(projected.aiEnabled).toBe(DEFAULT_APP_SETTINGS.aiEnabled);
@@ -622,13 +688,13 @@ describe("projectToRendererSettings (T087/T093 own-key projection)", () => {
   it("reports configured=false for an empty / whitespace-only key", () => {
     expect(
       projectToRendererSettings({ ...DEFAULT_APP_SETTINGS, aiApiKey: "", embeddingApiKey: "" }),
-    ).toMatchObject({ aiKeyConfigured: false, embeddingApiKeyConfigured: false });
+    ).toMatchObject({ aiKeyConfigured: false });
     expect(
       projectToRendererSettings({
         ...DEFAULT_APP_SETTINGS,
         aiApiKey: "   ",
         embeddingApiKey: "\t\n",
       }),
-    ).toMatchObject({ aiKeyConfigured: false, embeddingApiKeyConfigured: false });
+    ).toMatchObject({ aiKeyConfigured: false });
   });
 });

@@ -197,12 +197,10 @@ module.exports = {
     // worker resolves its `workerPath`/`corePath`/`langPath` there at runtime (NEVER
     // `node_modules`, NEVER the CDN) so OCR works fully offline.
     "dist/resources/tesseract/**/*",
-    // `fastembed` + its prebuilt `onnxruntime-node` `.node` addon (T087) cannot be
-    // `dlopen`'d from inside the asar, so the staged `dist/resources/fastembed/**`
-    // tree is unpacked. The DB-free `embed` worker resolves it there at runtime to
-    // compute REAL on-device MiniLM embeddings (the ~23 MB model is downloaded once
-    // into the app-data `models/` dir and cached on disk, never re-fetched).
-    "dist/resources/fastembed/**/*",
+    // Transformers.js model/runtime assets (T087) must remain real files, so the
+    // staged `dist/resources/transformers/**` tree is unpacked. The DB-free `embed`
+    // worker resolves it there at runtime to compute local EmbeddingGemma vectors.
+    "dist/resources/transformers/**/*",
   ],
 
   mac,

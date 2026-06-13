@@ -25,7 +25,7 @@ import { OperationLogRepository } from "./operation-log-repository";
 import { SourceRepository } from "./source-repository";
 import { createInMemoryDb, isVecAvailable } from "./test-db";
 
-const MODEL = "local:minilm-hash-384";
+const MODEL = "onnx-community/embeddinggemma-300m-ONNX";
 
 /**
  * Probe vec availability ONCE at module load (closing the probe handle), so the
@@ -178,6 +178,49 @@ describe.skipIf(!VEC_OK)("EmbeddingRepository (sqlite-vec, T087)", () => {
     expect(
       embeddings.knn(embed("review intervals"), { type: "source" }).map((h) => h.elementId),
     ).toContain(src.id);
+  });
+
+  it("knn filters to the query model id so fallback and real spaces do not mix", () => {
+    const real = sources.create({ title: "Real model vector", priority: 0.5 }).element;
+    const fallback = sources.create({ title: "Fallback vector", priority: 0.5 }).element;
+    const text = "review intervals scheduling";
+    embeddings.upsert({
+      elementId: real.id,
+      elementType: "source",
+      modelId: MODEL,
+      dim: EMBEDDING_DIM,
+      contentHash: "h-real",
+      vector: embed(text),
+    });
+    embeddings.upsert({
+      elementId: fallback.id,
+      elementType: "source",
+      modelId: "local:embeddinggemma-hash-768",
+      dim: EMBEDDING_DIM,
+      contentHash: "h-fallback",
+      vector: embed(text),
+    });
+
+    const hits = embeddings.knn(embed(text), { modelId: MODEL, limit: 5 });
+    expect(hits.map((h) => h.elementId)).toEqual([real.id]);
+  });
+
+  it("getVectorRecord returns the stored vector with its model id", () => {
+    const { element } = sources.create({ title: "Stored vector", priority: 0.5 });
+    const vector = embed("stored vector body");
+    embeddings.upsert({
+      elementId: element.id,
+      elementType: "source",
+      modelId: MODEL,
+      dim: EMBEDDING_DIM,
+      contentHash: "h-vector",
+      vector,
+    });
+
+    const record = embeddings.getVectorRecord(element.id);
+    expect(record?.modelId).toBe(MODEL);
+    expect(record?.vector).toHaveLength(EMBEDDING_DIM);
+    expect(record?.vector[0]).toBeCloseTo(vector[0] ?? 0);
   });
 
   it("delete prunes both the embeddings row and the element_vectors rowid", () => {

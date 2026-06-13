@@ -46,8 +46,8 @@ packages/db/.dev/
 *.sqlite-wal
 *.sqlite-shm
 
-# On-device embedding model cache (T087): `fastembed` downloads the real
-# all-MiniLM-L6-v2 ONNX model + tokenizer into its default `local_cache/` (or
+# On-device embedding model cache (T087): Transformers.js downloads the real
+# EmbeddingGemma ONNX model + tokenizer into its local cache (or
 # `INTERLEAVE_MODEL_DIR`) on first run — a transient, re-downloadable artifact, never committed.
 local_cache/
 
@@ -61,8 +61,9 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
-# Local Codex config
+# Local Codex/agent worktree config
 .codex/
+.claude/worktrees/
 
 # OS / editor
 .DS_Store

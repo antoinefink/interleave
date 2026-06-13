@@ -42,7 +42,7 @@ export const embeddings = sqliteTable(
     vecRowid: integer("vec_rowid").notNull(),
     /** The embedded element's type — one of the embeddable (`source`/`extract`/`card`) types. */
     elementType: text("element_type").notNull(),
-    /** The model that produced the vector, e.g. `"local:minilm-hash-384"`. */
+    /** The model that produced the vector, e.g. `"onnx-community/embeddinggemma-300m-ONNX"`. */
     modelId: text("model_id").notNull(),
     /** The vector dimension (matches the `element_vectors` column dim). */
     dim: integer("dim").notNull(),

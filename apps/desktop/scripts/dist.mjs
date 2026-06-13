@@ -8,7 +8,7 @@
  *   1. Build the renderer            → apps/web/dist (Vite, offline asset URLs)
  *   2. Vendor the Electron-ABI addon → apps/desktop/native/better_sqlite3.node
  *   3. Bundle main + preload + stage → apps/desktop/dist/{main.cjs,preload.cjs,
- *      migrations + renderer            drizzle/,renderer/}   (build.mjs)
+ *      migrations + renderer + embedding model assets}        (build.mjs)
  *   4. electron-builder              → apps/desktop/release/*.app + *.dmg
  *
  * electron-builder is packaging-ONLY: it consumes the already-built `dist/` +
@@ -35,9 +35,9 @@ const desktopDir = path.resolve(here, "..");
 const repoRoot = path.resolve(desktopDir, "..", "..");
 
 /** Run a command, inheriting stdio; throw on non-zero exit. */
-function run(cmd, args, cwd = desktopDir) {
+function run(cmd, args, cwd = desktopDir, env = {}) {
   console.log(`\n[dist] $ ${cmd} ${args.join(" ")}  (cwd: ${path.relative(repoRoot, cwd) || "."})`);
-  execFileSync(cmd, args, { cwd, stdio: "inherit" });
+  execFileSync(cmd, args, { cwd, stdio: "inherit", env: { ...process.env, ...env } });
 }
 
 function main() {
@@ -62,8 +62,8 @@ function main() {
     //     ABI mismatch, so a packaged app never ships a non-functional vec0.
     run("node", ["scripts/vendor-sqlite-vec.mjs"]);
 
-    // 3) main.cjs + preload.cjs + dist/drizzle + dist/renderer.
-    run("node", ["build.mjs"]);
+    // 3) main.cjs + preload.cjs + dist/drizzle + dist/renderer + model assets.
+    run("node", ["build.mjs"], desktopDir, { INTERLEAVE_REQUIRE_EMBEDDING_MODEL: "1" });
   } else {
     console.log("[dist] INTERLEAVE_DIST_SKIP_BUILD=1 — re-packaging existing dist/.");
   }

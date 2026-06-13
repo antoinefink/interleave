@@ -2908,20 +2908,21 @@ export class DbService {
    * main-side map, with a short timeout so `/search` never hangs), runs the
    * `SemanticSearchRepository` fusion, and enriches each hit with the same row
    * metadata `search()` produces. Degrades to FTS-only (never throws) when
-   * semantics are off / the model is absent / `vec0` failed to load / the query
+   * the model is absent / `vec0` failed to load / the query
    * embed timed out. The `mode` tells the UI which retrieval actually ran.
    */
   async semanticSearch(request: SemanticSearchRequest): Promise<SemanticSearchResult> {
-    const settings = this.repos.settings.getAppSettings();
-    const enabled = settings.semanticSearchEnabled && this.vecAvailable;
+    const enabled = this.vecAvailable;
 
     // Embed the query only when semantics can run (else FTS-only, no job enqueued).
-    const queryVector = enabled ? await this.embeddingService.embedQuery(request.q) : null;
+    const queryEmbedding = enabled ? await this.tryEmbedSemanticQuery(request.q) : null;
 
     const runFused = (type?: SearchableType) =>
       this.repos.semanticSearch.search(request.q, {
         semanticEnabled: enabled,
-        ...(queryVector ? { queryVector } : {}),
+        ...(queryEmbedding
+          ? { queryVector: queryEmbedding.vector, queryModelId: queryEmbedding.modelId }
+          : {}),
         ...(type ? { type } : {}),
         ...(request.limit !== undefined ? { limit: request.limit } : {}),
       });
@@ -2974,7 +2975,7 @@ export class DbService {
     const settings = this.repos.settings.getAppSettings();
     const stats = this.repos.embeddings.stats();
     return {
-      enabled: settings.semanticSearchEnabled,
+      enabled: true,
       vecAvailable: this.vecAvailable,
       modelDownloaded: settings.embeddingModelDownloaded,
       embedded: stats.embedded,
@@ -2986,7 +2987,7 @@ export class DbService {
   /**
    * Build the semantic index (T087): enqueue `embed` jobs for every live source/
    * extract/card that needs (re-)embedding. The renderer observes progress via the
-   * existing `jobs.subscribe`. A no-op (0) when semantics are off / `vec0` is absent.
+   * existing `jobs.subscribe`. A no-op (0) when `vec0` is absent.
    */
   semanticReindex(request: SemanticReindexRequest): SemanticReindexResult {
     return this.embeddingService.reindexAll({
@@ -2995,11 +2996,10 @@ export class DbService {
   }
 
   /**
-   * Download the local embedding model on first enable (T087). The default local
-   * provider runs the real `all-MiniLM-L6-v2` ONNX model, which `fastembed` streams
-   * into the worker's `INTERLEAVE_MODEL_DIR` cache on first use; this seam pre-warms
-   * that load and flips `embeddingModelDownloaded = true` once it resolves (it
-   * degrades to the deterministic embedder offline). See
+   * Prepare the local embedding model (T087). The local EmbeddingGemma ONNX runtime
+   * resolves from the worker's model directory; this seam pre-warms that path and
+   * flips `embeddingModelDownloaded = true` once it resolves (it degrades to the
+   * deterministic embedder offline). See
    * {@link EmbeddingService.downloadModel} for the mechanism + tradeoff.
    */
   async semanticDownloadModel(): Promise<{ downloaded: boolean }> {
@@ -3011,13 +3011,12 @@ export class DbService {
    * `vec0` store + the concept lineage: similar extracts, possible duplicates,
    * prerequisite (ancestor) concepts, and sibling sources. No new relation types,
    * no `operation_log` writes, no lineage mutation. Degrades gracefully: the vector
-   * buckets are empty (with `semanticAvailable: false`) when semantics are off /
+   * buckets are empty (with `semanticAvailable: false`) when
    * `vec0` is absent / the element isn't embedded, while the concept + sibling
    * buckets still resolve from lineage. No raw vectors cross IPC.
    */
   semanticRelated(request: SemanticRelatedRequest): SemanticRelatedResult {
-    const settings = this.repos.settings.getAppSettings();
-    const semanticEnabled = settings.semanticSearchEnabled && this.vecAvailable;
+    const semanticEnabled = this.vecAvailable;
     const result: RelatedResult = this.repos.related.related(request.elementId as ElementId, {
       semanticEnabled,
       ...(request.limit !== undefined ? { limit: request.limit } : {}),
@@ -3061,7 +3060,7 @@ export class DbService {
       buildText: (id) => this.embeddingService.buildText(id),
       resolveRef: (id) => resolveSourceRef(this.repos, id),
       vecAvailable: this.vecAvailable,
-      semanticEnabled: () => this.repos.settings.getAppSettings().semanticSearchEnabled,
+      semanticEnabled: () => true,
     });
     return this.contradiction;
   }
@@ -3072,7 +3071,7 @@ export class DbService {
    * signal (negation, numeric divergence, a newer source). NEVER authoritative — it
    * never edits/suspends/reschedules, writes NO `operation_log`, persists NO
    * "conflict" relation, and never mutates lineage. Returns empty flags when
-   * semantics are off / `vec0` is absent (the renderer hides the surface). No raw
+   * semantic vector lookup is unavailable / `vec0` is absent (the renderer hides the surface). No raw
    * vectors cross IPC. The flags re-derive from the persisted vectors + lineage after
    * an app restart.
    */
@@ -4873,9 +4872,9 @@ export class DbService {
    * defining behavior; every other deck guard (live / `card` / not soft-deleted /
    * not deleted / not suspended / not retired) holds.
    *
-   * For the `semantic` selector it awaits the existing `embeddingService.embedQuery`
-   * (the `semanticSearch` path) and injects the vector, degrading to the keyword
-   * resolver when semantics are off / `vec0` is unavailable / the embed timed out.
+   * For the `semantic` selector it awaits the existing semantic-query embedding path
+   * and injects the vector/model id, degrading to the keyword resolver when
+   * `vec0` is unavailable / the embed timed out.
    * READ-ONLY: no mutation, no `operation_log`. Grading reuses the unchanged
    * `review.grade`. Cards only — the two-scheduler split holds.
    */
@@ -4910,7 +4909,7 @@ export class DbService {
   /**
    * Build the {@link SemanticResolveContext} for a `semantic` selector — embed the
    * query via the existing `embeddingService.embedQuery` (the `semanticSearch` seam)
-   * ONLY when semantics are enabled AND `vec0` is available, else `null` so the
+   * ONLY when `vec0` is available, else `null` so the
    * service degrades to the keyword resolver. For every NON-semantic selector it
    * returns `undefined` (no embed work). Mirrors `semanticSearch`'s gating exactly.
    */
@@ -4918,10 +4917,23 @@ export class DbService {
     selector: ReviewModeDeckRequest["selector"],
   ): Promise<SemanticResolveContext | undefined> {
     if (selector.kind !== "semantic") return undefined;
-    const settings = this.repos.settings.getAppSettings();
-    const enabled = settings.semanticSearchEnabled && this.vecAvailable;
-    const queryVector = enabled ? await this.embeddingService.embedQuery(selector.query) : null;
-    return { enabled, queryVector };
+    const enabled = this.vecAvailable;
+    const queryEmbedding = enabled ? await this.tryEmbedSemanticQuery(selector.query) : null;
+    return {
+      enabled,
+      queryVector: queryEmbedding?.vector ?? null,
+      queryModelId: queryEmbedding?.modelId ?? null,
+    };
+  }
+
+  private async tryEmbedSemanticQuery(
+    query: string,
+  ): Promise<{ vector: number[]; modelId: string } | null> {
+    try {
+      return await this.embeddingService.embedQueryResult(query);
+    } catch {
+      return null;
+    }
   }
 
   /**

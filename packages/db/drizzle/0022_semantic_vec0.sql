@@ -16,6 +16,6 @@
 -- mere resolvability). On a vec-absent / ABI-mismatched host the table is never
 -- created, all other migrations apply, and the suite stays green FTS-only.
 --
--- The created table is: CREATE VIRTUAL TABLE element_vectors USING vec0(embedding float[384]);
+-- The created table is: CREATE VIRTUAL TABLE element_vectors USING vec0(embedding float[768]);
 -- (dim = @interleave/core EMBEDDING_DIM — the column DDL and the constant move together.)
 SELECT 1;

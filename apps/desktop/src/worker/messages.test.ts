@@ -8,6 +8,7 @@
  * `WorkerMessageSchema` (the `JsonValueSchema` carries the `number[]` vector).
  */
 
+import { DEFAULT_EMBEDDING_MODEL_ID, EMBEDDING_DIM } from "@interleave/core";
 import { describe, expect, it } from "vitest";
 import { WorkerMessageSchema, WorkerRequestSchema } from "./messages";
 
@@ -18,9 +19,9 @@ describe("worker messages — embed (T087)", () => {
       type: "embed" as const,
       payload: {
         text: "spaced repetition",
-        modelId: "local:minilm-hash-384",
+        modelId: DEFAULT_EMBEDDING_MODEL_ID,
         provider: "local",
-        dim: 384,
+        dim: EMBEDDING_DIM,
         persist: true,
       },
     };
@@ -32,12 +33,12 @@ describe("worker messages — embed (T087)", () => {
     const message = {
       kind: "result" as const,
       jobId: "job-1",
-      data: { vector: [0.1, 0.2, 0.3], modelId: "local:minilm-hash-384", dim: 384 },
+      data: { vector: [0.1, 0.2, 0.3], modelId: DEFAULT_EMBEDDING_MODEL_ID, dim: EMBEDDING_DIM },
     };
     const parsed = WorkerMessageSchema.safeParse(message);
     expect(parsed.success).toBe(true);
     if (parsed.success && parsed.data.kind === "result") {
-      expect((parsed.data.data as { dim: number }).dim).toBe(384);
+      expect((parsed.data.data as { dim: number }).dim).toBe(EMBEDDING_DIM);
     }
   });
 

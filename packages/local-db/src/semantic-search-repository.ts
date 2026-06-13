@@ -7,17 +7,18 @@
  *     the query's embedding,
  * fused with RECIPROCAL-RANK FUSION (RRF) so a purely-semantic neighbor with NO
  * keyword overlap still surfaces ("spaced repetition" finding a card about "review
- * intervals"). The whole feature is OFF BY DEFAULT and degrades cleanly:
+ * intervals"). The whole feature is always on when local vec/model capability is
+ * available, and it degrades cleanly:
  *
- *  - when `semanticEnabled` is false, `vec0` is unavailable, or no query vector
- *    was produced → it returns the FTS hits mapped to {@link FusedHit} (uniform
- *    surface, `mode: "fts"`), and NEVER throws.
+ *  - when local vec/model capability is unavailable, or no query vector was produced
+ *    → it returns the FTS hits mapped to {@link FusedHit} (uniform surface,
+ *    `mode: "fts"`), and NEVER throws.
  *
  * Query embedding rides the job runner (the model lives only in the DB-free
  * worker), so this layer does NOT embed the query itself — the caller passes the
- * pre-computed `queryVector` (the DB service's `embedQuery`, which enqueues a
- * transient `persist:false` embed job and recovers the vector via a main-side
- * map). This repository is pure SQLite + math: it fuses, dedupes, and ranks.
+ * pre-computed `queryVector` + `queryModelId` (the DB service's transient
+ * `persist:false` embed job result). This repository is pure SQLite + math: it
+ * fuses, dedupes, and ranks.
  *
  * It is READ-ONLY (appends nothing to the operation log) and excludes soft-deleted
  * elements (both underlying reads already do).
@@ -50,13 +51,15 @@ export interface FusedHit {
 export interface FusedSearchOptions {
   readonly limit?: number;
   readonly type?: ElementType;
-  /** The `semanticSearchEnabled` setting — when false, this is pure FTS. */
+  /** Semantic capability gate — when false, this is pure FTS. */
   readonly semanticEnabled: boolean;
   /**
    * The pre-computed query embedding (from the runner). `null`/omitted → FTS-only,
    * the graceful degrade when the model is off/absent or the embed job timed out.
    */
   readonly queryVector?: readonly number[] | null;
+  /** The model id that produced `queryVector`; KNN is filtered to the same space. */
+  readonly queryModelId?: string | null;
 }
 
 /** Which retrieval modes actually ran, surfaced to the UI. */
@@ -95,7 +98,9 @@ export class SemanticSearchRepository {
       options.semanticEnabled &&
       this.embeddings.available &&
       options.queryVector != null &&
-      options.queryVector.length > 0;
+      options.queryVector.length > 0 &&
+      options.queryModelId != null &&
+      options.queryModelId.length > 0;
 
     if (!canSemantic) {
       // FTS-only degrade: map keyword hits to the uniform fused shape.
@@ -105,6 +110,7 @@ export class SemanticSearchRepository {
 
     const knnHits = this.embeddings.knn(options.queryVector as number[], {
       limit: Math.min(Math.max(limit * 2, limit), 200),
+      modelId: options.queryModelId ?? undefined,
       ...(isEmbeddable(options.type) ? { type: options.type } : {}),
     });
 

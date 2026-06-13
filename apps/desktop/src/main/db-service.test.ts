@@ -13,7 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ElementId, IsoTimestamp } from "@interleave/core";
-import { priorityFromLabel } from "@interleave/core";
+import { DEFAULT_EMBEDDING_MODEL_ID, priorityFromLabel } from "@interleave/core";
 import { MIGRATIONS_DIR, openDatabase } from "@interleave/db";
 import { seedDemoCollection } from "@interleave/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -807,8 +807,8 @@ describe("DbService", () => {
     const second = new DbService();
     second.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
     const { settings } = second.getAppSettings();
-    // The IPC-facing read PROJECTS the own-keys to `*Configured` booleans (T087/T093) —
-    // the plaintext `aiApiKey`/`embeddingApiKey` are NEVER returned to the renderer.
+    // The IPC-facing read projects/strips own-key fields (T087/T093) — plaintext keys
+    // are NEVER returned to the renderer.
     expect(settings).toEqual({
       dailyBudgetMinutes: 90,
       distillationQuotaPercent: 25,
@@ -835,10 +835,8 @@ describe("DbService", () => {
       retentionByBand: {},
       retentionByBandEnabled: false,
       fsrsParamsGlobal: null,
-      semanticSearchEnabled: false,
-      embeddingProvider: "local",
-      embeddingApiKeyConfigured: false,
-      embeddingModelId: "local:all-MiniLM-L6-v2",
+      semanticSearchEnabled: true,
+      embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
       embeddingModelDownloaded: false,
       aiEnabled: false,
       aiProviderKind: "local",
@@ -849,6 +847,8 @@ describe("DbService", () => {
     });
     expect(settings).not.toHaveProperty("aiApiKey");
     expect(settings).not.toHaveProperty("embeddingApiKey");
+    expect(settings).not.toHaveProperty("embeddingProvider");
+    expect(settings).not.toHaveProperty("embeddingApiKeyConfigured");
     second.close();
   });
 
@@ -3218,7 +3218,7 @@ describe("DbService — review session (T037)", () => {
     expect(svc.seedIfEmpty()).toBe(true);
 
     const semantic = await svc.semanticSearch({ q: "intelligence", type: "source" });
-    expect(semantic.mode).toBe("disabled");
+    expect(semantic.mode).toBe("fts");
     expect(semantic.results.length).toBeGreaterThan(0);
     expect(semantic.results.every((r) => r.type === "source")).toBe(true);
     for (const type of ["source", "extract", "card"] as const) {

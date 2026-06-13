@@ -12,6 +12,7 @@
  * wiring; no SQLite/IPC — the renderer is a pure UI consumer here.
  */
 
+import { DEFAULT_EMBEDDING_MODEL_ID } from "@interleave/core";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -195,7 +196,7 @@ const h = vi.hoisted(() => {
     searchQuery: vi.fn(),
     libraryBrowse: vi.fn(),
     listConcepts: vi.fn(),
-    // Semantic search (T087) — default OFF so these tests exercise the FTS path.
+    // Semantic search (T087) — vector index unavailable by default so these tests exercise the FTS path.
     semanticStatus: vi.fn(),
     semanticSearch: vi.fn(),
     semanticReindex: vi.fn(),
@@ -269,7 +270,7 @@ beforeEach(() => {
       counts: h.browseCounts,
     });
   });
-  // Semantic search OFF by default → the library uses the FTS `searchQuery` path.
+  // Vector index unavailable by default → the library uses the FTS `searchQuery` path.
   h.semanticStatus.mockResolvedValue({
     enabled: false,
     vecAvailable: false,
@@ -483,15 +484,15 @@ describe("LibraryScreen", () => {
     });
   });
 
-  it("shows the 'Build index (N of M embedded)' affordance when semantics are enabled but the index is incomplete, and reindexes on click (T087)", async () => {
-    // Semantics ON + vec available, but only 1 of 3 elements embedded.
+  it("shows the 'Build index (N of M embedded)' affordance when semantic indexing is available but incomplete, and reindexes on click (T087)", async () => {
+    // Vec available, but only 1 of 3 elements embedded.
     h.semanticStatus.mockResolvedValue({
       enabled: true,
       vecAvailable: true,
       modelDownloaded: true,
       embedded: 1,
       total: 3,
-      modelId: "local:all-MiniLM-L6-v2",
+      modelId: DEFAULT_EMBEDDING_MODEL_ID,
     });
     render(<LibraryScreen />);
 
@@ -513,7 +514,7 @@ describe("LibraryScreen", () => {
       modelDownloaded: true,
       embedded: 3,
       total: 3,
-      modelId: "local:all-MiniLM-L6-v2",
+      modelId: DEFAULT_EMBEDDING_MODEL_ID,
     });
     render(<LibraryScreen />);
     // The no-query prompt is shown, but with the index complete there is no button.
@@ -541,6 +542,10 @@ describe("LibraryScreen", () => {
     const rows = screen.getAllByTestId("library-result");
     expect(rows.length).toBe(2);
     expect(rows.some((r) => r.querySelector("em"))).toBe(true);
+    expect(await screen.findByTestId("library-semantic-off")).toHaveTextContent(
+      /semantic indexing is unavailable on this build/i,
+    );
+    expect(screen.getByTestId("library-semantic-off")).not.toHaveTextContent(/settings/i);
   });
 
   it("renders backend byType counts on Type chips after a keyword query", async () => {

@@ -150,7 +150,6 @@ async function loadIndex(options: {
   vi.doMock("./ipc", () => ({ registerIpcHandlers }));
   vi.doMock("./job-apply-handlers", () => ({ createJobApplyHandlers: vi.fn(() => ({})) }));
   vi.doMock("./capture-pairing", () => ({ setCaptureEnabled }));
-  vi.doMock("./embedding-service", () => ({ embedJobSecrets: vi.fn(() => ({})) }));
   vi.doMock("./article-image-protocol", () => ({
     registerArticleImageProtocol,
     registerArticleImageSchemePrivileges,

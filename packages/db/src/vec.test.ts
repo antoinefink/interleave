@@ -4,7 +4,7 @@
  * Prove the low-level vec0 contract `@interleave/db` exposes: `loadVectorExtension`
  * loads the extension into a Node `better-sqlite3` handle, the `vecFunctional`
  * smoke test confirms `vec0` actually works (the source of truth for
- * `vecAvailable`), and a `vec0` table accepts a `float[384]` insert + a KNN MATCH
+ * `vecAvailable`), and a `vec0` table accepts a fixed-dimension insert + a KNN MATCH
  * returns the nearest by distance.
  *
  * The whole suite is gated on `vecFunctional` (NOT mere resolvability), so on an
@@ -48,14 +48,14 @@ describe.skipIf(!VEC_OK)("sqlite-vec vec0 (T087)", () => {
     db.close();
   });
 
-  it("accepts a float[384] insert and returns the nearest by distance via KNN MATCH", () => {
+  it("accepts a fixed-dimension insert and returns the nearest by distance via KNN MATCH", () => {
     const db = new Database(":memory:");
     loadVectorExtension(db);
     db.exec(`CREATE VIRTUAL TABLE v USING vec0(embedding float[${EMBEDDING_DIM}])`);
 
     // Two distinct vectors; the query is identical to the first → it must rank #1.
     const a = new Array(EMBEDDING_DIM).fill(0).map((_, i) => (i < 8 ? 1 : 0));
-    const b = new Array(EMBEDDING_DIM).fill(0).map((_, i) => (i >= 376 ? 1 : 0));
+    const b = new Array(EMBEDDING_DIM).fill(0).map((_, i) => (i >= EMBEDDING_DIM - 8 ? 1 : 0));
     db.prepare("INSERT INTO v(rowid, embedding) VALUES (1, ?)").run(vectorToBlob(a));
     db.prepare("INSERT INTO v(rowid, embedding) VALUES (2, ?)").run(vectorToBlob(b));
 

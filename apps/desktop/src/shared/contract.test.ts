@@ -7,7 +7,7 @@
  * generic `db.query`).
  */
 
-import { MAX_REVIEW_MODE_DECK } from "@interleave/core";
+import { DEFAULT_EMBEDDING_MODEL_ID, MAX_REVIEW_MODE_DECK } from "@interleave/core";
 import { describe, expect, it } from "vitest";
 import {
   AnalyticsGetRequestSchema,
@@ -2171,6 +2171,20 @@ describe("SettingsPatchSchema (T011)", () => {
     });
     expect(SettingsPatchSchema.parse({ displayName: "" })).toEqual({ displayName: "" });
     expect(() => SettingsPatchSchema.parse({ displayName: "x".repeat(65) })).toThrow();
+  });
+
+  it("coerces legacy semantic toggle/model patches and rejects removed provider settings", () => {
+    expect(
+      SettingsPatchSchema.parse({
+        semanticSearchEnabled: false,
+        embeddingModelId: "local:all-MiniLM-L6-v2",
+      }),
+    ).toEqual({
+      semanticSearchEnabled: true,
+      embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
+    });
+    expect(() => SettingsPatchSchema.parse({ embeddingProvider: "api" })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ embeddingApiKey: "sk-legacy" })).toThrow();
   });
 });
 

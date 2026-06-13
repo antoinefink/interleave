@@ -1,7 +1,9 @@
+import { EMBEDDING_DIM } from "@interleave/core";
 import { describe, expect, it } from "vitest";
 import { openDatabase } from "./client";
 import { applyVecMigration, migrateDatabase } from "./migrator";
 import { MIGRATIONS_DIR } from "./paths";
+import { loadVectorExtension, vecFunctional } from "./vec";
 
 function tableNames(filename = ":memory:") {
   const handle = openDatabase(filename);
@@ -81,6 +83,63 @@ describe("applyVecMigration", () => {
     const { handle } = tableNames();
     try {
       expect(() => applyVecMigration(handle.db)).toThrow(/vec0|no such module/i);
+    } finally {
+      handle.sqlite.close();
+    }
+  });
+
+  it("creates the vector table at the active embedding dimension when sqlite-vec works", () => {
+    const { handle } = tableNames();
+    try {
+      loadVectorExtension(handle.sqlite);
+      if (!vecFunctional(handle.sqlite)) return;
+
+      applyVecMigration(handle.db);
+      const row = handle.sqlite
+        .prepare("SELECT sql FROM sqlite_master WHERE name = 'element_vectors'")
+        .get() as { sql?: string } | undefined;
+      expect(row?.sql).toContain(`float[${EMBEDDING_DIM}]`);
+    } finally {
+      handle.sqlite.close();
+    }
+  });
+
+  it("rebuilds an old wrong-dimension vector table so the derived index can rehydrate", () => {
+    const { handle } = tableNames();
+    try {
+      loadVectorExtension(handle.sqlite);
+      if (!vecFunctional(handle.sqlite)) return;
+
+      migrateDatabase(handle.db, { vecAvailable: false });
+      handle.sqlite.exec("CREATE VIRTUAL TABLE element_vectors USING vec0(embedding float[384])");
+      handle.sqlite
+        .prepare(
+          `INSERT INTO elements
+            (id, type, status, stage, priority, title, created_at, updated_at)
+           VALUES
+            ('src-old-vector', 'source', 'inbox', 'raw_source', 0.5, 'Old vector',
+             '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+        )
+        .run();
+      handle.sqlite
+        .prepare(
+          `INSERT INTO embeddings
+            (element_id, vec_rowid, element_type, model_id, dim, content_hash, created_at, updated_at)
+           VALUES
+            ('src-old-vector', 1, 'source', 'local:all-MiniLM-L6-v2', 384, 'h-old',
+             '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')`,
+        )
+        .run();
+      applyVecMigration(handle.db);
+
+      const row = handle.sqlite
+        .prepare("SELECT sql FROM sqlite_master WHERE name = 'element_vectors'")
+        .get() as { sql?: string } | undefined;
+      expect(row?.sql).toContain(`float[${EMBEDDING_DIM}]`);
+      expect(row?.sql).not.toContain("float[384]");
+      expect(
+        (handle.sqlite.prepare("SELECT COUNT(*) AS n FROM embeddings").get() as { n: number }).n,
+      ).toBe(0);
     } finally {
       handle.sqlite.close();
     }

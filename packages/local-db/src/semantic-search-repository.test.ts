@@ -21,7 +21,8 @@ import { SemanticSearchRepository } from "./semantic-search-repository";
 import { SourceRepository } from "./source-repository";
 import { createInMemoryDb, isVecAvailable } from "./test-db";
 
-const MODEL = "local:minilm-hash-384";
+const MODEL = "onnx-community/embeddinggemma-300m-ONNX";
+const FALLBACK_MODEL = "local:embeddinggemma-hash-768";
 
 const VEC_OK = (() => {
   const probe = createInMemoryDb();
@@ -55,7 +56,7 @@ describe.skipIf(!VEC_OK)("SemanticSearchRepository fusion (T087)", () => {
   }
 
   /** Seed a source with a title + body, embedded with its own text. */
-  function seedEmbeddedSource(title: string, body: string) {
+  function seedEmbeddedSource(title: string, body: string, opts: { modelId?: string } = {}) {
     const { element } = sources.create({ title, priority: 0.5 });
     documents.upsert({
       elementId: element.id,
@@ -65,7 +66,7 @@ describe.skipIf(!VEC_OK)("SemanticSearchRepository fusion (T087)", () => {
     embeddings.upsert({
       elementId: element.id,
       elementType: "source",
-      modelId: MODEL,
+      modelId: opts.modelId ?? MODEL,
       dim: EMBEDDING_DIM,
       contentHash: `h-${element.id}`,
       vector: embed(`${title} ${body}`),
@@ -86,6 +87,7 @@ describe.skipIf(!VEC_OK)("SemanticSearchRepository fusion (T087)", () => {
     const result = semantic.search(queryText, {
       semanticEnabled: true,
       queryVector: embed(queryText),
+      queryModelId: MODEL,
       limit: 10,
     });
 
@@ -108,6 +110,7 @@ describe.skipIf(!VEC_OK)("SemanticSearchRepository fusion (T087)", () => {
     const result = semantic.search(queryText, {
       semanticEnabled: true,
       queryVector: embed(queryText),
+      queryModelId: MODEL,
       limit: 10,
     });
     expect(result.mode).toBe("semantic");
@@ -115,6 +118,42 @@ describe.skipIf(!VEC_OK)("SemanticSearchRepository fusion (T087)", () => {
     expect(top?.id).toBe(both.id);
     // It matched BOTH keyword + vector.
     expect(top?.source).toBe("both");
+  });
+
+  it("does not fuse fallback-model vector neighbors into a real-model semantic query", () => {
+    const real = seedEmbeddedSource(
+      "Optimal review intervals",
+      "scheduling repetitions to maximize retention over time",
+    );
+    const fallback = sources.create({
+      title: "Fallback-space-only candidate",
+      priority: 0.5,
+    }).element;
+    documents.upsert({
+      elementId: fallback.id,
+      prosemirrorJson: { type: "doc", content: [] },
+      plainText: "unrelated words with no keyword overlap",
+    });
+    const queryText = "scheduling intervals retention";
+    embeddings.upsert({
+      elementId: fallback.id,
+      elementType: "source",
+      modelId: FALLBACK_MODEL,
+      dim: EMBEDDING_DIM,
+      contentHash: `h-${fallback.id}`,
+      vector: embed(queryText),
+    });
+
+    const result = semantic.search(queryText, {
+      semanticEnabled: true,
+      queryVector: embed(queryText),
+      queryModelId: MODEL,
+      limit: 10,
+    });
+
+    expect(result.mode).toBe("semantic");
+    expect(result.hits.map((h) => h.id)).toContain(real.id);
+    expect(result.hits.map((h) => h.id)).not.toContain(fallback.id);
   });
 
   it("degrades to FTS-only (mode 'fts') when no query vector is supplied", () => {
@@ -129,11 +168,12 @@ describe.skipIf(!VEC_OK)("SemanticSearchRepository fusion (T087)", () => {
     expect(result.hits.every((h) => h.source === "fts")).toBe(true);
   });
 
-  it("reports mode 'disabled' when semantics are off", () => {
+  it("reports mode 'disabled' when the semantic capability gate is false", () => {
     seedEmbeddedSource("Memory", "recall");
     const result = semantic.search("memory", {
       semanticEnabled: false,
       queryVector: embed("memory"),
+      queryModelId: MODEL,
     });
     expect(result.mode).toBe("disabled");
   });

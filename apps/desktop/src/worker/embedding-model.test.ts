@@ -2,12 +2,12 @@
  * Worker embedding-model unit tests (T087) — the "distinct id, never KNN-mixed"
  * invariant asserted DIRECTLY.
  *
- * The spec's load-bearing guarantee is that the REAL `all-MiniLM-L6-v2` semantic
+ * The spec's load-bearing guarantee is that the REAL EmbeddingGemma semantic
  * space and the deterministic lexical FALLBACK are recorded under DISTINCT model
  * ids, so a host that flips between them re-embeds via the `model_id` gate rather
  * than KNN-mixing incompatible vectors under one id. Under Vitest `loadLocalModel`
  * short-circuits to the deterministic fallback via the `process.env.VITEST` guard
- * (so the suite never streams the ~80 MB real model), and `computeEmbedding`
+ * (so the suite never loads the real model), and `computeEmbedding`
  * deterministically takes the FALLBACK path here — we pin that it labels the vector
  * with {@link FALLBACK_MODEL_ID} REGARDLESS of the requested id (the real path labels
  * with {@link REAL_MODEL_ID}, exercised against the live model in the Electron E2E).
@@ -43,8 +43,8 @@ describe("embedding-model model ids (T087 — distinct, never KNN-mixed)", () =>
   });
 
   it("labels the deterministic fallback with the FALLBACK id, ignoring the requested id", async () => {
-    // `fastembed` is unresolvable under Vitest → the worker drops to the
-    // deterministic embedder. The row must NOT inherit the requested real id.
+    // The worker skips the real model under Vitest and drops to the deterministic
+    // embedder. The row must NOT inherit the requested real id.
     const result = await computeEmbedding(localPayload({ modelId: REAL_MODEL_ID }));
     expect(result.modelId).toBe(FALLBACK_MODEL_ID);
     expect(result.dim).toBe(EMBEDDING_DIM);

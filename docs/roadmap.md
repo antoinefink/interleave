@@ -306,15 +306,16 @@ Detailed specs: [`tasks/M17-analytics.md`](./tasks/M17-analytics.md) (T083–T08
 ## M18 — Semantic search & AI (T087–T095)
 Detailed specs: [`tasks/M18-semantic.md`](./tasks/M18-semantic.md) (T087–T089) · [`tasks/M18-trust.md`](./tasks/M18-trust.md) (T090–T092) · [`tasks/M18-ai.md`](./tasks/M18-ai.md) (T093–T095)
 
-> Local-first: embeddings and the vector index live **on-device** (e.g. `sqlite-vec` on the same
-> better-sqlite3 DB); AI runs from the Electron main with a **local model or the user's own API
-> key**. Your infrastructure is never in the loop by default. An **optional, off-by-default**
+> Local-first: semantic embeddings and the vector index live **on-device** (`sqlite-vec` on the
+> same better-sqlite3 DB, with the local EmbeddingGemma ONNX model); AI runs from the Electron
+> main with a **local model or the user's own API key**. Your infrastructure is never in the loop
+> by default. An **optional, off-by-default**
 > managed AI proxy may route calls through the first-party server for convenience — enabling it
 > must visibly disclose that content is sent to the server. AI output is always **drafts** until
 > the user approves it.
 
 - [x] **T087 — Semantic search (local)** · _deps: T058, T042_ · done
-  Done when: embeddings for sources/extracts/cards are generated **on-device** (a local model via the background runner, or an embedding API called with the user's own key) and stored in a **local vector index** (e.g. `sqlite-vec` on the same better-sqlite3 DB); search finds conceptually related material without keyword match. (Re-scope: local vector store, **not** Postgres/pgvector.)
+  Done when: embeddings for sources/extracts/cards are generated **on-device only** with the local EmbeddingGemma ONNX model via the background runner and stored in a **local vector index** (`sqlite-vec` on the same better-sqlite3 DB); search finds conceptually related material without keyword match. (Re-scope: local vector store, **not** Postgres/pgvector; no remote embedding provider.)
 - [x] **T088 — Related-item suggestions** · _deps: T087_ · done
   Done when: each element shows similar extracts, possible duplicates, prerequisite concepts, and sibling sources.
 - [x] **T089 — Contradiction detection** · _deps: T087_ · done
@@ -527,6 +528,7 @@ Detailed specs: [`plans/2026-06-12-004-feat-lineage-aware-deletion-plan.md`](./p
 Record notable completions / decisions here as tasks land (newest first).
 
 - 2026-06-13 - T121 Extract aging policy - done. Commit: `feat: T121 extract aging policy`. Adds typed extract-aging settings, a backend-owned policy service over stagnation signals, batch-keyed reference-fate demotion receipts with targeted undo, trusted current-day materialization before standing auto-postpone, queue/maintenance age-band rendering, and E2E fixture coverage for automatic demotion, restart persistence, and receipt undo. Verification: `pnpm lint`; `pnpm typecheck`; `pnpm test`; `pnpm e2e tests/electron/extract-aging-policy.spec.ts tests/electron/extract-stagnation.spec.ts tests/electron/auto-postpone.spec.ts`. Learning captured in [`docs/solutions/architecture-patterns/extract-aging-policy-receipt-demotion.md`](./solutions/architecture-patterns/extract-aging-policy-receipt-demotion.md).
+- 2026-06-13 - T087 semantic search local-only hardening - done. Commit: `this commit`. Makes semantic embeddings local-only and always-on with the packaged EmbeddingGemma ONNX model, removes remote embedding provider/settings surface, upgrades the `sqlite-vec` index to the 768-dimension model contract with wrong-dimension rebuilds, and isolates KNN by embedding model id across search, related items, contradiction detection, sibling ranking, and review-mode semantic context. Verification: `pnpm lint`; `pnpm typecheck`; `pnpm test`; `pnpm e2e tests/electron/semantic-search.spec.ts tests/electron/settings.spec.ts tests/electron/search.spec.ts tests/electron/related-items.spec.ts tests/electron/contradiction.spec.ts`. Learning captured in [`docs/solutions/architecture-patterns/local-only-semantic-search-sqlite-vec-model-isolation.md`](./solutions/architecture-patterns/local-only-semantic-search-sqlite-vec-model-isolation.md).
 - 2026-06-13 - T120 Batch conversion sessions - done. Commit: `feat: T120 batch conversion sessions`. Adds a trusted conversion-session read model for due atomic statements, short-lived validated main-process session snapshots with grounding fingerprints, explicit per-session AI draft prefetch into `ai_suggestions`, and a `/convert` route linked from Home and Queue for keyboard-first Q&A/cloze authoring with source context, quality warnings, skip, and session-scoped fate actions. Verification: `pnpm lint`; `pnpm typecheck`; `pnpm test`; `pnpm e2e tests/electron/conversion-session.spec.ts`. Learning captured in [`docs/solutions/architecture-patterns/frozen-conversion-session-revalidation.md`](./solutions/architecture-patterns/frozen-conversion-session-revalidation.md).
 - 2026-06-13 - T119 Protected distillation quota - done. Commit: `this commit`. Adds typed `distillationQuotaPercent` settings, scheduler composition metadata, protected auto-postpone floor metadata, and queue/session UI split rendering. Verification: `pnpm lint`; `pnpm typecheck`; `pnpm test`; `pnpm e2e tests/electron/auto-postpone.spec.ts tests/electron/process-queue.spec.ts`. Learning captured in [`docs/solutions/architecture-patterns/protected-distillation-quota-daily-workload-share.md`](./solutions/architecture-patterns/protected-distillation-quota-daily-workload-share.md).
 - 2026-06-12 - T114 Descendant-health input - done. Commit: `feat: T114 descendant health input`. `descendant_lapses` is no

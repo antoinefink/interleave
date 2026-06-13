@@ -8,8 +8,8 @@
  *
  * ## The default local model + the deterministic FALLBACK (decision, justified)
  *
- * The shipped DEFAULT on-device model is the real **`all-MiniLM-L6-v2`** (384-dim)
- * ONNX sentence-transformer, run in the DB-free worker via `fastembed`
+ * The shipped DEFAULT on-device model is **EmbeddingGemma-300M** (768-dim) as an
+ * ONNX model, run in the DB-free worker via Transformers.js
  * (`apps/desktop/src/worker/embedding-model.ts`). It produces TRUE semantic vectors:
  * "spaced repetition" lands near "review intervals" with ZERO shared tokens — the
  * roadmap "Done when" (find conceptually related material WITHOUT a keyword match).
@@ -17,7 +17,7 @@
  * THIS module is the dependency-free **deterministic fallback** the worker drops to
  * ONLY when the real model cannot load (the dev/Vitest path bundles no model; an
  * offline first run with an empty cache; an `onnxruntime` ABI miss). It is a
- * feature-hashing bag-of-words → L2-normalized `float[384]` ({@link embedTextLocal}).
+ * feature-hashing bag-of-words → L2-normalized `float[768]` ({@link embedTextLocal}).
  * Why keep it:
  *  - it is **fully offline with ZERO native/model dependency**, so the feature never
  *    hard-fails — it degrades to a lexical baseline instead of throwing;
@@ -28,7 +28,7 @@
  *    related material that shares vocabulary even without a literal FTS hit.
  *
  * The fallback is a lexical baseline (token co-occurrence, not deep semantics), so
- * the worker records its vectors under a DISTINCT model id (`local:minilm-hash-384`,
+ * the worker records its vectors under a DISTINCT model id (`local:embeddinggemma-hash-768`,
  * see `FALLBACK_MODEL_ID`) — the model id is stored per `embeddings` row, so the two
  * spaces are NEVER KNN-mixed and a host that flips between them re-embeds rather than
  * comparing incompatible vectors. The function lives in `@interleave/core`
@@ -38,11 +38,11 @@
 
 /**
  * The embedding vector dimension. Fixed at `vec0` migration time — the `vec0`
- * column DDL (`embedding float[384]`) and this constant MUST move together. 384
- * matches the default `all-MiniLM-L6-v2` model AND the deterministic fallback, so
+ * column DDL (`embedding float[768]`) and this constant MUST move together. 768
+ * matches the default EmbeddingGemma-300M model AND the deterministic fallback, so
  * both write the same fixed-dim column (only the model id differs per row).
  */
-export const EMBEDDING_DIM = 384;
+export const EMBEDDING_DIM = 768;
 
 /** A bookkeeping row mapping an embedded element to its `vec0` rowid + model + hash. */
 export interface Embedding {
@@ -52,8 +52,8 @@ export interface Embedding {
   readonly vecRowid: number;
   /** The embedded element's type (`source` | `extract` | `card`). */
   readonly elementType: "source" | "extract" | "card";
-  /** The model that produced the vector, e.g. `"local:all-MiniLM-L6-v2"` (the real
-   * default) or `"local:minilm-hash-384"` (the deterministic fallback). */
+  /** The model that produced the vector, e.g. `"onnx-community/embeddinggemma-300m-ONNX"`
+   * (the real default) or `"local:embeddinggemma-hash-768"` (the deterministic fallback). */
   readonly modelId: string;
   /** The vector dimension (must equal {@link EMBEDDING_DIM} for the current column). */
   readonly dim: number;
@@ -68,7 +68,7 @@ export const EMBEDDABLE_TYPES = ["source", "extract", "card"] as const;
 export type EmbeddableType = (typeof EMBEDDABLE_TYPES)[number];
 
 /**
- * The deterministic FALLBACK embedder (used when the real MiniLM model cannot
+ * The deterministic FALLBACK embedder (used when the real EmbeddingGemma model cannot
  * load — see the module docblock): tokenize → feature-hash each token into
  * `dim` buckets (a stable FNV-1a hash, signed by a second hash bit) → L2-normalize.
  * Pure + dependency-free. Identical text always yields the identical vector, and

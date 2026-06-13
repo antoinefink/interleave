@@ -2,8 +2,7 @@
  * EmbeddingService (T087) — the main-side semantic-embedding orchestrator.
  *
  * The OcrService twin for embeddings. Embeddings run on the T058 background runner:
- * a DB-FREE `utilityProcess` worker computes a vector (the deterministic on-device
- * model by default, or the user's OWN API endpoint), and posts it back; THIS
+ * a DB-FREE `utilityProcess` worker computes a local vector and posts it back; THIS
  * service is the main-owned glue:
  *
  *  - {@link buildText} — MAIN reads the DB and builds the pure text to embed per
@@ -24,24 +23,19 @@
  *    recovering the vector from the main-side map (because `waitForTerminal`
  *    resolves with the persisted `Job` snapshot, NOT the apply return value), with
  *    an explicit short timeout so `/search` never hangs.
- *  - {@link downloadModel} — pre-warm the local model on first enable (forces the
- *    worker's first `fastembed` load/cache of the real `all-MiniLM-L6-v2`) and flip
+ *  - {@link downloadModel} — pre-warm the local model and flip
  *    `embeddingModelDownloaded`; degrades to the deterministic embedder offline.
  *
  * Embeddings append NO `operation_log` (a derived index, like FTS5). The worker
  * NEVER opens the DB or loads `sqlite-vec`; main is the single writer.
  *
- * SECURITY: the enqueued/persisted `embed` payload carries NO secret. When the user
- * opts into `provider === "api"`, their OWN embedding-API key is threaded to the
- * DB-free worker OUT-OF-BAND via the runner's {@link JobSecretsProvider}
- * ({@link embedJobSecrets}) — read LIVE from SQLite settings and merged into the
- * worker request AT POST TIME, never written to the restart-safe `jobs` row (the
- * same secret-keeping discipline as the `INTERLEAVE_ASSETS_DIR` fork-env path).
+ * SECURITY: the enqueued/persisted `embed` payload carries no secret and no remote
+ * endpoint. Semantic embeddings are local-only.
  */
 
 import { createHash } from "node:crypto";
 import type { ElementId } from "@interleave/core";
-import { type AppSettings, EMBEDDING_DIM } from "@interleave/core";
+import { type AppSettings, DEFAULT_EMBEDDING_MODEL_ID, EMBEDDING_DIM } from "@interleave/core";
 import type { InterleaveDatabase } from "@interleave/db";
 import { cards, documents, elements, sourceLocations } from "@interleave/db";
 import type { EmbeddableType, Repositories } from "@interleave/local-db";
@@ -66,7 +60,7 @@ const PENDING_QUERY_MAX = 64;
 export interface EmbedJobPayload {
   readonly text: string;
   readonly modelId: string;
-  readonly provider: "local" | "api";
+  readonly provider: "local";
   readonly dim: number;
   /** Present for the INDEX path (the element to UPSERT); absent for the query path. */
   readonly elementId?: string;
@@ -74,29 +68,6 @@ export interface EmbedJobPayload {
   readonly contentHash?: string;
   /** `false` = the transient query path (return the vector, do NOT upsert). */
   readonly persist?: boolean;
-  /** The endpoint + bare model name (only for `provider === "api"`); NON-secret. */
-  readonly apiEndpoint?: string;
-  readonly apiModel?: string;
-}
-
-/** The job-payload key the API key is injected under at post time (NEVER persisted). */
-export const EMBED_API_KEY_SECRET_KEY = "apiKey";
-
-/**
- * The out-of-band secret provider for `embed` jobs (T087). The runner calls this
- * at POST time and merges the result into the worker payload WITHOUT persisting it.
- * The key is read LIVE from settings so a runtime key change is picked up without
- * an app restart, and it never touches the `jobs` table. Returns `{}` unless the
- * provider is `"api"` and a key is configured.
- */
-export function embedJobSecrets(
-  job: { type: string },
-  getSettings: () => AppSettings,
-): Record<string, string> {
-  if (job.type !== "embed") return {};
-  const settings = getSettings();
-  if (settings.embeddingProvider !== "api" || !settings.embeddingApiKey) return {};
-  return { [EMBED_API_KEY_SECRET_KEY]: settings.embeddingApiKey };
 }
 
 /** The worker's `embed` result `data` shape (validated at this apply boundary). */
@@ -104,6 +75,11 @@ export interface EmbedResultData {
   readonly vector: number[];
   readonly modelId: string;
   readonly dim: number;
+}
+
+export interface QueryEmbeddingResult {
+  readonly vector: number[];
+  readonly modelId: string;
 }
 
 /** Constructor dependencies (built lazily against the open DB). */
@@ -120,7 +96,7 @@ export class EmbeddingService {
   private readonly getRunner: () => JobRunner;
   private readonly getSettings: () => AppSettings;
   /** Vectors recovered from the transient query embed jobs, keyed by jobId. */
-  private readonly pendingQueryVectors = new Map<string, number[]>();
+  private readonly pendingQueryVectors = new Map<string, QueryEmbeddingResult>();
   /** Query jobIds whose waiter timed out — their late result is DROPPED, not stashed. */
   private readonly abandonedQueries = new Set<string>();
 
@@ -182,14 +158,13 @@ export class EmbeddingService {
 
   /**
    * Enqueue an `embed` job for `elementId` if it needs (re-)embedding. Returns
-   * `{ skipped: true }` when semantics are disabled / vec is unavailable / the text
+   * `{ skipped: true }` when vec is unavailable / the text
    * is empty / the content hash is unchanged; else `{ jobId }`. The provider/model
-   * come from settings main-side; the API KEY is NOT enqueued — it is injected
-   * out-of-band at post time (so it never touches the renderer or a persisted row).
+   * come from settings main-side.
    */
   enqueueElement(elementId: ElementId): { jobId: string } | { skipped: true } {
     const settings = this.getSettings();
-    if (!settings.semanticSearchEnabled || !this.available) return { skipped: true };
+    if (!this.available) return { skipped: true };
 
     const built = this.buildText(elementId);
     if (!built || built.text.trim().length === 0) return { skipped: true };
@@ -214,13 +189,12 @@ export class EmbeddingService {
   /**
    * Enqueue `embed` jobs for every live source/extract/card that needs embedding
    * (the "build the index" path `semantic.reindex` calls). Returns the count
-   * enqueued. A no-op (0) when semantics are off / vec is unavailable. `onlyMissing`
+   * enqueued. A no-op (0) when vec is unavailable. `onlyMissing`
    * is honored by `needsEmbedding` either way (a current row is always skipped), so
    * the flag is informational — both paths skip unchanged content.
    */
   reindexAll(_options: { onlyMissing?: boolean } = {}): { enqueued: number } {
-    const settings = this.getSettings();
-    if (!settings.semanticSearchEnabled || !this.available) return { enqueued: 0 };
+    if (!this.available) return { enqueued: 0 };
 
     const rows = this.db
       .select({ id: elements.id, type: elements.type })
@@ -257,7 +231,7 @@ export class EmbeddingService {
       if (this.abandonedQueries.has(jobId)) {
         this.abandonedQueries.delete(jobId);
       } else {
-        this.stashQueryVector(jobId, result.vector);
+        this.stashQueryVector(jobId, result);
       }
       return { modelId: result.modelId };
     }
@@ -295,20 +269,21 @@ export class EmbeddingService {
    * caller falls back to FTS-only — `/search` never hangs.
    */
   async embedQuery(text: string): Promise<number[] | null> {
+    const result = await this.embedQueryResult(text);
+    return result?.vector ?? null;
+  }
+
+  async embedQueryResult(text: string): Promise<QueryEmbeddingResult | null> {
     const settings = this.getSettings();
-    if (!settings.semanticSearchEnabled || !this.available) return null;
+    if (!this.available) return null;
     if (text.trim().length === 0) return null;
 
     const payload: EmbedJobPayload = {
       text: bound(text),
       modelId: settings.embeddingModelId,
-      provider: settings.embeddingProvider,
+      provider: "local",
       dim: EMBEDDING_DIM,
       persist: false,
-      // NON-secret API routing only; the key is injected out-of-band at post time.
-      ...(settings.embeddingProvider === "api"
-        ? { apiModel: stripModelPrefix(settings.embeddingModelId) }
-        : {}),
     };
     const job = this.getRunner().enqueue("embed", { ...payload });
 
@@ -323,28 +298,20 @@ export class EmbeddingService {
       this.pendingQueryVectors.delete(job.id);
       return null;
     }
-    const vector = this.pendingQueryVectors.get(job.id) ?? null;
+    const result = this.pendingQueryVectors.get(job.id) ?? null;
     this.pendingQueryVectors.delete(job.id);
-    return vector;
+    return result;
   }
 
   /**
    * Pre-warm the local embedding model on first enable.
    *
    * The spec (`docs/tasks/M18-semantic.md`) pins two ACCEPTABLE first-run mechanisms
-   * and asks us to pick one and document the tradeoff: (a) a guarded main-side fetch
-   * (`*.partial` + checksum + atomic rename + a dedicated `semantic:modelDownload`
-   * event + `AbortController`), or (b) let the chosen embedder own the
-   * download/cache. We take (b): the real `all-MiniLM-L6-v2` model lives ONLY in the
-   * DB-free worker (`fastembed`), which streams the ~23 MB quantized ONNX + tokenizer
-   * into `INTERLEAVE_MODEL_DIR` on its first `init` and reuses it from disk across
-   * restarts — so the "download" is genuinely worker-side and already integrity-
-   * checked + atomic inside `fastembed`'s cacheDir. A parallel main-side fetch of the
-   * SAME files would be redundant work racing the same cache directory, so we do not
-   * re-implement (a). TRADEOFF: the model bytes are fetched lazily on the worker's
-   * first job rather than streamed with main-side progress, so the UI signals
-   * readiness via `semantic.status().modelDownloaded` (this flag) and the bounded
-   * warm-up below rather than a per-byte progress event.
+   * and asks us to pick one and document the tradeoff: the model lives ONLY in the
+   * DB-free worker, which resolves it from the local Transformers.js cache/staged
+   * model directory. A tiny transient warm-up job proves the local path can produce
+   * a vector and flips `embeddingModelDownloaded`; if the model is not present the
+   * worker degrades to the deterministic local fallback.
    *
    * Concretely: this enqueues a tiny TRANSIENT (`persist:false`) `embed` job for a
    * fixed warm-up string and waits for it — a success means the worker loaded the
@@ -357,19 +324,24 @@ export class EmbeddingService {
    * until the warm-up resolves.
    */
   async downloadModel(): Promise<{ downloaded: boolean }> {
-    const settings = this.getSettings();
-    // The opt-in API provider needs no local model; nothing to warm.
-    if (settings.embeddingProvider !== "api" && this.available) {
-      try {
-        // A transient warm-up embed — forces the worker's first model load/download.
-        await this.embedQuery("warm up the on-device embedding model");
-      } catch {
-        // Never block enabling the feature on a warm-up failure — the index path
-        // re-attempts the load per job and degrades to FTS-only meanwhile.
-      }
+    if (!this.available) return { downloaded: false };
+
+    let result: QueryEmbeddingResult | null = null;
+    try {
+      // A transient warm-up embed — forces the worker's first local model load.
+      result = await this.embedQueryResult("warm up the on-device embedding model");
+    } catch {
+      // Never block enabling the feature on a warm-up failure — the index path
+      // re-attempts the load per job and degrades to FTS-only meanwhile.
     }
-    this.repositories.settings.updateAppSettings({ embeddingModelDownloaded: true });
-    return { downloaded: true };
+    const downloaded = result?.modelId === DEFAULT_EMBEDDING_MODEL_ID;
+    if (downloaded) {
+      this.repositories.settings.updateAppSettings({
+        embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
+        embeddingModelDownloaded: true,
+      });
+    }
+    return { downloaded };
   }
 
   /** Build the INDEX-path embed payload (the element to UPSERT). */
@@ -384,26 +356,22 @@ export class EmbeddingService {
     return {
       text: input.text,
       modelId: settings.embeddingModelId,
-      provider: settings.embeddingProvider,
+      provider: "local",
       dim: EMBEDDING_DIM,
       elementId: input.elementId,
       elementType: input.elementType,
       contentHash: input.contentHash,
       persist: true,
-      // NON-secret API routing only; the key is injected out-of-band at post time.
-      ...(settings.embeddingProvider === "api"
-        ? { apiModel: stripModelPrefix(settings.embeddingModelId) }
-        : {}),
     };
   }
 
   /** Stash a recovered query vector, evicting the oldest if the bounded map is full. */
-  private stashQueryVector(jobId: string, vector: number[]): void {
+  private stashQueryVector(jobId: string, result: QueryEmbeddingResult): void {
     if (this.pendingQueryVectors.size >= PENDING_QUERY_MAX) {
       const oldest = this.pendingQueryVectors.keys().next().value;
       if (oldest !== undefined) this.pendingQueryVectors.delete(oldest);
     }
-    this.pendingQueryVectors.set(jobId, vector);
+    this.pendingQueryVectors.set(jobId, result);
   }
 }
 
@@ -415,12 +383,6 @@ function sha256(text: string): string {
 /** Bound the text length so a huge source does not blow the model context. */
 function bound(text: string): string {
   return text.length > MAX_EMBED_CHARS ? text.slice(0, MAX_EMBED_CHARS) : text;
-}
-
-/** `"openai:text-embedding-3-small"` → `"text-embedding-3-small"` (the bare API model). */
-function stripModelPrefix(modelId: string): string {
-  const idx = modelId.indexOf(":");
-  return idx >= 0 ? modelId.slice(idx + 1) : modelId;
 }
 
 /** A cancellable-ish delay promise for the query-embed timeout race. */

@@ -274,6 +274,36 @@ Browse mode is inventory-first: it lists live browsable elements by facets. Sear
 
 A source, extract, or card returned from a user's library search, enriched enough for the user to inspect its priority, concept context, scheduling state, and source lineage before opening it.
 
+### Semantic search
+
+The local discovery capability that ranks sources, extracts, and cards by meaning rather than only by exact keyword overlap.
+
+Semantic search is part of the local-first knowledge store: the app owns the embedding model, derived vector index, and fallback behavior on-device, and remote embedding providers are not a user-selectable mode.
+
+### Embedding
+
+A derived numeric representation of searchable source, extract, or card text used only for local semantic retrieval.
+
+An Embedding belongs to the model that produced it. Equal vector length is not enough to compare two embeddings safely; semantic consumers should compare only embeddings from the same model space.
+
+### Local vector index
+
+The rebuildable on-device index that stores embeddings for nearest-neighbor semantic retrieval while the canonical knowledge data remains in the local database and asset vault.
+
+The Local vector index is derived state, not source lineage or user-authored content. If its shape no longer matches the active embedding model, it can be cleared and rebuilt from canonical elements.
+
+### Related item
+
+A derived suggestion that points from the current element to another live element that may be similar, duplicate-like, or useful context.
+
+Related items are advisory discovery hints. They do not create durable relations, mutate lineage, or merge elements by themselves.
+
+### Contradiction detection
+
+The advisory process that compares semantically similar claim-bearing elements for signs that one may oppose or supersede another.
+
+Contradiction detection is suggestive, not authoritative: it can surface possible conflicts for inspection, but it does not edit, suspend, merge, or reschedule the elements it compares.
+
 ### Facet
 
 A filter dimension on a search or library surface that narrows a result set by a project-specific attribute such as element type, concept, or priority.

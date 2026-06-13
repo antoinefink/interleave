@@ -12,10 +12,10 @@
  *  3. **prerequisite concepts** — the element's member concepts PLUS their parent
  *     chain (`concepts.parentConceptId`), the ancestors first (more general →
  *     learn first), each with a hierarchy `level` (0 = a direct member, 1+ = an
- *     ancestor). Works WITH SEMANTICS OFF (pure concept hierarchy);
+ *     ancestor). Works without vec/model availability (pure concept hierarchy);
  *  4. **sibling sources** — `source` elements that share at least one
  *     `concept_membership` concept with the element, ordered by vector similarity
- *     when available else by shared-concept count. Works WITH SEMANTICS OFF.
+ *     when available else by shared-concept count. Works without vec/model availability.
  *
  * EVERYTHING here is a DERIVED READ over the T087 `vec0` store + the existing
  * `element_relations` / `concepts` lineage graph:
@@ -25,10 +25,10 @@
  *  - it NEVER mutates lineage,
  *  - it excludes the element itself + soft-deleted elements.
  *
- * It degrades gracefully: when semantics are off / the element is not embedded, the
- * vector buckets (`similar`, `duplicates`) return `[]` with `semanticAvailable:
- * false`, while the concept + sibling-source buckets still resolve from lineage. It
- * never throws on a degraded store.
+ * It degrades gracefully: when vec/model capability is unavailable or the element is
+ * not embedded, the vector buckets (`similar`, `duplicates`) return `[]` with
+ * `semanticAvailable: false`, while the concept + sibling-source buckets still
+ * resolve from lineage. It never throws on a degraded store.
  *
  * The renderer reaches this only through the typed `semantic.related`
  * `window.appApi`; no vectors cross IPC (only ids/titles/similarities).
@@ -81,14 +81,14 @@ export interface RelatedResult {
   readonly duplicates: readonly RelatedItem[];
   readonly prerequisiteConcepts: readonly RelatedConcept[];
   readonly siblingSources: readonly RelatedItem[];
-  /** False when semantics are off / `vec0` is absent / the element is not embedded. */
+  /** False when `vec0` is absent / the element is not embedded. */
   readonly semanticAvailable: boolean;
 }
 
 /** Options narrowing a {@link RelatedService.related} read. */
 export interface RelatedOptions {
   readonly limit?: number;
-  /** The `semanticSearchEnabled` setting — when false this is a lineage-only read. */
+  /** Semantic capability gate — when false this is a lineage-only read. */
   readonly semanticEnabled: boolean;
 }
 
@@ -140,19 +140,31 @@ export class RelatedService {
     const limit = clampLimit(options.limit);
 
     // The element's own stored vector — the seed for the KNN buckets. `null` when
-    // semantics are off, `vec0` is absent, or the element is not (yet) embedded.
-    const ownVector =
+    // vec/model capability is unavailable, `vec0` is absent, or the element is not
+    // (yet) embedded.
+    const ownEmbedding =
       options.semanticEnabled && this.deps.embeddings.available
-        ? this.deps.embeddings.getVector(elementId)
+        ? this.deps.embeddings.getVectorRecord(elementId)
         : null;
-    const semanticAvailable = ownVector != null;
+    const semanticAvailable = ownEmbedding != null;
 
     const { similar, duplicates } = semanticAvailable
-      ? this.vectorBuckets(elementId, element.type, ownVector, limit)
+      ? this.vectorBuckets(
+          elementId,
+          element.type,
+          ownEmbedding.vector,
+          ownEmbedding.modelId,
+          limit,
+        )
       : { similar: [] as RelatedItem[], duplicates: [] as RelatedItem[] };
 
     const prerequisiteConcepts = this.prerequisiteConcepts(elementId);
-    const siblingSources = this.siblingSources(elementId, ownVector, limit);
+    const siblingSources = this.siblingSources(
+      elementId,
+      ownEmbedding?.vector ?? null,
+      ownEmbedding?.modelId ?? null,
+      limit,
+    );
 
     return { similar, duplicates, prerequisiteConcepts, siblingSources, semanticAvailable };
   }
@@ -171,11 +183,13 @@ export class RelatedService {
     elementId: ElementId,
     elementType: string,
     ownVector: readonly number[],
+    modelId: string,
     limit: number,
   ): { similar: RelatedItem[]; duplicates: RelatedItem[] } {
     // Over-fetch a broad neighbor pool once; partition it into the two buckets.
     const neighbors = this.deps.embeddings.knn(ownVector, {
       limit: Math.min(limit * 3, MAX_LIMIT * 3),
+      modelId,
       excludeElementId: elementId,
     });
 
@@ -265,6 +279,7 @@ export class RelatedService {
   private siblingSources(
     elementId: ElementId,
     ownVector: readonly number[] | null,
+    modelId: string | null,
     limit: number,
   ): RelatedItem[] {
     const memberConcepts = this.deps.concepts.conceptsForElement(elementId);
@@ -284,9 +299,10 @@ export class RelatedService {
 
     // Distance to each candidate source when we can rank by vector (else NaN).
     const distanceOf = new Map<ElementId, number>();
-    if (ownVector) {
+    if (ownVector && modelId) {
       const knn = this.deps.embeddings.knn(ownVector, {
         limit: MAX_LIMIT * 2,
+        modelId,
         type: "source",
         excludeElementId: elementId,
       });

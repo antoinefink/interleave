@@ -18,7 +18,7 @@
  *  - `branch`   → {@link LineageQuery.get} subtree nodes, kept where `type === "card"`
  *  - `search`   → {@link SearchRepository.search} ranked `card` hits
  *  - `semantic` → {@link SemanticSearchRepository.search} (FTS+vec fusion), card-only;
- *                 degrades to the keyword resolver when semantics are off / no vector
+ *                 degrades to the keyword resolver when vec/model is unavailable
  *  - `stale`    → the T090 lifetime prefilter + `deriveExpiryStatus` (not-fresh cards)
  *  - `leech`    → {@link ReviewRepository.listLeechCards} (already cards, most-lapsed-first)
  *  - `random`   → a bounded, SEEDED shuffle of live cards (stable + reproducible)
@@ -30,10 +30,10 @@
  *
  * Pure read: it performs NO mutation and appends NOTHING to the operation log — the
  * only mutation in this feature is the UNCHANGED `review.grade` path. It is also
- * SYNCHRONOUS: the `semantic` query vector is computed by the DB service (the embed
- * runs in the runner, not here) and INJECTED via the `queryVector` resolve hook;
- * absent → the semantic mode degrades to keyword (never an error). Cards only — the
- * two-scheduler split is intact.
+ * SYNCHRONOUS: the `semantic` query vector + model id are computed by the DB service
+ * (the embed runs in the runner, not here) and INJECTED via the resolve hook; absent
+ * → the semantic mode degrades to keyword (never an error). Cards only — the two-
+ * scheduler split is intact.
  */
 
 import {
@@ -97,12 +97,13 @@ export interface ReviewModeCount {
 /**
  * The pre-computed query vector for the `semantic` mode, resolved by the DB service
  * (the embed runs in the job runner; this service never embeds). `null` → the
- * semantic mode degrades to the keyword resolver. `enabled` is the
- * `semanticSearchEnabled` setting AND `vec0` availability — when false, keyword too.
+ * semantic mode degrades to the keyword resolver. `enabled` is local vec/model
+ * availability; `queryModelId` keeps KNN in the same vector space.
  */
 export interface SemanticResolveContext {
   readonly enabled: boolean;
   readonly queryVector: readonly number[] | null;
+  readonly queryModelId?: string | null;
 }
 
 export class ReviewModeService {
@@ -248,10 +249,10 @@ export class ReviewModeService {
 
   /**
    * Search (semantic): the fused FTS+vec `card` hits ({@link SemanticSearchRepository})
-   * when semantics are enabled AND a query vector was produced; otherwise it DEGRADES
-   * to the keyword resolver (never an error — calm fallback). The query vector is
-   * injected by the DB service (the embed runs in the runner, not here). Ranked hit
-   * order preserved; filtered to live non-retired cards.
+   * when vec/model capability is available AND a query vector was produced; otherwise
+   * it DEGRADES to the keyword resolver (never an error — calm fallback). The query
+   * vector/model id is injected by the DB service (the embed runs in the runner, not
+   * here). Ranked hit order preserved; filtered to live non-retired cards.
    */
   private semanticCardIds(query: string, semantic?: SemanticResolveContext): ElementId[] {
     const enabled = semantic?.enabled ?? false;
@@ -264,6 +265,7 @@ export class ReviewModeService {
       type: "card",
       semanticEnabled: true,
       queryVector,
+      queryModelId: semantic?.queryModelId ?? null,
       limit: MAX_REVIEW_MODE_DECK,
     });
     const cardHits = fused.hits.filter((h) => h.type === "card").map((h) => h.id as ElementId);

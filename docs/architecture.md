@@ -18,7 +18,8 @@ says so explicitly.
   Instant interaction, offline access, keyboard workflows, long-lived personal data. A
   server exists *later* **only as an end-to-end-encrypted backup target** — it stores opaque
   archives and never mirrors the domain model, syncs live, or processes content. Import, OCR,
-  embeddings, AI, and search all run **on-device** (local model or the user's own API key).
+  embeddings, and search run **on-device**; AI assistance can run on-device or through the
+  user's explicitly configured own-key provider.
 - **Boring, explicit, type-safe over clever.** Favor small composable domain functions
   with tests over large UI-coupled handlers.
 - **Domain logic out of React.** See the layering rule below and in `CLAUDE.md`.

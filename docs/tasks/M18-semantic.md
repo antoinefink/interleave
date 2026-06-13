@@ -1,5 +1,13 @@
 # M18 — On-device semantic search & AI: embeddings, related items, contradictions (T087–T089)
 
+> **Current T087 override (2026-06-13):** semantic embeddings are local-only and always-on when
+> local capability is available. The implementation uses Transformers.js with the local
+> EmbeddingGemma-300M ONNX model (`onnx-community/embeddinggemma-300m-ONNX`) and a 768-dimension
+> `sqlite-vec` table. There is no remote embedding provider, no embedding API key setting, and no
+> semantic-search Settings toggle; legacy stored provider/model/toggle values are accepted only for
+> compatibility and coerced to the local EmbeddingGemma shape. Older MiniLM / fastembed / API /
+> off-by-default wording below is historical and superseded by this note.
+
 Detailed, buildable specs for the first three tasks of M18 — the **semantic** layer that sits
 on top of the M8 keyword search (T042 FTS5) and the M12 background runner (T058). All three are
 **100% on-device**: there is **no server, no Postgres, no `pgvector`** in the loop. Three

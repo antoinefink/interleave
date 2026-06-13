@@ -34,7 +34,7 @@ import type { ElementId } from "./ids";
  *  - `branch`   — every live card in a lineage subtree (a `source`/`topic`/`extract` root).
  *  - `search`   — every live card matching a keyword query (ranked FTS hits).
  *  - `semantic` — every live card semantically related to a query (FTS+vec fusion);
- *                 degrades to keyword when semantics are off / `vec0` unavailable.
+ *                 degrades to keyword when vec/model capability is unavailable.
  *  - `stale`    — every live card whose T090 lifetime makes it `due_for_review`/`expired`.
  *  - `leech`    — every live leech card (T040, durable `cards.is_leech`).
  *  - `random`   — a bounded random audit sample of live cards (seeded, reproducible).

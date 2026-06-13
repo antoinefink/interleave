@@ -34,6 +34,7 @@ import {
   DAILY_BUDGET_MINUTES_MIN,
   DAILY_REVIEW_BUDGET_MAX,
   DAILY_REVIEW_BUDGET_MIN,
+  DEFAULT_EMBEDDING_MODEL_ID,
   DESIRED_RETENTION_MAX,
   DESIRED_RETENTION_MIN,
   DISPLAY_NAME_MAX,
@@ -41,9 +42,7 @@ import {
   DISTILLATION_QUOTA_PERCENT_MIN,
   ELEMENT_STATUSES,
   ELEMENT_TYPES,
-  EMBEDDING_API_KEY_MAX,
   EMBEDDING_MODEL_ID_MAX,
-  EMBEDDING_PROVIDERS,
   EXTRACT_AGING_AGE_DAYS_MAX,
   EXTRACT_AGING_AGE_DAYS_MIN,
   EXTRACT_AGING_POLICIES,
@@ -218,9 +217,8 @@ export const SettingsGetAllRequestSchema = z.void();
 export interface SettingsGetAllResult {
   /**
    * The complete, validated settings (unset keys resolved to defaults), PROJECTED for
-   * the renderer: the user's OWN keys (`aiApiKey`/`embeddingApiKey`) are stripped and
-   * replaced with `aiKeyConfigured`/`embeddingApiKeyConfigured` booleans. The plaintext
-   * keys are MAIN-SIDE secrets and are NEVER returned across the IPC boundary (T087/T093).
+   * the renderer: plaintext keys are stripped, AI exposes only `aiKeyConfigured`, and
+   * legacy embedding provider/key controls are not exposed across IPC (T087/T093).
    */
   readonly settings: RendererSettings;
 }
@@ -284,13 +282,13 @@ export const SettingsPatchSchema = z
     theme: z.enum(THEMES),
     /** The local vault owner's display name (trimmed + capped main-side). */
     displayName: z.string().max(DISPLAY_NAME_MAX),
-    // Semantic search (T087): the on/off switch, provider, the user's own API key
-    // (validated/coerced main-side), the active model id, and the model-downloaded
-    // flag. The key is stored in SQLite settings only — never our server.
-    semanticSearchEnabled: z.boolean(),
-    embeddingProvider: z.enum(EMBEDDING_PROVIDERS),
-    embeddingApiKey: z.string().max(EMBEDDING_API_KEY_MAX),
-    embeddingModelId: z.string().max(EMBEDDING_MODEL_ID_MAX),
+    // Semantic search (T087): always-on local search. Legacy off/model-id patches
+    // are accepted at the boundary only to coerce them into the safe local shape.
+    semanticSearchEnabled: z.boolean().transform(() => true),
+    embeddingModelId: z
+      .string()
+      .max(EMBEDDING_MODEL_ID_MAX)
+      .transform(() => DEFAULT_EMBEDDING_MODEL_ID),
     embeddingModelDownloaded: z.boolean(),
     // AI assistance (T093): the on/off switch, provider kind, the managed-proxy switch,
     // the model-downloaded flag, the local model id, and the user's OWN key (validated/
@@ -5442,7 +5440,7 @@ export const SemanticDownloadModelRequestSchema = z.object({});
 export type SemanticDownloadModelRequest = z.infer<typeof SemanticDownloadModelRequestSchema>;
 
 export interface SemanticDownloadModelResult {
-  /** Whether the local model is ready (`embeddingModelDownloaded` is now `true`). */
+  /** Whether the local EmbeddingGemma ONNX model is ready. */
   readonly downloaded: boolean;
 }
 
@@ -5507,7 +5505,7 @@ export interface SemanticRelatedResult {
  * ({@link SemanticContradictionsResult}) is a DERIVED, HEURISTIC read over the T087
  * `vec0` neighbors + the `sources` provenance dates (via lineage) — no op-log, no
  * persisted "conflict" relation, no lineage mutation, never authoritative. Returns
- * empty flags when semantics are off / `vec0` is absent (the surface hides). No raw
+ * empty flags when vectors are unavailable or `vec0` is absent. No raw
  * vectors cross IPC.
  */
 export const SemanticContradictionsRequestSchema = z.object({
@@ -5544,7 +5542,7 @@ export interface ContradictionFlagView {
 }
 
 export interface SemanticContradictionsResult {
-  /** The possible-conflict flags — empty when semantics are off / nothing conflicts. */
+  /** The possible-conflict flags — empty when vectors are unavailable / nothing conflicts. */
   readonly flags: readonly ContradictionFlagView[];
 }
 
@@ -7498,21 +7496,18 @@ export interface AppApi {
     /**
      * Fused semantic + FTS search (T087). Embeds the query on-device via the
      * background runner and fuses the `sqlite-vec` KNN with the FTS hits, so
-     * conceptually-related material surfaces without a keyword match. OFF BY
-     * DEFAULT: when semantics are disabled / the model is absent / `vec0` failed to
-     * load, it degrades to FTS-only and `mode` reports which retrieval ran. No raw
-     * vectors cross IPC.
+     * conceptually-related material surfaces without a keyword match. When the model
+     * is absent or `vec0` failed to load, it degrades to FTS-only and `mode` reports
+     * which retrieval ran. No raw vectors cross IPC.
      */
     search(request: SemanticSearchRequest): Promise<SemanticSearchResult>;
-    /** Index coverage + on/off/downloaded state for the Settings + library affordances. */
+    /** Index coverage + vec/model availability state for library affordances. */
     status(request?: SemanticStatusRequest): Promise<SemanticStatusResult>;
     /** Build the index — enqueue `embed` jobs; observe progress via `jobs.subscribe`. */
     reindex(request?: SemanticReindexRequest): Promise<SemanticReindexResult>;
     /**
-     * Pre-warm the local embedding model on first enable (T087) and flip
-     * `embeddingModelDownloaded = true`. The default local model `fastembed`-caches
-     * itself on its first worker job, so this warms that load and degrades to the
-     * deterministic embedder offline — search stays FTS-only until it resolves.
+     * Pre-warm the local EmbeddingGemma ONNX model (T087) and flip
+     * `embeddingModelDownloaded = true`; search stays FTS-only until it resolves.
      */
     downloadModel(request?: SemanticDownloadModelRequest): Promise<SemanticDownloadModelResult>;
     /**
@@ -7520,7 +7515,7 @@ export interface AppApi {
      * possible duplicates / prerequisite concepts / sibling sources over the `vec0`
      * store + the concept lineage. No new relation types, no op-log, no lineage
      * mutation; degrades to the lineage-only buckets (with `semanticAvailable:
-     * false`) when semantics are off. No raw vectors cross IPC.
+     * false`) when vectors are unavailable. No raw vectors cross IPC.
      */
     related(request: SemanticRelatedRequest): Promise<SemanticRelatedResult>;
     /**
@@ -7528,8 +7523,8 @@ export interface AppApi {
      * SUGGESTIVE read: highly-similar `vec0` neighbors that ALSO carry an opposing/
      * superseding signal (negation, numeric divergence, a newer source). Never
      * authoritative — it never edits/suspends/reschedules; it writes nothing (no
-     * op-log, no relation). Returns empty flags when semantics are off / `vec0` is
-     * absent (the surface hides). No raw vectors cross IPC.
+     * op-log, no relation). Returns empty flags when vectors are unavailable or
+     * `vec0` is absent. No raw vectors cross IPC.
      */
     contradictions(request: SemanticContradictionsRequest): Promise<SemanticContradictionsResult>;
   };

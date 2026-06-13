@@ -2044,8 +2044,8 @@ function RelatedRow({
  * the typed `semantic.related` bridge. Everything is a read-only suggestion over the
  * `vec0` store + the concept lineage — no relations are written, no lineage mutated.
  *
- * Graceful degrade: when `semanticAvailable` is false (semantics off / not embedded)
- * the vector buckets (similar/duplicates) hide and a calm "enable semantic search"
+ * Graceful degrade: when `semanticAvailable` is false (sqlite-vec unavailable or
+ * not indexed) the vector buckets (similar/duplicates) hide and a calm availability
  * hint shows, while the concept + sibling-source buckets STILL resolve from lineage.
  * Pure UI: one command, no SQL/vectors in React.
  */
@@ -2083,9 +2083,9 @@ export function RelatedSection({
     prerequisiteConcepts.length > 0 ||
     siblingSources.length > 0;
 
-  // Nothing to show AND semantics are on with nothing nearby → skip the section
-  // entirely (keep the inspector calm). When semantics are OFF we still show the
-  // hint so the user knows similarity suggestions exist behind the setting.
+  // Nothing to show AND semantics are available with nothing nearby → skip the
+  // section entirely (keep the inspector calm). When vector search is unavailable
+  // we still show the hint so the user knows similarity suggestions are currently missing.
   if (!hasAnything && semanticAvailable) return null;
 
   return (
@@ -2132,7 +2132,7 @@ export function RelatedSection({
 
       {!semanticAvailable ? (
         <p className="insp-empty" data-testid="related-degrade-hint">
-          Enable semantic search in Settings for similarity suggestions.
+          Similarity suggestions are unavailable until the local semantic index is ready.
         </p>
       ) : null}
     </div>

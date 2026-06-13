@@ -162,11 +162,11 @@ export function LibraryScreen() {
   const [selId, setSelId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Semantic search (T087): whether on-device semantics are enabled, and which
-  // retrieval the last query actually ran (so the UI labels "keyword only" honestly).
-  const [semanticEnabled, setSemanticEnabled] = useState(false);
+  // Semantic search (T087): whether on-device vector search is available, and
+  // which retrieval the last query actually ran (so the UI labels keyword fallback honestly).
+  const [semanticAvailable, setSemanticAvailable] = useState(false);
   const [searchMode, setSearchMode] = useState<SemanticSearchMode>("fts");
-  // The live "N of M embedded" index progress (drives the enabled-but-empty
+  // The live "N of M embedded" index progress (drives the available-but-incomplete
   // "Build index" affordance, per the T087 spec) + an in-flight reindex guard.
   const [semanticIndex, setSemanticIndex] = useState({ embedded: 0, total: 0 });
   const [reindexing, setReindexing] = useState(false);
@@ -176,7 +176,7 @@ export function LibraryScreen() {
   const hasQuery = debouncedTerm.length > 0;
   const hasActiveFacet = typeFilter !== null || conceptFilter !== null || priorityFilter !== null;
   const showSemanticBuildIndex =
-    !hasQuery && semanticEnabled && semanticIndex.embedded < semanticIndex.total;
+    !hasQuery && semanticAvailable && semanticIndex.embedded < semanticIndex.total;
   const pendingFilterLabels = useMemo(() => {
     const labels: string[] = [];
     if (typeFilter) {
@@ -239,18 +239,17 @@ export function LibraryScreen() {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
 
-  // Read whether on-device semantic search is enabled (T087) so the query effect
-  // picks the fused `semantic.search` path; re-checked when the embed jobs run (a
-  // freshly-built index becomes usable) and when the window regains focus (the
-  // Settings toggle lives on another route).
+  // Read whether on-device semantic indexing is available (T087) so the query
+  // effect picks the fused `semantic.search` path when sqlite-vec is functional.
+  // Re-checked when embed jobs run and when the window regains focus.
   const refreshSemantic = useCallback(async () => {
     if (!isDesktop()) return;
     try {
       const status = await appApi.semanticStatus();
-      setSemanticEnabled(status.enabled && status.vecAvailable);
+      setSemanticAvailable(status.vecAvailable);
       setSemanticIndex({ embedded: status.embedded, total: status.total });
     } catch {
-      setSemanticEnabled(false);
+      setSemanticAvailable(false);
     }
   }, []);
 
@@ -307,7 +306,7 @@ export function LibraryScreen() {
           if (cancelled) return;
           setSearchCounts(searchCountsFromBrowse(res.counts));
           setResults([]);
-          setSearchMode(semanticEnabled ? "fts" : "disabled");
+          setSearchMode(semanticAvailable ? "fts" : "disabled");
           setError(null);
         })
         .catch((e) => {
@@ -323,13 +322,13 @@ export function LibraryScreen() {
     let cancelled = false;
     setLoading(true);
 
-    // Semantic path (T087): when on-device semantics are enabled AND no
+    // Semantic path (T087): when on-device vector search is available AND no
     // concept/priority facet is active (the fused KNN path doesn't take those
     // facets), use `semantic.search` so conceptually-related material surfaces
     // without a keyword match. It returns counts over the fused result universe so
     // the filterbar never shows zeroed chips while semantic rows are visible.
     // Otherwise — or when a facet is active — use the FTS keyword search unchanged.
-    const useSemantic = semanticEnabled && !conceptFilter && !priorityFilter;
+    const useSemantic = semanticAvailable && !conceptFilter && !priorityFilter;
     if (useSemantic) {
       void appApi
         .semanticSearch({ q, ...(typeFilter ? { type: typeFilter } : {}) })
@@ -364,7 +363,7 @@ export function LibraryScreen() {
         // Guarded by the SAME cancelled flag as setResults so an out-of-order
         // response can never leave the chip counts pointing at a different query.
         setSearchCounts(res.counts);
-        setSearchMode(semanticEnabled ? "fts" : "disabled");
+        setSearchMode(semanticAvailable ? "fts" : "disabled");
         setError(null);
       })
       .catch((e) => {
@@ -376,7 +375,23 @@ export function LibraryScreen() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedTerm, typeFilter, conceptFilter, priorityFilter, semanticEnabled]);
+  }, [debouncedTerm, typeFilter, conceptFilter, priorityFilter, semanticAvailable]);
+
+  const keywordFallbackHint = useMemo(() => {
+    if (!semanticAvailable) {
+      return "Keyword search · semantic indexing is unavailable on this build.";
+    }
+    if (conceptFilter || priorityFilter) {
+      return "Keyword search · semantic results are not used with concept or priority filters.";
+    }
+    if (semanticIndex.total > 0 && semanticIndex.embedded === 0) {
+      return "Keyword search · semantic index has not been built yet.";
+    }
+    if (semanticIndex.embedded < semanticIndex.total) {
+      return "Keyword search · semantic index is still building.";
+    }
+    return "Keyword search · semantic results are unavailable for this query.";
+  }, [semanticAvailable, semanticIndex, conceptFilter, priorityFilter]);
 
   // The result list IS the backend-narrowed set. The Priority facet is now applied
   // MAIN-side (threaded as `priorityLabel` into the FTS query), so the drill-down
@@ -616,14 +631,14 @@ export function LibraryScreen() {
                     <div className="lib-hint" data-testid="library-semantic-on">
                       Semantic search on — results include conceptually related items.
                     </div>
-                  ) : !semanticEnabled ? (
+                  ) : searchMode === "fts" || searchMode === "disabled" ? (
                     <div className="lib-hint" data-testid="library-semantic-off">
-                      Keyword search · enable semantic search in Settings to find related material.
+                      {keywordFallbackHint}
                     </div>
                   ) : null
                 ) : null}
                 {/* T096 — launch a TARGETED review over the CARDS matching this query
-                    (keyword always; semantic when enabled). Each button resolves its own
+                    (keyword always; semantic when available). Each button resolves its own
                     subset count and is omitted when no cards match. */}
                 {hasQuery ? (
                   <div className="lib-review-modes" data-testid="library-review-modes">
@@ -633,7 +648,7 @@ export function LibraryScreen() {
                       label={(n) => `Review ${n} matching card${n === 1 ? "" : "s"}`}
                       testId="library-review-search"
                     />
-                    {semanticEnabled ? (
+                    {semanticAvailable ? (
                       <ReviewModeButton
                         selector={{ kind: "semantic", query: debouncedQuery.trim() }}
                         hideWhileLoading

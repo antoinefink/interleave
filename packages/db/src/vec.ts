@@ -20,7 +20,7 @@
  * throws on first use instead of degrading. Therefore the source of truth for
  * "is vec available?" is NOT {@link loadVectorExtension} returning — it is
  * {@link vecFunctional}, a FUNCTIONAL round-trip smoke test (load → `vec_version()`
- * → create a `vec0` table → insert a `float[384]` → KNN `MATCH … LIMIT 1` →
+ * → create a `vec0` table → insert a `float[EMBEDDING_DIM]` → KNN `MATCH … LIMIT 1` →
  * drop). Only if EVERY step succeeds is vec usable; any throw degrades the app to
  * FTS-only. Callers MUST gate on `vecFunctional`, never on `loadVectorExtension`.
  *

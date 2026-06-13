@@ -32,7 +32,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRepositories, type Repositories } from "./index";
 import { createInMemoryDb, isVecAvailable } from "./test-db";
 
-const MODEL = "local:minilm-hash-384";
+const MODEL = "onnx-community/embeddinggemma-300m-ONNX";
+const FALLBACK_MODEL = "local:embeddinggemma-hash-768";
 
 const VEC_OK = (() => {
   const probe = createInMemoryDb();
@@ -65,7 +66,11 @@ describe("RelatedService (T088)", () => {
   });
 
   /** Create an extract element, optionally embedding its own text. */
-  function makeExtract(title: string, body: string, opts: { embed?: boolean } = {}): ElementId {
+  function makeExtract(
+    title: string,
+    body: string,
+    opts: { embed?: boolean; modelId?: string } = {},
+  ): ElementId {
     const el = repos.elements.create({
       type: "extract",
       status: "active",
@@ -77,7 +82,7 @@ describe("RelatedService (T088)", () => {
       repos.embeddings.upsert({
         elementId: el.id,
         elementType: "extract",
-        modelId: MODEL,
+        modelId: opts.modelId ?? MODEL,
         dim: EMBEDDING_DIM,
         contentHash: `h-${el.id}`,
         vector: embed(`${title} ${body}`),
@@ -87,13 +92,17 @@ describe("RelatedService (T088)", () => {
   }
 
   /** Create a source element, optionally embedding its own text. */
-  function makeSource(title: string, body: string, opts: { embed?: boolean } = {}): ElementId {
+  function makeSource(
+    title: string,
+    body: string,
+    opts: { embed?: boolean; modelId?: string } = {},
+  ): ElementId {
     const { element } = repos.sources.create({ title, priority: PRIORITY_LABEL_VALUE.B });
     if (opts.embed !== false && VEC_OK) {
       repos.embeddings.upsert({
         elementId: element.id,
         elementType: "source",
-        modelId: MODEL,
+        modelId: opts.modelId ?? MODEL,
         dim: EMBEDDING_DIM,
         contentHash: `h-${element.id}`,
         vector: embed(`${title} ${body}`),
@@ -159,6 +168,18 @@ describe("RelatedService (T088)", () => {
       expect(result.semanticAvailable).toBe(false);
       expect(result.similar).toEqual([]);
       expect(result.duplicates).toEqual([]);
+    });
+
+    it("does not mix fallback-model neighbors into vector buckets", () => {
+      const title = "Spacing effect";
+      const body = "spacing repetitions over time improves long-term retention substantially";
+      const subject = makeExtract(title, body);
+      const fallbackDuplicate = makeExtract(title, body, { modelId: FALLBACK_MODEL });
+
+      const result = repos.related.related(subject, { semanticEnabled: true });
+      expect(result.semanticAvailable).toBe(true);
+      expect(result.duplicates.map((i) => i.id)).not.toContain(fallbackDuplicate);
+      expect(result.similar.map((i) => i.id)).not.toContain(fallbackDuplicate);
     });
   });
 
@@ -228,6 +249,27 @@ describe("RelatedService (T088)", () => {
 
       const result = repos.related.related(subject, { semanticEnabled: false });
       expect(result.siblingSources.map((i) => i.id)).not.toContain(sibling);
+    });
+
+    it.skipIf(!VEC_OK)("only vector-ranks same-model sibling sources when semantics are on", () => {
+      const memory = repos.concepts.createConcept({ name: "Memory" });
+      const subject = makeExtract("Forgetting curve", "retention decays over time");
+      repos.concepts.assignConcept(subject, memory.id);
+      const realSibling = makeSource("Memory consolidation", "retention decays over time");
+      repos.concepts.assignConcept(realSibling, memory.id);
+      const fallbackSibling = makeSource("Memory reconsolidation", "retention decays over time", {
+        modelId: FALLBACK_MODEL,
+      });
+      repos.concepts.assignConcept(fallbackSibling, memory.id);
+
+      const result = repos.related.related(subject, { semanticEnabled: true });
+      const real = result.siblingSources.find((i) => i.id === realSibling);
+      const fallback = result.siblingSources.find((i) => i.id === fallbackSibling);
+      expect(real?.similarity).toBeTypeOf("number");
+      expect(fallback?.similarity).toBeUndefined();
+      expect(result.siblingSources.findIndex((i) => i.id === realSibling)).toBeLessThan(
+        result.siblingSources.findIndex((i) => i.id === fallbackSibling),
+      );
     });
   });
 

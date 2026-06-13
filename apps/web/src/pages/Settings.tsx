@@ -91,10 +91,8 @@ const FALLBACK_SETTINGS: RendererSettings = {
   retentionByBand: {},
   retentionByBandEnabled: false,
   fsrsParamsGlobal: null,
-  semanticSearchEnabled: false,
-  embeddingProvider: "local",
-  embeddingApiKeyConfigured: false,
-  embeddingModelId: "local:minilm-hash-384",
+  semanticSearchEnabled: true,
+  embeddingModelId: "onnx-community/embeddinggemma-300m-ONNX",
   embeddingModelDownloaded: false,
   aiEnabled: false,
   aiProviderKind: "local",
@@ -312,193 +310,6 @@ function RetentionBandRow({
         </button>
       </div>
     </SettingRow>
-  );
-}
-
-/**
- * The "Semantic search" settings section (T087). On-device + OFF BY DEFAULT: the
- * switch turns on FTS+vector fusion (after the local model is ready); the provider
- * choice + the masked API-key field let a user bring their OWN embedding key (stored
- * in SQLite only, never our server). The "Build index" button enqueues `embed`
- * jobs and the live "N of M embedded" readout reflects coverage. Pure UI — one
- * command per action; no model/SQL in React. When `vec0` failed to load, the
- * feature shows a calm "unavailable on this build" note rather than letting the
- * toggle pretend it works.
- */
-function SemanticSearchPanel({
-  settings,
-  patch,
-}: {
-  settings: RendererSettings;
-  patch: (next: Partial<AppSettings>) => Promise<void>;
-}) {
-  // The user's OWN embedding key is write-only (T087) — the renderer never reads it back.
-  // It tracks the input locally + persists when the key is stored, mirroring the AI key field.
-  const [embeddingKeyInput, setEmbeddingKeyInput] = useState("");
-  const [status, setStatus] = useState<{
-    vecAvailable: boolean;
-    embedded: number;
-    total: number;
-    modelDownloaded: boolean;
-  } | null>(null);
-  const [reindexing, setReindexing] = useState(false);
-
-  const refreshStatus = useCallback(async () => {
-    if (!isDesktop()) return;
-    try {
-      const s = await appApi.semanticStatus();
-      setStatus({
-        vecAvailable: s.vecAvailable,
-        embedded: s.embedded,
-        total: s.total,
-        modelDownloaded: s.modelDownloaded,
-      });
-    } catch {
-      setStatus(null);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshStatus();
-  }, [refreshStatus]);
-
-  // Reflect indexing progress live as the runner drains the embed jobs.
-  useEffect(() => {
-    if (!isDesktop()) return;
-    const unsubscribe = appApi.subscribeJobs((job) => {
-      if (job.type === "embed") void refreshStatus();
-    });
-    return unsubscribe;
-  }, [refreshStatus]);
-
-  const onToggle = useCallback(
-    async (enabled: boolean) => {
-      // On first enable, pre-warm the local model (flips `embeddingModelDownloaded`;
-      // the default warms `fastembed` and degrades to the deterministic embedder
-      // offline), then back-fill the index for existing content.
-      await patch({ semanticSearchEnabled: enabled });
-      if (enabled) {
-        try {
-          await appApi.semanticDownloadModel();
-        } catch {
-          // Non-fatal — the worker re-attempts the load per job; search stays
-          // FTS-only until it resolves.
-        }
-        try {
-          await appApi.semanticReindex({ onlyMissing: true });
-        } catch {
-          // Non-fatal — the user can press Build index.
-        }
-        await refreshStatus();
-      }
-    },
-    [patch, refreshStatus],
-  );
-
-  const onReindex = useCallback(async () => {
-    setReindexing(true);
-    try {
-      await appApi.semanticReindex({ onlyMissing: false });
-      await refreshStatus();
-    } finally {
-      setReindexing(false);
-    }
-  }, [refreshStatus]);
-
-  const vecUnavailable = status != null && !status.vecAvailable;
-
-  return (
-    <SectionPanel title="Semantic search">
-      <SettingRow
-        label="On-device semantic search"
-        hint="Find conceptually related material even without a keyword match. Runs fully on this device — it downloads a small embedding model once, then computes everything offline. Off by default."
-      >
-        <Toggle
-          name="setting-semantic-enabled"
-          checked={settings.semanticSearchEnabled}
-          onChange={(value) => void onToggle(value)}
-        />
-      </SettingRow>
-
-      {vecUnavailable ? (
-        <div className="py-2 text-sm text-text-3" data-testid="semantic-unavailable">
-          The vector index is unavailable on this build — search runs in keyword-only mode.
-        </div>
-      ) : null}
-
-      <SettingRow
-        label="Embedding provider"
-        hint="Local downloads a small model once, then computes on-device fully offline. API uses your OWN embedding key — stored on this device only, never sent to us."
-      >
-        <Segmented
-          name="setting-embedding-provider"
-          value={settings.embeddingProvider}
-          onChange={(value) =>
-            void patch({ embeddingProvider: value as AppSettings["embeddingProvider"] })
-          }
-          options={[
-            { value: "local", label: "Local" },
-            { value: "api", label: "API key" },
-          ]}
-        />
-      </SettingRow>
-
-      {settings.embeddingProvider === "api" ? (
-        <SettingRow
-          label="Embedding API key"
-          hint={
-            settings.embeddingApiKeyConfigured
-              ? "A key is configured (stored in this vault only; never shown). Enter a new value to replace it."
-              : "Your own provider key. Stored in this vault's settings only — never returned to the UI."
-          }
-        >
-          <div className="flex items-center gap-2">
-            <input
-              type="password"
-              data-testid="setting-embedding-api-key"
-              value={embeddingKeyInput}
-              placeholder={settings.embeddingApiKeyConfigured ? "•••• configured" : "sk-…"}
-              onChange={(e) => setEmbeddingKeyInput(e.target.value)}
-              className="w-40 rounded-md border border-border bg-surface px-2.5 py-1 text-sm text-text placeholder:text-text-3 focus:outline-none focus:ring-2 focus:ring-accent"
-            />
-            <button
-              type="button"
-              data-testid="setting-embedding-store-key"
-              onClick={() => {
-                const trimmed = embeddingKeyInput.trim();
-                if (trimmed.length === 0) return;
-                void patch({ embeddingApiKey: trimmed });
-                setEmbeddingKeyInput("");
-              }}
-              className="rounded-md border border-border bg-surface px-3 py-1 text-sm text-text hover:bg-surface-2"
-            >
-              Store key
-            </button>
-          </div>
-        </SettingRow>
-      ) : null}
-
-      {settings.semanticSearchEnabled && !vecUnavailable ? (
-        <SettingRow
-          label="Index"
-          hint={
-            status
-              ? `${status.embedded} of ${status.total} items embedded.`
-              : "Build embeddings for your existing sources, extracts, and cards."
-          }
-        >
-          <button
-            type="button"
-            data-testid="setting-semantic-reindex"
-            disabled={reindexing}
-            onClick={() => void onReindex()}
-            className="rounded-md border border-border bg-surface px-3 py-1 text-sm text-text hover:bg-surface-2 disabled:opacity-40"
-          >
-            {reindexing ? "Building…" : "Build index"}
-          </button>
-        </SettingRow>
-      ) : null}
-    </SectionPanel>
   );
 }
 
@@ -1175,21 +986,15 @@ export function Settings() {
    * applied to <html> immediately so the change is visible.
    */
   const patch = useCallback(async (next: Partial<AppSettings>) => {
-    // The own-keys (`aiApiKey`/`embeddingApiKey`) are WRITE-ONLY: they go to the main
-    // side via the patch but never live in the renderer's projected state. Strip them
-    // from the optimistic merge and instead flip the `*Configured` flag locally so the
-    // "configured" hint updates immediately; the authoritative state is the projected
-    // `RendererSettings` the main side returns below.
-    const { aiApiKey, embeddingApiKey, ...rendererNext } = next;
+    // AI own-key is WRITE-ONLY: it goes to the main side via the patch but never lives
+    // in renderer state.
+    const { aiApiKey, ...rendererNext } = next;
     setSettings((prev) =>
       prev
         ? {
             ...prev,
             ...rendererNext,
             ...(aiApiKey !== undefined ? { aiKeyConfigured: aiApiKey.trim().length > 0 } : {}),
-            ...(embeddingApiKey !== undefined
-              ? { embeddingApiKeyConfigured: embeddingApiKey.trim().length > 0 }
-              : {}),
           }
         : prev,
     );
@@ -1632,8 +1437,6 @@ export function Settings() {
       <WorkloadSimulator />
 
       <OptimizationPanel />
-
-      <SemanticSearchPanel settings={s} patch={patch} />
 
       <AiAssistancePanel settings={s} patch={patch} />
 

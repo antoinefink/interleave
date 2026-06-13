@@ -8,8 +8,8 @@
  *  - a near-duplicate-but-OPPOSING neighbor is flagged with the neighbor's title +
  *    ref + reasons;
  *  - a NEWER-source neighbor is flagged with `newerSide` set (resolved from lineage);
- *  - `findForElement` returns `[]` when `semanticSearchEnabled=false` (the surface
- *    hides) and when `vecAvailable=false`;
+ *  - `findForElement` returns `[]` when its injected semantic capability gate is
+ *    false and when `vecAvailable=false`;
  *  - a soft-deleted neighbor is excluded.
  *
  * Built on a REAL in-memory DB (so lineage + the `vec0` KNN are genuine) with the
@@ -20,6 +20,7 @@
  */
 
 import {
+  DEFAULT_EMBEDDING_MODEL_ID,
   type ElementId,
   EMBEDDING_DIM,
   embedTextLocal,
@@ -36,7 +37,8 @@ import { createRepositories, type Repositories, resolveSourceRef } from "@interl
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ContradictionService } from "./contradiction-service";
 
-const MODEL = "local:minilm-hash-384";
+const MODEL = DEFAULT_EMBEDDING_MODEL_ID;
+const FALLBACK_MODEL = "local:embeddinggemma-hash-768";
 
 /** Open a fresh in-memory DB with vec loaded + the functional check (mirrors test-db). */
 function makeDb(): { handle: DbHandle; vecAvailable: boolean } {
@@ -97,7 +99,12 @@ describe("ContradictionService.findForElement (T089)", () => {
    * Create an extract anchored to `sourceId` with `claim` as its selected text, and
    * embed it (so the vec0 KNN + buildText both work). Returns the extract id.
    */
-  function makeExtract(sourceId: ElementId, title: string, claim: string): ElementId {
+  function makeExtract(
+    sourceId: ElementId,
+    title: string,
+    claim: string,
+    opts: { modelId?: string } = {},
+  ): ElementId {
     const { element } = repos.sources.createExtract({
       sourceElementId: sourceId,
       title,
@@ -109,7 +116,7 @@ describe("ContradictionService.findForElement (T089)", () => {
       repos.embeddings.upsert({
         elementId: element.id,
         elementType: "extract",
-        modelId: MODEL,
+        modelId: opts.modelId ?? MODEL,
         dim: EMBEDDING_DIM,
         contentHash: `h-${element.id}`,
         // The embed text mirrors buildText's extract text: `${title}\n${selectedText}`.
@@ -187,6 +194,15 @@ describe("ContradictionService.findForElement (T089)", () => {
       expect(flags.map((f) => f.otherId)).not.toContain(deleted);
     });
 
+    it("does not compare against fallback-model neighbors", () => {
+      const src = makeSource("Doc", { publishedAt: "2020" });
+      const subject = makeExtract(src, "Caffeine claim", AFFIRM);
+      makeExtract(src, "Caffeine rebuttal", NEGATE, { modelId: FALLBACK_MODEL });
+
+      const flags = makeService().findForElement(subject);
+      expect(flags).toEqual([]);
+    });
+
     it("does NOT flag an agreeing near-duplicate (same polarity, same era)", () => {
       const src = makeSource("Doc", { publishedAt: "2020" });
       const claim = "Distributed practice improves long-term retention substantially.";
@@ -197,7 +213,7 @@ describe("ContradictionService.findForElement (T089)", () => {
       expect(flags).toEqual([]);
     });
 
-    it("returns [] when semanticSearchEnabled is false (the surface hides)", () => {
+    it("returns [] when the injected semantic capability gate is false", () => {
       const src = makeSource("Doc", { publishedAt: "2020" });
       const subject = makeExtract(src, "A", "X is true.");
       makeExtract(src, "B", "X is false.");

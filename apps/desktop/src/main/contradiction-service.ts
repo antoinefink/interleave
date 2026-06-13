@@ -3,9 +3,8 @@
  * {@link detectContradictions} heuristic.
  *
  * `findForElement(elementId)` builds the candidate pairs the heuristic needs:
- *  1. resolve the element's own vector (gated on `vecAvailable` + the
- *     `semanticSearchEnabled` setting — when semantics are off it returns `[]` and the
- *     surface hides);
+ *  1. resolve the element's own vector (gated on local vec/model availability; when
+ *     unavailable it returns `[]` and the surface hides);
  *  2. run a `vec0` KNN for highly-similar SAME/compatible-type neighbors;
  *  3. for the element + each neighbor, resolve the embedded text
  *     (`EmbeddingService.buildText`) and the source dates via lineage
@@ -89,7 +88,7 @@ export interface ContradictionDeps {
   readonly resolveRef: (id: ElementId) => SourceRef | null;
   /** Whether `sqlite-vec` `vec0` is loaded + functional on this connection. */
   readonly vecAvailable: boolean;
-  /** Whether the `semanticSearchEnabled` setting is on. */
+  /** Whether semantic vector lookups are available for this service instance. */
   readonly semanticEnabled: () => boolean;
 }
 
@@ -98,8 +97,8 @@ export class ContradictionService {
 
   /**
    * The possible-conflict flags for `elementId` — highly-similar neighbors that also
-   * carry an opposing/superseding signal. Returns `[]` when semantics are off /
-   * `vec0` is absent / the element isn't a comparable type / isn't embedded. An
+   * carry an opposing/superseding signal. Returns `[]` when semantic vector lookup is
+   * unavailable / `vec0` is absent / the element isn't a comparable type / isn't embedded. An
    * idempotent read; writes nothing.
    */
   findForElement(elementId: ElementId): ContradictionFlagView[] {
@@ -109,8 +108,8 @@ export class ContradictionService {
     if (!self || self.deletedAt) return [];
     if (!COMPARABLE_TYPES.has(self.type as EmbeddableType)) return [];
 
-    const ownVector = this.deps.repositories.embeddings.getVector(elementId);
-    if (!ownVector) return [];
+    const ownEmbedding = this.deps.repositories.embeddings.getVectorRecord(elementId);
+    if (!ownEmbedding) return [];
 
     const selfText = this.deps.buildText(elementId);
     if (!selfText) return [];
@@ -118,8 +117,9 @@ export class ContradictionService {
     // High-similarity neighbors of the element's own vector. Scan a wide pool so
     // non-comparable (`source`) neighbors can't crowd a comparable conflict out of
     // the COMPARABLE_PAIR_LIMIT cap applied in the loop below.
-    const neighbors = this.deps.repositories.embeddings.knn(ownVector, {
+    const neighbors = this.deps.repositories.embeddings.knn(ownEmbedding.vector, {
       limit: NEIGHBOR_FETCH_LIMIT,
+      modelId: ownEmbedding.modelId,
       excludeElementId: elementId,
     });
 

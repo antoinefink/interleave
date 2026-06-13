@@ -8,7 +8,7 @@
  *  - duplicates are styled distinctly (a "possible duplicate" badge) + dismissable;
  *  - clicking a related row navigates (selects) that element;
  *  - when `semanticAvailable` is false it shows the lineage buckets + the calm
- *    "enable semantic search" hint (never an error/crash).
+ *    local-index availability hint (never an error/crash).
  *
  * `appApi` is mocked so the test exercises only this component's wiring.
  */
@@ -126,7 +126,7 @@ describe("RelatedSection (T088)", () => {
     expect(screen.queryByTestId("related-duplicate-row")).not.toBeInTheDocument();
   });
 
-  it("degrades gracefully: shows lineage buckets + a hint when semantics are off", async () => {
+  it("degrades gracefully: shows lineage buckets + a hint when semantic indexing is unavailable", async () => {
     const degraded: SemanticRelatedResult = {
       similar: [],
       duplicates: [],
@@ -153,10 +153,12 @@ describe("RelatedSection (T088)", () => {
     // Vector buckets hidden + the calm degrade hint shown (never an error).
     expect(screen.queryByTestId("related-similar")).not.toBeInTheDocument();
     expect(screen.queryByTestId("related-duplicates")).not.toBeInTheDocument();
-    expect(screen.getByTestId("related-degrade-hint")).toHaveTextContent(/enable semantic search/i);
+    expect(screen.getByTestId("related-degrade-hint")).toHaveTextContent(
+      /local semantic index is ready/i,
+    );
   });
 
-  it("renders nothing when there is nothing related and semantics are on", async () => {
+  it("renders nothing when there is nothing related and semantic indexing is available", async () => {
     h.semanticRelated.mockResolvedValue({
       similar: [],
       duplicates: [],

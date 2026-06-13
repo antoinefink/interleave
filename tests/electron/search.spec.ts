@@ -75,6 +75,7 @@ test("typing a seeded term returns the source, extract, and card grouped + highl
 
   // All three searchable groups appear (the seed has the term in each type).
   await expect(page.getByTestId("library-group-source")).toBeVisible();
+  await expect(page.getByText(/enable semantic search in Settings/i)).toHaveCount(0);
   await expect(page.getByTestId("library-group-extract")).toBeVisible();
   await expect(page.getByTestId("library-group-card")).toBeVisible();
   const counts = await page.evaluate(async (term) => {

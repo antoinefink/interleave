@@ -23,7 +23,7 @@
  * `INTERLEAVE_REQUIRE_VEC=1`, in which case a missing binary fails the build.
  */
 
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,8 +31,18 @@ import Database from "better-sqlite3";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(here, "..");
+const repoRoot = path.resolve(desktopDir, "..", "..");
 const nativeDir = path.join(desktopDir, "native");
 const require = createRequire(import.meta.url);
+const EMBEDDING_DIM = readEmbeddingDim();
+
+function readEmbeddingDim() {
+  const source = readFileSync(path.join(repoRoot, "packages/core/src/embedding.ts"), "utf8");
+  const match = source.match(/export\s+const\s+EMBEDDING_DIM\s*=\s*(\d+)\s*;/);
+  if (!match?.[1])
+    throw new Error("Could not read EMBEDDING_DIM from packages/core/src/embedding.ts");
+  return Number(match[1]);
+}
 
 /** Per-platform `vec0` loadable-binary file name. */
 function vecBinaryName() {
@@ -61,8 +71,8 @@ function assertVecFunctional(binaryPath) {
     if (typeof version?.v !== "string") {
       throw new Error("vec_version() did not return a string");
     }
-    db.exec("CREATE VIRTUAL TABLE _vec_smoke USING vec0(embedding float[384])");
-    const buf = Buffer.from(new Float32Array(384).fill(0.0123).buffer);
+    db.exec(`CREATE VIRTUAL TABLE _vec_smoke USING vec0(embedding float[${EMBEDDING_DIM}])`);
+    const buf = Buffer.from(new Float32Array(EMBEDDING_DIM).fill(0.0123).buffer);
     db.prepare("INSERT INTO _vec_smoke(rowid, embedding) VALUES (1, ?)").run(buf);
     const row = db
       .prepare("SELECT rowid FROM _vec_smoke WHERE embedding MATCH ? ORDER BY distance LIMIT 1")

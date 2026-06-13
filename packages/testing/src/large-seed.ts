@@ -39,6 +39,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import {
   type BlockId,
+  DEFAULT_EMBEDDING_MODEL_ID,
   EMBEDDING_DIM,
   type EmbeddableType,
   embedTextLocal,
@@ -219,7 +220,7 @@ export const CI_SCALE_PROFILE: Required<Omit<LargeSeedOptions, "seed" | "asOf" |
 
 const DEFAULT_SEED = "interleave-scale";
 const DEFAULT_AS_OF = "2026-06-01T12:00:00.000Z";
-const MODEL_ID = "local:minilm-hash-384";
+const MODEL_ID = DEFAULT_EMBEDDING_MODEL_ID;
 /** Spread `created_at` over this many days back from `asOf`. */
 const CREATED_WINDOW_DAYS = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;

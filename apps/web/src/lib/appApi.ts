@@ -136,15 +136,11 @@ export interface AppSettings {
    * directly — it applies a suggestion via `optimization.apply`.
    */
   readonly fsrsParamsGlobal: number[] | null;
-  /** On-device semantic search master switch (T087) — OFF BY DEFAULT. */
+  /** On-device semantic search compatibility flag (T087) — always resolves on locally. */
   readonly semanticSearchEnabled: boolean;
-  /** Which embedder computes vectors (T087): `local` (on-device) or `api` (user's own key). */
-  readonly embeddingProvider: "local" | "api";
-  /** The user's OWN embedding-API key (T087); stored on-device only, never our server. */
-  readonly embeddingApiKey: string;
-  /** The active embedding model id (T087). */
+  /** The pinned local EmbeddingGemma ONNX model id (T087). */
   readonly embeddingModelId: string;
-  /** First-run state for the local model (T087). */
+  /** First-run state for the local EmbeddingGemma ONNX model (T087). */
   readonly embeddingModelDownloaded: boolean;
   /** On-device AI assistance master switch (T093) — OFF BY DEFAULT. */
   readonly aiEnabled: boolean;
@@ -168,14 +164,14 @@ export interface AppSettings {
 
 /**
  * The RENDERER-facing projection of {@link AppSettings} (T087/T093) — the shape the
- * settings READ returns. The user's OWN keys (`aiApiKey`/`embeddingApiKey`) are MAIN-SIDE
- * secrets, so they are stripped and replaced with write-only `*Configured` booleans: the
- * renderer reads whether a key is set, never the plaintext key. The WRITE path still
- * accepts the raw key via {@link AppSettings} (the patch).
+ * settings READ returns. Plaintext keys are stripped; AI keeps a configured boolean
+ * because its Settings UI still edits that own-key provider. Legacy embedding
+ * provider/key fields are not exposed to the renderer.
  */
-export type RendererSettings = Omit<AppSettings, "aiApiKey" | "embeddingApiKey"> & {
-  /** Whether the user's OWN embedding-API key is set (T087) — never the key itself. */
-  readonly embeddingApiKeyConfigured: boolean;
+export type RendererSettings = Omit<
+  AppSettings,
+  "aiApiKey" | "embeddingApiKey" | "embeddingProvider"
+> & {
   /** Whether the user's OWN AI-API key is set (T093) — never the key itself. */
   readonly aiKeyConfigured: boolean;
 };
@@ -5839,10 +5835,9 @@ export const appApi = {
   /**
    * Fused semantic + FTS search (T087). On-device: embeds the query via the
    * background runner and fuses the `sqlite-vec` KNN with the FTS hits, so
-   * conceptually-related material surfaces without a keyword match. OFF BY DEFAULT:
-   * degrades to FTS-only when disabled / model absent / `vec0` unavailable, with
-   * `mode` reporting which retrieval ran. Outside the desktop shell, returns an
-   * empty disabled result.
+   * conceptually-related material surfaces without a keyword match. Degrades to
+   * FTS-only when the model is absent or `vec0` unavailable, with `mode` reporting
+   * which retrieval ran. Outside the desktop shell, returns an empty disabled result.
    */
   semanticSearch(request: SemanticSearchRequest): Promise<SemanticSearchResult> {
     if (!isDesktop() || !window.appApi?.semantic) {
@@ -5858,7 +5853,7 @@ export const appApi = {
     }
     return window.appApi.semantic.search(request);
   },
-  /** Semantic-index status (T087) — on/off, vec availability, "N of M embedded". */
+  /** Semantic-index status (T087) — vec/model availability, "N of M embedded". */
   semanticStatus(request?: SemanticStatusRequest): Promise<SemanticStatusResult> {
     if (!isDesktop() || !window.appApi?.semantic) {
       return Promise.resolve({
@@ -5880,7 +5875,7 @@ export const appApi = {
     return window.appApi.semantic.reindex(request);
   },
   /**
-   * Pre-warm the local embedding model on first enable (T087) and flip
+   * Pre-warm the local EmbeddingGemma ONNX model (T087) and flip
    * `embeddingModelDownloaded`. A no-op `{ downloaded: false }` outside desktop.
    */
   semanticDownloadModel(

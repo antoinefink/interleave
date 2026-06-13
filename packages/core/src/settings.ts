@@ -148,47 +148,32 @@ export interface AppSettings {
    */
   readonly fsrsParamsGlobal: number[] | null;
   /**
-   * On-device semantic search master switch (T087). `false` by default — when off,
-   * `/search` runs FTS-only, no embeddings are generated, and the vector index is
-   * dormant. Turning it on (after the local model is downloaded) lets the search
-   * fuse FTS + `sqlite-vec` KNN so conceptually-related material surfaces without a
-   * keyword match. Off-by-default + graceful degrade are load-bearing invariants.
+   * On-device semantic search compatibility flag (T087). Semantic search is now a
+   * built-in local capability, so this always resolves to `true`; old stored `false`
+   * values and renderer patches are accepted only for compatibility and coerced on.
    */
   readonly semanticSearchEnabled: boolean;
   /**
-   * Which embedder computes vectors (T087): `"local"` runs a bundled/downloaded
-   * on-device model in the DB-free worker (the default, fully offline); `"api"`
-   * calls the user's OWN embedding endpoint with {@link embeddingApiKey} — the key
-   * lives only here in SQLite, the only network call is to the provider the user
-   * configured, never our server.
+   * Which embedder computes vectors (T087). Semantic embeddings are local-only; old
+   * `"api"` provider values are accepted at coercion boundaries only and resolve to
+   * `"local"`.
    */
-  readonly embeddingProvider: "local" | "api";
+  readonly embeddingProvider: "local";
   /**
-   * The user's OWN embedding-API key (T087), used only when {@link embeddingProvider}
-   * is `"api"`. Stored in SQLite settings on the user's own device. The load-bearing
-   * invariant: it is NEVER sent to OUR server — the only network call it authorizes
-   * is to the provider the user configured. It is injected into the worker job
-   * payload OUT-OF-BAND at post time (never persisted to a `jobs` row); the Settings
-   * panel reads it back (masked) only so the user can edit it on their own machine.
-   * Empty by default.
+   * Legacy embedding-API key slot (T087). Local semantic search no longer uses this,
+   * but existing vaults may contain it. It remains main-side only and is projected to
+   * a configured boolean for renderer reads.
    */
   readonly embeddingApiKey: string;
   /**
-   * The active embedding model id (T087), e.g. `"local:all-MiniLM-L6-v2"` or
-   * `"openai:text-embedding-3-small"`. The model id + its dim are stored per
-   * embedding row so KNN refuses to mix vectors of different models; switching the
-   * model re-embeds. One active model at a time in T087.
+   * The active embedding model id (T087). Semantic search is pinned to the local
+   * EmbeddingGemma ONNX model; legacy model ids coerce to this default so KNN never
+   * mixes incompatible vector spaces.
    */
   readonly embeddingModelId: string;
   /**
-   * First-run state for the local model (T087): `false` until the one-time
-   * download-on-first-enable completes. The default real `all-MiniLM-L6-v2` model is
-   * fetched + cached on disk (into `INTERLEAVE_MODEL_DIR`) by the worker's `fastembed`
-   * on its first load; `EmbeddingService.downloadModel` pre-warms that load and flips
-   * this `true`. Until then, semantic search stays FTS-only with a "Downloading
-   * model…" affordance (and the worker falls back to the deterministic embedder if
-   * the fetch is unavailable, so the feature still degrades cleanly rather than
-   * hanging).
+   * First-run state for the local EmbeddingGemma ONNX model (T087): `false` until
+   * the one-time local model preparation completes.
    */
   readonly embeddingModelDownloaded: boolean;
   /**
@@ -244,33 +229,32 @@ export interface AppSettings {
 }
 
 /**
- * The RENDERER-facing projection of {@link AppSettings} (T087/T093). The user's OWN
- * keys (`aiApiKey`, `embeddingApiKey`) are MAIN-SIDE secrets — they must NEVER cross
- * the trusted/untrusted boundary in plaintext. So the typed settings read/write the
- * renderer sees swaps each raw key for a write-only `*Configured: boolean` derived
- * from whether a non-empty key is set. The renderer reads the boolean (to show
- * "key configured") and WRITES the key via the patch, but never reads the value back.
- * `projectToRendererSettings` is the single choke point that performs this projection.
+ * The RENDERER-facing projection of {@link AppSettings} (T087/T093). Plaintext keys
+ * are MAIN-SIDE secrets and must never cross the trusted/untrusted boundary. AI still
+ * exposes a configured boolean because its Settings UI edits the own-key provider;
+ * legacy embedding provider/key fields are removed from the renderer surface entirely.
+ * `projectToRendererSettings` is the single choke point for this projection.
  */
-export type RendererSettings = Omit<AppSettings, "aiApiKey" | "embeddingApiKey"> & {
-  /** Whether the user's OWN embedding-API key is set (T087) — never the key itself. */
-  readonly embeddingApiKeyConfigured: boolean;
+export type RendererSettings = Omit<
+  AppSettings,
+  "aiApiKey" | "embeddingApiKey" | "embeddingProvider"
+> & {
   /** Whether the user's OWN AI-API key is set (T093) — never the key itself. */
   readonly aiKeyConfigured: boolean;
 };
 
 /**
  * Project the full main-side {@link AppSettings} to the renderer-safe
- * {@link RendererSettings}: strip the plaintext `aiApiKey`/`embeddingApiKey` and
- * replace them with `aiKeyConfigured`/`embeddingApiKeyConfigured` booleans. This is the
- * load-bearing T087/T093 invariant — the own-keys are write-only from the renderer's
- * perspective and are never returned in plaintext.
+ * {@link RendererSettings}: strip plaintext keys and remove legacy embedding provider
+ * controls. This is the load-bearing T087/T093 invariant — own-keys are write-only
+ * from the renderer's perspective and are never returned in plaintext.
  */
 export function projectToRendererSettings(settings: AppSettings): RendererSettings {
-  const { aiApiKey, embeddingApiKey, ...rest } = settings;
+  const { aiApiKey, embeddingApiKey, embeddingProvider, ...rest } = settings;
+  void embeddingApiKey;
+  void embeddingProvider;
   return {
     ...rest,
-    embeddingApiKeyConfigured: embeddingApiKey.trim().length > 0,
     aiKeyConfigured: aiApiKey.trim().length > 0,
   };
 }
@@ -319,16 +303,10 @@ export const SETTINGS_KEYS = {
 } as const satisfies Record<keyof AppSettings, string>;
 
 /**
- * The default on-device embedding model id (T087). The shipped default is the REAL
- * `all-MiniLM-L6-v2` (384-dim) ONNX sentence-transformer, run in the DB-free worker
- * via `fastembed` — it produces TRUE semantic vectors (conceptual matches without a
- * shared keyword). The id is stored per embedding row so a model switch re-embeds and
- * KNN refuses to mix spaces. When the real model cannot load (offline first run, an
- * `onnxruntime` ABI miss, the dev/Vitest path that bundles no model), the worker
- * degrades to a deterministic feature-hashing fallback recorded under a DISTINCT id
- * (`local:minilm-hash-384`, `FALLBACK_MODEL_ID`) so the two spaces are never KNN-mixed.
+ * The default on-device embedding model id (T087). Semantic search is pinned to
+ * EmbeddingGemma-300M ONNX, whose sentence embeddings are 768-dimensional.
  */
-export const DEFAULT_EMBEDDING_MODEL_ID = "local:all-MiniLM-L6-v2";
+export const DEFAULT_EMBEDDING_MODEL_ID = "onnx-community/embeddinggemma-300m-ONNX";
 
 /**
  * The pinned local instruction-model id (T093). `node-llama-cpp` running
@@ -392,10 +370,9 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   // `null` = inherit ts-fsrs `default_w` (the T036 behavior) until the optimization
   // flow explicitly applies a fitted preset. Never auto-filled (T080).
   fsrsParamsGlobal: null,
-  // Semantic search (T087) — OFF BY DEFAULT. When off, `/search` is FTS-only, no
-  // embeddings run, and the vector index is dormant. The local provider + the
-  // canonical default model id; the user's own API key is empty until they opt in.
-  semanticSearchEnabled: false,
+  // Semantic search (T087) — always-on local capability. Availability is decided by
+  // sqlite-vec/model readiness; this compatibility setting always resolves true.
+  semanticSearchEnabled: true,
   embeddingProvider: "local",
   embeddingApiKey: "",
   embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
@@ -413,7 +390,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
 };
 
 /** The valid embedding-provider values (the `semantic.provider` setting). */
-export const EMBEDDING_PROVIDERS = ["local", "api"] as const;
+export const EMBEDDING_PROVIDERS = ["local"] as const;
 export type EmbeddingProvider = (typeof EMBEDDING_PROVIDERS)[number];
 
 /** Type guard for {@link EmbeddingProvider}. */
@@ -665,22 +642,21 @@ export function coerceSettingValue<K extends keyof AppSettings>(
       // FSRS validity is enforced at the OptimizationService write (T080).
       return coerceFsrsParams(raw) as AppSettings[K];
     case "semanticSearchEnabled":
-      return (typeof raw === "boolean" ? raw : fallback) as AppSettings[K];
+      // Compatibility read/write only: semantic search is always on when local vec/model
+      // capability is available, so old stored `false` values cannot disable it.
+      return true as AppSettings[K];
     case "embeddingProvider":
-      return (isEmbeddingProvider(raw) ? raw : fallback) as AppSettings[K];
+      // Semantic embeddings are local-only. Legacy `"api"` or corrupt values are ignored.
+      return "local" as AppSettings[K];
     case "embeddingApiKey":
-      // A bounded string; a non-string degrades to the empty default so a corrupt
-      // value never reaches the worker's provider call.
+      // Legacy, main-side-only slot. Local embeddings never read this value, but keeping
+      // bounded coercion preserves backup/settings compatibility without projection leaks.
       return (
         typeof raw === "string" ? raw.slice(0, EMBEDDING_API_KEY_MAX) : fallback
       ) as AppSettings[K];
     case "embeddingModelId":
-      // A non-empty bounded string, else the canonical default model id.
-      return (
-        typeof raw === "string" && raw.trim().length > 0
-          ? raw.trim().slice(0, EMBEDDING_MODEL_ID_MAX)
-          : fallback
-      ) as AppSettings[K];
+      // The embedding space is pinned to EmbeddingGemma ONNX; old MiniLM/API ids coerce.
+      return DEFAULT_EMBEDDING_MODEL_ID as AppSettings[K];
     case "embeddingModelDownloaded":
       return (typeof raw === "boolean" ? raw : fallback) as AppSettings[K];
     case "aiEnabled":
@@ -720,6 +696,9 @@ export function appSettingsFromStored(stored: Readonly<Record<string, unknown>>)
     "dailyReviewBudget",
     stored[SETTINGS_KEYS.dailyReviewBudget],
   );
+  const rawEmbeddingModelId = stored[SETTINGS_KEYS.embeddingModelId];
+  const embeddingModelMatchesDefault =
+    rawEmbeddingModelId === undefined || rawEmbeddingModelId === DEFAULT_EMBEDDING_MODEL_ID;
   return {
     dailyBudgetMinutes: coerceSettingValue(
       "dailyBudgetMinutes",
@@ -812,10 +791,12 @@ export function appSettingsFromStored(stored: Readonly<Record<string, unknown>>)
       "embeddingModelId",
       stored[SETTINGS_KEYS.embeddingModelId],
     ),
-    embeddingModelDownloaded: coerceSettingValue(
-      "embeddingModelDownloaded",
-      stored[SETTINGS_KEYS.embeddingModelDownloaded],
-    ),
+    embeddingModelDownloaded: embeddingModelMatchesDefault
+      ? coerceSettingValue(
+          "embeddingModelDownloaded",
+          stored[SETTINGS_KEYS.embeddingModelDownloaded],
+        )
+      : false,
     aiEnabled: coerceSettingValue("aiEnabled", stored[SETTINGS_KEYS.aiEnabled]),
     aiProviderKind: coerceSettingValue("aiProviderKind", stored[SETTINGS_KEYS.aiProviderKind]),
     aiManagedProxyEnabled: coerceSettingValue(
@@ -862,7 +843,9 @@ export function settingsPatchToStored(
   for (const key of Object.keys(patch) as (keyof AppSettings)[]) {
     const value = patch[key];
     if (value !== undefined) {
-      out[SETTINGS_KEYS[key]] = value;
+      out[SETTINGS_KEYS[key]] = shouldCoerceSettingOnWrite(key)
+        ? coerceSettingValue(key, value)
+        : value;
     }
   }
   if (patch.dailyBudgetMinutes !== undefined && patch.dailyReviewBudget === undefined) {
@@ -878,6 +861,12 @@ export function settingsPatchToStored(
     );
   }
   return out;
+}
+
+function shouldCoerceSettingOnWrite(key: keyof AppSettings): boolean {
+  return (
+    key === "semanticSearchEnabled" || key === "embeddingProvider" || key === "embeddingModelId"
+  );
 }
 
 /** Set the default source priority from an A/B/C/D label (UI → numeric store). */

@@ -268,22 +268,21 @@ describe("JobRunner", () => {
     runner.stop();
   });
 
-  it("getJobSecrets injects a secret into the POSTED payload but NEVER persists it (T087 key leak guard)", async () => {
+  it("getJobSecrets injects a secret into the POSTED payload but NEVER persists it", async () => {
     const fake = new FakeWorker();
     // The "live" secret the provider reads — mutated mid-run to prove it is read
     // at POST time (a runtime key change is picked up without a restart/re-enqueue).
     let liveKey = "sk-first";
     const runner = new JobRunner({
       jobsRepo,
-      applyHandlers: { embed: () => ({ ok: true }) },
+      applyHandlers: { ai: () => ({ ok: true }) },
       workerPath: "(unused)",
       fork: () => fake,
-      // Mirror the index.ts wiring: only `embed` jobs get the key, read live.
-      getJobSecrets: (job) => (job.type === "embed" ? { apiKey: liveKey } : {}),
+      getJobSecrets: (job) => (job.type === "ai" ? { apiKey: liveKey } : {}),
     });
     runner.start();
 
-    const job = runner.enqueue("embed", { text: "hello", provider: "api", persist: true });
+    const job = runner.enqueue("ai", { action: "summarize", text: "hello" });
 
     // The PERSISTED row must NOT carry the key (the whole point of the fix).
     const stored = jobsRepo.findById(job.id);
@@ -299,7 +298,7 @@ describe("JobRunner", () => {
     fake.reply({ kind: "result", jobId: job.id, data: null });
     await until(() => jobsRepo.findById(job.id)?.status === "succeeded");
     liveKey = "sk-second";
-    const job2 = runner.enqueue("embed", { text: "world", provider: "api", persist: true });
+    const job2 = runner.enqueue("ai", { action: "summarize", text: "world" });
     await until(() => fake.posted.some((r) => r.jobId === job2.id));
     const posted2 = fake.posted.find((r) => r.jobId === job2.id);
     expect((posted2?.payload as { apiKey?: string }).apiKey).toBe("sk-second");
@@ -316,7 +315,7 @@ describe("JobRunner", () => {
       applyHandlers: { url_import: () => ({ status: "imported", id: "s" }) },
       workerPath: "(unused)",
       fork: () => fake,
-      getJobSecrets: (job) => (job.type === "embed" ? { apiKey: "sk" } : {}),
+      getJobSecrets: (job) => (job.type === "ai" ? { apiKey: "sk" } : {}),
     });
     runner.start();
     runner.enqueue("url_import", { url: "https://x.test" });

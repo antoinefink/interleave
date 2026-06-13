@@ -17,7 +17,7 @@
  * constructed with a `vecAvailable` flag; when `false`, `knn` returns `[]` and
  * `upsert` is a no-op guarded write (so a stray enqueue on a vec-absent host never
  * throws). The owning service additionally gates enqueues on the
- * `semanticSearchEnabled` setting.
+ * local vec/model availability.
  */
 
 import type { ElementId } from "@interleave/core";
@@ -47,11 +47,18 @@ export interface KnnHit {
   readonly distance: number;
 }
 
+export interface StoredEmbeddingVector {
+  readonly vector: number[];
+  readonly modelId: string;
+}
+
 /** Options narrowing a {@link EmbeddingRepository.knn} query. */
 export interface KnnOptions {
   readonly limit?: number;
   /** Restrict neighbors to a single element type. */
   readonly type?: EmbeddableType;
+  /** Restrict neighbors to the embedding model that produced the query vector. */
+  readonly modelId?: string;
   /** Exclude this element id from the results (e.g. the query's own element). */
   readonly excludeElementId?: ElementId;
 }
@@ -194,9 +201,13 @@ export class EmbeddingRepository {
    * re-embedding it.
    */
   getVector(elementId: ElementId): number[] | null {
+    return this.getVectorRecord(elementId)?.vector ?? null;
+  }
+
+  getVectorRecord(elementId: ElementId): StoredEmbeddingVector | null {
     if (!this.vecAvailable) return null;
     const row = this.db
-      .select({ vecRowid: embeddings.vecRowid })
+      .select({ vecRowid: embeddings.vecRowid, modelId: embeddings.modelId })
       .from(embeddings)
       .where(eq(embeddings.elementId, elementId))
       .get();
@@ -207,7 +218,7 @@ export class EmbeddingRepository {
     if (!vecRow) return null;
     try {
       const parsed = JSON.parse(String(vecRow.embedding));
-      return Array.isArray(parsed) ? (parsed as number[]) : null;
+      return Array.isArray(parsed) ? { vector: parsed as number[], modelId: row.modelId } : null;
     } catch {
       return null;
     }
@@ -260,12 +271,23 @@ export class EmbeddingRepository {
     }>(sql`
       SELECT b.element_id AS id, b.element_type AS type, v.distance AS distance
       FROM (
-        SELECT rowid, distance FROM element_vectors
-        WHERE embedding MATCH ${blob} ORDER BY distance LIMIT ${kVec}
+        SELECT rowid, distance
+        FROM element_vectors
+        WHERE embedding MATCH ${blob}
+        ${
+          options.modelId
+            ? sql`
+              AND rowid IN (
+                SELECT vec_rowid FROM embeddings WHERE model_id = ${options.modelId}
+              )
+            `
+            : sql``
+        }
+        ORDER BY distance
+        LIMIT ${kVec}
       ) v
       JOIN embeddings b ON b.vec_rowid = v.rowid
       JOIN elements e ON e.id = b.element_id AND e.deleted_at IS NULL
-      ORDER BY v.distance ASC
     `);
 
     const out: KnnHit[] = [];

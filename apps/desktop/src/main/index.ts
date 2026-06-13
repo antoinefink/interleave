@@ -28,7 +28,6 @@ import { CaptureController } from "./capture-controller";
 import { setCaptureEnabled } from "./capture-pairing";
 import type { CaptureOpenSourceInput, CaptureOpenSourceResult } from "./capture-server";
 import { DbService } from "./db-service";
-import { embedJobSecrets } from "./embedding-service";
 import { registerIpcHandlers } from "./ipc";
 import { createJobApplyHandlers } from "./job-apply-handlers";
 import { JobRunner } from "./job-runner";
@@ -366,11 +365,6 @@ function bootstrap(): void {
         ? { aiApiKey: s.aiApiKey, aiProviderKind: s.aiProviderKind }
         : { aiProviderKind: s.aiProviderKind };
     })(),
-    // Out-of-band secret seam (T087): the user's embedding-API key is read LIVE
-    // from settings and merged into the `embed` worker payload AT POST TIME — it is
-    // NEVER written to the persisted `jobs` row (the same secret-keeping discipline
-    // as the fork-env paths above).
-    getJobSecrets: (job) => embedJobSecrets(job, () => dbService.repos.settings.getAppSettings()),
   });
   // Hand the runner to the DB service so the OCR command path (T066) can enqueue
   // an `ocr` job (the apply handler reaches the OCR service the other direction).

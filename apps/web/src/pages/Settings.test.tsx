@@ -15,10 +15,6 @@ const h = vi.hoisted(() => ({
   getCapturePairing: vi.fn(),
   setCaptureEnabled: vi.fn(),
   regenerateCaptureToken: vi.fn(),
-  semanticStatus: vi.fn(),
-  semanticReindex: vi.fn(),
-  semanticDownloadModel: vi.fn(),
-  subscribeJobs: vi.fn(),
   aiStatus: vi.fn(),
   downloadAiModel: vi.fn(),
   setRetentionBandEnabled: vi.fn(),
@@ -55,10 +51,6 @@ vi.mock("../lib/appApi", async () => {
       getCapturePairing: h.getCapturePairing,
       setCaptureEnabled: h.setCaptureEnabled,
       regenerateCaptureToken: h.regenerateCaptureToken,
-      semanticStatus: h.semanticStatus,
-      semanticReindex: h.semanticReindex,
-      semanticDownloadModel: h.semanticDownloadModel,
-      subscribeJobs: h.subscribeJobs,
       aiStatus: h.aiStatus,
       downloadAiModel: h.downloadAiModel,
       setRetentionBandEnabled: h.setRetentionBandEnabled,
@@ -114,10 +106,8 @@ const settings: RendererSettings = {
   retentionByBand: {},
   retentionByBandEnabled: false,
   fsrsParamsGlobal: null,
-  semanticSearchEnabled: false,
-  embeddingProvider: "local",
-  embeddingApiKeyConfigured: false,
-  embeddingModelId: "local:minilm-hash-384",
+  semanticSearchEnabled: true,
+  embeddingModelId: "onnx-community/embeddinggemma-300m-ONNX",
   embeddingModelDownloaded: false,
   aiEnabled: false,
   aiProviderKind: "local",
@@ -184,13 +174,6 @@ beforeEach(() => {
     extensionOriginHint: null,
   });
   h.setCaptureEnabled.mockResolvedValue({ enabled: true, running: true, port: 17890 });
-  h.semanticStatus.mockResolvedValue({
-    vecAvailable: true,
-    embedded: 0,
-    total: 2,
-    modelDownloaded: false,
-  });
-  h.subscribeJobs.mockReturnValue(() => {});
   h.aiStatus.mockResolvedValue({
     enabled: false,
     providerKind: "local",
@@ -719,31 +702,38 @@ describe("Settings", () => {
     expect(getByTestId("settings-capture-origin")).toHaveTextContent("chrome-extension://abc");
   });
 
-  it("uses write-only key patches for semantic and AI settings", async () => {
+  it("does not render semantic-search provider or embedding-key settings", async () => {
     h.getAppSettings.mockResolvedValue({
       settings: {
         ...settings,
-        embeddingProvider: "api",
+      },
+    });
+    const { findByTestId, queryByTestId, queryByText } = render(<Settings />);
+
+    await findByTestId("setting-budget");
+
+    expect(queryByText(/^Semantic search$/i)).toBeNull();
+    expect(queryByTestId("setting-semantic-enabled")).toBeNull();
+    expect(queryByTestId("setting-embedding-provider")).toBeNull();
+    expect(queryByTestId("setting-embedding-api-key")).toBeNull();
+    expect(queryByTestId("setting-embedding-store-key")).toBeNull();
+  });
+
+  it("uses write-only key patches for AI settings", async () => {
+    h.getAppSettings.mockResolvedValue({
+      settings: {
+        ...settings,
         aiProviderKind: "openai",
       },
     });
     h.updateAppSettings.mockImplementation(({ patch }) => ({
       settings: {
         ...settings,
-        embeddingProvider: "api",
         aiProviderKind: "openai",
         ...patch,
       },
     }));
     const { getByTestId, findByTestId } = render(<Settings />);
-
-    fireEvent.change(await findByTestId("setting-embedding-api-key"), {
-      target: { value: " embed-key " },
-    });
-    fireEvent.click(getByTestId("setting-embedding-store-key"));
-    await waitFor(() =>
-      expect(h.updateAppSettings).toHaveBeenCalledWith({ patch: { embeddingApiKey: "embed-key" } }),
-    );
 
     fireEvent.change(await findByTestId("setting-ai-api-key"), {
       target: { value: " ai-key " },

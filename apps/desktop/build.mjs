@@ -30,7 +30,7 @@
  * Pass `--watch` for an incremental dev build.
  */
 
-import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..");
 const distDir = path.join(here, "dist");
 const watch = process.argv.includes("--watch");
+const DEFAULT_EMBEDDING_MODEL_ID = readCoreStringConstant("DEFAULT_EMBEDDING_MODEL_ID");
 
 /**
  * Runtime-provided / never-reached modules that must not be bundled.
@@ -140,59 +141,102 @@ function stageTesseract() {
 }
 
 /**
- * Stage `fastembed` + its prebuilt `onnxruntime-node` native addon next to the
- * worker bundle so the DB-free `embed` job (T087) can compute REAL on-device
- * MiniLM embeddings offline.
+ * Stage Transformers.js next to the worker bundle so the DB-free `embed` job
+ * (T087) can compute local EmbeddingGemma ONNX embeddings offline.
  *
  * Same constraint as tesseract: the packaged app ships NO `node_modules`, and the
- * worker keeps `fastembed`/`onnxruntime-node` EXTERNAL (the native `.node` addon
- * cannot be inlined by esbuild). We copy a SELF-CONTAINED tree into
- * `dist/resources/fastembed/node_modules/` (the pnpm peer dir of `fastembed`, laid
- * out as a real `node_modules` so its requires — `onnxruntime-node`, the tokenizer
- * addon — resolve). `embedding-model.ts` loads it from this staged path via a
+ * worker keeps `@huggingface/transformers` EXTERNAL so model/runtime assets stay as
+ * real files. We copy a SELF-CONTAINED tree into
+ * `dist/resources/transformers/node_modules/` (the pnpm peer dir of Transformers.js,
+ * laid out as a real `node_modules` so its requires resolve). `embedding-model.ts`
+ * loads it from this staged path via a
  * DYNAMIC require. This dir is packaged by the `dist/**` glob and `asarUnpack`'d (a
  * `.node`/`.onnx` cannot be read from inside the asar) — see electron-builder.config.cjs.
  *
- * The ~23 MB MiniLM model itself is NOT bundled — `fastembed` downloads it on first
- * enable into the app-data `models/` dir (`INTERLEAVE_MODEL_DIR`) and caches it on
- * disk across restarts (the download-on-first-enable UX the spec documents). A no-op
- * (with a warning) if `fastembed` is not installed — the worker then falls back to
- * the deterministic embedder.
+ * The EmbeddingGemma ONNX model is vendored into `models/` for packaged builds.
+ * Dev/watch builds skip model vendoring by default; set
+ * `INTERLEAVE_VENDOR_EMBEDDING_MODEL=1` to prefill the local package cache. Ship
+ * builds set `INTERLEAVE_REQUIRE_EMBEDDING_MODEL=1` and fail if the model cannot be
+ * staged.
  */
-function stageFastEmbed() {
-  const stageDir = path.join(distDir, "resources", "fastembed");
+async function stageTransformers() {
+  const stageDir = path.join(distDir, "resources", "transformers");
   rmSync(stageDir, { recursive: true, force: true });
 
-  let feEntry;
+  let transformersEntry;
   try {
-    // `fastembed`'s `exports` map blocks `./package.json`, so resolve its main entry
-    // (`lib/cjs/index.js`) and walk up to the package root instead.
-    feEntry = require.resolve("fastembed");
+    transformersEntry = require.resolve("@huggingface/transformers");
   } catch {
     console.warn(
-      "[desktop] stageFastEmbed: `fastembed` not installed — packaged worker will use the\n" +
-        "          deterministic embedding fallback. Run `pnpm --filter @interleave/desktop add fastembed`.",
+      "[desktop] stageTransformers: `@huggingface/transformers` not installed — packaged worker\n" +
+        "          will use the deterministic embedding fallback.",
     );
     return;
   }
-  // …/.pnpm/fastembed@<v>/node_modules/fastembed/lib/cjs/index.js → the package root
-  // is the dir holding `package.json`; its parent `node_modules` is the self-contained
-  // peer tree (fastembed + onnxruntime-node + the tokenizer addon).
-  let feDir = path.dirname(feEntry);
-  while (feDir !== path.dirname(feDir) && !existsSync(path.join(feDir, "package.json"))) {
-    feDir = path.dirname(feDir);
+  let transformersDir = path.dirname(transformersEntry);
+  while (
+    transformersDir !== path.dirname(transformersDir) &&
+    !existsSync(path.join(transformersDir, "package.json"))
+  ) {
+    transformersDir = path.dirname(transformersDir);
   }
   const stagedNodeModules = path.join(stageDir, "node_modules");
   mkdirSync(stagedNodeModules, { recursive: true });
 
   // pnpm's store is NESTED: each package's transitive deps live in its OWN
-  // `.pnpm/<pkg>@<v>/node_modules/` peer dir (NOT flat under fastembed), and the same
+  // `.pnpm/<pkg>@<v>/node_modules/` peer dir (NOT flat under the runtime package), and the same
   // dep can appear at several versions. Recursively walk the dependency graph from
-  // `fastembed`, copying every reachable package's REAL dir into the staged tree —
+  // the embedding runtime, copying every reachable package's REAL dir into the staged tree —
   // hoisting to the top-level `node_modules` when the name is free, else NESTING under
   // the requiring package (so conflicting versions stay isolated, exactly like a real
   // install). This produces a self-contained tree a plain `require` resolves offline.
-  collectPnpmGraph(feDir, stagedNodeModules);
+  collectPnpmGraph(transformersDir, stagedNodeModules);
+  await stageEmbeddingModel(stageDir);
+}
+
+export async function stageEmbeddingModel(stageDir, options = {}) {
+  const required = options.required ?? process.env.INTERLEAVE_REQUIRE_EMBEDDING_MODEL === "1";
+  const requested =
+    required || (options.requested ?? process.env.INTERLEAVE_VENDOR_EMBEDDING_MODEL === "1");
+  const modelDir = path.join(stageDir, "models");
+  mkdirSync(modelDir, { recursive: true });
+  if (!requested) {
+    console.warn(
+      "[desktop] stageTransformers: skipping EmbeddingGemma model vendoring for this dev build.",
+    );
+    return;
+  }
+  try {
+    const mod = options.transformers ?? (await import("@huggingface/transformers"));
+    if (mod.env) {
+      mod.env.cacheDir = modelDir;
+      mod.env.localModelPath = modelDir;
+      mod.env.allowLocalModels = true;
+      // Build-time acquisition only: packaged/runtime jobs keep this false.
+      mod.env.allowRemoteModels = true;
+    }
+    await mod.pipeline("feature-extraction", DEFAULT_EMBEDDING_MODEL_ID, { dtype: "q8" });
+    writeFileSync(
+      path.join(modelDir, ".interleave-model-ready.json"),
+      `${JSON.stringify({ modelId: DEFAULT_EMBEDDING_MODEL_ID }, null, 2)}\n`,
+    );
+  } catch (error) {
+    const message =
+      "[desktop] stageTransformers: EmbeddingGemma model could not be staged. " +
+      "Dev builds will fall back deterministically; dist builds require the model.\n" +
+      `          ${error instanceof Error ? error.message : String(error)}`;
+    if (required) throw new Error(message);
+    console.warn(message);
+  }
+}
+
+function readCoreStringConstant(name) {
+  const settingsSource = readFileSync(path.join(repoRoot, "packages/core/src/settings.ts"), "utf8");
+  const match = settingsSource.match(
+    new RegExp(`export\\s+const\\s+${name}\\s*=\\s*"([^"]+)"\\s*;`),
+  );
+  if (!match?.[1]) throw new Error(`[desktop] could not read ${name} from core settings`);
+  return match[1];
 }
 
 /**
@@ -317,18 +361,16 @@ async function run() {
       // (its node worker-thread script must be a real file on disk, so it cannot be
       // inlined). `stageTesseract()` copies that self-contained tree.
       //
-      // `fastembed` (+ its native `onnxruntime-node` addon, T087) is kept EXTERNAL
-      // for the SAME reason: the prebuilt onnxruntime `.node` binary must be a real
-      // file on disk and cannot be inlined. The worker loads it by a DYNAMIC require
-      // from the STAGED `dist/resources/fastembed/node_modules` tree that
-      // `stageFastEmbed()` copies. `onnxruntime-node`/`onnxruntime-common` are listed
-      // so esbuild never tries to follow fastembed's transitive native requires.
+      // Transformers.js (T087) is kept EXTERNAL so its ONNX/model runtime assets
+      // remain real files. The worker loads it by a DYNAMIC require from the staged
+      // `dist/resources/transformers/node_modules` tree that `stageTransformers()`
+      // copies.
       ...common,
       external: [
         ...external,
         "tesseract.js",
         "tesseract.js-core",
-        "fastembed",
+        "@huggingface/transformers",
         "onnxruntime-node",
         "onnxruntime-common",
       ],
@@ -339,7 +381,7 @@ async function run() {
 
   stageMigrations();
   stageTesseract();
-  stageFastEmbed();
+  await stageTransformers();
 
   if (watch) {
     const contexts = await Promise.all(targets.map((t) => esbuild.context(t)));
@@ -355,11 +397,13 @@ async function run() {
 
   await Promise.all(targets.map((t) => esbuild.build(t)));
   console.log(
-    "[desktop] built main.cjs + preload.cjs + job-worker.cjs + drizzle/ + resources/tesseract/ + resources/fastembed/",
+    "[desktop] built main.cjs + preload.cjs + job-worker.cjs + drizzle/ + resources/tesseract/ + resources/transformers/",
   );
 }
 
-run().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  run().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}

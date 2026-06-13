@@ -12,10 +12,9 @@
  * `waitForTerminal` resolves and WHEN the apply result arrives.
  */
 
-import type { AppSettings } from "@interleave/core";
-import { EMBEDDING_DIM } from "@interleave/core";
-import { describe, expect, it } from "vitest";
-import { EmbeddingService, embedJobSecrets } from "./embedding-service";
+import { DEFAULT_EMBEDDING_MODEL_ID, EMBEDDING_DIM } from "@interleave/core";
+import { describe, expect, it, vi } from "vitest";
+import { EmbeddingService } from "./embedding-service";
 
 /** A controllable fake runner: records enqueues + lets the test resolve terminals. */
 function makeFakeRunner() {
@@ -53,10 +52,35 @@ function makeService(runner: ReturnType<typeof makeFakeRunner>) {
         semanticSearchEnabled: true,
         embeddingProvider: "local",
         embeddingApiKey: "",
-        embeddingModelId: "local:minilm-hash-384",
+        embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
         embeddingModelDownloaded: true,
       }) as never,
   });
+}
+
+function makeServiceWithSettingsUpdate(
+  runner: ReturnType<typeof makeFakeRunner>,
+  updateAppSettings = vi.fn(),
+) {
+  return {
+    service: new EmbeddingService({
+      db: {} as never,
+      repositories: {
+        embeddings: { available: true },
+        settings: { updateAppSettings },
+      } as never,
+      getRunner: () => runner as never,
+      getSettings: () =>
+        ({
+          semanticSearchEnabled: true,
+          embeddingProvider: "local",
+          embeddingApiKey: "",
+          embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
+          embeddingModelDownloaded: false,
+        }) as never,
+    }),
+    updateAppSettings,
+  };
 }
 
 describe("EmbeddingService.embedQuery (T087 leak guard)", () => {
@@ -140,7 +164,7 @@ describe("EmbeddingService.embedQuery (T087 leak guard)", () => {
     expect(pending.size).toBe(0);
   });
 
-  it("the enqueued query payload carries NO apiKey even with provider:api (key is out-of-band)", async () => {
+  it("the enqueued query payload is local-only and never carries API routing", async () => {
     const runner = makeFakeRunner();
     const service = new EmbeddingService({
       db: {} as never,
@@ -149,48 +173,81 @@ describe("EmbeddingService.embedQuery (T087 leak guard)", () => {
       getSettings: () =>
         ({
           semanticSearchEnabled: true,
-          embeddingProvider: "api",
+          embeddingProvider: "local",
           embeddingApiKey: "sk-user-own-key",
-          embeddingModelId: "openai:text-embedding-3-small",
+          embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
           embeddingModelDownloaded: true,
         }) as never,
     });
     // Times out (the fake runner never resolves) but the enqueue still happened.
     await service.embedQuery("semantic query");
     expect(runner.enqueued).toHaveLength(1);
-    const payload = runner.enqueued[0]?.payload as { apiKey?: string; apiModel?: string };
-    expect(payload.apiKey).toBeUndefined(); // the secret is NEVER in the payload
-    expect(payload.apiModel).toBe("text-embedding-3-small"); // non-secret routing stays
-  });
-});
-
-describe("embedJobSecrets (T087 out-of-band key)", () => {
-  function settings(over: Partial<AppSettings>): AppSettings {
-    return {
-      embeddingProvider: "local",
-      embeddingApiKey: "",
-      ...over,
-    } as AppSettings;
-  }
-
-  it("returns the live key only for an `embed` job with provider:api + a non-empty key", () => {
-    const get = () => settings({ embeddingProvider: "api", embeddingApiKey: "sk-live" });
-    expect(embedJobSecrets({ type: "embed" }, get)).toEqual({ apiKey: "sk-live" });
+    const payload = runner.enqueued[0]?.payload as {
+      apiKey?: string;
+      apiModel?: string;
+      provider?: string;
+    };
+    expect(payload.provider).toBe("local");
+    expect(payload.apiKey).toBeUndefined();
+    expect(payload.apiModel).toBeUndefined();
   });
 
-  it("returns {} for the local provider (no key leaves settings)", () => {
-    const get = () => settings({ embeddingProvider: "local", embeddingApiKey: "sk-live" });
-    expect(embedJobSecrets({ type: "embed" }, get)).toEqual({});
+  it("downloadModel marks downloaded only when the real EmbeddingGemma model answered", async () => {
+    const runner = makeFakeRunner();
+    const { service, updateAppSettings } = makeServiceWithSettingsUpdate(runner);
+
+    const promise = service.downloadModel();
+    const job = runner.enqueued[0];
+    if (!job) throw new Error("expected an enqueued warm-up job");
+    service.applyResult(
+      {
+        text: "warm up the on-device embedding model",
+        modelId: DEFAULT_EMBEDDING_MODEL_ID,
+        provider: "local",
+        dim: EMBEDDING_DIM,
+        persist: false,
+      },
+      {
+        vector: new Array(EMBEDDING_DIM).fill(0.4),
+        modelId: DEFAULT_EMBEDDING_MODEL_ID,
+        dim: EMBEDDING_DIM,
+      },
+      job.id,
+    );
+    runner.resolveSucceeded(job.id);
+
+    await expect(promise).resolves.toEqual({ downloaded: true });
+    expect(updateAppSettings).toHaveBeenCalledWith({
+      embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
+      embeddingModelDownloaded: true,
+    });
   });
 
-  it("returns {} when provider:api but the key is empty", () => {
-    const get = () => settings({ embeddingProvider: "api", embeddingApiKey: "" });
-    expect(embedJobSecrets({ type: "embed" }, get)).toEqual({});
-  });
+  it("downloadModel leaves downloaded false when the worker fell back", async () => {
+    const runner = makeFakeRunner();
+    const { service, updateAppSettings } = makeServiceWithSettingsUpdate(runner);
 
-  it("returns {} for a non-embed job type even with a configured key", () => {
-    const get = () => settings({ embeddingProvider: "api", embeddingApiKey: "sk-live" });
-    expect(embedJobSecrets({ type: "url_import" }, get)).toEqual({});
-    expect(embedJobSecrets({ type: "ocr" }, get)).toEqual({});
+    const promise = service.downloadModel();
+    const job = runner.enqueued[0];
+    if (!job) throw new Error("expected an enqueued warm-up job");
+    service.applyResult(
+      {
+        text: "warm up the on-device embedding model",
+        modelId: DEFAULT_EMBEDDING_MODEL_ID,
+        provider: "local",
+        dim: EMBEDDING_DIM,
+        persist: false,
+      },
+      {
+        vector: new Array(EMBEDDING_DIM).fill(0.5),
+        modelId: "local:embeddinggemma-hash-768",
+        dim: EMBEDDING_DIM,
+      },
+      job.id,
+    );
+    runner.resolveSucceeded(job.id);
+
+    await expect(promise).resolves.toEqual({ downloaded: false });
+    expect(updateAppSettings).not.toHaveBeenCalled();
   });
 });

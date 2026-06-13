@@ -82,6 +82,20 @@ test("the /settings UI reads the persisted settings through the bridge", async (
   await app.close();
 });
 
+test("settings no longer exposes semantic search provider controls", async () => {
+  const app = await launchApp(dataDir);
+  const page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+  await gotoSettings(page);
+
+  await expect(page.getByText(/^Semantic search$/)).toHaveCount(0);
+  await expect(page.getByTestId("setting-semantic-enabled")).toHaveCount(0);
+  await expect(page.getByTestId("setting-embedding-provider")).toHaveCount(0);
+  await expect(page.getByTestId("setting-embedding-api-key")).toHaveCount(0);
+
+  await app.close();
+});
+
 test("settings scrolling stays inside the app shell instead of moving the document", async () => {
   const app = await launchApp(dataDir);
   const page = await app.firstWindow();
