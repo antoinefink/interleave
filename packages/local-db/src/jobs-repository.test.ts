@@ -46,14 +46,21 @@ describe("JobsRepository", () => {
     expect(repo.findById(job.id)?.payload).toEqual({ url: "https://x.test" });
   });
 
-  it("embedJobStats aggregates queued/running/failed embed jobs + the last embed error (U2)", () => {
-    // Two embed jobs: one queued, one failed (with an error). A non-embed failed
+  it("embedJobStats counts INDEX embeds only — transient query embeds are excluded (U2)", () => {
+    // Two INDEX embed jobs: one queued, one failed (with an error). A non-embed failed
     // job must NOT be counted, and its error must NOT leak into lastError.
-    repo.enqueue({ type: "embed", payload: { elementId: "el_q" } });
-    const toFail = repo.enqueue({ type: "embed", payload: { elementId: "el_f" } });
+    repo.enqueue({ type: "embed", payload: { elementId: "el_q", persist: true } });
+    const toFail = repo.enqueue({ type: "embed", payload: { elementId: "el_f", persist: true } });
     repo.fail(toFail.id, "OVERSIZED: element text too large");
     const otherFail = repo.enqueue({ type: "ocr", payload: { elementId: "el_o" } });
     repo.fail(otherFail.id, "ocr boom");
+    // Transient QUERY embeds (persist:false, no elementId) are search-time work, not
+    // the index building — a queued one (in flight) and a failed one (timed out). They
+    // must NOT inflate the counts, and the query timeout must NOT surface as lastError
+    // (else typing a search would report "Indexing…" on a fully-embedded vault).
+    repo.enqueue({ type: "embed", payload: { persist: false } });
+    const queryFail = repo.enqueue({ type: "embed", payload: { persist: false } });
+    repo.fail(queryFail.id, "QUERY_EMBED_TIMEOUT");
 
     const stats = repo.embedJobStats();
     expect(stats.queued).toBe(1);

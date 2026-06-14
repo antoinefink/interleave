@@ -144,10 +144,20 @@ test("semantic search builds the index and finds related material, off-main", as
 
   // A query that is semantically near the seeded "intelligence" content but shares
   // vocabulary rather than the exact title term — the fused result still surfaces it.
+  // The fused semantic retrieval actually ran — assert the search MODE through the
+  // bridge (a stable signal, not removed UI chrome): `mode === "semantic"` means the
+  // KNN+FTS fusion executed, not the FTS-only fallback.
+  const mode = await page.evaluate(async () => {
+    const api = window.appApi as unknown as {
+      semantic: { search(r: { q: string }): Promise<{ mode: string }> };
+    };
+    return (await api.semantic.search({ q: "cognition skill acquisition" })).mode;
+  });
+  expect(mode).toBe("semantic");
+
   await openSearch(page);
   await page.getByTestId("library-search-input").fill("cognition skill acquisition");
-  // The semantic-on hint appears (the feature actually ran), and at least one result.
-  await expect(page.getByTestId("library-semantic-on")).toBeVisible({ timeout: 8000 });
+  // ...and the UI renders at least one fused result row.
   await expect(page.getByTestId("library-result").first()).toBeVisible({ timeout: 8000 });
 
   await app.close();

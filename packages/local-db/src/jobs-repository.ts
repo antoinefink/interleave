@@ -313,6 +313,14 @@ export class JobsRepository {
    * many embed jobs are `queued`/`running` (the index is "building") and `failed`
    * (retries exhausted, surfaced + retryable), plus the most recent failed embed's
    * raw error text (the UI renders it in plain language). Pure read; no op-log.
+   *
+   * Counts INDEX embeds only — rows with an `elementId` (the same predicate
+   * {@link activeOrFailedEmbedElementIds} uses to mean "index work"). Transient
+   * QUERY embeds (`persist:false`, no `elementId`) are enqueued on every `/search`
+   * keystroke to embed the query text; they are search-time work, NOT the index
+   * building. Counting them flipped `indexHealth` to "building" whenever the user
+   * typed — surfacing a bogus "Indexing… N of N" even on a fully-embedded vault —
+   * and let a transient query timeout masquerade as an index failure in `lastError`.
    */
   embedJobStats(): {
     queued: number;
@@ -327,10 +335,12 @@ export class JobsRepository {
         COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
       FROM jobs
       WHERE type = 'embed'
+        AND json_extract(payload, '$.elementId') IS NOT NULL
     `);
     const errRow = this.db.get<{ error: string | null }>(sql`
       SELECT error FROM jobs
       WHERE type = 'embed' AND status = 'failed' AND error IS NOT NULL
+        AND json_extract(payload, '$.elementId') IS NOT NULL
       ORDER BY finished_at DESC
       LIMIT 1
     `);

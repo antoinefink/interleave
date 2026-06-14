@@ -682,6 +682,47 @@ describe("LibraryScreen", () => {
     ).toBeTruthy();
   });
 
+  it("shows NO standing hint on the happy path — semantic ran, index healthy (per-row badge carries it)", async () => {
+    // The removed "Semantic search on — …" banner was pure chrome: when the index is
+    // healthy and the search ran in semantic mode, the meaning-only `related` badges
+    // already mark which rows came from vectors. Assert none of the hint variants render.
+    h.semanticStatus.mockResolvedValue({
+      enabled: true,
+      vecAvailable: true,
+      modelDownloaded: true,
+      embedded: 2,
+      total: 2,
+      modelId: "test-model",
+      modelState: "ready",
+      indexHealth: "healthy",
+      coverageRatio: 1,
+      failedCount: 0,
+      lastError: null,
+      etaSeconds: null,
+    });
+    h.semanticSearch.mockResolvedValue({
+      results: [{ ...h.sourceHit, semantic: true, vecDistance: 0.12 }],
+      mode: "semantic",
+      counts: {
+        byType: { source: 1, extract: 0, card: 0 },
+        byConcept: {},
+        byPriority: { A: 1, B: 0, C: 0, D: 0 },
+      },
+    });
+    render(<LibraryScreen />);
+    await waitFor(() => expect(h.semanticStatus).toHaveBeenCalled());
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+    await waitFor(() => expect(h.semanticSearch).toHaveBeenCalled());
+    // The result row rendered, but no semantic hint banner of any kind did.
+    expect(await screen.findByTestId("library-result")).toBeInTheDocument();
+    expect(screen.queryByTestId("library-semantic-on")).toBeNull();
+    expect(screen.queryByTestId("library-semantic-building")).toBeNull();
+    expect(screen.queryByTestId("library-semantic-partial")).toBeNull();
+    expect(screen.queryByTestId("library-semantic-off")).toBeNull();
+  });
+
   it("shows a reassuring 'Indexing…' hint while the index is actively building (U6)", async () => {
     h.semanticStatus.mockResolvedValue({
       enabled: true,

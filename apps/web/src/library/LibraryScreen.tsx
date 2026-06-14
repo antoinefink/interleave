@@ -640,13 +640,19 @@ export function LibraryScreen() {
                     {error}
                   </p>
                 ) : null}
-                {/* Semantic-search affordance (T087): a calm one-liner telling the
-                    user which retrieval ran. Only shown once there is a query. */}
+                {/* Semantic-search affordance (T087): an HONEST hint, shown only when
+                    it tells the user something they can't already see. The happy path
+                    (semantic ran, index healthy) shows NOTHING — the per-row `related`
+                    badge already marks meaning-only hits, so a standing "semantic on"
+                    banner is pure chrome. We surface a line only for the exceptions:
+                    a genuine in-flight index build, honestly-degraded partial coverage,
+                    or a keyword-only fallback (and why). Only shown once there is a query. */}
                 {hasQuery ? (
                   indexBuilding ? (
                     <div className="lib-hint" data-testid="library-semantic-building">
-                      Indexing… {semanticIndex.embedded} of {semanticIndex.total}. Semantic results
-                      improve as it finishes.
+                      {semanticIndex.embedded < semanticIndex.total
+                        ? `Indexing… ${semanticIndex.embedded} of ${semanticIndex.total}.`
+                        : "Indexing…"}
                     </div>
                   ) : searchMode === "semantic" ? (
                     partialCoverage ? (
@@ -654,11 +660,7 @@ export function LibraryScreen() {
                         Partial coverage — newer items may only match by keyword until indexing
                         finishes.
                       </div>
-                    ) : (
-                      <div className="lib-hint" data-testid="library-semantic-on">
-                        Semantic search on — results include conceptually related items.
-                      </div>
-                    )
+                    ) : null
                   ) : searchMode === "fts" || searchMode === "disabled" ? (
                     <div className="lib-hint" data-testid="library-semantic-off">
                       {keywordFallbackHint}
