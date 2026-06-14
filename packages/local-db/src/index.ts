@@ -259,6 +259,7 @@ export {
   type InboxItemSummary,
   type InboxProvenance,
   InboxQuery,
+  inboxSourceDomain,
   inboxSourceTypeLabel,
 } from "./inbox-query";
 export {

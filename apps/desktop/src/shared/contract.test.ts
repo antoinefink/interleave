@@ -628,6 +628,8 @@ describe("SourcesImportPdfRequestSchema (T064)", () => {
         accessedAt: "2026-06-01T00:00:00.000Z",
         charCount: 10,
         previewSnippet: "Page 1",
+        origin: "file",
+        domain: null,
       },
     };
     const cancelled: SourcesImportPdfResult = { status: "cancelled" };
@@ -685,6 +687,8 @@ describe("EPUB import schemas (T067)", () => {
         accessedAt: "2026-06-01T00:00:00.000Z",
         charCount: 10,
         previewSnippet: "Title",
+        origin: "file",
+        domain: null,
       },
     };
     expect(result.status).toBe("imported");
@@ -731,6 +735,8 @@ describe("Media import schemas (T073)", () => {
         accessedAt: "2026-06-01T00:00:00.000Z",
         charCount: 10,
         previewSnippet: "A Talk",
+        origin: "file",
+        domain: null,
       },
       mediaKind: "video",
       hasTranscript: true,
@@ -815,6 +821,8 @@ describe("Highlight import schemas (T069)", () => {
           accessedAt: "2026-06-01T00:00:00.000Z",
           charCount: 4,
           previewSnippet: "Book",
+          origin: "highlight_import",
+          domain: null,
         },
       ],
     };
@@ -858,6 +866,8 @@ describe("Anki import/export schemas (T070)", () => {
         accessedAt: "2026-06-01T00:00:00.000Z",
         charCount: 0,
         previewSnippet: "",
+        origin: "file",
+        domain: null,
       },
     };
     expect(result.cardCount).toBe(42);
@@ -947,6 +957,8 @@ describe("Markdown/HTML import-export schemas (T068)", () => {
         accessedAt: "2026-06-01T00:00:00.000Z",
         charCount: 10,
         previewSnippet: "A Note",
+        origin: "manual",
+        domain: null,
       },
     };
     expect(imp.id).toBe("el_md");

@@ -23,7 +23,7 @@ import { ElementRepository } from "./element-repository";
 import { InboxQuery } from "./inbox-query";
 import { createRepositories, type Repositories } from "./index";
 import { OperationLogRepository } from "./operation-log-repository";
-import { SourceRepository } from "./source-repository";
+import { type CreateSourceInput, SourceRepository } from "./source-repository";
 import { createInMemoryDb } from "./test-db";
 
 let handle: DbHandle;
@@ -254,5 +254,108 @@ describe("InboxQuery (T012)", () => {
     expect(detail?.bodyDoc).toEqual(prosemirrorJson);
     expect(detail?.bodyText).toBe("");
     expect(detail?.bodyPreview).toBeNull();
+  });
+});
+
+describe("InboxQuery origin + domain read model (T126)", () => {
+  /** Create an inbox source with arbitrary provenance (origin / URL fields). */
+  function importInboxWith(
+    title: string,
+    extra: Omit<CreateSourceInput, "title" | "priority" | "status" | "stage">,
+  ) {
+    return new SourceRepository(handle.db).create({
+      title,
+      priority: priorityFromLabel("C"),
+      status: "inbox",
+      stage: "raw_source",
+      ...extra,
+    });
+  }
+
+  it("surfaces origin from the persisted captured_via column across feeders", () => {
+    const manual = importInboxWith("Hand note", { capturedVia: "manual" }).element;
+    const url = importInboxWith("Fetched page", {
+      capturedVia: "url",
+      url: "https://example.com/post",
+      canonicalUrl: "https://example.com/post",
+    }).element;
+    const extension = importInboxWith("Captured page", {
+      capturedVia: "extension",
+      url: "https://news.ycombinator.com/item?id=1",
+      canonicalUrl: "https://news.ycombinator.com/item?id=1",
+    }).element;
+    const highlight = importInboxWith("Kindle export", { capturedVia: "highlight_import" }).element;
+    // A legacy row that predates the column writes nothing → null.
+    const legacy = importInboxWith("Legacy import", {}).element;
+
+    const byId = new Map(inbox.list().map((item) => [item.id, item.origin]));
+    expect(byId.get(manual.id)).toBe("manual");
+    expect(byId.get(url.id)).toBe("url");
+    expect(byId.get(extension.id)).toBe("extension");
+    expect(byId.get(highlight.id)).toBe("highlight_import");
+    expect(byId.get(legacy.id)).toBeNull();
+  });
+
+  it("parses domain from canonicalUrl ?? url, stripping a leading www.", () => {
+    const manual = importInboxWith("Hand note", { capturedVia: "manual" }).element;
+    const bareHost = importInboxWith("Bare host", {
+      capturedVia: "url",
+      url: "https://example.com/some/path?q=1#frag",
+    }).element;
+    const wwwHost = importInboxWith("WWW host", {
+      capturedVia: "extension",
+      url: "https://www.example.com/x",
+    }).element;
+    // canonicalUrl wins over url when both present.
+    const canonicalWins = importInboxWith("Canonical wins", {
+      capturedVia: "url",
+      url: "https://www.tracking.example.com/a?utm=1",
+      canonicalUrl: "https://blog.example.com/a",
+    }).element;
+
+    const byId = new Map(inbox.list().map((item) => [item.id, item.domain]));
+    // No URL → null.
+    expect(byId.get(manual.id)).toBeNull();
+    expect(byId.get(bareHost.id)).toBe("example.com");
+    // Leading www. stripped.
+    expect(byId.get(wwwHost.id)).toBe("example.com");
+    expect(byId.get(canonicalWins.id)).toBe("blog.example.com");
+  });
+
+  it("returns domain null for a malformed URL rather than throwing", () => {
+    const malformed = importInboxWith("Malformed", {
+      capturedVia: "url",
+      url: "not a url",
+    }).element;
+    // The list query must not throw on garbage URLs.
+    let list: ReturnType<InboxQuery["list"]> = [];
+    expect(() => {
+      list = inbox.list();
+    }).not.toThrow();
+    expect(list.find((i) => i.id === malformed.id)?.domain).toBeNull();
+  });
+
+  it("keeps the inbox list newest-first and inbox-only while exposing origin/domain", () => {
+    const elements = new ElementRepository(handle.db);
+    const older = importInboxWith("Older", {
+      capturedVia: "url",
+      url: "https://www.example.com/old",
+    }).element;
+    const newer = importInboxWith("Newer", { capturedVia: "manual" }).element;
+    // An accepted source must not appear in the list.
+    const accepted = importInboxWith("Accepted", { capturedVia: "file" }).element;
+    elements.update(accepted.id, { status: "active" });
+
+    const list = inbox.list();
+    // Newest-first ordering preserved.
+    expect(list.map((i) => i.id)).toEqual([newer.id, older.id]);
+    expect(list.map((i) => i.id)).not.toContain(accepted.id);
+    // The two new fields ride alongside the existing shape.
+    const newerRow = list.find((i) => i.id === newer.id);
+    expect(newerRow?.origin).toBe("manual");
+    expect(newerRow?.domain).toBeNull();
+    const olderRow = list.find((i) => i.id === older.id);
+    expect(olderRow?.origin).toBe("url");
+    expect(olderRow?.domain).toBe("example.com");
   });
 });

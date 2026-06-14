@@ -1179,6 +1179,13 @@ export interface SourcesImportManualRequest {
   readonly priority?: PriorityLabelInput;
 }
 
+/**
+ * Capture origin (T126) — WHERE a source entered the system, mirrored from the
+ * core `CapturedVia` tuple. The renderer labels it via `capturedViaLabel`
+ * (`null` ⇒ "Other") for the inbox group-by-origin view.
+ */
+export type CapturedVia = "manual" | "url" | "extension" | "highlight_import" | "file";
+
 /** A flat, list-row summary for one inbox source. */
 export interface InboxItemSummary {
   readonly id: string;
@@ -1192,6 +1199,10 @@ export interface InboxItemSummary {
   readonly accessedAt: string | null;
   readonly charCount: number;
   readonly previewSnippet: string | null;
+  /** Persisted `captured_via` raw value, or `null` for a legacy / un-recorded origin. */
+  readonly origin: CapturedVia | null;
+  /** URL host of `canonicalUrl ?? url` with a leading `www.` stripped, or `null` when no URL. */
+  readonly domain: string | null;
 }
 
 export interface SourcesImportManualResult {

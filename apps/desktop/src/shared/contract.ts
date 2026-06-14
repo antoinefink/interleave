@@ -27,6 +27,7 @@ import {
   type AppSettings,
   CARD_EDIT_CHOICES,
   CARD_KINDS,
+  type CapturedVia,
   CHRONIC_POSTPONE_THRESHOLD_MAX,
   CHRONIC_POSTPONE_THRESHOLD_MIN,
   CONFIDENCE_LEVELS,
@@ -95,6 +96,7 @@ import { z } from "zod";
 // the badge from them.
 export type {
   AppSettings,
+  CapturedVia,
   ConfidenceLevel,
   ExtractFate,
   ExtractShapeResult,
@@ -1639,6 +1641,17 @@ export interface InboxItemSummary {
   readonly charCount: number;
   /** A short plain-text preview snippet (first ~160 chars), or `null`. */
   readonly previewSnippet: string | null;
+  /**
+   * Capture origin (T126) — the persisted `captured_via` raw value, or `null` for a
+   * legacy / un-recorded origin. The renderer labels it via `capturedViaLabel`
+   * (`null` ⇒ "Other") for the group-by-origin view.
+   */
+  readonly origin: CapturedVia | null;
+  /**
+   * The URL host of `canonicalUrl ?? url` with a leading `www.` stripped (T126), or
+   * `null` when the source has no URL. The group-by-domain bucket key.
+   */
+  readonly domain: string | null;
 }
 
 export interface SourcesImportManualResult {

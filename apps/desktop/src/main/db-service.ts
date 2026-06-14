@@ -86,6 +86,7 @@ import {
   HEAVY_FIT_REVIEW_THRESHOLD,
   InboxQuery,
   InspectorQuery,
+  inboxSourceDomain,
   inboxSourceTypeLabel,
   type LibraryBrowseFilters,
   LibraryQuery,
@@ -3517,6 +3518,8 @@ export class DbService {
       accessedAt: provenance?.accessedAt ?? null,
       charCount: plainText.length,
       previewSnippet,
+      origin: provenance?.capturedVia ?? null,
+      domain: inboxSourceDomain(provenance),
     };
   }
 

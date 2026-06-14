@@ -13,6 +13,7 @@
  */
 
 import type {
+  CapturedVia,
   ConfidenceLevel,
   Element,
   ElementId,
@@ -36,6 +37,19 @@ export interface InboxItemSummary {
   readonly accessedAt: string | null;
   readonly charCount: number;
   readonly previewSnippet: string | null;
+  /**
+   * Capture origin (T126) — the persisted `sources.captured_via` (`manual`/`url`/
+   * `extension`/`highlight_import`/`file`), or `null` for a legacy / un-recorded
+   * origin. The raw value (NOT a human label — the renderer labels it via
+   * `capturedViaLabel`); the inbox group-by-origin view buckets `null` into "Other".
+   */
+  readonly origin: CapturedVia | null;
+  /**
+   * The host of `canonicalUrl ?? url` with a leading `www.` stripped (T126), or
+   * `null` when the source has no URL or the URL is malformed. The key the inbox
+   * group-by-domain view buckets on.
+   */
+  readonly domain: string | null;
 }
 
 /** Source provenance shown in the inbox preview's metadata rail. */
@@ -98,6 +112,28 @@ export function inboxSourceTypeLabel(source: Source | null): string {
 function mediaSourceLabel(kind: MediaKind): string {
   if (kind === "youtube") return "YouTube";
   return kind === "audio" ? "Audio" : "Video";
+}
+
+/**
+ * Parse the group-by-domain key from a source's URL (T126): the host of
+ * `canonicalUrl ?? url`, normalized by stripping a leading `www.` (so
+ * `https://www.example.com/x` and `https://example.com/y` bucket together). Returns
+ * `null` when there is no URL or the URL is malformed (the platform `URL` parser
+ * throws on garbage — we swallow it rather than let the read query throw).
+ *
+ * Exported so the DB service's per-item summary builder (`summaryForId`) derives the
+ * `domain` field through the SAME rule the list query uses — no divergent parse.
+ */
+export function inboxSourceDomain(source: Source | null): string | null {
+  const raw = source?.canonicalUrl ?? source?.url ?? null;
+  if (!raw) return null;
+  try {
+    const host = new URL(raw).hostname;
+    if (!host) return null;
+    return host.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
 }
 
 /** Collapse whitespace + trim, then take the first `max` chars (no mid-word ellipsis fuss). */
@@ -189,6 +225,8 @@ export class InboxQuery {
       accessedAt: provenance?.accessedAt ?? null,
       charCount: plainText.length,
       previewSnippet: snippet(plainText, 160),
+      origin: provenance?.capturedVia ?? null,
+      domain: inboxSourceDomain(provenance),
     };
   }
 }
