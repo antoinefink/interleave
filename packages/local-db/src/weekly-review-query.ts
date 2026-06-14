@@ -1,6 +1,6 @@
 import type { ElementId, IsoTimestamp, PriorityLabel } from "@interleave/core";
 import { elements, type InterleaveDatabase, reviewLogs } from "@interleave/db";
-import { and, count, eq, gte, lte, sql } from "drizzle-orm";
+import { type AnyColumn, and, count, eq, gte, lt, lte, sql } from "drizzle-orm";
 import { nowIso } from "./ids";
 import type { Repositories } from "./index";
 import type {
@@ -21,6 +21,10 @@ export interface WeeklyReviewLedger {
   readonly extracts: number;
   readonly cards: number;
   readonly maturedCards: number;
+  readonly sourcesPrev?: number;
+  readonly extractsPrev?: number;
+  readonly cardsPrev?: number;
+  readonly maturedCardsPrev?: number;
   readonly priorityMisses: readonly WeeklyReviewPriorityMiss[];
 }
 
@@ -109,11 +113,21 @@ export class WeeklyReviewQuery {
     window: WeeklyReviewWindow,
     bands: readonly PriorityIntegrityBandSummary[],
   ): WeeklyReviewLedger {
+    const currentWindow: CountWindow = {
+      start: window.start,
+      end: window.end,
+      endInclusive: true,
+    };
+    const priorWindow = previousWindow(window);
     return {
-      sources: this.countElements("source", window),
-      extracts: this.countElements("extract", window),
-      cards: this.countElements("card", window),
-      maturedCards: this.countMaturedCards(window),
+      sources: this.countElements("source", currentWindow),
+      extracts: this.countElements("extract", currentWindow),
+      cards: this.countElements("card", currentWindow),
+      maturedCards: this.countMaturedCards(currentWindow),
+      sourcesPrev: this.countElements("source", priorWindow),
+      extractsPrev: this.countElements("extract", priorWindow),
+      cardsPrev: this.countElements("card", priorWindow),
+      maturedCardsPrev: this.countMaturedCards(priorWindow),
       priorityMisses: bands
         .filter((band) => band.deferred > 0)
         .map((band) => ({
@@ -124,7 +138,7 @@ export class WeeklyReviewQuery {
     };
   }
 
-  private countElements(type: string, window: WeeklyReviewWindow): number {
+  private countElements(type: string, window: CountWindow): number {
     return (
       this.db
         .select({ value: count() })
@@ -133,14 +147,14 @@ export class WeeklyReviewQuery {
           and(
             eq(elements.type, type),
             gte(elements.createdAt, window.start),
-            lte(elements.createdAt, window.end),
+            upperBound(elements.createdAt, window),
           ),
         )
         .get()?.value ?? 0
     );
   }
 
-  private countMaturedCards(window: WeeklyReviewWindow): number {
+  private countMaturedCards(window: CountWindow): number {
     const row = this.db
       .select({ value: sql<number>`count(distinct ${reviewLogs.elementId})` })
       .from(reviewLogs)
@@ -148,12 +162,33 @@ export class WeeklyReviewQuery {
         and(
           eq(reviewLogs.nextState, "review"),
           gte(reviewLogs.reviewedAt, window.start),
-          lte(reviewLogs.reviewedAt, window.end),
+          upperBound(reviewLogs.reviewedAt, window),
         ),
       )
       .get();
     return Number(row?.value ?? 0);
   }
+}
+
+interface CountWindow {
+  readonly start: IsoTimestamp;
+  readonly end: IsoTimestamp;
+  readonly endInclusive: boolean;
+}
+
+function upperBound(column: AnyColumn, window: CountWindow) {
+  return window.endInclusive ? lte(column, window.end) : lt(column, window.end);
+}
+
+function previousWindow(window: WeeklyReviewWindow): CountWindow {
+  const start = new Date(window.start);
+  const priorStart = new Date(start);
+  priorStart.setDate(priorStart.getDate() - window.days);
+  return {
+    start: priorStart.toISOString() as IsoTimestamp,
+    end: window.start,
+    endInclusive: false,
+  };
 }
 
 function weeklyWindow(asOf: IsoTimestamp): WeeklyReviewWindow {

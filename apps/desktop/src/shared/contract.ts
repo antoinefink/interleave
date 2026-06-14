@@ -6706,6 +6706,10 @@ export interface WeeklyReviewLedger {
   readonly extracts: number;
   readonly cards: number;
   readonly maturedCards: number;
+  readonly sourcesPrev?: number;
+  readonly extractsPrev?: number;
+  readonly cardsPrev?: number;
+  readonly maturedCardsPrev?: number;
   readonly priorityMisses: readonly WeeklyReviewPriorityMiss[];
 }
 
