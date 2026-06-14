@@ -256,6 +256,261 @@ describe("EmbeddingService.embedQuery (T087 leak guard)", () => {
   });
 });
 
+describe("EmbeddingService query-embedding cache (U2)", () => {
+  /**
+   * Drive the LAST enqueued query job to a successful terminal under `modelId`, so the
+   * recovered vector is returned and (for a real model) cached. Mirrors the order the
+   * real runner guarantees: apply stashes the vector, THEN the terminal resolves.
+   */
+  function settleQuery(
+    runner: ReturnType<typeof makeFakeRunner>,
+    service: EmbeddingService,
+    text: string,
+    modelId: string,
+    vector: number[],
+  ): void {
+    const job = runner.enqueued.at(-1);
+    if (!job) throw new Error("expected an enqueued query job");
+    service.applyResult(
+      { text, modelId, provider: "local", dim: EMBEDDING_DIM, persist: false },
+      { vector, modelId, dim: EMBEDDING_DIM },
+      job.id,
+    );
+    runner.resolveSucceeded(job.id);
+  }
+
+  it("misses then hits: a repeat query returns the cached vector WITHOUT enqueueing", async () => {
+    const runner = makeFakeRunner();
+    const service = makeService(runner);
+
+    const vector = new Array(EMBEDDING_DIM).fill(0.7);
+    const first = service.embedQueryResult("foo");
+    settleQuery(runner, service, "foo", DEFAULT_EMBEDDING_MODEL_ID, vector);
+    await expect(first).resolves.toMatchObject({ vector, modelId: DEFAULT_EMBEDDING_MODEL_ID });
+    expect(runner.enqueued).toHaveLength(1);
+
+    // Second identical call is a cache hit: no new enqueue, no timeout race needed.
+    await expect(service.embedQueryResult("foo")).resolves.toMatchObject({
+      vector,
+      modelId: DEFAULT_EMBEDDING_MODEL_ID,
+    });
+    expect(runner.enqueued).toHaveLength(1);
+  });
+
+  it("the model probe bypasses the cache and always does a LIVE embed", async () => {
+    const runner = makeFakeRunner();
+    const service = makeService(runner);
+    // The fixed probe text — a normal query for it WOULD be cacheable.
+    const probeText = "warm up the on-device embedding model";
+
+    // Warm the cache for the probe text via a normal (cacheable) query.
+    const warm = service.embedQueryResult(probeText);
+    settleQuery(
+      runner,
+      service,
+      probeText,
+      DEFAULT_EMBEDDING_MODEL_ID,
+      new Array(EMBEDDING_DIM).fill(0.2),
+    );
+    await warm;
+    expect(runner.enqueued).toHaveLength(1);
+
+    // A forced probe must NOT short-circuit on the cached vector — its job is to report
+    // the model's CURRENT real/fallback state, which a stale cache would mask. It enqueues
+    // a fresh live embed instead.
+    const probe = service.probeModelState({ force: true });
+    expect(runner.enqueued).toHaveLength(2);
+    settleQuery(
+      runner,
+      service,
+      probeText,
+      DEFAULT_EMBEDDING_MODEL_ID,
+      new Array(EMBEDDING_DIM).fill(0.2),
+    );
+    await expect(probe).resolves.toBe("ready");
+  });
+
+  it("normalizes the key: '  Foo  ' and 'foo' share one cache entry", async () => {
+    const runner = makeFakeRunner();
+    const service = makeService(runner);
+
+    const vector = new Array(EMBEDDING_DIM).fill(0.8);
+    const first = service.embedQueryResult("  Foo  ");
+    settleQuery(runner, service, "  Foo  ", DEFAULT_EMBEDDING_MODEL_ID, vector);
+    await first;
+    expect(runner.enqueued).toHaveLength(1);
+
+    // Different casing/whitespace normalizes to the same key → hit, no new enqueue.
+    await expect(service.embedQueryResult("foo")).resolves.toMatchObject({
+      vector,
+      modelId: DEFAULT_EMBEDDING_MODEL_ID,
+    });
+    expect(runner.enqueued).toHaveLength(1);
+  });
+
+  it("does NOT cache a fallback-model result: a subsequent identical call re-enqueues", async () => {
+    const runner = makeFakeRunner();
+    const service = makeService(runner);
+
+    const vector = new Array(EMBEDDING_DIM).fill(0.9);
+    const first = service.embedQueryResult("bar");
+    settleQuery(runner, service, "bar", FALLBACK_EMBEDDING_MODEL_ID, vector);
+    await expect(first).resolves.toMatchObject({ vector, modelId: FALLBACK_EMBEDDING_MODEL_ID });
+    expect(runner.enqueued).toHaveLength(1);
+
+    // Fallback was returned but not cached → the next identical call enqueues again.
+    const second = service.embedQueryResult("bar");
+    expect(runner.enqueued).toHaveLength(2);
+    settleQuery(runner, service, "bar", FALLBACK_EMBEDDING_MODEL_ID, vector);
+    await second;
+  });
+
+  it("a fallback result then a real result for the same text populates the cache", async () => {
+    const runner = makeFakeRunner();
+    const service = makeService(runner);
+
+    // First answer falls back → not cached.
+    const fb = service.embedQueryResult("baz");
+    settleQuery(
+      runner,
+      service,
+      "baz",
+      FALLBACK_EMBEDDING_MODEL_ID,
+      new Array(EMBEDDING_DIM).fill(0.1),
+    );
+    await fb;
+    expect(runner.enqueued).toHaveLength(1);
+
+    // Same text re-enqueues; this time the real model answers → cached.
+    const realVector = new Array(EMBEDDING_DIM).fill(0.2);
+    const real = service.embedQueryResult("baz");
+    expect(runner.enqueued).toHaveLength(2);
+    settleQuery(runner, service, "baz", DEFAULT_EMBEDDING_MODEL_ID, realVector);
+    await real;
+
+    // Now it's a hit: no third enqueue.
+    await expect(service.embedQueryResult("baz")).resolves.toMatchObject({
+      vector: realVector,
+      modelId: DEFAULT_EMBEDDING_MODEL_ID,
+    });
+    expect(runner.enqueued).toHaveLength(2);
+  });
+
+  it("clears the whole cache on a model-id change so no cross-model vector is served", async () => {
+    const runner = makeFakeRunner();
+    const service = makeService(runner);
+    const modelA = "model-a";
+    const modelB = "model-b";
+
+    // Cache "alpha" under model A.
+    const a = service.embedQueryResult("alpha");
+    settleQuery(runner, service, "alpha", modelA, new Array(EMBEDDING_DIM).fill(0.3));
+    await a;
+    expect(runner.enqueued).toHaveLength(1);
+
+    // A different text answers under model B → the model-space changed, so A's entry is dropped.
+    const b = service.embedQueryResult("beta");
+    settleQuery(runner, service, "beta", modelB, new Array(EMBEDDING_DIM).fill(0.4));
+    await b;
+    expect(runner.enqueued).toHaveLength(2);
+
+    // "alpha" must now MISS (its model-A vector was cleared) and re-embed under model B.
+    const aAgain = service.embedQueryResult("alpha");
+    expect(runner.enqueued).toHaveLength(3);
+    settleQuery(runner, service, "alpha", modelB, new Array(EMBEDDING_DIM).fill(0.5));
+    await aAgain;
+  });
+
+  it("is bounded: exceeding the cap evicts the oldest entry (it misses again)", async () => {
+    const runner = makeFakeRunner();
+    const service = makeService(runner);
+    const cap = (service as unknown as { queryVectorCache: Map<string, unknown> }).queryVectorCache;
+    // Read the cap off the service's behavior by overflowing it; the constant is 256.
+    const QUERY_CACHE_MAX = 256;
+
+    // Fill the cache to exactly the cap with unique keys.
+    for (let i = 0; i < QUERY_CACHE_MAX; i += 1) {
+      const text = `q${i}`;
+      const p = service.embedQueryResult(text);
+      settleQuery(
+        runner,
+        service,
+        text,
+        DEFAULT_EMBEDDING_MODEL_ID,
+        new Array(EMBEDDING_DIM).fill(0.01 * i),
+      );
+      await p;
+    }
+    expect(cap.size).toBe(QUERY_CACHE_MAX);
+    const enqueuedAtCap = runner.enqueued.length;
+
+    // Insert one more unique key → evicts the OLDEST ("q0").
+    const overflow = service.embedQueryResult("overflow");
+    settleQuery(
+      runner,
+      service,
+      "overflow",
+      DEFAULT_EMBEDDING_MODEL_ID,
+      new Array(EMBEDDING_DIM).fill(0.99),
+    );
+    await overflow;
+    expect(cap.size).toBe(QUERY_CACHE_MAX);
+    expect(runner.enqueued).toHaveLength(enqueuedAtCap + 1);
+
+    // "q0" was evicted → it MISSES and re-enqueues; a still-resident key ("q255") HITS.
+    const evicted = service.embedQueryResult("q0");
+    expect(runner.enqueued).toHaveLength(enqueuedAtCap + 2);
+    settleQuery(
+      runner,
+      service,
+      "q0",
+      DEFAULT_EMBEDDING_MODEL_ID,
+      new Array(EMBEDDING_DIM).fill(0.0),
+    );
+    await evicted;
+
+    const stillEnqueued = runner.enqueued.length;
+    await service.embedQueryResult(`q${QUERY_CACHE_MAX - 1}`);
+    expect(runner.enqueued).toHaveLength(stillEnqueued);
+  });
+
+  it("does NOT cache a timed-out (null) query: a later call retries", async () => {
+    const runner = makeFakeRunner();
+    const service = makeService(runner);
+
+    // The runner never resolves in-window → timeout → null, not cached.
+    await expect(service.embedQueryResult("never")).resolves.toBeNull();
+    expect(runner.enqueued).toHaveLength(1);
+
+    // A later identical call retries (enqueues again); this time it succeeds and caches.
+    const vector = new Array(EMBEDDING_DIM).fill(0.6);
+    const retry = service.embedQueryResult("never");
+    expect(runner.enqueued).toHaveLength(2);
+    settleQuery(runner, service, "never", DEFAULT_EMBEDDING_MODEL_ID, vector);
+    await expect(retry).resolves.toMatchObject({ vector, modelId: DEFAULT_EMBEDDING_MODEL_ID });
+
+    // Now it's warm: a third call hits, no new enqueue.
+    await service.embedQueryResult("never");
+    expect(runner.enqueued).toHaveLength(2);
+  });
+
+  it("a cache hit enqueues NO embed job (ties to the index-health guarantee)", async () => {
+    const runner = makeFakeRunner();
+    const service = makeService(runner);
+
+    const vector = new Array(EMBEDDING_DIM).fill(0.42);
+    const first = service.embedQueryResult("indexed?");
+    settleQuery(runner, service, "indexed?", DEFAULT_EMBEDDING_MODEL_ID, vector);
+    await first;
+    const enqueuedAfterMiss = runner.enqueued.length;
+
+    // Several warm repeats — none may enqueue an embed job.
+    await service.embedQueryResult("indexed?");
+    await service.embedQueryResult("  INDEXED?  ");
+    expect(runner.enqueued).toHaveLength(enqueuedAfterMiss);
+  });
+});
+
 describe("EmbeddingService.probeModelState (U1 honest probe)", () => {
   /** Drive a probe to a terminal result by stashing the apply result then resolving. */
   function settleProbe(

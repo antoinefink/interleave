@@ -65,6 +65,18 @@ const PROBE_EMBED_TIMEOUT_MS = 60_000;
 const PROBE_TEXT = "warm up the on-device embedding model";
 /** Belt-and-braces cap on the pending-query map so a pathological run can't grow it unbounded. */
 const PENDING_QUERY_MAX = 64;
+/**
+ * Cap on the in-memory query-embedding cache (U2). Bounded, insertion-ordered LRU-ish:
+ * once full, inserting evicts the oldest key. Repeat query embeds (backspace/retype,
+ * re-runs, the palette's tight loop) then hit instantly instead of churning the worker.
+ */
+const QUERY_CACHE_MAX = 256;
+/**
+ * Defensive bound on a cache key's length. A normalized query is already short, but a
+ * pathological multi-KB "query" must not bloat the cache key; trimming the key only loses
+ * cache precision for absurd inputs, never correctness (the embed still uses the full text).
+ */
+const QUERY_CACHE_KEY_MAX = 512;
 /** Rolling window of recent embed completions kept for the ETA estimate. */
 const ETA_WINDOW = 20;
 /** Minimum completion samples before an ETA is meaningful (else `null`). */
@@ -120,6 +132,17 @@ export class EmbeddingService {
   private readonly abandonedQueries = new Set<string>();
   /** Cached terminal model state from the last probe (`ready`/`fallback`); undefined until probed. */
   private modelStateCache: SemanticModelState | undefined;
+  /**
+   * In-memory query-text→vector cache (U2). Bounded + insertion-ordered (oldest evicted
+   * past {@link QUERY_CACHE_MAX}). It only ever holds vectors from the single CURRENT
+   * real-model space — never a {@link FALLBACK_EMBEDDING_MODEL_ID} vector — and is dropped
+   * whole on a model-id change (see {@link cacheModelId}). That invariant is what makes a
+   * cache hit always safe to return directly: an embedding belongs to the model that
+   * produced it, and equal vector length is NOT cross-model comparability.
+   */
+  private readonly queryVectorCache = new Map<string, QueryEmbeddingResult>();
+  /** The real-model id the {@link queryVectorCache} currently holds, or `null` when empty. */
+  private cacheModelId: string | null = null;
   /** Recent index-embed completion epoch-ms (rolling window) — the in-memory ETA source (U2). */
   private readonly completionTimestamps: number[] = [];
 
@@ -349,10 +372,24 @@ export class EmbeddingService {
   async embedQueryResult(
     text: string,
     timeoutMs: number = QUERY_EMBED_TIMEOUT_MS,
+    opts?: { useCache?: boolean },
   ): Promise<QueryEmbeddingResult | null> {
     const settings = this.getSettings();
     if (!this.available) return null;
     if (text.trim().length === 0) return null;
+
+    // U2 cache: a warm key returns instantly — NO enqueue (so it cannot read as
+    // "index building" per commit 49fe02e4) and NO 800ms timeout race. The cache only
+    // ever holds vectors from the single current real-model space (cleared on a model-id
+    // change), so a hit is always safe to return directly. The model PROBE opts out
+    // (`useCache: false`) so it always does a LIVE embed — its whole job is to report
+    // the model's CURRENT real/fallback/loading state, which a cached vector would mask.
+    const useCache = opts?.useCache !== false;
+    const cacheKey = queryCacheKey(text);
+    if (useCache) {
+      const cached = this.queryVectorCache.get(cacheKey);
+      if (cached) return cached;
+    }
 
     const payload: EmbedJobPayload = {
       text: bound(text),
@@ -370,13 +407,40 @@ export class EmbeddingService {
 
     if (terminal === "timeout" || terminal.status !== "succeeded") {
       // The waiter gave up; the late persist:false apply result must be dropped.
+      // A null/timeout result is NEVER cached — a later call retries.
       this.abandonedQueries.add(job.id);
       this.pendingQueryVectors.delete(job.id);
       return null;
     }
     const result = this.pendingQueryVectors.get(job.id) ?? null;
     this.pendingQueryVectors.delete(job.id);
+    if (result && useCache) this.cacheQueryVector(cacheKey, result);
     return result;
+  }
+
+  /**
+   * Populate the query cache from a recovered terminal vector (U2). A
+   * {@link FALLBACK_EMBEDDING_MODEL_ID} vector is returned to the caller but NOT cached:
+   * the deterministic hash embedder is cheap, and a fallback entry must never linger to be
+   * served as if it were a real-model vector. On a real-model result whose `modelId`
+   * differs from the cache's current model space, the whole cache is dropped first (so no
+   * cross-model vector is ever served), then the new entry is inserted with oldest-first
+   * eviction past {@link QUERY_CACHE_MAX}.
+   */
+  private cacheQueryVector(key: string, result: QueryEmbeddingResult): void {
+    if (result.modelId === FALLBACK_EMBEDDING_MODEL_ID) return;
+    if (result.modelId !== this.cacheModelId) {
+      this.queryVectorCache.clear();
+      this.cacheModelId = result.modelId;
+    }
+    // Refresh recency: a re-set moves the key to the newest insertion slot.
+    this.queryVectorCache.delete(key);
+    this.queryVectorCache.set(key, result);
+    while (this.queryVectorCache.size > QUERY_CACHE_MAX) {
+      const oldest = this.queryVectorCache.keys().next().value;
+      if (oldest === undefined) break;
+      this.queryVectorCache.delete(oldest);
+    }
   }
 
   /**
@@ -405,7 +469,9 @@ export class EmbeddingService {
 
     let result: QueryEmbeddingResult | null = null;
     try {
-      result = await this.embedQueryResult(PROBE_TEXT, opts?.timeoutMs ?? PROBE_EMBED_TIMEOUT_MS);
+      result = await this.embedQueryResult(PROBE_TEXT, opts?.timeoutMs ?? PROBE_EMBED_TIMEOUT_MS, {
+        useCache: false,
+      });
     } catch {
       // A probe failure is treated as "still loading / unknown" — never throws to the caller.
     }
@@ -494,6 +560,19 @@ function sha256(text: string): string {
 /** Bound the text length so a huge source does not blow the model context. */
 function bound(text: string): string {
   return text.length > MAX_EMBED_CHARS ? text.slice(0, MAX_EMBED_CHARS) : text;
+}
+
+/**
+ * Normalize a query string into a stable cache key (U2): trim, lowercase, and collapse
+ * internal runs of whitespace to a single space, then defensively bound the length. So
+ * `"  Foo  "` and `"foo"` share one entry. Casefolding is fine for the cache key because
+ * the underlying embed text is unchanged; only the cache lookup is normalized.
+ */
+function queryCacheKey(text: string): string {
+  const normalized = text.trim().toLowerCase().replace(/\s+/g, " ");
+  return normalized.length > QUERY_CACHE_KEY_MAX
+    ? normalized.slice(0, QUERY_CACHE_KEY_MAX)
+    : normalized;
 }
 
 /** A cancellable-ish delay promise for the query-embed timeout race. */
