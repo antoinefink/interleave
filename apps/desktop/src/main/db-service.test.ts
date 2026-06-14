@@ -3349,6 +3349,31 @@ describe("DbService — review session (T037)", () => {
     const row = svc.libraryBrowse({ types: ["task"] }).items.find((item) => item.id === task.id);
     expect(row?.linkedElementId).toBe(card?.id);
     expect(row?.linkedElementType).toBe("card");
+    // The browse row must carry the task's type so the renderer's open helper can
+    // route it (e.g. weekly_review → /weekly) instead of falling through.
+    expect(row?.taskType).toBe("find_better_source");
+    // A non-task row carries a null taskType.
+    expect(card?.taskType ?? null).toBeNull();
+
+    svc.close();
+  });
+
+  it("library.browse tags the weekly-review task with its taskType (routes to /weekly, not the queue)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    // Enabling weekly review creates the recurring system task.
+    svc.updateAppSettings({ weeklyReviewEnabled: true });
+
+    const weekly = svc
+      .libraryBrowse({ types: ["task"] })
+      .items.find((item) => item.taskType === "weekly_review");
+    expect(weekly).toBeDefined();
+    expect(weekly?.title).toBe("Weekly review");
+    // No linked element — routing to /weekly relies solely on taskType. Without it the
+    // row falls through to the /process loop, which surfaces the next due card.
+    expect(weekly?.linkedElementId).toBeNull();
 
     svc.close();
   });

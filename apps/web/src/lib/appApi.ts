@@ -3844,6 +3844,8 @@ export interface LibraryItem {
   readonly linkedElementId: string | null;
   /** The protected element's type, paired with `linkedElementId` for task routing. */
   readonly linkedElementType: string | null;
+  /** For a `task` row, its task type (e.g. `"weekly_review"`); `null` for non-task rows. */
+  readonly taskType: TaskType | null;
 }
 
 /**

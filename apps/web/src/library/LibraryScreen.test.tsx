@@ -124,6 +124,7 @@ const h = vi.hoisted(() => {
     notInQueueReason: sourceHit.notInQueueReason,
     linkedElementId: null,
     linkedElementType: null,
+    taskType: null,
   };
   const cardBrowseItem: LibraryItem = {
     id: cardHit.id,
@@ -145,6 +146,7 @@ const h = vi.hoisted(() => {
     notInQueueReason: cardHit.notInQueueReason,
     linkedElementId: null,
     linkedElementType: null,
+    taskType: null,
   };
   const topicBrowseItem: LibraryItem = {
     id: "topic-1",
@@ -166,6 +168,7 @@ const h = vi.hoisted(() => {
     notInQueueReason: "Not in queue: no return scheduled",
     linkedElementId: null,
     linkedElementType: null,
+    taskType: null,
   };
   const concept: ConceptNode = {
     id: "concept-1",

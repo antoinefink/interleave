@@ -5757,10 +5757,8 @@ export class DbService {
     // "Scheduled" default rather than dropping out of the browse.
     const inspectorData = this.inspectorQuery.get(element.id);
     const summary = this.queueQuery.summaryFor(element.id);
-    const linked =
-      element.type === "task"
-        ? (this.repos.tasks.findTask(element.id)?.linkedElement ?? null)
-        : null;
+    const task = element.type === "task" ? this.repos.tasks.findTask(element.id) : null;
+    const linked = task?.linkedElement ?? null;
     const scheduler = inspectorData?.scheduler ?? {
       kind: "attention" as const,
       retrievability: null,
@@ -5795,6 +5793,7 @@ export class DbService {
       notInQueueReason: summary?.notInQueueReason ?? "Not in queue: summary unavailable",
       linkedElementId: linked?.id ?? null,
       linkedElementType: linked?.type ?? null,
+      taskType: task?.taskType ?? null,
     };
   }
 

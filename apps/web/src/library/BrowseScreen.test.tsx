@@ -66,6 +66,7 @@ const h = vi.hoisted(() => {
     notInQueueReason: "Not in queue: no return scheduled",
     linkedElementId: null,
     linkedElementType: null,
+    taskType: null,
   };
   const topicRow: LibraryItem = {
     id: "topic-1",
@@ -87,6 +88,7 @@ const h = vi.hoisted(() => {
     notInQueueReason: "Not in queue: no return scheduled",
     linkedElementId: null,
     linkedElementType: null,
+    taskType: null,
   };
   const parkedRow: LibraryItem = {
     ...sourceRow,
@@ -119,6 +121,7 @@ const h = vi.hoisted(() => {
     notInQueueReason: null,
     linkedElementId: null,
     linkedElementType: null,
+    taskType: null,
   };
   const taskRow: LibraryItem = {
     id: "task-1",
@@ -140,6 +143,25 @@ const h = vi.hoisted(() => {
     notInQueueReason: "Not in queue: returns Jun 2",
     linkedElementId: "card-1",
     linkedElementType: "card",
+    taskType: "verify_claim",
+  };
+  // A system "Weekly review" task: no linked element, routed by its taskType to the
+  // dedicated /weekly surface (NOT the process loop / next due card). Regression guard
+  // for the contract carrying `taskType` through to `openQueueItem`.
+  const weeklyTaskRow: LibraryItem = {
+    ...taskRow,
+    id: "task-weekly-1",
+    title: "Weekly review",
+    priorityLabel: "D",
+    status: "scheduled",
+    stage: "rough_topic",
+    concept: null,
+    sourceTitle: null,
+    sourceLocationLabel: null,
+    notInQueueReason: "Not in queue: summary unavailable",
+    linkedElementId: null,
+    linkedElementType: null,
+    taskType: "weekly_review",
   };
   const concept: ConceptNode = {
     id: "concept-1",
@@ -167,6 +189,7 @@ const h = vi.hoisted(() => {
     parkedRow,
     cardRow,
     taskRow,
+    weeklyTaskRow,
     concept,
     counts,
     navigateSpy: vi.fn(),
@@ -606,6 +629,34 @@ describe("BrowseScreen", () => {
     expect(h.navigateSpy).not.toHaveBeenCalledWith({
       to: "/source/$id",
       params: { id: "task-1" },
+    });
+  });
+
+  it("Open task on a weekly-review task routes to /weekly, not the next due card", async () => {
+    h.libraryBrowse.mockResolvedValue({
+      items: [h.weeklyTaskRow],
+      counts: {
+        all: 1,
+        byType: { source: 0, extract: 0, card: 0, topic: 0, synthesis_note: 0, task: 1 },
+        byConcept: {},
+        byPriority: { A: 0, B: 0, C: 0, D: 1 },
+        byStatus: { active: 0, scheduled: 1, inbox: 0, pending: 0, done: 0, suspended: 0 },
+      },
+    });
+    render(<BrowseScreen />);
+    const taskGroup = await screen.findByTestId("library-group-task");
+    fireEvent.click(within(taskGroup).getByTestId("library-result"));
+    fireEvent.click(await screen.findByTestId("library-detail-open"));
+
+    expect(h.selectSpy).toHaveBeenCalledWith("task-weekly-1");
+    expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/weekly", search: {} });
+    // The bug: with `taskType` dropped from the browse row, the weekly task fell
+    // through to the /process loop (which surfaces the next due card → looks like a
+    // Q&A card opened). It must reach the dedicated weekly surface instead.
+    expect(h.navigateSpy).not.toHaveBeenCalledWith({ to: "/process", search: {} });
+    expect(h.navigateSpy).not.toHaveBeenCalledWith({
+      to: "/card/$id",
+      params: { id: "card-1" },
     });
   });
 
