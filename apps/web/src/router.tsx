@@ -41,6 +41,7 @@ import { LibraryScreen } from "./library/LibraryScreen";
 import { LeechRemediation } from "./maintenance/LeechRemediation";
 import { MaintenanceScreen } from "./maintenance/MaintenanceScreen";
 import { RetiredCards } from "./maintenance/RetiredCards";
+import { ReverifyScreen } from "./maintenance/ReverifyScreen";
 import { StagnantExtracts } from "./maintenance/StagnantExtracts";
 import { ConversionSession } from "./pages/convert/ConversionSession";
 import { HomeScreen } from "./pages/home/HomeScreen";
@@ -240,6 +241,19 @@ const stagnantExtractsRoute = createRoute({
 });
 
 /**
+ * Re-verify drain (T124) — the maintenance surface that resolves T123's content-staleness
+ * flags. Outputs whose source block was edited (extract / atomic statement / card) resolve
+ * per source as confirm / rebase / detach, op-logged + undoable. The whole list comes from
+ * `appApi.reverify.flaggedSources()` + `sessionPreview()`; every action is a typed
+ * `appApi.reverify.*` call — the renderer holds no provenance or resolution logic.
+ */
+const reverifyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/maintenance/reverify",
+  component: ReverifyScreen,
+});
+
+/**
  * Collection Explorer Search mode (T042) — local FTS5 full-text search over source
  * title/body + extract body + card prompt/answer + tags, ranked best-first, with
  * pending type/concept/priority filters + grouped/highlighted results + the
@@ -363,6 +377,7 @@ const routeTree = rootRoute.addChildren([
   leechCleanupRoute,
   retiredCardsRoute,
   stagnantExtractsRoute,
+  reverifyRoute,
   searchRoute,
   libraryRoute,
   conceptsRoute,

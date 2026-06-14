@@ -254,6 +254,10 @@ not need the marker).
 
 ## Related
 
+- [`detach-tombstone-receipt-only-undo-and-per-triple-fingerprint-for-flag-resolution.md`](./detach-tombstone-receipt-only-undo-and-per-triple-fingerprint-for-flag-resolution.md)
+  — the **resolution half** (T124): the human-in-the-loop drain that confirms / rebases /
+  detaches the `needs_reverify` flag this doc produces. The "future resolution-undo" referenced
+  below now ships as receipt-only undo there.
 - [`review-triggered-descendant-health-source-rescheduling.md`](./review-triggered-descendant-health-source-rescheduling.md)
   — the **upward** back edge (review lapse → parent source reschedule). This doc is its
   **downward/forward** content counterpart (source edit → descendant needs-reverify flag).

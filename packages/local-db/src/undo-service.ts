@@ -303,6 +303,22 @@ export class UndoService {
       // cleared the flags while the blocks stayed stale would desync the two layers.
       // The clear path is re-reconciliation (edit the block back), not undo.
       if (op.payload.propagation === true) return false;
+      // T124 resolution ops (`reverifyResolution`) are reversed ONLY through the guarded
+      // receipt path (`ReverifyResolutionService.undoReceipt` → `restoreResolutionWithin`),
+      // never by global ⌘Z. Two reasons: (1) every resolution is immediately followed by a
+      // `propagation: true` recompute op, which is the NEWEST op and non-invertible, so
+      // `undoLast` short-circuits on it anyway — a "global undo" of a resolution was never
+      // actually reachable. (2) A second, unguarded global-undo path would desync the
+      // persisted receipt (it would re-insert provenance while leaving the receipt
+      // `actionable`, so the snackbar Undo then falsely refuses "source changed"). One
+      // authoritative undo path — the receipt, with its four-part current-state guard —
+      // keeps the boolean, the provenance, and the receipt status consistent.
+      if (
+        typeof op.payload.reverifyResolution === "object" &&
+        op.payload.reverifyResolution !== null
+      ) {
+        return false;
+      }
       const prev = op.payload.prev;
       return typeof prev === "object" && prev !== null && Object.keys(prev).length > 0;
     }
@@ -444,6 +460,17 @@ export class UndoService {
         // T123 content-staleness flag flips are non-invertible markers (see
         // {@link isInvertible}); the clear path is re-reconciliation, not undo.
         if (op.payload.propagation === true) return null;
+        // T124 resolution ops are reversed ONLY through the guarded receipt path
+        // (`undoReceipt` → `restoreResolutionWithin`), never global ⌘Z — see
+        // {@link isInvertible}. Returning null here keeps the single authoritative undo
+        // path (the receipt, with its four-part current-state guard) and avoids desyncing
+        // the persisted receipt against an unguarded global re-insert.
+        if (
+          typeof op.payload.reverifyResolution === "object" &&
+          op.payload.reverifyResolution !== null
+        ) {
+          return null;
+        }
         const prev = op.payload.prev;
         // A marker op (leech / flag / body edit) carries no object pre-image — there
         // is nothing to re-apply, so this op is non-invertible (return `null`, not a

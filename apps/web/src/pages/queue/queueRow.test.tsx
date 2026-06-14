@@ -1,7 +1,18 @@
 import { render } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import type { ReactNode } from "react";
+import { describe, expect, it, vi } from "vitest";
 import type { QueueItemSummary } from "../../lib/appApi";
 import { actionFor, DueBadge, ExtractAgeChip, metaFor, ReverifyChip, titleFor } from "./queueRow";
+
+// The actionable re-verify chip (T124) renders a TanStack `<Link>`; mock it to a plain
+// anchor so the pure-presentation chip stays renderable without a full router context.
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => (
+    <a href={to} {...props}>
+      {children}
+    </a>
+  ),
+}));
 
 function queueItem(overrides: Partial<QueueItemSummary>): QueueItemSummary {
   return {
@@ -126,7 +137,7 @@ describe("queue row helpers", () => {
     expect(getByTestId("extract-age-chip")).toHaveTextContent("Stale · return");
   });
 
-  it("renders an inert re-verify chip when the row's body may no longer match its source", () => {
+  it("renders an actionable re-verify chip linking to the drain (T124)", () => {
     const { getByTestId } = render(
       <ReverifyChip
         item={queueItem({
@@ -137,9 +148,9 @@ describe("queue row helpers", () => {
     );
     const chip = getByTestId("reverify-chip");
     expect(chip).toHaveTextContent("Re-verify");
-    // Inert: advisory only — T123 flags, resolution is T124. No button affordance.
-    expect(chip.getAttribute("role")).toBeNull();
-    expect(chip.tagName).toBe("SPAN");
+    // Actionable now (T124): the chip links to the re-verify drain.
+    expect(chip.tagName).toBe("A");
+    expect(chip.getAttribute("href")).toBe("/maintenance/reverify");
     expect(chip.getAttribute("title")).toContain("re-verify");
   });
 

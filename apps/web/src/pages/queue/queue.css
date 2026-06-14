@@ -442,6 +442,14 @@
   font-size: var(--t-xs);
   font-weight: 600;
 }
+/* T124 — the chip is now an actionable link to the re-verify drain. */
+.reverify-chip--action {
+  cursor: pointer;
+  text-decoration: none;
+}
+.reverify-chip--action:hover {
+  border-color: var(--warn);
+}
 .qitem__action {
   display: flex;
   align-items: center;

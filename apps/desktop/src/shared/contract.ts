@@ -6517,6 +6517,141 @@ export const ExtractAgingUndoReceiptRequestSchema = z.object({
 export type ExtractAgingUndoReceiptRequest = z.infer<typeof ExtractAgingUndoReceiptRequestSchema>;
 
 // ---------------------------------------------------------------------------
+// reverify.*  (T124 — re-verify drain: confirm / rebase / detach a flagged output)
+// ---------------------------------------------------------------------------
+
+/** A per-sitting cap mirroring the service constant (`REVERIFY_SESSION_CAP`). */
+const REVERIFY_SESSION_CAP_MAX = 200;
+
+/** The three resolution verbs (mirrors `ReverifyResolutionVerb`). */
+export const ReverifyResolutionVerbSchema = z.enum(["confirm", "rebase", "detach"]);
+export type ReverifyResolutionVerbWire = z.infer<typeof ReverifyResolutionVerbSchema>;
+
+export type ReverifyReceiptStatus = "actionable" | "undone";
+export type ReverifyResolveSkipReason =
+  | "not-flagged"
+  | "block-re-edited"
+  | "target-changed"
+  | "deleted"
+  | "rebase-failed";
+
+/** One source with ≥1 live flagged output (drives the hub metric + source-page entry). */
+export interface ReverifyFlaggedSource {
+  readonly sourceElementId: string;
+  readonly title: string;
+  readonly count: number;
+}
+
+/** The light, read-only cross-source flagged-output rollup. */
+export interface ReverifyFlaggedSourcesResult {
+  readonly totalOutputs: number;
+  readonly sources: readonly ReverifyFlaggedSource[];
+}
+
+/** One hydrated, fingerprinted preview item. */
+export interface ReverifySessionItem {
+  readonly elementId: string;
+  readonly type: string;
+  readonly stage: string;
+  readonly title: string;
+  readonly stableBlockId: string;
+  readonly oldAnchorText: string;
+  readonly currentBlockText: string;
+  readonly fingerprint: string;
+}
+
+/** The read-only per-source session preview payload (zero `operation_log`). */
+export interface ReverifySessionPreview {
+  readonly sourceElementId: string;
+  readonly asOf: string;
+  readonly expiresAt: string;
+  readonly cap: number;
+  readonly remaining: number;
+  readonly items: readonly ReverifySessionItem[];
+}
+
+export interface ReverifyResolveSkip {
+  readonly elementId: string;
+  readonly reason: ReverifyResolveSkipReason;
+}
+
+export interface ReverifyReceiptItem {
+  readonly elementId: string;
+  readonly stableBlockId: string;
+  readonly verb: ReverifyResolutionVerbWire;
+}
+
+export interface ReverifyReceiptCounts {
+  readonly confirmed: number;
+  readonly rebased: number;
+  readonly detached: number;
+  readonly skipped: number;
+}
+
+export interface ReverifyResolutionReceipt {
+  readonly batchId: string;
+  readonly localDay: string;
+  readonly sourceElementId: string;
+  readonly status: ReverifyReceiptStatus;
+  readonly createdAt: string;
+  readonly counts: ReverifyReceiptCounts;
+  readonly items: readonly ReverifyReceiptItem[];
+  readonly undoneAt?: string;
+}
+
+export interface ReverifyResolveResult {
+  readonly batchId: string;
+  readonly applied: number;
+  readonly skipped: readonly ReverifyResolveSkip[];
+  readonly receipt: ReverifyResolutionReceipt | null;
+}
+
+export interface ReverifyUndoResult {
+  readonly undone: boolean;
+  readonly count: number;
+  readonly reason?: string;
+  readonly skipped: readonly ReverifyReceiptItem[];
+  readonly receipt: ReverifyResolutionReceipt | null;
+}
+
+export interface ReverifyReceiptsTodayResult {
+  readonly receipts: readonly ReverifyResolutionReceipt[];
+}
+
+export const ReverifySessionPreviewRequestSchema = z.object({
+  /** The source element whose flagged outputs to hydrate (tolerant read — see KTD8). */
+  sourceElementId: ElementIdSchema,
+  /** Optional per-sitting cap; omit to use the service default. */
+  cap: z.number().int().min(1).max(REVERIFY_SESSION_CAP_MAX).optional(),
+});
+export type ReverifySessionPreviewRequest = z.infer<typeof ReverifySessionPreviewRequestSchema>;
+
+const ReverifyDecisionSchema = z.object({
+  elementId: ElementIdSchema,
+  stableBlockId: z.string().min(1).max(128),
+  verb: ReverifyResolutionVerbSchema,
+  /** The opaque per-item revalidation token returned by `sessionPreview`. */
+  fingerprint: z.string().min(1).max(4096),
+});
+
+export const ReverifyResolveRequestSchema = z.object({
+  /** Reuse one `batchId` per sitting; omit to mint a fresh one (one per resolve call). */
+  batchId: z.string().min(1).max(128).optional(),
+  sourceElementId: ElementIdSchema,
+  decisions: z.array(ReverifyDecisionSchema).min(1).max(REVERIFY_SESSION_CAP_MAX),
+});
+export type ReverifyResolveRequest = z.infer<typeof ReverifyResolveRequestSchema>;
+
+export const ReverifyUndoReceiptRequestSchema = z.object({
+  // A batchId only ever originates from `resolve` (bounded to 128 there) — bound it
+  // symmetrically here so the two channels validate the same identifier identically.
+  batchId: z.string().min(1).max(128),
+  /** Optional per-item filter — reverse only these elements of the batch. */
+  itemIds: z.array(ElementIdSchema).min(1).max(REVERIFY_SESSION_CAP_MAX).optional(),
+});
+export type ReverifyUndoReceiptRequest = z.infer<typeof ReverifyUndoReceiptRequestSchema>;
+
+// ---------------------------------------------------------------------------
 // weeklyReview.*  (T110 — weekly ledger & integrity session)
 // ---------------------------------------------------------------------------
 
@@ -7734,6 +7869,21 @@ export interface AppApi {
     apply(request?: ExtractAgingApplyRequest): Promise<ExtractAgingApplyResult>;
     /** Undo one aging receipt batch after ownership and current-state guards pass. */
     undoReceipt(request: ExtractAgingUndoReceiptRequest): Promise<ExtractAgingUndoReceiptResult>;
+  };
+  readonly reverify: {
+    /** READ-ONLY cross-source rollup of sources with live flagged outputs (T124). */
+    flaggedSources(): Promise<ReverifyFlaggedSourcesResult>;
+    /**
+     * READ-ONLY per-source, capped, fingerprinted session preview. Tolerant: a
+     * stale/missing/deleted source id returns a stable empty payload, never throws.
+     */
+    sessionPreview(request: ReverifySessionPreviewRequest): Promise<ReverifySessionPreview>;
+    /** Apply a batch of confirm/rebase/detach decisions transactionally (strict write). */
+    resolve(request: ReverifyResolveRequest): Promise<ReverifyResolveResult>;
+    /** Reverse a resolution receipt (or named items) after the four-part current-state guard. */
+    undoReceipt(request: ReverifyUndoReceiptRequest): Promise<ReverifyUndoResult>;
+    /** READ-ONLY — the resolution receipts persisted for the current local day. */
+    receiptsToday(): Promise<ReverifyReceiptsTodayResult>;
   };
   readonly weeklyReview: {
     /** Weekly ledger/integrity session summary. May create/suppress the system task. */

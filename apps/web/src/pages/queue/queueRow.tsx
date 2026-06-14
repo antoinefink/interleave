@@ -13,6 +13,7 @@
  * SQL, no scheduling math, no data fetching.
  */
 
+import { Link } from "@tanstack/react-router";
 import type { ReactElement } from "react";
 import { Icon, type IconName } from "../../components/Icon";
 import { Stage } from "../../components/inspector/primitives";
@@ -125,23 +126,24 @@ export function ExtractAgeChip({ item }: { item: QueueItemSummary }): ReactEleme
 }
 
 /**
- * T123 — the content-staleness chip. Inert (read-only `<span>`, no click/role) for an
- * advisory, non-terminal signal: a source block this item derives from was edited, so its
- * body may no longer match. Resolution (confirm/rebase/detach) is T124, so the chip only
- * informs — its tooltip says so. Styled at the same `--warn` advisory severity as a stale
- * extract-age chip, NOT `--danger`.
+ * T123 → T124 — the content-staleness chip, now ACTIONABLE. A source block this item
+ * derives from was edited, so its body may no longer match. The chip links to the T124
+ * re-verify drain (`/maintenance/reverify`) where the flag resolves as confirm / rebase /
+ * detach. Styled at the same `--warn` advisory severity as a stale extract-age chip, NOT
+ * `--danger`.
  */
 export function ReverifyChip({ item }: { item: QueueItemSummary }): ReactElement | null {
   if (!item.schedulerSignals.needsReverify) return null;
   return (
-    <span
-      className="reverify-chip"
+    <Link
+      to="/maintenance/reverify"
+      className="reverify-chip reverify-chip--action"
       data-testid="reverify-chip"
-      title="Source content changed — re-verify this item (available in a future update)"
+      title="Source content changed — click to re-verify"
     >
       <Icon name="warning" size={12} />
       Re-verify
-    </span>
+    </Link>
   );
 }
 

@@ -415,6 +415,34 @@ export {
 } from "./retirement-suggestion-repository";
 export { ReverifyPropagationRepository } from "./reverify-propagation-repository";
 export {
+  type ClearProvenanceInput,
+  type DetachInput,
+  type DetachSnapshotInput,
+  type FlaggedBySourceRow,
+  type ReverifyProvenancePreimage,
+  type ReverifyResolutionOpPayload,
+  ReverifyResolutionRepository,
+  type ReverifyResolutionVerb,
+} from "./reverify-resolution-repository";
+export {
+  REVERIFY_RESOLUTION_STATE_KEY,
+  REVERIFY_SESSION_CAP,
+  type ReverifyDecision,
+  type ReverifyFlaggedSource,
+  type ReverifyFlaggedSourcesSummary,
+  type ReverifyReceiptCounts,
+  type ReverifyReceiptItem,
+  type ReverifyReceiptStatus,
+  type ReverifyResolutionReceipt,
+  ReverifyResolutionService,
+  type ReverifyResolveResult,
+  type ReverifyResolveSkip,
+  type ReverifyResolveSkipReason,
+  type ReverifySessionItem,
+  type ReverifySessionPreview,
+  type ReverifyUndoResult,
+} from "./reverify-resolution-service";
+export {
   type ReviewModeCount,
   type ReviewModeDeck,
   ReviewModeService,

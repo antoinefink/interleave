@@ -1,0 +1,123 @@
+/**
+ * Re-verify drain surface (T124) styles. Token-driven so light + dark work for free:
+ * deletions read at `--danger` (struck through), insertions at `--ok`. The diff block is
+ * deliberately subdued (context, not the action) and height-capped so a large source edit
+ * never buries the per-item confirm/rebase/detach controls below the fold.
+ */
+
+.rv-group {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin: 0 24px 14px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.rv-group__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 14px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+}
+
+.rv-group__head:hover {
+  background: var(--surface-2);
+}
+
+.rv-group__title {
+  flex: 1;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rv-group__count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.rv-block {
+  border-top: 1px solid var(--border);
+  padding: 10px 14px;
+}
+
+.rv-block__diff {
+  max-height: 120px;
+  overflow: auto;
+  background: var(--surface-2);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-muted);
+}
+
+.rv-diff__equal {
+  color: var(--text-muted);
+}
+
+.rv-diff__delete {
+  color: var(--danger);
+  text-decoration: line-through;
+  background: var(--danger-soft);
+  border-radius: 2px;
+}
+
+.rv-diff__insert {
+  color: var(--ok);
+  background: var(--ok-soft);
+  border-radius: 2px;
+}
+
+.rv-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0 0;
+}
+
+.rv-item__title {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rv-item__actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.rv-item__skip {
+  font-size: 12px;
+  color: var(--warn);
+  background: var(--warn-soft);
+  border-radius: 4px;
+  padding: 2px 7px;
+}
+
+.rv-bulk {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 14px 12px;
+}
+
+.rv-resume {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 6px 14px 12px;
+}

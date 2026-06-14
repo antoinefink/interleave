@@ -138,6 +138,12 @@ A derived element (Extract, atomic statement, or card) whose body may no longer 
 
 Content staleness is distinct from a block's own *stale after edit* Block processing outcome (which marks the block, not its descendants) and from calendar staleness (a fact going out of date with the passage of time, not with a source edit). It is additive metadata, never a lifecycle status: a content-stale card keeps its schedule until the user resolves it, and the flag clears automatically when the source block's content is restored.
 
+### Re-verify
+
+The per-source, session-capped drain by which a user resolves Content staleness on flagged outputs, with three verbs: **confirm** (the drift is immaterial — clear the flag), **rebase** (re-anchor to the corrected source text; for raw/clean extracts, re-derive the body), and **detach** (freeze a provenance snapshot and keep the output standalone, so a future edit of that block never re-flags it). Each resolution is op-logged and undoable through its sitting's receipt; resolving clears the flag everywhere it shows.
+
+A **detach** is *not* a Lineage tombstone (a soft-deleted middle element): the output stays live and its `source_locations` anchor is never touched. The standalone guarantee comes from a frozen detach-snapshot row that the staleness-propagation walk skips, so the output keeps its lineage while opting out of future re-flagging.
+
 ### Source yield
 
 The durable productive output attributed to processing a Source or Extract, such as derived extracts, cards, synthesis work, and honorable non-card outcomes.

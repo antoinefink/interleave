@@ -221,6 +221,65 @@ export const elementReverifyProvenance = sqliteTable(
   ],
 );
 
+/**
+ * T124 — detach-resolution snapshot. When a re-verify flag is resolved with the
+ * **detach** verb, the derived element becomes genuinely standalone WITHOUT severing
+ * lineage: the live `source_locations` anchor is left fully intact, and instead this
+ * row IS the tombstone — the propagation walk (`ReverifyPropagationRepository`) skips
+ * any `(element, source, block)` tuple that has a snapshot here (a `NOT EXISTS` guard),
+ * so a future source edit can no longer re-flag the detached output. Detach also clears
+ * the provenance that flagged it. The row freezes the provenance snapshot — the
+ * standalone element's frozen evidence root — recording the source block it was detached
+ * from, the frozen anchor text (`selectedText`) and `blockIds`/offsets, and the
+ * `pre_stale_hash` current at detach, grouped by the resolution `batchId`.
+ *
+ * `blockIds` is stored as a JSON array of stable block ids, mirroring
+ * `source_locations.blockIds`. Both FKs cascade only on HARD purge of the
+ * element/source (mirroring `element_reverify_provenance`): soft delete (the common
+ * trash path) does NOT remove the element row, so it does NOT fire the cascade — the
+ * frozen snapshot survives a soft delete. (The cascade needs no separate purge-guard:
+ * the T135 guard exists to stop a hard purge from `SET NULL`-orphaning live lineage
+ * edges; these `ON DELETE cascade` FKs just drop the snapshot cleanly when its element
+ * is hard-purged.) Detach is recoverable: undo drops the matching snapshot row and
+ * re-inserts provenance (the anchor was never touched, so there is nothing to restore).
+ */
+export const elementDetachSnapshot = sqliteTable(
+  "element_detach_snapshot",
+  {
+    id: text("id").primaryKey(),
+    /** The DERIVED element that was detached into a standalone output. */
+    elementId: text("element_id")
+      .notNull()
+      .references(() => elements.id, { onDelete: "cascade" }),
+    /** The source the element was detached FROM (its frozen evidence root). */
+    sourceElementId: text("source_element_id")
+      .notNull()
+      .references(() => elements.id, { onDelete: "cascade" }),
+    /** The specific source block the element was anchored to at detach. */
+    stableBlockId: text("stable_block_id").notNull(),
+    /** The frozen anchor text snapshotted at detach (the evidence as it then read). */
+    selectedText: text("selected_text").notNull(),
+    /** Frozen anchor block ids, JSON array (mirrors `source_locations.block_ids`). */
+    blockIds: text("block_ids").notNull(),
+    /** Frozen anchor start offset within the first block; `null` when block-level. */
+    startOffset: integer("start_offset"),
+    /** Frozen anchor end offset within the last block; `null` when block-level. */
+    endOffset: integer("end_offset"),
+    /** The block's `pre_stale_hash` at detach time, if any (else `null`). */
+    preStaleHash: text("pre_stale_hash"),
+    /** The resolution run that wrote this snapshot (audit + undo grouping). */
+    batchId: text("batch_id").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("element_detach_snapshot_element_idx").on(table.elementId),
+    index("element_detach_snapshot_source_block_idx").on(
+      table.sourceElementId,
+      table.stableBlockId,
+    ),
+  ],
+);
+
 export type DocumentRow = typeof documents.$inferSelect;
 export type NewDocumentRow = typeof documents.$inferInsert;
 export type DocumentBlockRow = typeof documentBlocks.$inferSelect;
@@ -233,3 +292,5 @@ export type SourceBlockProcessingOutputRow = typeof sourceBlockProcessingOutputs
 export type NewSourceBlockProcessingOutputRow = typeof sourceBlockProcessingOutputs.$inferInsert;
 export type ElementReverifyProvenanceRow = typeof elementReverifyProvenance.$inferSelect;
 export type NewElementReverifyProvenanceRow = typeof elementReverifyProvenance.$inferInsert;
+export type ElementDetachSnapshotRow = typeof elementDetachSnapshot.$inferSelect;
+export type NewElementDetachSnapshotRow = typeof elementDetachSnapshot.$inferInsert;

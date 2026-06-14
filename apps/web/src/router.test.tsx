@@ -19,6 +19,7 @@ describe("application router", () => {
       "/maintenance",
       "/maintenance/leeches",
       "/maintenance/retired",
+      "/maintenance/reverify",
       "/maintenance/stagnant",
       "/process",
       "/queue",

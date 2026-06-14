@@ -67,6 +67,8 @@ describe("schema migration", () => {
       "document_blocks",
       "document_marks",
       "documents",
+      // T124 detach-resolution snapshot (frozen provenance + tombstone for a detached output).
+      "element_detach_snapshot",
       "element_relations",
       // T123 content-staleness provenance (which source block staled which derived element).
       "element_reverify_provenance",

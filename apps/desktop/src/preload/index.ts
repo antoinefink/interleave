@@ -117,6 +117,9 @@ import type {
   RetentionSetBandRequest,
   RetentionSetCardRequest,
   RetentionSetConceptRequest,
+  ReverifyResolveRequest,
+  ReverifySessionPreviewRequest,
+  ReverifyUndoReceiptRequest,
   ReviewCardRequest,
   ReviewGradeRequestInput,
   ReviewModeCountRequest,
@@ -542,6 +545,16 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.extractAgingApply, request ?? {}),
     undoReceipt: (request: ExtractAgingUndoReceiptRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.extractAgingUndoReceipt, request),
+  },
+  reverify: {
+    flaggedSources: () => ipcRenderer.invoke(IPC_CHANNELS.reverifyFlaggedSources),
+    sessionPreview: (request: ReverifySessionPreviewRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.reverifySessionPreview, request),
+    resolve: (request: ReverifyResolveRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.reverifyResolve, request),
+    undoReceipt: (request: ReverifyUndoReceiptRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.reverifyUndoReceipt, request),
+    receiptsToday: () => ipcRenderer.invoke(IPC_CHANNELS.reverifyReceiptsToday),
   },
   weeklyReview: {
     summary: (request?: WeeklyReviewSummaryRequest) =>

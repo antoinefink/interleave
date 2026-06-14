@@ -18,18 +18,58 @@
 
 import type { BlockId, ElementId, IsoTimestamp } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
-import { reviewStates } from "@interleave/db";
+import {
+  documents,
+  elementDetachSnapshot,
+  elementReverifyProvenance,
+  elements,
+  reviewStates,
+} from "@interleave/db";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BlockProcessingService } from "./block-processing-service";
 import { CardEditService } from "./card-edit-service";
+import { CardService } from "./card-service";
+import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
 import { ExtractService } from "./extract-service";
+import { ExtractionService } from "./extraction-service";
 import { createRepositories } from "./index";
 import { OperationLogRepository } from "./operation-log-repository";
 import { QueueActionService } from "./queue-action-service";
+import { ReverifyResolutionRepository } from "./reverify-resolution-repository";
 import { type ReviewOutcome, ReviewRepository } from "./review-repository";
+import { SourceRepository } from "./source-repository";
 import { createInMemoryDb } from "./test-db";
 import { UndoService } from "./undo-service";
+
+/**
+ * A minimal `ParsedOp`-shaped record so the tests can drive `UndoService`'s private
+ * `isInvertible` / `invertWithin` directly (the plan's U3 assertions name those methods).
+ * The service parses the same shape out of `operation_log`, so calling them with a
+ * hand-built op is faithful to production.
+ */
+interface UndoServicePrivate {
+  isInvertible(op: {
+    id: string;
+    opType: string;
+    elementId: ElementId | null;
+    payload: Record<string, unknown>;
+  }): boolean;
+  invertWithin(
+    tx: unknown,
+    op: {
+      id: string;
+      opType: string;
+      elementId: ElementId | null;
+      payload: Record<string, unknown>;
+    },
+  ): string | null;
+}
+
+function asPrivate(undo: UndoService): UndoServicePrivate {
+  return undo as unknown as UndoServicePrivate;
+}
 
 let handle: DbHandle;
 
@@ -601,5 +641,234 @@ describe("UndoService.undoLast — lineage branch delete (T135/U5)", () => {
     const reRestored = undo.undoLast();
     expect(reRestored.undone).toBe(true);
     expect(review.findReviewState(cardId)?.dueAt).toBe(reviewDue);
+  });
+});
+
+/**
+ * T124 U3 — `reverifyResolution` ops are reversed ONLY through the guarded receipt path.
+ *
+ * A resolution (confirm / detach / rebase) clears the self-healing flag by DELETING
+ * provenance rows; its op carries the full preimage on a dedicated `reverifyResolution`
+ * marker. The actual inverse lives in `ReverifyResolutionService.undoReceipt` →
+ * `ReverifyResolutionRepository.restoreResolutionWithin` (with a four-part current-state
+ * guard) — covered by the service + repository suites. The GLOBAL undo (`undoLast`)
+ * deliberately does NOT reverse a resolution: a second, unguarded undo path would desync
+ * the persisted receipt, and every resolution is immediately followed by a non-invertible
+ * `propagation: true` recompute op that already shadows it. So this suite asserts the
+ * global path defers — `isInvertible` is false and `invertWithin` is a no-op — while
+ * T123's `propagation: true` flips stay non-invertible too. The seed mirrors the
+ * resolution-repository test: a real source → extract → card lineage staled through
+ * `BlockProcessingService` so provenance is produced exactly as production writes it.
+ */
+describe("UndoService — reverifyResolution is receipt-only (T124)", () => {
+  interface ReverifyLineage {
+    readonly sourceId: ElementId;
+    readonly extractId: ElementId;
+    readonly cardId: ElementId;
+    readonly extractedBlock: BlockId;
+  }
+
+  function seedReverifyLineage(): ReverifyLineage {
+    const { element: source } = new SourceRepository(handle.db).createWithDocument({
+      title: "A long article",
+      priority: 0.875,
+      status: "active",
+      stage: "raw_source",
+      body: "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.",
+    });
+    const sourceId = source.id;
+    const blocks = new DocumentRepository(handle.db)
+      .listBlocks(sourceId)
+      .map((b) => b.stableBlockId as BlockId);
+    const extractedBlock = blocks[1] as BlockId;
+
+    const { element: extract } = new ExtractionService(handle.db).createExtraction({
+      sourceElementId: sourceId,
+      selectedText: "Second paragraph.",
+      blockIds: [extractedBlock],
+      startOffset: 0,
+      endOffset: 17,
+      priority: 0.875,
+    });
+    const { element: card } = new CardService(handle.db).createFromExtract({
+      extractId: extract.id,
+      kind: "qa",
+      prompt: "What is in the second paragraph?",
+      answer: "Second paragraph.",
+    });
+
+    return { sourceId, extractId: extract.id, cardId: card.id, extractedBlock };
+  }
+
+  function storedDoc(sourceId: ElementId): unknown {
+    const row = handle.db
+      .select({ json: documents.prosemirrorJson })
+      .from(documents)
+      .where(eq(documents.elementId, sourceId))
+      .get();
+    if (!row) throw new Error("no document");
+    return JSON.parse(row.json);
+  }
+
+  function editBlockText(doc: unknown, blockId: BlockId, newText: string): unknown {
+    const clone = JSON.parse(JSON.stringify(doc)) as { content?: unknown[] };
+    const visit = (node: { attrs?: { blockId?: unknown }; content?: unknown[] }): void => {
+      if (node?.attrs?.blockId === blockId) {
+        node.content = [{ type: "text", text: newText }];
+        return;
+      }
+      for (const child of node?.content ?? []) visit(child as never);
+    };
+    visit(clone as never);
+    return clone;
+  }
+
+  /** Stale `extractedBlock` so the extract + card gain provenance + the flag. */
+  function staleLineage(lineage: ReverifyLineage): void {
+    const service = new BlockProcessingService(handle.db);
+    handle.db.transaction((tx) => {
+      service.reconcileSourceDocumentWithin(
+        tx,
+        lineage.sourceId,
+        editBlockText(storedDoc(lineage.sourceId), lineage.extractedBlock, "Heavily rewritten."),
+      );
+    });
+  }
+
+  function needsReverify(id: ElementId): boolean {
+    return (
+      handle.db
+        .select({ needsReverify: elements.needsReverify })
+        .from(elements)
+        .where(eq(elements.id, id))
+        .get()?.needsReverify === true
+    );
+  }
+
+  function provenanceRows(elementId: ElementId) {
+    return handle.db
+      .select()
+      .from(elementReverifyProvenance)
+      .where(eq(elementReverifyProvenance.elementId, elementId))
+      .all();
+  }
+
+  function detachSnapshotCount(elementId: ElementId): number {
+    return handle.db
+      .select()
+      .from(elementDetachSnapshot)
+      .where(eq(elementDetachSnapshot.elementId, elementId))
+      .all().length;
+  }
+
+  type ParsedLogOp = {
+    id: string;
+    opType: string;
+    elementId: ElementId | null;
+    payload: Record<string, unknown>;
+  };
+
+  /** All `update_element` ops for an element, parsed into the `ParsedOp` shape (newest first). */
+  function elementOps(elementId: ElementId): ParsedLogOp[] {
+    return new OperationLogRepository(handle.db).listForElement(elementId).map((entry) => ({
+      id: entry.id,
+      opType: entry.opType,
+      elementId: entry.elementId as ElementId | null,
+      payload: (entry.payload ?? {}) as Record<string, unknown>,
+    }));
+  }
+
+  /** The `reverifyResolution`-marked op for an element. */
+  function resolutionOp(elementId: ElementId): ParsedLogOp {
+    const op = elementOps(elementId).find(
+      (o) => o.payload.reverifyResolution !== undefined && o.payload.reverifyResolution !== null,
+    );
+    if (!op) throw new Error("expected a reverifyResolution op");
+    return op;
+  }
+
+  /** A `propagation: true` op for an element (a T123 flag flip). */
+  function propagationOp(elementId: ElementId): ParsedLogOp {
+    const op = elementOps(elementId).find((o) => o.payload.propagation === true);
+    if (!op) throw new Error("expected a propagation op");
+    return op;
+  }
+
+  function confirmClear(lineage: ReverifyLineage, elementId: ElementId): void {
+    handle.db.transaction((tx) => {
+      new ReverifyResolutionRepository(handle.db).clearProvenanceWithin(tx, {
+        elementId,
+        sourceElementId: lineage.sourceId,
+        stableBlockId: lineage.extractedBlock,
+        batchId: "confirm-batch",
+        verb: "confirm",
+      });
+    });
+  }
+
+  it("a reverifyResolution confirm op is NOT globally invertible — undo is receipt-only", () => {
+    const lineage = seedReverifyLineage();
+    staleLineage(lineage);
+    confirmClear(lineage, lineage.extractId);
+    expect(provenanceRows(lineage.extractId)).toHaveLength(0);
+    expect(needsReverify(lineage.extractId)).toBe(false);
+
+    // T124 resolutions are reversed ONLY through the guarded receipt path
+    // (`ReverifyResolutionService.undoReceipt`), never global ⌘Z: the op reports
+    // non-invertible and a global invert is a no-op that leaves the flag cleared (so the
+    // single authoritative receipt path can't be desynced by an unguarded global undo).
+    const undo = new UndoService(handle.db);
+    const op = resolutionOp(lineage.extractId);
+    expect(asPrivate(undo).isInvertible(op)).toBe(false);
+    expect(asPrivate(undo).invertWithin(handle.db, op)).toBeNull();
+    expect(provenanceRows(lineage.extractId)).toHaveLength(0);
+    expect(needsReverify(lineage.extractId)).toBe(false);
+  });
+
+  it("a reverifyResolution detach op is NOT globally invertible either", () => {
+    const lineage = seedReverifyLineage();
+    staleLineage(lineage);
+    handle.db.transaction((tx) => {
+      new ReverifyResolutionRepository(handle.db).detachWithin(
+        tx,
+        {
+          elementId: lineage.extractId,
+          sourceElementId: lineage.sourceId,
+          stableBlockId: lineage.extractedBlock,
+          snapshot: {
+            elementId: lineage.extractId,
+            sourceElementId: lineage.sourceId,
+            stableBlockId: lineage.extractedBlock,
+            selectedText: "Second paragraph.",
+            blockIds: JSON.stringify([lineage.extractedBlock]),
+            startOffset: null,
+            endOffset: null,
+            preStaleHash: null,
+          },
+        },
+        "detach-batch",
+      );
+    });
+    expect(detachSnapshotCount(lineage.extractId)).toBe(1);
+
+    const undo = new UndoService(handle.db);
+    const op = resolutionOp(lineage.extractId);
+    expect(asPrivate(undo).isInvertible(op)).toBe(false);
+    expect(asPrivate(undo).invertWithin(handle.db, op)).toBeNull();
+    // The snapshot + cleared flag stand — only the guarded receipt path reverses a detach.
+    expect(detachSnapshotCount(lineage.extractId)).toBe(1);
+    expect(needsReverify(lineage.extractId)).toBe(false);
+  });
+
+  it("a propagation:true op remains NON-invertible (T123 regression guard)", () => {
+    const lineage = seedReverifyLineage();
+    staleLineage(lineage); // the stale produces a `propagation: true` flag-flip op
+
+    const undo = new UndoService(handle.db);
+    const op = propagationOp(lineage.extractId);
+    expect(asPrivate(undo).isInvertible(op)).toBe(false);
+    // …and the inverse refuses to mutate (returns null), leaving the flag set.
+    expect(asPrivate(undo).invertWithin(handle.db, op)).toBeNull();
+    expect(needsReverify(lineage.extractId)).toBe(true);
   });
 });

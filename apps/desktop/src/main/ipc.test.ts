@@ -156,6 +156,34 @@ function fakeDbService() {
       receipt: null,
       undo: { undone: true, count: 1, label: "Undid 1 change", opType: "update_element" },
     })),
+    reverifyFlaggedSources: vi.fn(() => ({
+      totalOutputs: 3,
+      sources: [{ sourceElementId: "source-1", title: "A source", count: 3 }],
+    })),
+    reverifySessionPreview: vi.fn((request?: unknown) => ({
+      sourceElementId:
+        request && typeof request === "object" && "sourceElementId" in request
+          ? (request as { sourceElementId?: string }).sourceElementId
+          : "source-1",
+      asOf: "2026-06-14T09:00:00.000Z",
+      expiresAt: "2026-06-14T09:10:00.000Z",
+      cap: 25,
+      remaining: 0,
+      items: [],
+    })),
+    reverifyResolve: vi.fn(() => ({
+      batchId: "batch-reverify-1",
+      applied: 1,
+      skipped: [],
+      receipt: null,
+    })),
+    reverifyUndoReceipt: vi.fn(() => ({
+      undone: true,
+      count: 1,
+      skipped: [],
+      receipt: null,
+    })),
+    reverifyReceiptsToday: vi.fn(() => ({ receipts: [] })),
     getPriorityIntegrity: vi.fn((request?: unknown) => ({
       asOf: "2026-06-08T09:00:00.000Z",
       windowDays: 30,
@@ -572,6 +600,136 @@ describe("registerIpcHandlers", () => {
     expect(db.previewExtractAging).not.toHaveBeenCalled();
     expect(db.applyExtractAging).not.toHaveBeenCalled();
     expect(db.undoExtractAgingReceipt).not.toHaveBeenCalled();
+  });
+
+  it("forwards the read-only reverify flagged-sources rollup (no payload)", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+    const handler = electron.handlers.get(IPC_CHANNELS.reverifyFlaggedSources);
+
+    expect(handler?.({}, undefined)).toMatchObject({ totalOutputs: 3 });
+    expect(db.reverifyFlaggedSources).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates and forwards a reverify session preview request", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+    const request = { sourceElementId: "source-1", cap: 10 };
+    const handler = electron.handlers.get(IPC_CHANNELS.reverifySessionPreview);
+
+    expect(handler?.({}, request)).toMatchObject({ sourceElementId: "source-1" });
+    expect(db.reverifySessionPreview).toHaveBeenCalledWith(request);
+  });
+
+  it("returns the stable empty preview for a missing/deleted source id without throwing", () => {
+    // The service tolerates a stale source id (returns a full-shape empty payload). The
+    // fake mirrors that contract — the handler must parse + delegate, never throw.
+    const db = fakeDbService();
+    db.reverifySessionPreview = vi.fn((request?: unknown) => ({
+      sourceElementId:
+        request && typeof request === "object" && "sourceElementId" in request
+          ? (request as { sourceElementId?: string }).sourceElementId
+          : "gone",
+      asOf: "2026-06-14T09:00:00.000Z",
+      expiresAt: "2026-06-14T09:10:00.000Z",
+      cap: 25,
+      remaining: 0,
+      items: [],
+    })) as never;
+    registerIpcHandlers(db as never);
+    const handler = electron.handlers.get(IPC_CHANNELS.reverifySessionPreview);
+
+    const result = handler?.({}, { sourceElementId: "deleted-source" });
+    expect(result).toMatchObject({ sourceElementId: "deleted-source", items: [], remaining: 0 });
+    expect(db.reverifySessionPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it("validates and forwards a reverify resolve request", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+    const request = {
+      batchId: "batch-reverify-1",
+      sourceElementId: "source-1",
+      decisions: [
+        {
+          elementId: "extract-1",
+          stableBlockId: "block-1",
+          verb: "confirm",
+          fingerprint: "fp-1",
+        },
+      ],
+    };
+    const handler = electron.handlers.get(IPC_CHANNELS.reverifyResolve);
+
+    expect(handler?.({}, request)).toMatchObject({ batchId: "batch-reverify-1", applied: 1 });
+    expect(db.reverifyResolve).toHaveBeenCalledWith(request);
+  });
+
+  it("validates and forwards a reverify receipt undo request", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+    const handler = electron.handlers.get(IPC_CHANNELS.reverifyUndoReceipt);
+
+    expect(handler?.({}, { batchId: "batch-reverify-1" })).toMatchObject({ undone: true });
+    expect(db.reverifyUndoReceipt).toHaveBeenCalledWith({ batchId: "batch-reverify-1" });
+  });
+
+  it("forwards the read-only reverify receipts-today read (no payload)", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+    const handler = electron.handlers.get(IPC_CHANNELS.reverifyReceiptsToday);
+
+    expect(handler?.({}, undefined)).toMatchObject({ receipts: [] });
+    expect(db.reverifyReceiptsToday).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects malformed reverify payloads at the Zod boundary before invoking the database service", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+
+    // sessionPreview: missing source id / bad cap.
+    expect(() =>
+      electron.handlers.get(IPC_CHANNELS.reverifySessionPreview)?.({}, { cap: 5 }),
+    ).toThrow();
+    expect(() =>
+      electron.handlers.get(IPC_CHANNELS.reverifySessionPreview)?.(
+        {},
+        { sourceElementId: "source-1", cap: 0 },
+      ),
+    ).toThrow();
+    // resolve: invalid verb / empty decisions / missing source id.
+    expect(() =>
+      electron.handlers.get(IPC_CHANNELS.reverifyResolve)?.(
+        {},
+        {
+          sourceElementId: "source-1",
+          decisions: [
+            { elementId: "e", stableBlockId: "b", verb: "frobnicate", fingerprint: "fp" },
+          ],
+        },
+      ),
+    ).toThrow();
+    expect(() =>
+      electron.handlers.get(IPC_CHANNELS.reverifyResolve)?.(
+        {},
+        { sourceElementId: "source-1", decisions: [] },
+      ),
+    ).toThrow();
+    expect(() =>
+      electron.handlers.get(IPC_CHANNELS.reverifyResolve)?.(
+        {},
+        {
+          decisions: [{ elementId: "e", stableBlockId: "b", verb: "confirm", fingerprint: "fp" }],
+        },
+      ),
+    ).toThrow();
+    // undoReceipt: empty batchId.
+    expect(() =>
+      electron.handlers.get(IPC_CHANNELS.reverifyUndoReceipt)?.({}, { batchId: "" }),
+    ).toThrow();
+    expect(db.reverifySessionPreview).not.toHaveBeenCalled();
+    expect(db.reverifyResolve).not.toHaveBeenCalled();
+    expect(db.reverifyUndoReceipt).not.toHaveBeenCalled();
   });
 
   it("validates and forwards priority integrity requests", () => {

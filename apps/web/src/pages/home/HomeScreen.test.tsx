@@ -362,6 +362,11 @@ const h = vi.hoisted(() => {
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => h.navigateSpy,
   useSearch: () => h.search(),
+  Link: ({ to, children, ...props }: { to: string; children?: import("react").ReactNode }) => (
+    <a href={to} {...props}>
+      {children}
+    </a>
+  ),
 }));
 
 vi.mock("../../lib/appApi", async () => {

@@ -224,6 +224,14 @@ export const IPC_CHANNELS = {
   extractAgingPreview: "extractAging:preview",
   extractAgingApply: "extractAging:apply",
   extractAgingUndoReceipt: "extractAging:receipt:undo",
+  // Re-verify drain (T124) — the human-in-the-loop resolution of content-stale
+  // (`needs_reverify`) outputs. `flaggedSources`/`sessionPreview`/`receiptsToday` are
+  // READ-ONLY (zero `operation_log`); `resolve`/`receipt:undo` are strict mutations.
+  reverifyFlaggedSources: "reverify:flaggedSources",
+  reverifySessionPreview: "reverify:sessionPreview",
+  reverifyResolve: "reverify:resolve",
+  reverifyUndoReceipt: "reverify:receipt:undo",
+  reverifyReceiptsToday: "reverify:receipts:today",
   weeklyReviewSummary: "weeklyReview:summary",
   weeklyReviewUpdateProgress: "weeklyReview:updateProgress",
   weeklyReviewComplete: "weeklyReview:complete",

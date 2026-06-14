@@ -323,6 +323,13 @@ export function MaintenanceScreen() {
           <Link to="/maintenance/stagnant" className="mt-link">
             Stagnant
           </Link>
+          <Link
+            to="/maintenance/reverify"
+            className="mt-link"
+            data-testid="maintenance-link-reverify"
+          >
+            Re-verify
+          </Link>
           <Link to="/trash" className="mt-link">
             Trash
           </Link>

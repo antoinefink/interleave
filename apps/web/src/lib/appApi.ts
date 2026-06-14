@@ -4381,6 +4381,121 @@ export interface ExtractAgingUndoReceiptResult {
   readonly undo: UndoLastResult;
 }
 
+// ---------------------------------------------------------------------------
+// reverify.*  (T124 — re-verify drain: confirm / rebase / detach a flagged output)
+// ---------------------------------------------------------------------------
+
+export type ReverifyResolutionVerb = "confirm" | "rebase" | "detach";
+export type ReverifyReceiptStatus = "actionable" | "undone";
+export type ReverifyResolveSkipReason =
+  | "not-flagged"
+  | "block-re-edited"
+  | "target-changed"
+  | "deleted"
+  | "rebase-failed";
+
+export interface ReverifyFlaggedSource {
+  readonly sourceElementId: string;
+  readonly title: string;
+  readonly count: number;
+}
+
+export interface ReverifyFlaggedSourcesResult {
+  readonly totalOutputs: number;
+  readonly sources: readonly ReverifyFlaggedSource[];
+}
+
+export interface ReverifySessionItem {
+  readonly elementId: string;
+  readonly type: string;
+  readonly stage: string;
+  readonly title: string;
+  readonly stableBlockId: string;
+  readonly oldAnchorText: string;
+  readonly currentBlockText: string;
+  readonly fingerprint: string;
+}
+
+export interface ReverifySessionPreview {
+  readonly sourceElementId: string;
+  readonly asOf: string;
+  readonly expiresAt: string;
+  readonly cap: number;
+  readonly remaining: number;
+  readonly items: readonly ReverifySessionItem[];
+}
+
+export interface ReverifyDecision {
+  readonly elementId: string;
+  readonly stableBlockId: string;
+  readonly verb: ReverifyResolutionVerb;
+  readonly fingerprint: string;
+}
+
+export interface ReverifyResolveSkip {
+  readonly elementId: string;
+  readonly reason: ReverifyResolveSkipReason;
+}
+
+export interface ReverifyReceiptItem {
+  readonly elementId: string;
+  readonly stableBlockId: string;
+  readonly verb: ReverifyResolutionVerb;
+}
+
+export interface ReverifyReceiptCounts {
+  readonly confirmed: number;
+  readonly rebased: number;
+  readonly detached: number;
+  readonly skipped: number;
+}
+
+export interface ReverifyResolutionReceipt {
+  readonly batchId: string;
+  readonly localDay: string;
+  readonly sourceElementId: string;
+  readonly status: ReverifyReceiptStatus;
+  readonly createdAt: string;
+  readonly counts: ReverifyReceiptCounts;
+  readonly items: readonly ReverifyReceiptItem[];
+  readonly undoneAt?: string;
+}
+
+export interface ReverifySessionPreviewRequest {
+  readonly sourceElementId: string;
+  readonly cap?: number;
+}
+
+export interface ReverifyResolveRequest {
+  readonly batchId?: string;
+  readonly sourceElementId: string;
+  readonly decisions: readonly ReverifyDecision[];
+}
+
+export interface ReverifyResolveResult {
+  readonly batchId: string;
+  readonly applied: number;
+  readonly skipped: readonly ReverifyResolveSkip[];
+  readonly receipt: ReverifyResolutionReceipt | null;
+}
+
+export interface ReverifyUndoReceiptRequest {
+  readonly batchId: string;
+  readonly itemIds?: readonly string[];
+}
+
+export interface ReverifyUndoResult {
+  readonly undone: boolean;
+  readonly count: number;
+  readonly reason?: string;
+  readonly skipped: readonly ReverifyReceiptItem[];
+  readonly receipt: ReverifyResolutionReceipt | null;
+}
+
+export interface ReverifyReceiptsTodayResult {
+  readonly receipts: readonly ReverifyResolutionReceipt[];
+}
+
 export interface DailyWorkSummaryResult {
   readonly asOf: string;
   readonly dueQueueItems: number;
@@ -4961,6 +5076,13 @@ export interface AppApi {
     preview(request?: ExtractAgingPreviewRequest): Promise<ExtractAgingPreviewResult>;
     apply(request?: ExtractAgingApplyRequest): Promise<ExtractAgingApplyResult>;
     undoReceipt(request: ExtractAgingUndoReceiptRequest): Promise<ExtractAgingUndoReceiptResult>;
+  };
+  readonly reverify: {
+    flaggedSources(): Promise<ReverifyFlaggedSourcesResult>;
+    sessionPreview(request: ReverifySessionPreviewRequest): Promise<ReverifySessionPreview>;
+    resolve(request: ReverifyResolveRequest): Promise<ReverifyResolveResult>;
+    undoReceipt(request: ReverifyUndoReceiptRequest): Promise<ReverifyUndoResult>;
+    receiptsToday(): Promise<ReverifyReceiptsTodayResult>;
   };
   readonly weeklyReview: {
     summary(request?: WeeklyReviewSummaryRequest): Promise<WeeklyReviewSummaryResult>;
@@ -6196,6 +6318,57 @@ export const appApi = {
       });
     }
     return requireAppApi().extractAging.undoReceipt(request);
+  },
+  // reverify.* (T124) — the re-verify drain. Reads return inert empty payloads off-desktop;
+  // writes return the no-op shape (`applied: 0` / `undone: false`) so the renderer renders
+  // a stable "caught up" / "bridge unavailable" surface in the bare-renderer mode.
+  reverifyFlaggedSources(): Promise<ReverifyFlaggedSourcesResult> {
+    if (!isDesktop() || !window.appApi?.reverify?.flaggedSources) {
+      return Promise.resolve({ totalOutputs: 0, sources: [] });
+    }
+    return requireAppApi().reverify.flaggedSources();
+  },
+  reverifySessionPreview(request: ReverifySessionPreviewRequest): Promise<ReverifySessionPreview> {
+    if (!isDesktop() || !window.appApi?.reverify?.sessionPreview) {
+      return Promise.resolve({
+        sourceElementId: request.sourceElementId,
+        asOf: new Date().toISOString(),
+        expiresAt: new Date().toISOString(),
+        cap: request.cap ?? 25,
+        remaining: 0,
+        items: [],
+      });
+    }
+    return requireAppApi().reverify.sessionPreview(request);
+  },
+  reverifyResolve(request: ReverifyResolveRequest): Promise<ReverifyResolveResult> {
+    if (!isDesktop() || !window.appApi?.reverify?.resolve) {
+      return Promise.resolve({
+        batchId: request.batchId ?? "",
+        applied: 0,
+        skipped: [],
+        receipt: null,
+      });
+    }
+    return requireAppApi().reverify.resolve(request);
+  },
+  reverifyUndoReceipt(request: ReverifyUndoReceiptRequest): Promise<ReverifyUndoResult> {
+    if (!isDesktop() || !window.appApi?.reverify?.undoReceipt) {
+      return Promise.resolve({
+        undone: false,
+        count: 0,
+        reason: "Desktop bridge unavailable",
+        skipped: [],
+        receipt: null,
+      });
+    }
+    return requireAppApi().reverify.undoReceipt(request);
+  },
+  reverifyReceiptsToday(): Promise<ReverifyReceiptsTodayResult> {
+    if (!isDesktop() || !window.appApi?.reverify?.receiptsToday) {
+      return Promise.resolve({ receipts: [] });
+    }
+    return requireAppApi().reverify.receiptsToday();
   },
   getWeeklyReviewSummary(request?: WeeklyReviewSummaryRequest): Promise<WeeklyReviewSummaryResult> {
     return requireAppApi().weeklyReview.summary(request);

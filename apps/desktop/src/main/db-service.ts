@@ -105,6 +105,12 @@ import {
   type RelatedResult,
   type Repositories,
   RetentionService,
+  type ReverifyFlaggedSourcesSummary,
+  type ReverifyResolutionReceipt,
+  ReverifyResolutionService,
+  type ReverifyResolveResult,
+  type ReverifySessionPreview,
+  type ReverifyUndoResult,
   ReviewModeService,
   type ReviewOutcome,
   ReviewSessionService,
@@ -311,6 +317,9 @@ import type {
   RetentionSetConceptResult,
   RetentionUpdatedResult,
   RetiredCardSummary,
+  ReverifyResolveRequest,
+  ReverifySessionPreviewRequest,
+  ReverifyUndoReceiptRequest,
   ReviewCardRequest,
   ReviewCardResult,
   ReviewCardView,
@@ -582,6 +591,8 @@ export class DbService {
   /** The extract-stagnation scan (T084) — extracts that keep returning without progressing. */
   private extractStagnation: ExtractStagnationQuery | null = null;
   private extractAging: ExtractAgingPolicyService | null = null;
+  /** The re-verify drain orchestrator (T124) — preview/resolve/undo + the flagged rollup. */
+  private reverify: ReverifyResolutionService | null = null;
   private inboxQuery: InboxQuery | null = null;
   private queueAction: QueueActionService | null = null;
   private blockProcessing: BlockProcessingService | null = null;
@@ -900,6 +911,10 @@ export class DbService {
     // delete suggestions. No mutation, no `operation_log`, no schedule change.
     this.extractStagnation = new ExtractStagnationQuery(this.handle.db);
     this.extractAging = new ExtractAgingPolicyService(this.handle.db, this.repositories);
+    // The re-verify drain orchestrator behind `/maintenance/reverify` (T124): a per-source
+    // capped/fingerprinted preview (read-only), transactional confirm/rebase/detach with a
+    // receipt + batch undo, and the light cross-source flagged-output rollup.
+    this.reverify = new ReverifyResolutionService(this.handle.db, this.repositories);
     this.queueAction = new QueueActionService(this.handle.db);
     this.blockProcessing = new BlockProcessingService(this.handle.db);
     this.dailyWork = new DailyWorkQuery(this.repositories, this.blockProcessing);
@@ -976,6 +991,7 @@ export class DbService {
     this.autoPostpone = null;
     this.standingAutoPostpone = null;
     this.extractAging = null;
+    this.reverify = null;
     this.recoveryMode = null;
     this.inboxQuery = null;
     this.extraction = null;
@@ -1852,6 +1868,55 @@ export class DbService {
 
   undoExtractAgingReceipt(request: ExtractAgingUndoReceiptRequest): ExtractAgingUndoResult {
     return this.extractAgingPolicyService.undoReceipt(request.batchId);
+  }
+
+  private get reverifyResolutionService(): ReverifyResolutionService {
+    if (!this.reverify) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.reverify;
+  }
+
+  /** READ-ONLY (T124) — the cross-source flagged-output rollup. Appends no op-log rows. */
+  reverifyFlaggedSources(): ReverifyFlaggedSourcesSummary {
+    return this.reverifyResolutionService.flaggedSourcesSummary();
+  }
+
+  /**
+   * READ-ONLY (T124) — the per-source, capped, fingerprinted session preview. Tolerant by
+   * construction: a stale/missing/deleted source id yields a stable empty payload (KTD8).
+   */
+  reverifySessionPreview(request: ReverifySessionPreviewRequest): ReverifySessionPreview {
+    return this.reverifyResolutionService.sessionPreview({
+      sourceElementId: request.sourceElementId as ElementId,
+      ...(request.cap !== undefined ? { cap: request.cap } : {}),
+    });
+  }
+
+  /** Apply a batch of confirm/rebase/detach decisions transactionally (T124, strict write). */
+  reverifyResolve(request: ReverifyResolveRequest): ReverifyResolveResult {
+    return this.reverifyResolutionService.resolve({
+      ...(request.batchId !== undefined ? { batchId: request.batchId } : {}),
+      sourceElementId: request.sourceElementId as ElementId,
+      decisions: request.decisions.map((decision) => ({
+        elementId: decision.elementId as ElementId,
+        stableBlockId: decision.stableBlockId as BlockId,
+        verb: decision.verb,
+        fingerprint: decision.fingerprint,
+      })),
+    });
+  }
+
+  /** Reverse a resolution receipt (or named items) after the four-part guard (T124). */
+  reverifyUndoReceipt(request: ReverifyUndoReceiptRequest): ReverifyUndoResult {
+    return this.reverifyResolutionService.undoReceipt(request.batchId, {
+      ...(request.itemIds ? { itemIds: request.itemIds as ElementId[] } : {}),
+    });
+  }
+
+  /** READ-ONLY (T124) — the resolution receipts persisted for the current local day. */
+  reverifyReceiptsToday(): { readonly receipts: readonly ReverifyResolutionReceipt[] } {
+    return { receipts: this.reverifyResolutionService.receiptsForToday() };
   }
 
   /**

@@ -267,6 +267,13 @@
       "when": 1781385941781,
       "tag": "0037_nosy_lady_vermin",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1781417949120,
+      "tag": "0038_worthless_gateway",
+      "breakpoints": true
     }
   ]
 }

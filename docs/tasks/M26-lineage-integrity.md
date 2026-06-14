@@ -98,7 +98,17 @@ queryable fact on extracts, statements, and cards — not just on blocks nobody 
 # T124 — Re-verify workflow
 
 - **Milestone:** M26 — Lineage integrity
-- **Status:** `[ ]` not started
+- **Status:** `[x]` complete — landed on `main` (see `docs/roadmap.md` T124). Learning:
+  [`docs/solutions/architecture-patterns/detach-tombstone-receipt-only-undo-and-per-triple-fingerprint-for-flag-resolution.md`](../solutions/architecture-patterns/detach-tombstone-receipt-only-undo-and-per-triple-fingerprint-for-flag-resolution.md).
+  Implemented as: `element_detach_snapshot` table (additive migration `0038`) + a
+  `ReverifyResolutionRepository`/`ReverifyResolutionService` drain (confirm/rebase/detach,
+  per-source session preview with a per-`(element,source,block)`-triple revalidation fingerprint,
+  receipt-scoped four-part-guard undo), the detach snapshot doubling as a re-flag tombstone in
+  `ReverifyPropagationRepository` (applied to descendants too), receipt-only global-undo deferral in
+  `UndoService`, a typed `reverify.*` IPC surface, and a `/maintenance/reverify` keyboard-first
+  drain screen + actionable `ReverifyChip`. Card schedules are left untouched (the T125 seam is
+  noted in code). Verified by `pnpm lint`/`typecheck`/`test` (4081) and
+  `pnpm e2e tests/electron/reverify-workflow.spec.ts tests/electron/reverify-propagation.spec.ts`.
 - **Depends on:** T123
 - **Roadmap line:** flagged items resolve as confirm / rebase / detach (rebase re-anchors to
   current text, hash-diff assisted; detach freezes a provenance snapshot), batched per source,

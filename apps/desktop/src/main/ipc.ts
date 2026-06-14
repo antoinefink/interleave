@@ -131,6 +131,9 @@ import {
   RetentionSetBandRequestSchema,
   RetentionSetCardRequestSchema,
   RetentionSetConceptRequestSchema,
+  ReverifyResolveRequestSchema,
+  ReverifySessionPreviewRequestSchema,
+  ReverifyUndoReceiptRequestSchema,
   ReviewCardRequestSchema,
   ReviewGradeRequestSchema,
   ReviewLeechesRequestSchema,
@@ -1507,6 +1510,33 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.extractAgingUndoReceipt, (_event, rawRequest: unknown) => {
     const request = ExtractAgingUndoReceiptRequestSchema.parse(rawRequest);
     return dbService.undoExtractAgingReceipt(request);
+  });
+
+  // reverify.* (T124) — tolerant reads, strict writes (KTD8). The READ handlers
+  // (`flaggedSources`, `sessionPreview`, `receiptsToday`) delegate to service methods that
+  // return a stable empty payload for a stale/missing/deleted source id rather than
+  // throwing; the mutation handlers (`resolve`, `undoReceipt`) parse strictly first.
+  ipcMain.handle(IPC_CHANNELS.reverifyFlaggedSources, () => {
+    return dbService.reverifyFlaggedSources();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.reverifySessionPreview, (_event, rawRequest: unknown) => {
+    const request = ReverifySessionPreviewRequestSchema.parse(rawRequest);
+    return dbService.reverifySessionPreview(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.reverifyResolve, (_event, rawRequest: unknown) => {
+    const request = ReverifyResolveRequestSchema.parse(rawRequest);
+    return dbService.reverifyResolve(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.reverifyUndoReceipt, (_event, rawRequest: unknown) => {
+    const request = ReverifyUndoReceiptRequestSchema.parse(rawRequest);
+    return dbService.reverifyUndoReceipt(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.reverifyReceiptsToday, () => {
+    return dbService.reverifyReceiptsToday();
   });
 
   ipcMain.handle(IPC_CHANNELS.weeklyReviewSummary, (_event, rawRequest: unknown) => {

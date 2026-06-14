@@ -27,6 +27,7 @@
 
 import type { BlockId, ElementId, SourceBlockReconcileReport } from "@interleave/core";
 import {
+  elementDetachSnapshot,
   elementReverifyProvenance,
   elements,
   type InterleaveDatabase,
@@ -44,8 +45,11 @@ import type { DbClient } from "./types";
  * flags these: in practice only derived artifacts carry `source_locations` anchors, but
  * flagging any other type would violate the CHECK and abort the source save, so the walk
  * filters defensively rather than trusting that invariant implicitly.
+ *
+ * Exported as the single source of truth: the resolution repo + service import this so
+ * the flaggable set stays in lockstep with the `elements` CHECK in ONE place.
  */
-const REVERIFY_FLAGGABLE_TYPES: ReadonlySet<string> = new Set([
+export const REVERIFY_FLAGGABLE_TYPES: ReadonlySet<string> = new Set([
   "extract",
   "card",
   "media_fragment",
@@ -87,6 +91,12 @@ export class ReverifyPropagationRepository {
               .map((row) => row.id as ElementId),
           ];
           for (const elementId of affected) {
+            // T124 detach tombstone applies to DESCENDANTS too, not just the direct
+            // anchor (which `liveAnchorsByBlock` already filtered): a descent-flagged
+            // card/statement detached against this (source, block) must not be re-flagged
+            // when its ancestor's block is later edited, or the detach's standalone
+            // promise is silently broken for non-anchor outputs.
+            if (this.isDetached(tx, elementId, sourceElementId, blockId)) continue;
             this.insertProvenanceWithin(tx, {
               elementId,
               sourceElementId,
@@ -133,8 +143,15 @@ export class ReverifyPropagationRepository {
    * parsing `source_locations.block_ids` (the immutable lineage anchor — never the
    * extract body's reminted ids). Mirrors the defensive parse in
    * `BlockProcessingRepository.listLiveOutputs`.
+   *
+   * T124 detach tombstone: a `(element, source, block)` tuple that has a row in
+   * `element_detach_snapshot` was deliberately detached into a standalone output, so a
+   * future edit of that block must NOT re-anchor and re-flag it. Such tuples are
+   * excluded here via a `NOT EXISTS` subquery, so the detach is a durable re-flag
+   * tombstone (until undo drops the snapshot). With no snapshots present this is a
+   * no-op, preserving the T123 behavior exactly.
    */
-  private liveAnchorsByBlock(
+  liveAnchorsByBlock(
     tx: DbClient,
     sourceElementId: ElementId,
     blocks: ReadonlySet<BlockId>,
@@ -162,12 +179,41 @@ export class ReverifyPropagationRepository {
       for (const raw of blockIds) {
         const blockId = raw as BlockId;
         if (!blocks.has(blockId)) continue;
+        // Detach tombstone: skip a tuple that was detached into a standalone output.
+        if (this.isDetached(tx, row.elementId as ElementId, sourceElementId, blockId)) continue;
         const set = out.get(blockId) ?? new Set<ElementId>();
         set.add(row.elementId as ElementId);
         out.set(blockId, set);
       }
     }
     return out;
+  }
+
+  /**
+   * Whether the `(element, source, block)` tuple has a frozen detach snapshot — i.e.
+   * it was detached into a standalone output and must not be re-anchored/re-flagged on
+   * a future block edit (T124 detach tombstone). Returns `false` when no snapshot
+   * exists (the common case), so the T123 walk is unchanged.
+   */
+  private isDetached(
+    tx: DbClient,
+    elementId: ElementId,
+    sourceElementId: ElementId,
+    stableBlockId: BlockId,
+  ): boolean {
+    const row = tx
+      .select({ id: elementDetachSnapshot.id })
+      .from(elementDetachSnapshot)
+      .where(
+        and(
+          eq(elementDetachSnapshot.elementId, elementId),
+          eq(elementDetachSnapshot.sourceElementId, sourceElementId),
+          eq(elementDetachSnapshot.stableBlockId, stableBlockId),
+        ),
+      )
+      .limit(1)
+      .get();
+    return row !== undefined;
   }
 
   /**
@@ -190,7 +236,13 @@ export class ReverifyPropagationRepository {
     return row?.n ?? 0;
   }
 
-  private insertProvenanceWithin(
+  /**
+   * Insert one provenance triple (idempotent via the unique index +
+   * `ON CONFLICT DO NOTHING`). Public so T124's `ReverifyResolutionRepository`
+   * composes the same projection on undo (re-inserting a captured `prevProvenance`
+   * row) rather than re-implementing it.
+   */
+  insertProvenanceWithin(
     tx: DbClient,
     input: {
       readonly elementId: ElementId;
@@ -216,8 +268,14 @@ export class ReverifyPropagationRepository {
    * Recompute the self-healing projection for one element: `needs_reverify =
    * EXISTS(provenance for element)`. Writes (and op-logs) only when the value actually
    * changes — so re-runs are idempotent and unchanged elements cost nothing.
+   *
+   * Public so T124's `ReverifyResolutionRepository` settles the flag after deleting (or
+   * re-inserting) provenance rows — composing this projection rather than flipping the
+   * boolean (which KTD1 forbids, since it would break multi-block self-healing). The
+   * `propagation: true` marker on this op stays in place: this flag-write is never
+   * the undo unit; T124's dedicated `reverifyResolution` op is.
    */
-  private recomputeFlagWithin(tx: DbClient, elementId: ElementId, batchId: string): void {
+  recomputeFlagWithin(tx: DbClient, elementId: ElementId, batchId: string): void {
     const current = tx
       .select({ needsReverify: elements.needsReverify, staleSince: elements.staleSince })
       .from(elements)
