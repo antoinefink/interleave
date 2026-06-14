@@ -3352,8 +3352,9 @@ describe("DbService — review session (T037)", () => {
     // The browse row must carry the task's type so the renderer's open helper can
     // route it (e.g. weekly_review → /weekly) instead of falling through.
     expect(row?.taskType).toBe("find_better_source");
-    // A non-task row carries a null taskType.
-    expect(card?.taskType ?? null).toBeNull();
+    // A non-task row carries a null taskType (assert directly — `?? null` would also
+    // pass if the field were dropped from the row, masking a contract regression).
+    expect(card?.taskType).toBeNull();
 
     svc.close();
   });

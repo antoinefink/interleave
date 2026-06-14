@@ -671,6 +671,10 @@ describe("BrowseScreen", () => {
           sourceLocationLabel: null,
           linkedElementId: null,
           linkedElementType: null,
+          // A genuinely unlinked task is a `custom` task — verify_claim always has a
+          // link. Keep the fixture authentic so it can't accidentally enter a future
+          // taskType-specific routing branch.
+          taskType: "custom",
         },
       ],
       counts: {
