@@ -1,6 +1,7 @@
 ---
 title: "Command palette source search should use compact typed search and reset stale async state"
 date: "2026-06-07"
+last_updated: "2026-06-15"
 category: "ui-bugs"
 module: "apps/web command palette source search"
 problem_type: "ui_bug"
@@ -24,6 +25,7 @@ tags:
   - "ipc"
   - "stale-response-guard"
   - "async-state"
+  - "semantic-search"
 ---
 
 # Command palette source search should use compact typed search and reset stale async state
@@ -81,9 +83,49 @@ The optional count flag avoids a new IPC surface while keeping the heavy `/searc
 - For debounced overlays, reset query, debounce, result, status, selection, and request-id state on close as well as open.
 - Test every boundary touched by lookup features: palette UI, Shell route params, renderer `appApi` forwarding, shared Zod contract, and `DbService` behavior.
 
+## Update (2026-06-15): the palette now routes through semantic search
+
+Having the palette on FTS-only `appApi.searchQuery` while `/search` used embeddings
+created **two different searches in one app** — the palette could not surface a source
+related by meaning that `/search` would. The palette's source live-search was switched to
+`appApi.semanticSearch` so both surfaces share one embedding-based retrieval:
+
+```ts
+// CommandPalette.tsx — same request shape, now the semantic command
+appApi.semanticSearch({ q: debouncedQuery, type: "source", limit: 8, includeCounts: false });
+res.results.filter(isSourceResult).slice(0, SOURCE_SEARCH_LIMIT);
+```
+
+What this preserved, and why it was low-risk:
+
+- **`SemanticSearchResultRow extends SearchResult`**, so rendering, `runSource`, and
+  keyboard nav are unchanged; `isSourceResult` was made generic to narrow the wider row
+  type. No new result-mapping code.
+- **The same lightweight lever was applied to the semantic command, not duplicated.**
+  `includeCounts` was added to `SemanticSearchRequestSchema` (it already existed on the FTS
+  `search.query` path). With `includeCounts: false`, `semanticSearch` runs a single fused
+  pass and returns zeroed counts, skipping the three per-type fusion passes and the
+  concept-membership fold — so the palette stays off the heavy `/search` facet-count path.
+  This is the same "extend an existing typed command with an explicit lightweight option
+  before adding a parallel IPC endpoint" rule the original fix used, applied again.
+- **`semanticSearch` degrades to FTS internally** when `sqlite-vec`/the model is
+  unavailable, so the palette keeps returning keyword source rows when semantics are off —
+  the swap unifies the fallback path rather than adding one.
+- **All prior invariants still hold**: `type: "source"` scoping, `limit: 8`, the 150 ms
+  debounce, the ≥2-char min-length, the `sourceRequestRef` request-id stale guard, and the
+  open/close state reset. The embed step makes resolution *slower*, which **widens** the
+  stale-response race — so the request-id guard is now load-bearing, not belt-and-braces.
+- **Latency note**: the first uncached term now waits on a worker embed (≤800 ms, then FTS
+  degrade). The `EmbeddingService` query-embedding cache keeps repeats instant; see
+  [[local-only-semantic-search-sqlite-vec-model-isolation]] for the cache's model-isolation rules.
+
+Earlier sections describing the palette on `searchQuery` (FTS) record the original fix;
+this section supersedes the *which command* choice while every other invariant stands.
+
 ## Related Issues
 
 - `docs/solutions/ui-bugs/search-filterbar-facet-counts-after-search.md` covers the full `/search` count contract that compact lookup opts out of.
 - `docs/solutions/ui-bugs/search-empty-query-facets-browse-rows.md` covers empty-input and stale-result guardrails for search-adjacent UI.
 - `docs/solutions/architecture-patterns/collection-explorer-route-owned-modes.md` covers keeping compact Search intent distinct from Collection Explorer route modes.
 - `docs/solutions/architecture-patterns/test-audit-driven-battle-testing.md` covers testing high-risk `window.appApi` seams.
+- [[search-typing-stutter-is-renderer-rerender-not-async-work]] — the /search input shares this debounce + stale-async discipline; its stutter was renderer re-render cost, not embedding work.

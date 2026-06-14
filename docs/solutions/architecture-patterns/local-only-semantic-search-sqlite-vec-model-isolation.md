@@ -1,6 +1,7 @@
 ---
 title: "Local-only semantic search needs model-owned vector dimensions and settings"
 date: "2026-06-13"
+last_updated: "2026-06-15"
 category: "architecture-patterns"
 module: "semantic-search"
 problem_type: "architecture_pattern"
@@ -62,6 +63,29 @@ Pass that `modelId` into every KNN consumer: search fusion, related-item vector 
 
 The packaging path is part of the semantic contract. Keep runtime jobs local-only, but let the build step acquire and stage the model for distributable builds. Dist builds should fail if the required model cannot be staged; dev and e2e builds can skip the large model and use the deterministic fallback.
 
+### Caching query embeddings is model-space-bound
+
+A query-embedding cache (text → vector, to cut repeat embeds and per-keystroke worker churn) is *itself* a model-isolation surface, because an embedding belongs to the model that produced it. A query-vector cache must obey the same rules as the index:
+
+- **Only cache real-model vectors.** Never store a `FALLBACK_EMBEDDING_MODEL_ID` result — the deterministic hash embedder is cheap to recompute and a fallback entry must never linger to be served as if it were a real-model vector.
+- **Invalidate on a model-id change from BOTH directions.** The cache can go stale two ways, and guarding only one is the subtle bug:
+  - *Write side* — a newly produced vector reports a different model id than the cache currently holds → drop the whole cache, then insert under the new model.
+  - *Read side* — the configured model id changed before any new vector was produced, so a hit would serve the old-model vector → re-check the configured model id at lookup and drop the cache if it no longer matches.
+- **The model probe must bypass the cache.** A probe's whole job is to report the model's *current* real/fallback/loading state with a live embed. If it can hit the query cache, a stale cached vector makes a since-degraded model read as `ready`. Give the embed call an explicit `useCache: false` opt-out and have the probe use it (the user-query path keeps caching by default).
+
+```ts
+// read-side guard, before any cache hit
+if (cacheModelId !== null && cacheModelId !== settings.embeddingModelId) {
+  queryVectorCache.clear();
+  cacheModelId = null;
+}
+// write side: skip fallback, clear-on-model-change, then insert
+if (result.modelId === FALLBACK_EMBEDDING_MODEL_ID) return;       // never cache fallback
+if (result.modelId !== cacheModelId) { queryVectorCache.clear(); cacheModelId = result.modelId; }
+```
+
+A cache hit also enqueues no embed job, which keeps query embeds from being mistaken for index-build activity in any job-stats rollup.
+
 ## Why This Matters
 
 `sqlite-vec` vector columns are fixed-width. If the app changes from one embedding model dimension to another without rebuilding the virtual table, writes and queries can fail or silently operate against stale derived rows.
@@ -75,6 +99,7 @@ Settings are also part of correctness. If the UI or renderer contract still expo
 - Changing the embedding model, embedding dimension, or vector runtime.
 - Moving a feature from optional/remote-capable to built-in local-only behavior.
 - Adding a new semantic consumer that seeds KNN from a stored element vector.
+- Caching query embeddings (or any derived vector) to cut repeat embeds — the cache is model-space-bound.
 - Packaging local model/runtime assets that are required in release builds but optional in dev.
 - Migrating a derived SQLite index whose schema is coupled to non-SQL model metadata.
 
@@ -108,3 +133,5 @@ Build-script tests should cover the release-only model staging branch without do
 
 - [Search filterbar facet counts after search](../ui-bugs/search-filterbar-facet-counts-after-search.md) — adjacent semantic search result contract coverage.
 - [SQLite table rebuild with foreign keys on fires ON DELETE actions](../database-issues/sqlite-table-rebuild-with-foreign-keys-on-fires-on-delete-actions.md) — adjacent migration-safety warning for SQLite rebuilds and non-empty tests.
+- [Command palette source search should use compact typed search](../ui-bugs/command-palette-source-lookup-search-query.md) — a new semantic consumer (the ⌘K palette) that shares the query-embedding cache.
+- [Search typing stutter is renderer re-render cost](../performance-issues/search-typing-stutter-is-renderer-rerender-not-async-work.md) — why the query embed is off-thread, and how that off-thread design is invisible to the renderer's typing path.
