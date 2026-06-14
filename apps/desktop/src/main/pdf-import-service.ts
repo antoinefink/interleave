@@ -219,6 +219,8 @@ export class PdfImportService {
         accessedAt: new Date().toISOString(),
         snapshotKey: snapshotRel,
         reasonAdded,
+        // Capture origin (T126): a local PDF file import.
+        capturedVia: "file",
         conversion,
       });
       sourceCommitted = true;

@@ -250,6 +250,8 @@ export class MediaImportService {
         snapshotKey: snapshotRel,
         reasonAdded: nonEmpty(input.reasonAdded ?? null),
         mediaKind: kind,
+        // Capture origin (T126): a local media file import.
+        capturedVia: "file",
         conversion,
       });
       sourceCommitted = true;
@@ -334,6 +336,8 @@ export class MediaImportService {
       snapshotKey: null,
       reasonAdded: nonEmpty(input.reasonAdded ?? null),
       mediaKind: "youtube",
+      // Capture origin (T126): a YouTube reference import (the media-import seam).
+      capturedVia: "file",
       conversion,
     });
 

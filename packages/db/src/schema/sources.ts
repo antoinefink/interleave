@@ -15,7 +15,8 @@
  * re-import of the source document.
  */
 
-import { CONFIDENCE_LEVELS, RELIABILITY_TIERS, SOURCE_TYPES } from "@interleave/core";
+import { CAPTURED_VIA, CONFIDENCE_LEVELS, RELIABILITY_TIERS, SOURCE_TYPES } from "@interleave/core";
+import { sql } from "drizzle-orm";
 import { check, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { inList } from "./_shared";
 import { elements } from "./elements";
@@ -65,6 +66,15 @@ export const sources = sqliteTable(
     confidence: text("confidence"),
     /** Free-text reliability caveats / known biases (≤2048), or `null`. */
     reliabilityNotes: text("reliability_notes"),
+    /**
+     * Capture origin (T126) — WHERE this source entered the system, one of the core
+     * `CAPTURED_VIA` tuple (`manual`/`url`/`extension`/`highlight_import`/`file`),
+     * written at the import seam. Nullable: a `null` is a legacy / un-recorded origin
+     * (the inbox renders it as "Other"). The queryable axis the inbox group-by-origin
+     * view buckets on. CHECK-constrained against the core tuple (nullable-domain — a
+     * `null` passes), so the DB + the domain union can't drift.
+     */
+    capturedVia: text("captured_via"),
   },
   (table) => [
     // T061: the canonical-URL duplicate-detection lookup. Non-unique by design —
@@ -77,6 +87,12 @@ export const sources = sqliteTable(
     check("sources_source_type_check", inList(table.sourceType, SOURCE_TYPES)),
     check("sources_reliability_tier_check", inList(table.reliabilityTier, RELIABILITY_TIERS)),
     check("sources_confidence_check", inList(table.confidence, CONFIDENCE_LEVELS)),
+    // T126: nullable-domain CHECK — a NULL captured_via (legacy / un-recorded origin)
+    // is allowed, otherwise the value must be one of the core CAPTURED_VIA origins.
+    check(
+      "sources_captured_via_check",
+      sql`${table.capturedVia} IS NULL OR ${inList(table.capturedVia, CAPTURED_VIA)}`,
+    ),
   ],
 );
 

@@ -39,6 +39,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  type CapturedVia,
   type ElementId,
   type PlainTextConversion,
   type PriorityLabel,
@@ -166,14 +167,17 @@ export class DocumentImportService {
     if (format === "markdown") {
       const conversion = markdownToProseMirrorDoc(text, newBlockId);
       const title = firstHeadingTitle(conversion) ?? filenameTitle;
-      return this.createSource({ title, conversion, priority: input.priority }, input.reasonAdded);
+      return this.createSource(
+        { title, conversion, priority: input.priority, capturedVia: "file" },
+        input.reasonAdded,
+      );
     }
 
     // HTML: sanitize → HTML→PM, AND store the original untrusted bytes in the vault.
     const conversion = htmlFileToProseMirrorDoc(text, newBlockId);
     const title = extractHtmlTitle(text) ?? firstHeadingTitle(conversion) ?? filenameTitle;
     return this.createHtmlSource(
-      { title, conversion, priority: input.priority },
+      { title, conversion, priority: input.priority, capturedVia: "file" },
       input.reasonAdded,
       bytes,
     );
@@ -190,12 +194,21 @@ export class DocumentImportService {
     const conversion = markdownToProseMirrorDoc(input.text, newBlockId);
     const title =
       nonEmpty(input.title ?? null) ?? firstHeadingTitle(conversion) ?? "Pasted Markdown";
-    return this.createSource({ title, conversion, priority: input.priority }, input.reasonAdded);
+    // Capture origin (T126): pasted Markdown is a manual capture, not a file import.
+    return this.createSource(
+      { title, conversion, priority: input.priority, capturedVia: "manual" },
+      input.reasonAdded,
+    );
   }
 
   /** Create an `inbox` source from a pre-built conversion (the shared MD/paste path). */
   private createSource(
-    args: { title: string; conversion: PlainTextConversion; priority?: PriorityLabel | undefined },
+    args: {
+      title: string;
+      conversion: PlainTextConversion;
+      priority?: PriorityLabel | undefined;
+      capturedVia: CapturedVia;
+    },
     reasonAdded: string | null | undefined,
   ): DocumentImportResult {
     const id = newElementId() as ElementId;
@@ -208,6 +221,8 @@ export class DocumentImportService {
         stage: "raw_source",
         accessedAt: new Date().toISOString(),
         reasonAdded: nonEmpty(reasonAdded ?? null),
+        // Capture origin (T126) — `file` for a read file, `manual` for pasted text.
+        capturedVia: args.capturedVia,
         conversion: args.conversion,
       });
     });
@@ -221,7 +236,12 @@ export class DocumentImportService {
    * rollback the partial vault dir is best-effort removed.
    */
   private createHtmlSource(
-    args: { title: string; conversion: PlainTextConversion; priority?: PriorityLabel | undefined },
+    args: {
+      title: string;
+      conversion: PlainTextConversion;
+      priority?: PriorityLabel | undefined;
+      capturedVia: CapturedVia;
+    },
     reasonAdded: string | null | undefined,
     bytes: Buffer,
   ): DocumentImportResult {
@@ -248,6 +268,8 @@ export class DocumentImportService {
           accessedAt: new Date().toISOString(),
           snapshotKey: snapshotRel,
           reasonAdded: nonEmpty(reasonAdded ?? null),
+          // Capture origin (T126) — `file` for a read file, `manual` for pasted text.
+          capturedVia: args.capturedVia,
           conversion: args.conversion,
         });
         this.assetsRepo.createWithin(tx, {

@@ -26,7 +26,7 @@ import {
   timingSafeTokenEqual,
   validateOrigin,
 } from "@interleave/capture-contract";
-import type { PriorityLabel } from "@interleave/core";
+import type { CapturedVia, PriorityLabel } from "@interleave/core";
 
 /**
  * The discriminated import result both `importFromHtml` (page) and
@@ -49,6 +49,8 @@ export interface CaptureImportService {
     priority?: PriorityLabel;
     reasonAdded?: string | null;
     accessedAt?: string | null;
+    /** Capture origin (T126) — the loopback path passes `extension`. */
+    capturedVia?: CapturedVia;
   }): Promise<CaptureImportResult>;
   importSelection(input: {
     url: string;
@@ -58,6 +60,8 @@ export interface CaptureImportService {
     reasonAdded?: string | null;
     blockContext?: string | null;
     accessedAt?: string | null;
+    /** Capture origin (T126) — the loopback path passes `extension`. */
+    capturedVia?: CapturedVia;
   }): Promise<CaptureImportResult>;
 }
 
@@ -166,6 +170,8 @@ function dispatch(
       title: request.title ?? null,
       ...(priority ? { priority } : {}),
       reasonAdded: request.reason ?? null,
+      // Capture origin (T126): the loopback path is a browser-extension capture.
+      capturedVia: "extension",
     });
   }
   return importService.importSelection({
@@ -176,6 +182,8 @@ function dispatch(
     reasonAdded: request.reason ?? null,
     blockContext: request.blockContext ?? null,
     ...(request.accessedAt ? { accessedAt: request.accessedAt } : {}),
+    // Capture origin (T126): the loopback path is a browser-extension capture.
+    capturedVia: "extension",
   });
 }
 

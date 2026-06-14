@@ -16,6 +16,7 @@
 
 import type {
   BlockId,
+  CapturedVia,
   ClipWindow,
   ConfidenceLevel,
   DistillationStage,
@@ -36,6 +37,7 @@ import type {
   SourceType,
 } from "@interleave/core";
 import {
+  isCapturedVia,
   isConfidenceLevel,
   isReliabilityTier,
   isSourceType,
@@ -88,6 +90,13 @@ export interface CreateSourceInput {
   readonly reliabilityTier?: ReliabilityTier | null;
   readonly confidence?: ConfidenceLevel | null;
   readonly reliabilityNotes?: string | null;
+  /**
+   * Capture origin (T126) — WHERE this source entered the system, set at the import
+   * seam (`manual`/`url`/`extension`/`highlight_import`/`file`). Optional; omitted ⇒
+   * `null` (a legacy / un-recorded origin, rendered as "Other"). Narrowed to the core
+   * tuple on write so a stray value never persists.
+   */
+  readonly capturedVia?: CapturedVia | null;
 }
 
 /**
@@ -283,6 +292,8 @@ export class SourceRepository {
         reliabilityTier: isReliabilityTier(input.reliabilityTier) ? input.reliabilityTier : null,
         confidence: isConfidenceLevel(input.confidence) ? input.confidence : null,
         reliabilityNotes: input.reliabilityNotes ?? null,
+        // Capture origin (T126) — narrowed to the core tuple; default null.
+        capturedVia: isCapturedVia(input.capturedVia) ? input.capturedVia : null,
       };
       tx.insert(sources)
         .values({ ...source })
@@ -342,6 +353,8 @@ export class SourceRepository {
       reliabilityTier: isReliabilityTier(input.reliabilityTier) ? input.reliabilityTier : null,
       confidence: isConfidenceLevel(input.confidence) ? input.confidence : null,
       reliabilityNotes: input.reliabilityNotes ?? null,
+      // Capture origin (T126) — narrowed to the core tuple; default null.
+      capturedVia: isCapturedVia(input.capturedVia) ? input.capturedVia : null,
     };
     const { element, blockCount } = this.insertElementWithDocument(tx, {
       type: "source",

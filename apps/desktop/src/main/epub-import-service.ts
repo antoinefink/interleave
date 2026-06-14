@@ -237,6 +237,8 @@ export class EpubImportService {
           accessedAt,
           snapshotKey: snapshotRel,
           reasonAdded,
+          // Capture origin (T126): a local EPUB file import.
+          capturedVia: "file",
           conversion: bookConversion,
         });
 

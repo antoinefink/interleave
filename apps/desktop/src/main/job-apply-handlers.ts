@@ -184,6 +184,10 @@ export function createJobApplyHandlers(deps: JobApplyHandlerDeps): JobApplyHandl
         ...(payload.forceNewVersion !== undefined
           ? { forceNewVersion: payload.forceNewVersion }
           : {}),
+        // Capture origin (T126): the URL background runner is a `url` import (this is
+        // the REAL url seam — distinct from the extension loopback that also calls
+        // importFromHtml; both share UrlImportService, so the origin is set here).
+        capturedVia: "url",
       });
       // The result is the discriminated import outcome (imported | duplicate) —
       // serializable JSON the IPC handler maps back to SourcesImportUrlResult.

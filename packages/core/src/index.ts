@@ -59,6 +59,9 @@ export {
   IMPORT_BALANCE_FLOOR,
   judgeBalance,
 } from "./balance";
+// Capture origin (T126) — where a source entered the system (./capture-origin).
+export type { CapturedVia } from "./capture-origin";
+export { CAPTURED_VIA, capturedViaLabel, isCapturedVia } from "./capture-origin";
 // Card-edit shape classifier — substantive-vs-typo heuristic for the write barrier (T125).
 export type {
   CardEditBody,

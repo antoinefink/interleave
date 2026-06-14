@@ -232,6 +232,8 @@ export class AnkiImportService {
           accessedAt: new Date().toISOString(),
           reasonAdded: "Imported Anki deck",
           snapshotKey: archiveRel,
+          // Capture origin (T126): a local `.apkg` file import.
+          capturedVia: "file",
           conversion: plainTextToProseMirrorDoc(overviewBody),
         });
 

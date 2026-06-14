@@ -2057,6 +2057,8 @@ export class DbService {
       author: request.author ?? null,
       publishedAt: request.publishedAt ?? null,
       reasonAdded: request.reasonAdded ?? null,
+      // Capture origin (T126): a hand-typed / pasted source is a manual capture.
+      capturedVia: "manual",
       body: request.body,
     });
     const detail = this.inbox.get(element.id);

@@ -1,0 +1,37 @@
+-- T126 — Bulk inbox triage: persisted capture origin (`sources.captured_via`).
+--
+-- HAND-EDITED to be PURELY ADDITIVE. `drizzle-kit generate` wanted to REBUILD the
+-- `sources` table (PRAGMA foreign_keys=OFF; CREATE __new_sources → copy → DROP sources
+-- → RENAME) because this diff adds a column WITH a CHECK constraint. That rebuild is
+-- the exact shape that fired `ON DELETE` actions and NULLED every parent/source link
+-- in the real vault during migration 0030
+-- (see docs/solutions/database-issues/sqlite-table-rebuild-with-foreign-keys-on-fires-on-delete-actions.md
+-- and the 0037/0039 header notes). The generated copy was ALSO mis-shaped: its
+-- `INSERT … SELECT` reads `captured_via` from the OLD `sources` table, which does not
+-- have that column yet (the Drizzle 0.45.x rebuild-SELECT bug noted in migration 0024).
+--
+-- Adding the column with `ALTER TABLE … ADD COLUMN` (incl. a column-level CHECK that
+-- allows NULL, exactly as migration 0032 did for `extract_fate`, 0037 for
+-- `needs_reverify`, and 0039 for `edit_class`/`edit_choice`) does NOT rebuild the table
+-- and cannot copy/drop rows. The end-state schema is identical to the generated
+-- snapshot, so future `db:generate` runs stay clean.
+--
+-- If a future `db:generate` ever proposes a `sources` rebuild here, hand-edit it back
+-- down to ONLY the additive `ALTER TABLE … ADD COLUMN` + the backfill below.
+--
+-- The column is nullable and defaults NULL on every existing row; a NULL captured_via
+-- means "legacy / un-recorded origin" (renders as "Other"), so the nullable-domain
+-- CHECK passes for every pre-existing row before the backfill runs.
+ALTER TABLE `sources` ADD `captured_via` text CHECK ("captured_via" IS NULL OR "captured_via" IN ('manual', 'url', 'extension', 'highlight_import', 'file'));--> statement-breakpoint
+-- Honest backfill (NO fabricated heuristic). The only reliable discriminator legacy
+-- rows carry is whether they have a URL:
+--   - a URL-bearing source backfills to 'url' (legacy extension captures are
+--     indistinguishable from URL imports in storage — R-1; honest-unknown beats
+--     confident-wrong, so they read as 'url', not a guessed 'extension');
+--   - a URL-less source backfills to 'manual'.
+-- A genuinely-ambiguous row (none exist under these two rules, which together cover
+-- every legacy source) would stay NULL → "Other". We deliberately do NOT key a
+-- 'highlight_import' backfill on `reason_added` (KTD-5): legacy highlight sources have
+-- no stable origin discriminator, so they honestly fall under url/manual above.
+UPDATE `sources` SET `captured_via` = 'url' WHERE `captured_via` IS NULL AND `url` IS NOT NULL;--> statement-breakpoint
+UPDATE `sources` SET `captured_via` = 'manual' WHERE `captured_via` IS NULL AND `url` IS NULL;

@@ -20,6 +20,7 @@ describe("source and document model shapes", () => {
       reliabilityTier: "secondary",
       confidence: "medium",
       reliabilityNotes: "Editorial source",
+      capturedVia: "url",
     } satisfies Source;
 
     const document = {

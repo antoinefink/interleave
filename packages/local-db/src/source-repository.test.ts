@@ -584,3 +584,61 @@ describe("SourceRepository.updateReliability (T091)", () => {
     );
   });
 });
+
+describe("SourceRepository captured_via (T126)", () => {
+  it("persists and round-trips an explicit capturedVia through createWithDocument", () => {
+    const repo = new SourceRepository(handle.db);
+    const result = repo.createWithDocument({
+      title: "Extension capture",
+      priority: priorityFromLabel("C"),
+      status: "inbox",
+      stage: "raw_source",
+      capturedVia: "extension",
+      conversion: buildConversion(),
+    });
+    // The returned + persisted provenance both carry the origin.
+    expect(result.source.capturedVia).toBe("extension");
+    expect(repo.findById(result.element.id)?.source.capturedVia).toBe("extension");
+  });
+
+  it("round-trips every CAPTURED_VIA origin", () => {
+    const repo = new SourceRepository(handle.db);
+    for (const origin of ["manual", "url", "extension", "highlight_import", "file"] as const) {
+      const { element } = repo.createWithDocument({
+        title: `Source via ${origin}`,
+        priority: priorityFromLabel("C"),
+        status: "inbox",
+        stage: "raw_source",
+        capturedVia: origin,
+        conversion: buildConversion(),
+      });
+      expect(repo.findById(element.id)?.source.capturedVia).toBe(origin);
+    }
+  });
+
+  it("defaults to null when no capturedVia is supplied (legacy / un-recorded → 'Other')", () => {
+    const repo = new SourceRepository(handle.db);
+    const { element } = repo.createWithDocument({
+      title: "No origin",
+      priority: priorityFromLabel("C"),
+      status: "inbox",
+      stage: "raw_source",
+      conversion: buildConversion(),
+    });
+    expect(repo.findById(element.id)?.source.capturedVia).toBeNull();
+  });
+
+  it("narrows a non-tuple value to null on write (the CHECK domain is enforced)", () => {
+    const repo = new SourceRepository(handle.db);
+    const { element } = repo.createWithDocument({
+      title: "Bad origin",
+      priority: priorityFromLabel("C"),
+      status: "inbox",
+      stage: "raw_source",
+      // A stray value must not persist — the repo narrows it to null.
+      capturedVia: "legacy_value" as never,
+      conversion: buildConversion(),
+    });
+    expect(repo.findById(element.id)?.source.capturedVia).toBeNull();
+  });
+});

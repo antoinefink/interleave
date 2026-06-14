@@ -136,6 +136,8 @@ describe("createJobApplyHandlers", () => {
       priority: "A",
       reasonAdded: "high value",
       forceNewVersion: true,
+      // T126: the URL background runner stamps capture origin `url`.
+      capturedVia: "url",
     });
   });
 });

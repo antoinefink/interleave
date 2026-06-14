@@ -19,7 +19,12 @@ import type {
   ReviewState,
   Source,
 } from "@interleave/core";
-import { isConfidenceLevel, isReliabilityTier, isSourceType } from "@interleave/core";
+import {
+  isCapturedVia,
+  isConfidenceLevel,
+  isReliabilityTier,
+  isSourceType,
+} from "@interleave/core";
 import type {
   AssetRow,
   DocumentRow,
@@ -73,6 +78,9 @@ export function rowToSource(row: SourceRow): Source {
     reliabilityTier: isReliabilityTier(row.reliabilityTier) ? row.reliabilityTier : null,
     confidence: isConfidenceLevel(row.confidence) ? row.confidence : null,
     reliabilityNotes: row.reliabilityNotes ?? null,
+    // Capture origin (T126) — narrowed to the core tuple (a non-tuple legacy value
+    // degrades to `null` → renders as "Other").
+    capturedVia: isCapturedVia(row.capturedVia) ? row.capturedVia : null,
   };
 }
 

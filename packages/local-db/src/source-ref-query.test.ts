@@ -54,6 +54,7 @@ function source(elementId: ElementId, overrides: Partial<Source> = {}): Source {
     reliabilityTier: "primary",
     confidence: "high",
     reliabilityNotes: "Peer-reviewed",
+    capturedVia: "url",
     ...overrides,
   };
 }

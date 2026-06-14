@@ -13,6 +13,7 @@
  * the row-level vocabulary the rest of the app imports.
  */
 
+import type { CapturedVia } from "./capture-origin";
 import type { BlockId, ElementId, IsoTimestamp } from "./ids";
 import type { ConfidenceLevel, ReliabilityTier, SourceType } from "./source-ref";
 
@@ -59,6 +60,13 @@ export interface Source {
   confidence: ConfidenceLevel | null;
   /** Free-text reliability caveats / known biases, or `null`. */
   reliabilityNotes: string | null;
+  /**
+   * Where this source entered the system (T126) — one of {@link CapturedVia}
+   * (`manual`/`url`/`extension`/`highlight_import`/`file`), written at the import
+   * seam, or `null` for a legacy / un-recorded origin (renders as "Other"). The
+   * queryable origin the inbox group-by-origin view buckets on.
+   */
+  capturedVia: CapturedVia | null;
 }
 
 /**

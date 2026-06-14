@@ -281,6 +281,13 @@
       "when": 1781459153874,
       "tag": "0039_green_havok",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1781471976157,
+      "tag": "0040_strange_zarek",
+      "breakpoints": true
     }
   ]
 }

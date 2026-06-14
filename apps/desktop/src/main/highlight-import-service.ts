@@ -232,6 +232,8 @@ export class HighlightImportService {
           canonicalUrl,
           accessedAt: new Date().toISOString(),
           reasonAdded: "Imported highlights",
+          // Capture origin (T126): a Readwise / Kindle highlight export import.
+          capturedVia: "highlight_import",
           conversion: bodyConversion,
         });
         sourceId = created.element.id;

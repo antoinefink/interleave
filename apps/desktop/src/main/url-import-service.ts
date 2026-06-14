@@ -25,6 +25,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
+  type CapturedVia,
   canonicalizeUrl,
   type ElementId,
   type PlainTextConversion,
@@ -139,6 +140,11 @@ export interface ImportFromUrlInput {
   readonly reasonAdded?: string | null;
   /** Reserved for T061 dedup ("import new version anyway"). Ignored at T060. */
   readonly forceNewVersion?: boolean;
+  /**
+   * Capture origin (T126) — WHERE this import was initiated. Optional; defaults to
+   * `url` (this path fetches a URL). Threaded to `sources.captured_via`.
+   */
+  readonly capturedVia?: CapturedVia;
 }
 
 /** Arguments to {@link UrlImportService.importFromHtml} (the M13 capture entry point). */
@@ -158,6 +164,12 @@ export interface ImportFromHtmlInput {
    * `url` (the M13 capture path has no separate entered url).
    */
   readonly originalUrl?: string | null;
+  /**
+   * Capture origin (T126) — distinguishes the two callers that share this method:
+   * the extension loopback (`capture-handler.ts` → `extension`) and the URL
+   * background runner (`job-apply-handlers.ts` → `url`). Optional; defaults to `url`.
+   */
+  readonly capturedVia?: CapturedVia;
 }
 
 /**
@@ -173,6 +185,11 @@ export interface ImportSelectionInput {
   /** Surrounding-text anchor for selection lineage; folded into `reasonAdded`. */
   readonly blockContext?: string | null;
   readonly accessedAt?: string | null;
+  /**
+   * Capture origin (T126) — a selection capture comes from the extension loopback
+   * (`capture-handler.ts` → `extension`). Optional; defaults to `extension`.
+   */
+  readonly capturedVia?: CapturedVia;
 }
 
 /** The shared, internal step 2–6 inputs (after the fetch has produced the HTML). */
@@ -195,6 +212,8 @@ interface PipelineInput {
    * anyway" choice; the canonical-URL index is non-unique by design).
    */
   readonly forceNewVersion: boolean;
+  /** Capture origin (T126) written to `sources.captured_via` for the created source. */
+  readonly capturedVia: CapturedVia;
 }
 
 export class UrlImportService {
@@ -239,6 +258,8 @@ export class UrlImportService {
       priority: this.resolvePriority(input.priority),
       reasonAdded: input.reasonAdded ?? null,
       forceNewVersion: input.forceNewVersion ?? false,
+      // This path fetches a URL — origin `url` unless a caller overrides it.
+      capturedVia: input.capturedVia ?? "url",
     });
   }
 
@@ -263,6 +284,9 @@ export class UrlImportService {
       titleOverride: input.title ?? null,
       accessedAt: input.accessedAt ?? null,
       forceNewVersion: input.forceNewVersion ?? false,
+      // The two distinct callers pass `extension` (loopback) or `url` (runner);
+      // default `url` for any other caller of this shared path.
+      capturedVia: input.capturedVia ?? "url",
     });
   }
 
@@ -316,6 +340,8 @@ export class UrlImportService {
         // No snapshot — a selection is a fresh document, not a page capture.
         snapshotKey: null,
         reasonAdded,
+        // Capture origin (T126): a selection capture comes from the extension.
+        capturedVia: input.capturedVia ?? "extension",
         // The raw selection text → plainTextToProseMirrorDoc (stable block ids).
         body: input.selection,
       });
@@ -474,6 +500,8 @@ export class UrlImportService {
           snapshotKey: cleanedRel,
           reasonAdded,
           sourceType: "article",
+          // Capture origin (T126): `extension` or `url` from the call site.
+          capturedVia: input.capturedVia,
           conversion,
         });
         this.assetsRepo.createWithin(tx, {

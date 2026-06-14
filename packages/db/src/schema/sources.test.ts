@@ -22,9 +22,11 @@ describe("source schema", () => {
       "reliabilityTier",
       "confidence",
       "reliabilityNotes",
+      "capturedVia",
     ]);
     expect(columns.canonicalUrl.name).toBe("canonical_url");
     expect(columns.reliabilityTier.name).toBe("reliability_tier");
+    expect(columns.capturedVia.name).toBe("captured_via");
   });
 
   it("pins actionable source-location anchors for text, pages, regions, and media clips", () => {
