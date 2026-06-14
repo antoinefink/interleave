@@ -3702,6 +3702,8 @@ export interface SemanticStatusResult {
   readonly failedCount: number;
   readonly lastError: string | null;
   readonly etaSeconds: number | null;
+  /** Why automatic indexing is paused now (`"battery"`), or `null` when free to run (U3). */
+  readonly autoIndexPaused: "battery" | null;
 }
 
 export interface SemanticReindexRequest {
@@ -5933,6 +5935,7 @@ export const appApi = {
         failedCount: 0,
         lastError: null,
         etaSeconds: null,
+        autoIndexPaused: null,
       });
     }
     return window.appApi.semantic.status(request);

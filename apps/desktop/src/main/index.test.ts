@@ -87,6 +87,7 @@ async function loadIndex(options: {
     updateSetting: vi.fn(),
     close: vi.fn(),
     setRunner: vi.fn(),
+    setPowerSource: vi.fn(),
     triageInboxItem: vi.fn(() => ({ item: null, deleted: false })),
     repos: {
       settings: {

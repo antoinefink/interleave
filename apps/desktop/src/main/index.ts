@@ -45,8 +45,20 @@ import {
 import { resolveSqliteVecBinary } from "./sqlite-vec-binding";
 import { createMainWindow } from "./window";
 
+/** Live power-source probe (Electron `powerMonitor`), guarded for early/headless calls. */
+const isOnBattery = (): boolean => {
+  try {
+    return powerMonitor.onBatteryPower === true;
+  } catch {
+    return false;
+  }
+};
+
 /** Single DB service instance for the app's lifetime. */
 const dbService = new DbService();
+// Surface a battery-paused auto-index honestly (U3): the status panel reads the live
+// power source so it can say "paused — on battery" instead of a frozen "building".
+dbService.setPowerSource(isOnBattery);
 let disposeIpc: (() => void) | null = null;
 /** The live loopback capture controller (T062), held for the will-quit stop. */
 let captureController: CaptureController | null = null;
@@ -399,13 +411,7 @@ function bootstrap(): void {
           return { queued: j.queued, running: j.running };
         },
         isReplacingLocalData: () => dbService.localDataRestartRequired,
-        isOnBattery: () => {
-          try {
-            return powerMonitor.onBatteryPower === true;
-          } catch {
-            return false;
-          }
-        },
+        isOnBattery,
         log: (message) => console.warn(message),
       },
       Number.isFinite(startupMs) && startupMs >= 0 ? { startupDelayMs: startupMs } : {},

@@ -16,8 +16,9 @@
  *  - **Safety (R3, KTD3)** — auto-index is gated on `modelState === "ready"` (never
  *    auto-build with the fallback embedder); ticks are failure-isolated (a thrown
  *    error is logged, the timer survives); writes are skipped while a local-data
- *    replacement (restore/reset) is in progress and (a minimal courtesy ahead of the
- *    full power policy) while the device is on battery.
+ *    replacement (restore/reset) is in progress; and the HEAVY bulk reindex defers
+ *    while on battery — the cheap model probe still runs, so the status surface stays
+ *    honest — a minimal courtesy ahead of the full power policy.
  *
  * The service depends on a small injected interface (not the whole `DbService`) so
  * the triage/scrub logic is unit-testable without Electron or a database.
@@ -115,7 +116,6 @@ export class EmbeddingMaintenanceService {
     if (this.passInFlight) return;
     if (!this.deps.isAvailable()) return;
     if (this.deps.isReplacingLocalData()) return;
-    if (this.deps.isOnBattery()) return;
 
     this.passInFlight = true;
     try {
@@ -132,6 +132,11 @@ export class EmbeddingMaintenanceService {
 
       const { embedded, total } = this.deps.stats();
       if (embedded >= total) return; // caught up — nothing to do
+
+      // Power courtesy: the cheap probe + prune above ALWAYS run (so the model state
+      // stays honest and the panel can report it), but the HEAVY bulk reindex defers
+      // while on battery. Plugging in — or the ungated manual Rebuild — resumes it.
+      if (this.deps.isOnBattery()) return;
 
       // Don't double-queue: only enqueue the next batch once the prior one has drained.
       const { queued, running } = this.deps.embedJobStats();

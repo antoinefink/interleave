@@ -32,6 +32,8 @@ export interface SemanticStatusInputs {
   readonly lastError: string | null;
   /** Seconds-to-complete estimate from the embed-throughput tracker, or `null`. */
   readonly etaSeconds: number | null;
+  /** Why automatic indexing is paused right now (`"battery"`), or `null` when free to run. */
+  readonly autoIndexPaused: "battery" | null;
 }
 
 /** Derive the expanded status result from gathered inputs (pure, deterministic). */
@@ -76,5 +78,7 @@ export function assembleSemanticStatus(inputs: SemanticStatusInputs): SemanticSt
     lastError: inputs.lastError,
     // ETA only means something while work is in flight.
     etaSeconds: building ? inputs.etaSeconds : null,
+    // Forwarded verbatim — db-service decides the reason from the live power source.
+    autoIndexPaused: inputs.autoIndexPaused,
   };
 }

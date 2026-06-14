@@ -21,6 +21,7 @@ const base: SemanticStatusInputs = {
   failed: 0,
   lastError: null,
   etaSeconds: null,
+  autoIndexPaused: null,
 };
 
 describe("assembleSemanticStatus", () => {
@@ -106,5 +107,17 @@ describe("assembleSemanticStatus", () => {
     });
     expect(s.failedCount).toBe(2);
     expect(s.lastError).toBe("OVERSIZED: element text too large");
+  });
+
+  it("forwards the autoIndexPaused reason verbatim", () => {
+    const paused = assembleSemanticStatus({
+      ...base,
+      total: 10,
+      embedded: 3,
+      autoIndexPaused: "battery",
+    });
+    expect(paused.autoIndexPaused).toBe("battery");
+    const free = assembleSemanticStatus({ ...base, total: 10, embedded: 3 });
+    expect(free.autoIndexPaused).toBeNull();
   });
 });

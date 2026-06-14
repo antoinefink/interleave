@@ -972,6 +972,30 @@ describe("Settings — Search Intelligence panel (U5)", () => {
     expect(await findByTestId("semantic-unavailable")).toBeInTheDocument();
     expect(queryByTestId("semantic-reindex")).toBeNull();
   });
+
+  it("shows a paused-on-battery state with the plug-in hint and a working Rebuild", async () => {
+    h.semanticStatus.mockResolvedValue({
+      enabled: true,
+      vecAvailable: true,
+      modelDownloaded: true,
+      embedded: 0,
+      total: 25,
+      modelId: "onnx-community/embeddinggemma-300m-ONNX",
+      modelState: "ready",
+      indexHealth: "stale",
+      coverageRatio: 0,
+      failedCount: 0,
+      lastError: null,
+      etaSeconds: null,
+      autoIndexPaused: "battery",
+    });
+    const { findByTestId, getByText } = render(<Settings />);
+    expect(await findByTestId("semantic-index-health")).toHaveTextContent("Indexing paused");
+    expect(getByText(/plug in to finish indexing/i)).toBeInTheDocument();
+    // The manual escape hatch stays available and ungated even on battery.
+    fireEvent.click(await findByTestId("semantic-reindex"));
+    await waitFor(() => expect(h.semanticReindex).toHaveBeenCalledWith({ onlyMissing: false }));
+  });
 });
 
 describe("Settings — Search Intelligence building/loading states (U5)", () => {

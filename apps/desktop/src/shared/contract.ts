@@ -5484,6 +5484,13 @@ export interface SemanticStatusResult {
   readonly lastError: string | null;
   /** Seconds-to-complete estimate while building, or `null` until enough samples exist. */
   readonly etaSeconds: number | null;
+  /**
+   * Why automatic indexing is paused right now, or `null` when it's free to run.
+   * `"battery"` = unplugged, so the self-healing supervisor defers the heavy bulk
+   * reindex (the cheap model probe still runs, so {@link modelState} stays honest).
+   * The manual Rebuild action is ungated and resumes indexing immediately.
+   */
+  readonly autoIndexPaused: "battery" | null;
 }
 
 export const SemanticReindexRequestSchema = z.object({

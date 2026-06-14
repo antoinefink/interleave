@@ -715,12 +715,19 @@ function SearchIntelligencePanel() {
         : "hourglass";
   const healthTone: "ok" | "warn" | "danger" =
     status.indexHealth === "healthy" ? "ok" : status.indexHealth === "degraded" ? "danger" : "warn";
+  // Auto-indexing is parked while on battery (the supervisor defers the bulk reindex).
+  // Say so plainly instead of a frozen "Building…"/"incomplete" — Rebuild stays available.
+  const pausedOnBattery = status.autoIndexPaused === "battery";
 
   return (
     <SectionPanel title="Search intelligence">
       <SettingRow label="Search index" hint="Find related material by meaning, not just keywords.">
-        <StatusChip testid="semantic-index-health" icon={healthIcon} tone={healthTone}>
-          {indexHealthHeadline(status.indexHealth)}
+        <StatusChip
+          testid="semantic-index-health"
+          icon={pausedOnBattery ? "info" : healthIcon}
+          tone={healthTone}
+        >
+          {pausedOnBattery ? "Indexing paused" : indexHealthHeadline(status.indexHealth)}
         </StatusChip>
       </SettingRow>
 
@@ -737,13 +744,15 @@ function SearchIntelligencePanel() {
         <SettingRow
           label="Indexed"
           hint={
-            status.etaSeconds != null
-              ? formatEta(status.etaSeconds)
-              : status.indexHealth === "building"
-                ? "estimating…"
-                : pct < SEMANTIC_THRESHOLD_PCT
-                  ? "Partial — semantic search improves as more items are indexed."
-                  : "Fully indexed."
+            pausedOnBattery
+              ? "On battery — plug in to finish indexing, or rebuild now."
+              : status.etaSeconds != null
+                ? formatEta(status.etaSeconds)
+                : status.indexHealth === "building"
+                  ? "estimating…"
+                  : pct < SEMANTIC_THRESHOLD_PCT
+                    ? "Partial — semantic search improves as more items are indexed."
+                    : "Fully indexed."
           }
         >
           <div className="flex items-center gap-2" data-testid="semantic-progress">

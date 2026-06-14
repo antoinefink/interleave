@@ -82,9 +82,13 @@ describe("EmbeddingMaintenanceService", () => {
     expect(deps.reindex).not.toHaveBeenCalled();
   });
 
-  it("defers while on battery (courtesy ahead of the full power policy)", async () => {
+  it("on battery: still probes + prunes (honest status) but defers the bulk reindex", async () => {
     const deps = makeDeps({ isOnBattery: vi.fn(() => true) });
     await new EmbeddingMaintenanceService(deps).tick("manual");
+    // The cheap signals run so the panel can report an honest model state…
+    expect(deps.probeModelState).toHaveBeenCalledTimes(1);
+    expect(deps.pruneOrphans).toHaveBeenCalledTimes(1);
+    // …but the heavy reindex waits for AC power.
     expect(deps.reindex).not.toHaveBeenCalled();
   });
 

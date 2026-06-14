@@ -809,6 +809,19 @@ export class DbService {
   }
 
   /**
+   * Live power-source probe used only to explain a paused auto-index (U3) in
+   * {@link semanticStatus}. Defaults to "never on battery" so tests and non-Electron
+   * callers always see indexing as free to run; `index.ts` wires the real Electron
+   * `powerMonitor` after the app is ready. Stored as a thunk — never read eagerly.
+   */
+  private isOnBattery: () => boolean = () => false;
+
+  /** Wire the live power-source probe (Electron `powerMonitor`) — see `index.ts`. */
+  setPowerSource(isOnBattery: () => boolean): void {
+    this.isOnBattery = isOnBattery;
+  }
+
+  /**
    * Block all ordinary DB access while the main process is replacing the local
    * store. The lock is acquired before any awaited cleanup so concurrent IPC
    * writes cannot commit to data that is about to be replaced.
@@ -2994,6 +3007,15 @@ export class DbService {
       failed: jobStats.failed,
       lastError: jobStats.lastError,
       etaSeconds: this.embeddingService.etaSeconds(stats.total - stats.embedded),
+      // The supervisor defers the bulk reindex on battery; surface that so the panel
+      // can say "paused" instead of a frozen "building". Only meaningful when work
+      // remains AND nothing is draining (else it's genuinely building or caught up).
+      autoIndexPaused:
+        this.isOnBattery() &&
+        stats.embedded < stats.total &&
+        jobStats.queued + jobStats.running === 0
+          ? "battery"
+          : null,
     });
   }
 
