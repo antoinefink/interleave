@@ -28,6 +28,22 @@ describe("active scope registry", () => {
     expect(hasActiveScope()).toBe(false);
   });
 
+  it("treats the inbox `triage` scope as active so global keys defer to it (T126)", () => {
+    expect(hasActiveScope()).toBe(false);
+    const release = pushActiveScope("triage");
+    releases.push(release);
+
+    // While triage is active the global shell handler reads `hasActiveScope()` and
+    // defers its overlapping `o`/`u`/`+`/`-` keys to the inbox keymap.
+    expect(hasActiveScope()).toBe(true);
+    expect(isScopeActive("triage")).toBe(true);
+    expect(isScopeActive("queue")).toBe(false);
+
+    release();
+    expect(isScopeActive("triage")).toBe(false);
+    expect(hasActiveScope()).toBe(false);
+  });
+
   it("registers a scope only while the hook is enabled and mounted", () => {
     const { rerender, unmount } = renderHook(
       ({ enabled }: { enabled: boolean }) => useActiveScope("review", enabled),

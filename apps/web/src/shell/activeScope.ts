@@ -18,8 +18,14 @@
 
 import { useEffect } from "react";
 
-/** The per-screen scopes that can suppress overlapping global keys. */
-export type ActiveScope = "reader" | "review" | "queue";
+/**
+ * The per-screen scopes that can suppress overlapping global keys. `triage` is the
+ * inbox bulk-triage surface (T126) — while it is active the global shell defers its
+ * overlapping element-action keys (`o`/`u`/`+`/`-`) to the inbox keymap. (`⌘Z` is
+ * NOT scope-gated — it fires before the deferral check, so global undo always works;
+ * the inbox scope deliberately never binds it.)
+ */
+export type ActiveScope = "reader" | "review" | "queue" | "triage";
 
 const active = new Set<ActiveScope>();
 

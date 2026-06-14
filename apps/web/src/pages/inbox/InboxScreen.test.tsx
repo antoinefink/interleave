@@ -211,6 +211,7 @@ vi.mock("../../lib/appApi", async () => {
   };
 });
 
+import { hasActiveScope, isScopeActive } from "../../shell/activeScope";
 import { InboxScreen } from "./InboxScreen";
 
 const items = [
@@ -1281,5 +1282,184 @@ describe("InboxScreen bulk triage (T126)", () => {
       expect(h.bulkTriageInboxUndo).toHaveBeenCalledWith({ batchId: "batch-undo" }),
     );
     await waitFor(() => expect(h.listInbox).toHaveBeenCalled());
+  });
+});
+
+describe("InboxScreen keyboard triage scope (T126 — U6)", () => {
+  /** Build N URL-origin rows so a single group holds the whole sweep. */
+  function bigGroup(n: number): readonly BulkRow[] {
+    return Array.from({ length: n }, (_, i) => ({
+      id: `g${i + 1}`,
+      type: "source" as const,
+      status: "inbox" as const,
+      title: `Group row ${i + 1}`,
+      srcType: "Web article",
+      author: null,
+      charCount: 100,
+      priority: 0.375,
+      accessedAt: null,
+      origin: "url" as const,
+      domain: "example.com",
+    }));
+  }
+
+  it("registers the `triage` active scope while the inbox list is shown so global keys defer", async () => {
+    mountBulk();
+    const { findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    // The inbox is the active triage surface — the shell defers `o`/`u`/`+`/`-`.
+    await waitFor(() => expect(isScopeActive("triage")).toBe(true));
+    expect(hasActiveScope()).toBe(true);
+  });
+
+  it("⌘Z is NOT bound by the inbox scope — it never fires a bulk undo (global undo always works)", async () => {
+    mountBulk();
+    const { container, findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    fireEvent.click(rowById(container, "u1"));
+    fireEvent.click(rowById(container, "u2"), { metaKey: true });
+    await findByTestId("inbox-bulk-panel");
+
+    // ⌘Z must pass straight through to the global undo handler — the inbox scope
+    // does not consume it, so no bulk-undo IPC fires.
+    fireEvent.keyDown(window, { key: "z", metaKey: true });
+    expect(h.bulkTriageInboxUndo).not.toHaveBeenCalled();
+    expect(h.bulkTriageInbox).not.toHaveBeenCalled();
+  });
+
+  it("select-rest-of-group (s) + a verb key dispatch ONE bulk over a 30-item group", async () => {
+    const rows = bigGroup(30);
+    mountBulk(rows);
+    h.bulkTriageInbox.mockResolvedValue({
+      batchId: "batch-kbd",
+      applied: 30,
+      skipped: [],
+      errored: [],
+    });
+    const { findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    // One keypress selects the whole 30-item group (NOT 30 keypresses), then one
+    // verb key fires exactly ONE bulk command over every id in the group.
+    fireEvent.keyDown(window, { key: "s" });
+    fireEvent.keyDown(window, { key: "2" }); // Queue soon
+
+    await waitFor(() => expect(h.bulkTriageInbox).toHaveBeenCalledTimes(1));
+    const call = h.bulkTriageInbox.mock.calls[0]?.[0] as {
+      ids: string[];
+      action: string;
+    };
+    expect(call.action).toBe("queueSoon");
+    expect(call.ids).toHaveLength(30);
+    expect(call.ids).toEqual(rows.map((r) => r.id));
+  });
+
+  it("an armed band rides with a keyboard verb in one combined batch (a then 2)", async () => {
+    const rows = bigGroup(4);
+    mountBulk(rows);
+    h.bulkTriageInbox.mockResolvedValue({
+      batchId: "batch-kbd-b",
+      applied: 4,
+      skipped: [],
+      errored: [],
+    });
+    const { findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    fireEvent.keyDown(window, { key: "s" }); // select the whole group
+    fireEvent.keyDown(window, { key: "b" }); // arm band B (no IPC)
+    expect(h.bulkTriageInbox).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: "2" }); // queue soon, combined with B
+
+    await waitFor(() => expect(h.bulkTriageInbox).toHaveBeenCalledTimes(1));
+    expect(h.bulkTriageInbox).toHaveBeenCalledWith({
+      ids: rows.map((r) => r.id),
+      action: "queueSoon",
+      priority: "B",
+    });
+  });
+
+  it("with an EMPTY selection a verb key acts on exactly the cursor row (no widening)", async () => {
+    mountBulk();
+    const { findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    // No multi-select — the verb falls back to the single cursor row via the
+    // per-item command, NOT a bulk sweep over the whole list.
+    fireEvent.keyDown(window, { key: "2" }); // Queue soon
+
+    await waitFor(() =>
+      expect(h.triageInboxItem).toHaveBeenCalledWith({
+        id: "u1",
+        action: { kind: "queueSoon" },
+      }),
+    );
+    expect(h.bulkTriageInbox).not.toHaveBeenCalled();
+    expect(h.triageInboxItem).toHaveBeenCalledTimes(1);
+  });
+
+  it("the empty-selection 1 key reads the cursor row now and falls back to per-item accept", async () => {
+    mountBulk();
+    h.triageInboxItem.mockResolvedValue({ item: { ...bulkRows[0] }, deleted: false });
+    const { findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    fireEvent.keyDown(window, { key: "1" }); // Read now (cursor row)
+
+    await waitFor(() =>
+      expect(h.triageInboxItem).toHaveBeenCalledWith({
+        id: "u1",
+        action: { kind: "accept" },
+      }),
+    );
+    expect(h.bulkTriageInbox).not.toHaveBeenCalled();
+  });
+
+  it("j / k move the roving cursor without changing the selection", async () => {
+    mountBulk();
+    const { container, findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    // The first row (u1) is the initial cursor.
+    await waitFor(() => expect(rowById(container, "u1")).toHaveAttribute("data-cursor", "true"));
+
+    fireEvent.keyDown(window, { key: "j" });
+    expect(rowById(container, "u2")).toHaveAttribute("data-cursor", "true");
+    expect(rowById(container, "u1")).not.toHaveAttribute("data-cursor", "true");
+    // Moving the cursor selects nothing on its own.
+    expect(rowById(container, "u2")).not.toHaveAttribute("data-selected", "true");
+
+    fireEvent.keyDown(window, { key: "k" });
+    expect(rowById(container, "u1")).toHaveAttribute("data-cursor", "true");
+  });
+
+  it("x toggles the cursor row into the set; ⇧j extends the range", async () => {
+    mountBulk();
+    const { container, findByTestId, getByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    await waitFor(() => expect(rowById(container, "u1")).toHaveAttribute("data-cursor", "true"));
+
+    fireEvent.keyDown(window, { key: "x" }); // toggle u1 in
+    expect(rowById(container, "u1")).toHaveAttribute("data-selected", "true");
+
+    fireEvent.keyDown(window, { key: "j", shiftKey: true }); // extend to u2
+    expect(rowById(container, "u2")).toHaveAttribute("data-selected", "true");
+    expect(getByTestId("inbox-bulk-headline")).toHaveTextContent("2 selected");
+  });
+
+  it("⌘A selects all and Esc clears via the keyboard", async () => {
+    mountBulk();
+    const { container, findByTestId, getByTestId, queryByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    fireEvent.keyDown(window, { key: "a", metaKey: true });
+    expect(getByTestId("inbox-bulk-headline")).toHaveTextContent("4 selected");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(queryByTestId("inbox-bulk-panel")).not.toBeInTheDocument();
+    expect(rowById(container, "u1")).not.toHaveAttribute("data-selected", "true");
   });
 });

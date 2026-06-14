@@ -15,11 +15,12 @@
  */
 
 import { describe, expect, it } from "vitest";
-import processSrc from "../pages/queue/useProcessShortcuts.ts?raw";
-import readerSrc from "../pages/source/SourceReader.tsx?raw";
 // The scope hooks' SOURCE, imported as raw strings via Vite's `?raw` loader (a
 // renderer-native feature — no Node `fs`), so the drift guard can scan what each
 // hook actually binds without leaving the renderer toolchain.
+import inboxTriageSrc from "../pages/inbox/useInboxTriageShortcuts.ts?raw";
+import processSrc from "../pages/queue/useProcessShortcuts.ts?raw";
+import readerSrc from "../pages/source/SourceReader.tsx?raw";
 import reviewRepairSrc from "../review/ReviewRepairBar.tsx?raw";
 import reviewScreenSrc from "../review/ReviewScreen.tsx?raw";
 import { CHEAT_SHEET, COMMAND_ITEMS } from "./nav";
@@ -112,8 +113,10 @@ describe("registry-vs-handlers drift guard", () => {
     // keys in the repair bar — both own the review keyboard.
     review: reviewScreenSrc + reviewRepairSrc,
     queue: processSrc,
-    // `triage` shares the queue process-loop hook (the loop is the triage surface).
-    triage: processSrc,
+    // The inbox is the real triage surface (T126): its bulk-triage keymap is bound
+    // in `useInboxTriageShortcuts`, so the `triage` scope's drift guard scans THAT
+    // hook's source (not the queue process loop, which owns the `queue` scope).
+    triage: inboxTriageSrc,
   };
 
   /** The handler-literal(s) we expect to see in source for a registry keycap. */
@@ -121,8 +124,15 @@ describe("registry-vs-handlers drift guard", () => {
     switch (cap) {
       case "⌘":
         return ["metaKey"];
+      case "⇧":
+        return ["shiftKey"]; // range-extend (⇧J / ⇧K) reads e.shiftKey
+      case "J":
+        return ['"j"']; // inbox cursor-down (lowercase handler literal)
       case "K":
+        // `⌘K` (palette) matches `"k"`; the inbox cursor-up key also uses `"k"`.
         return ['"k"'];
+      case "A":
+        return ['"a"']; // inbox priority-band A (bare lowercase key)
       case "Z":
         return ['"z"'];
       case "?":
@@ -161,7 +171,9 @@ describe("registry-vs-handlers drift guard", () => {
         return ['"-"'];
       case "1":
       case "4":
-        return ["g.key", "GRADES", "rating"]; // 1–4 are the grade keys
+        // 1–4 are the review/queue grade keys; the inbox verb keys (1/2/3/6) map
+        // the bare digit directly, so accept the literal digit too.
+        return ["g.key", "GRADES", "rating", '"1"'];
       default:
         return [cap];
     }

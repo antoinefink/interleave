@@ -38,6 +38,7 @@ import {
   type PriorityLabelInput,
   type SourceDuplicateSummary,
 } from "../../lib/appApi";
+import { useActiveScope } from "../../shell/activeScope";
 import { Kbd } from "../../shell/Kbd";
 import { NEW_SOURCE_EVENT, UNDO_EVENT } from "../../shell/nav";
 import { useSelection } from "../../shell/selection";
@@ -46,6 +47,7 @@ import { ImportFileModal } from "./ImportFileModal";
 import { ImportUrlModal } from "./ImportUrlModal";
 import { groupInboxItems, type InboxGroupBy, InboxGroupedList } from "./InboxGroupedList";
 import { NewSourceModal } from "./NewSourceModal";
+import { useInboxTriageShortcuts } from "./useInboxTriageShortcuts";
 import "../source/reader.css";
 
 /** Past-tense verb label for the snackbar + aria-live wording of a bulk sweep. */
@@ -856,6 +858,115 @@ export function InboxScreen() {
     anchorRef.current = orderedIds[orderedIds.length - 1] ?? null;
   }, [orderedIds]);
 
+  // --- Keyboard cursor + selection mutators (T126 — U6) ---
+
+  /**
+   * Move the roving cursor by one row in display order (clamped at the ends). The
+   * cursor is distinct from the selected set — moving it does NOT change selection;
+   * it only repositions the shift anchor so a following ⇧J/⇧K range extends from
+   * where the user is now.
+   */
+  const moveCursor = useCallback(
+    (delta: 1 | -1) => {
+      if (orderedIds.length === 0) return;
+      const current = selIdRef.current;
+      const at = current ? orderedIds.indexOf(current) : -1;
+      const nextIndex =
+        at === -1
+          ? delta === 1
+            ? 0
+            : orderedIds.length - 1
+          : Math.min(orderedIds.length - 1, Math.max(0, at + delta));
+      const nextId = orderedIds[nextIndex];
+      if (!nextId) return;
+      selIdRef.current = nextId;
+      setSelId(nextId);
+      anchorRef.current = nextId;
+      // Keep the cursor row visible during a keyboard sweep.
+      requestAnimationFrame(() => {
+        document
+          .querySelector<HTMLButtonElement>(
+            `[data-testid="inbox-row"][data-element-id="${nextId}"]`,
+          )
+          ?.scrollIntoView({ block: "nearest" });
+      });
+    },
+    [orderedIds],
+  );
+
+  /**
+   * Extend the contiguous range one row in `delta`'s direction: move the cursor,
+   * then select the whole run from the shift anchor to the new cursor (mirrors a
+   * ⇧-arrow range the way the user sees it across group boundaries).
+   */
+  const extendRange = useCallback(
+    (delta: 1 | -1) => {
+      if (orderedIds.length === 0) return;
+      const anchor = anchorRef.current ?? selIdRef.current;
+      const current = selIdRef.current;
+      const at = current ? orderedIds.indexOf(current) : -1;
+      const nextIndex =
+        at === -1
+          ? delta === 1
+            ? 0
+            : orderedIds.length - 1
+          : Math.min(orderedIds.length - 1, Math.max(0, at + delta));
+      const nextId = orderedIds[nextIndex];
+      if (!nextId) return;
+      selIdRef.current = nextId;
+      setSelId(nextId);
+      if (!anchor) anchorRef.current = nextId;
+      const anchorAt = orderedIds.indexOf(anchor ?? nextId);
+      if (anchorAt === -1) {
+        anchorRef.current = nextId;
+        setSelectedIds(new Set([nextId]));
+        return;
+      }
+      const [lo, hi] = anchorAt <= nextIndex ? [anchorAt, nextIndex] : [nextIndex, anchorAt];
+      setSelectedIds(new Set(orderedIds.slice(lo, hi + 1)));
+      requestAnimationFrame(() => {
+        document
+          .querySelector<HTMLButtonElement>(
+            `[data-testid="inbox-row"][data-element-id="${nextId}"]`,
+          )
+          ?.scrollIntoView({ block: "nearest" });
+      });
+    },
+    [orderedIds],
+  );
+
+  /** Toggle the current cursor row in / out of the selected set (x / Space). */
+  const toggleCursorRow = useCallback(() => {
+    const id = selIdRef.current;
+    if (!id) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    anchorRef.current = id;
+  }, []);
+
+  /**
+   * Select the rest of the cursor's group — the cheap group sweep (a 30-item group
+   * needs ONE keypress, not 30). Adds every id in the cursor row's rendered group
+   * to the selection; a no-op when there is no cursor.
+   */
+  const selectRestOfGroup = useCallback(() => {
+    const id = selIdRef.current;
+    if (!id) return;
+    const group = groups.find((g) => g.items.some((it) => it.id === id));
+    if (!group) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const it of group.items) next.add(it.id);
+      return next;
+    });
+    const last = group.items[group.items.length - 1];
+    if (last) anchorRef.current = last.id;
+  }, [groups]);
+
   /**
    * Move focus to the next remaining row after a REMOVING sweep dropped the acted
    * ids — keeps the keyboard path fluid (the first surviving row in display order;
@@ -950,6 +1061,25 @@ export function InboxScreen() {
     void runBulk("setPriority", bulkPriority);
   }, [runBulk, bulkPriority]);
 
+  /**
+   * Keyboard verb dispatch (U6): operate on the SELECTION SET when it is non-empty
+   * (one bulk batch, carrying the armed band like the panel buttons), FALLING BACK
+   * to the single cursor row (today's per-item behavior) when the set is empty — so
+   * a verb key never silently widens a single-item triage into a list sweep.
+   */
+  const triageVerb = useCallback(
+    (kind: Exclude<InboxBulkTriageAction, "setPriority">) => {
+      if (selectedIds.size > 0) {
+        void runBulk(kind, bulkPriority);
+        return;
+      }
+      // Empty selection → the cursor row only, via the existing per-item commands.
+      if (kind === "accept") void onReadNow();
+      else void onTriage(kind);
+    },
+    [selectedIds.size, runBulk, bulkPriority, onReadNow, onTriage],
+  );
+
   /** The snackbar Undo reverses exactly the bound batch (NOT the global undoLast). */
   const onBulkUndo = useCallback(() => {
     const batchId = snackBatchId;
@@ -986,36 +1116,34 @@ export function InboxScreen() {
     }
   }, [selectedIds.size]);
 
-  // Esc clears the selection (the rest of the keymap is U6).
-  useEffect(() => {
-    if (!desktop || modalOpen || urlModalOpen || fileModalOpen) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== "Escape") return;
-      if (selectedIds.size === 0) return;
-      const target = e.target as HTMLElement | null;
-      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-      clearSelection();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [desktop, modalOpen, urlModalOpen, fileModalOpen, selectedIds.size, clearSelection]);
+  // The inbox is the registered "triage" keyboard scope (T126 — U6). It is the
+  // active triage surface while the desktop shell shows the list and no import modal
+  // is open. Marking it active makes the global shell DEFER its overlapping
+  // element-action keys (`o`/`u`/`+`/`-`) to this scope so they never double-fire;
+  // `⌘Z` is NOT deferred (it fires before the scope gate, so global undo always
+  // works) and this scope deliberately never binds it.
+  const triageScopeActive =
+    desktop && items.length > 0 && !modalOpen && !urlModalOpen && !fileModalOpen;
+  useActiveScope("triage", triageScopeActive);
 
-  // Keyboard triage: 1 = read now, 2 = queue soon, 3 = save for later, 6 = delete (ignore when a
-  // field/modal is focused, matching the kit's 1–6 hints).
-  useEffect(() => {
-    if (!desktop || modalOpen || urlModalOpen || fileModalOpen || !selId) return;
-    function onKey(e: KeyboardEvent) {
-      const target = e.target as HTMLElement | null;
-      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === "1") void onReadNow();
-      else if (e.key === "2") void onTriage("queueSoon");
-      else if (e.key === "3") void onTriage("keepForLater");
-      else if (e.key === "6") void onTriage("delete");
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [desktop, modalOpen, urlModalOpen, fileModalOpen, selId, onReadNow, onTriage]);
+  // The full inbox keymap (cursor move, range-extend, toggle, select-rest-of-group,
+  // ⌘A select-all, Esc-clear, the four verb keys, and the A–D band-arming keys) is
+  // bound in `useInboxTriageShortcuts` — a dedicated, drift-scannable hook. Verb keys
+  // operate on the selection set when non-empty, falling back to the cursor row.
+  useInboxTriageShortcuts(
+    {
+      moveCursor,
+      extendRange,
+      toggleCursorRow,
+      selectRestOfGroup,
+      selectAll: onSelectAll,
+      clearSelection,
+      triageVerb,
+      armPriority: onArmBulkPriority,
+    },
+    triageScopeActive,
+    groupBy,
+  );
 
   // Open the New-source modal when the ⌘K command palette fires its event
   // ("Paste text as source…" / "New manual note…").

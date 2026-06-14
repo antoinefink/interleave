@@ -27,7 +27,7 @@
 export type ShortcutScope = "global" | "reader" | "review" | "queue" | "triage";
 
 /** The cheat-sheet / palette grouping a shortcut belongs to. */
-export type ShortcutGroup = "Navigation" | "Reading" | "Review" | "Triage" | "Actions";
+export type ShortcutGroup = "Navigation" | "Reading" | "Review" | "Triage" | "Inbox" | "Actions";
 
 /** One shortcut in the single source of truth. */
 export interface ShortcutDef {
@@ -304,6 +304,95 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     group: "Triage",
     scope: "queue",
   },
+  // ---- Inbox bulk triage (triage scope, T126) ------------------------------
+  // The inbox is the real "triage" surface: these keys make a 50-item morning
+  // mouse-free. They are BOUND in `pages/inbox/useInboxTriageShortcuts.ts` (the
+  // drift test scans that hook's source). `⌘Z` is intentionally absent — global
+  // undo fires before the scope gate, so the inbox scope must not bind it.
+  {
+    id: "inbox-cursor-down",
+    label: "Move cursor down",
+    keys: ["J"],
+    group: "Inbox",
+    scope: "triage",
+  },
+  {
+    id: "inbox-cursor-up",
+    label: "Move cursor up",
+    keys: ["K"],
+    group: "Inbox",
+    scope: "triage",
+  },
+  {
+    id: "inbox-range-extend",
+    label: "Extend selection",
+    keys: ["⇧", "J"],
+    group: "Inbox",
+    scope: "triage",
+  },
+  {
+    id: "inbox-toggle-row",
+    label: "Add / remove cursor row",
+    keys: ["X"],
+    group: "Inbox",
+    scope: "triage",
+  },
+  {
+    id: "inbox-select-group",
+    label: "Select rest of group",
+    keys: ["S"],
+    group: "Inbox",
+    scope: "triage",
+  },
+  {
+    id: "inbox-select-all",
+    label: "Select all",
+    keys: ["⌘", "A"],
+    group: "Inbox",
+    scope: "triage",
+  },
+  {
+    id: "inbox-clear",
+    label: "Clear selection",
+    keys: ["Esc"],
+    group: "Inbox",
+    scope: "triage",
+  },
+  {
+    id: "inbox-read-now",
+    label: "Read now (selection)",
+    keys: ["1"],
+    group: "Inbox",
+    scope: "triage",
+  },
+  {
+    id: "inbox-queue-soon",
+    label: "Queue soon (selection)",
+    keys: ["2"],
+    group: "Inbox",
+    scope: "triage",
+  },
+  {
+    id: "inbox-keep",
+    label: "Save for later (selection)",
+    keys: ["3"],
+    group: "Inbox",
+    scope: "triage",
+  },
+  {
+    id: "inbox-delete",
+    label: "Delete (selection)",
+    keys: ["6"],
+    group: "Inbox",
+    scope: "triage",
+  },
+  {
+    id: "inbox-priority-band",
+    label: "Arm priority A / B / C / D",
+    keys: ["A", "B", "C", "D"],
+    group: "Inbox",
+    scope: "triage",
+  },
 ] as const;
 
 /** The cheat-sheet group display order. */
@@ -313,6 +402,7 @@ export const CHEAT_GROUP_ORDER: readonly ShortcutGroup[] = [
   "Reading",
   "Review",
   "Triage",
+  "Inbox",
 ];
 
 /** All shortcuts in a given scope (for the drift test + per-scope wiring). */
