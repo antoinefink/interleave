@@ -234,6 +234,14 @@ function fakeDbService() {
     listInbox: vi.fn(() => ({ items: [] })),
     triageInboxItem: vi.fn(),
     getInboxItem: vi.fn(),
+    bulkTriageInboxItems: vi.fn((request?: unknown) => ({
+      batchId: "batch-bulk-1",
+      applied: 2,
+      skipped: [],
+      errored: [],
+      request,
+    })),
+    bulkTriageUndo: vi.fn(() => ({ undone: true, count: 2 })),
   };
 }
 
@@ -600,6 +608,58 @@ describe("registerIpcHandlers", () => {
     expect(db.previewExtractAging).not.toHaveBeenCalled();
     expect(db.applyExtractAging).not.toHaveBeenCalled();
     expect(db.undoExtractAgingReceipt).not.toHaveBeenCalled();
+  });
+
+  it("validates and forwards bulk inbox triage + undo requests (T126)", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+
+    const applyHandler = electron.handlers.get(IPC_CHANNELS.inboxBulkTriage);
+    expect(
+      applyHandler?.({}, { ids: ["el_1", "el_2"], action: "queueSoon", priority: "B" }),
+    ).toMatchObject({ batchId: "batch-bulk-1", applied: 2 });
+    expect(db.bulkTriageInboxItems).toHaveBeenCalledWith({
+      ids: ["el_1", "el_2"],
+      action: "queueSoon",
+      priority: "B",
+    });
+
+    const undoHandler = electron.handlers.get(IPC_CHANNELS.inboxBulkTriageUndo);
+    expect(undoHandler?.({}, { batchId: "batch-bulk-1" })).toMatchObject({
+      undone: true,
+      count: 2,
+    });
+    expect(db.bulkTriageUndo).toHaveBeenCalledWith({ batchId: "batch-bulk-1" });
+  });
+
+  it("rejects malformed bulk inbox triage payloads before invoking the database service (T126)", () => {
+    const db = fakeDbService();
+    registerIpcHandlers(db as never);
+
+    // Empty id list, over-cap list, unknown verb, and a priority-only sweep without a band.
+    expect(() =>
+      electron.handlers.get(IPC_CHANNELS.inboxBulkTriage)?.({}, { ids: [], action: "accept" }),
+    ).toThrow();
+    expect(() =>
+      electron.handlers.get(IPC_CHANNELS.inboxBulkTriage)?.(
+        {},
+        { ids: Array.from({ length: 1001 }, (_, i) => `el_${i}`), action: "accept" },
+      ),
+    ).toThrow();
+    expect(() =>
+      electron.handlers.get(IPC_CHANNELS.inboxBulkTriage)?.({}, { ids: ["el_1"], action: "nope" }),
+    ).toThrow();
+    expect(() =>
+      electron.handlers.get(IPC_CHANNELS.inboxBulkTriage)?.(
+        {},
+        { ids: ["el_1"], action: "setPriority" },
+      ),
+    ).toThrow();
+    expect(() =>
+      electron.handlers.get(IPC_CHANNELS.inboxBulkTriageUndo)?.({}, { batchId: "" }),
+    ).toThrow();
+    expect(db.bulkTriageInboxItems).not.toHaveBeenCalled();
+    expect(db.bulkTriageUndo).not.toHaveBeenCalled();
   });
 
   it("forwards the read-only reverify flagged-sources rollup (no payload)", () => {

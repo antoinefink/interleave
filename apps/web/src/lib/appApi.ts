@@ -2084,6 +2084,54 @@ export interface InboxTriageResult {
   readonly deleted: boolean;
 }
 
+/**
+ * Bulk inbox triage (T126) — renderer-local mirrors of the desktop contract shapes (the
+ * renderer never imports desktop package types). The ONE verb a bulk sweep applies to N
+ * selected ids; `setPriority` is a priority-only sweep (the band rides in `priority`).
+ */
+export type InboxBulkTriageAction =
+  | "accept"
+  | "queueSoon"
+  | "keepForLater"
+  | "delete"
+  | "setPriority";
+
+/** Why an id in a bulk selection was skipped (classified + counted, never thrown). */
+export type InboxBulkTriageSkipReason = "not_inbox" | "deleted" | "wrong_type" | "already_acted";
+
+/** One bulk-triage request: a verb over N ids, optionally + one priority band. */
+export interface InboxBulkTriageRequest {
+  readonly ids: readonly string[];
+  readonly action: InboxBulkTriageAction;
+  /** When present, every applied id ALSO gets this band in the same batch. */
+  readonly priority?: PriorityLabelInput;
+}
+
+/** The outcome of one bulk sweep: counts + the per-id skip/error channels. */
+export interface InboxBulkTriageResult {
+  /** The shared batch id, so the whole sweep undoes as one (the snackbar binds this). */
+  readonly batchId: string;
+  /** How many ids had the verb (and optional priority) applied. */
+  readonly applied: number;
+  /** Ineligible/stale ids with classified reasons (the batch did NOT abort for these). */
+  readonly skipped: readonly { readonly id: string; readonly reason: InboxBulkTriageSkipReason }[];
+  /** Ids whose write failed unexpectedly — the whole tx aborted (`applied` is 0). */
+  readonly errored: readonly { readonly id: string; readonly error: string }[];
+}
+
+/** Undo a bulk-triage batch by its `batchId`. */
+export interface InboxBulkTriageUndoRequest {
+  readonly batchId: string;
+}
+
+/** The outcome of a bulk-triage undo: how many ops reversed, or a clean refusal. */
+export interface InboxBulkTriageUndoResult {
+  readonly undone: boolean;
+  readonly count: number;
+  /** Why nothing was undone (e.g. a victim moved since the batch), when `undone` is false. */
+  readonly reason?: string;
+}
+
 // ---------------------------------------------------------------------------
 // documents.get() / documents.save()  (T015 — editable rich-text body)
 // ---------------------------------------------------------------------------
@@ -4962,6 +5010,8 @@ export interface AppApi {
     list(): Promise<InboxListResult>;
     get(request: InboxGetRequest): Promise<InboxGetResult>;
     triage(request: InboxTriageRequest): Promise<InboxTriageResult>;
+    bulkTriage(request: InboxBulkTriageRequest): Promise<InboxBulkTriageResult>;
+    bulkTriageUndo(request: InboxBulkTriageUndoRequest): Promise<InboxBulkTriageUndoResult>;
   };
   readonly documents: {
     get(request: DocumentsGetRequest): Promise<DocumentsGetResult>;
@@ -5640,6 +5690,17 @@ export const appApi = {
   /** Apply one triage action to an inbox source (T012). */
   triageInboxItem(request: InboxTriageRequest): Promise<InboxTriageResult> {
     return requireAppApi().inbox.triage(request);
+  },
+  /**
+   * Apply ONE triage verb (optionally + ONE priority band) to N inbox ids as ONE
+   * transactional, op-logged batch sharing one `batchId` (T126).
+   */
+  bulkTriageInbox(request: InboxBulkTriageRequest): Promise<InboxBulkTriageResult> {
+    return requireAppApi().inbox.bulkTriage(request);
+  },
+  /** Undo a bulk-triage batch by its `batchId` via the movement guard (T126). */
+  bulkTriageInboxUndo(request: InboxBulkTriageUndoRequest): Promise<InboxBulkTriageUndoResult> {
+    return requireAppApi().inbox.bulkTriageUndo(request);
   },
   /** Load an element's document body (ProseMirror JSON + plain text) (T015). */
   getDocument(request: DocumentsGetRequest): Promise<DocumentsGetResult> {

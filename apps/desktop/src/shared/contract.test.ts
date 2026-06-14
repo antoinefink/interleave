@@ -74,6 +74,8 @@ import {
   ExtractsRewriteRequestSchema,
   ExtractsSetFateRequestSchema,
   ExtractsUpdateStageRequestSchema,
+  InboxBulkTriageRequestSchema,
+  InboxBulkTriageUndoRequestSchema,
   InboxGetRequestSchema,
   InboxTriageRequestSchema,
   InspectorGetRequestSchema,
@@ -253,6 +255,8 @@ describe("IPC channels", () => {
         "inbox:list",
         "inbox:get",
         "inbox:triage",
+        "inbox:bulkTriage",
+        "inbox:bulkTriageUndo",
         "documents:get",
         "documents:save",
         "documents:exportMarkdown",
@@ -2395,6 +2399,83 @@ describe("InboxTriageRequestSchema (T012)", () => {
 
   it("requires an id", () => {
     expect(() => InboxTriageRequestSchema.parse({ action: { kind: "accept" } })).toThrow();
+  });
+});
+
+describe("InboxBulkTriageRequestSchema (T126)", () => {
+  it("accepts each verb over a valid id list", () => {
+    for (const action of ["accept", "queueSoon", "keepForLater", "delete"] as const) {
+      expect(InboxBulkTriageRequestSchema.parse({ ids: ["el_1", "el_2"], action })).toEqual({
+        ids: ["el_1", "el_2"],
+        action,
+      });
+    }
+  });
+
+  it("accepts an optional priority band alongside a verb (combined sweep)", () => {
+    const parsed = InboxBulkTriageRequestSchema.parse({
+      ids: ["el_1"],
+      action: "queueSoon",
+      priority: "B",
+    });
+    expect(parsed.priority).toBe("B");
+    // A bare verb leaves priority undefined.
+    expect(
+      InboxBulkTriageRequestSchema.parse({ ids: ["el_1"], action: "accept" }).priority,
+    ).toBeUndefined();
+  });
+
+  it("accepts a priority-only setPriority sweep but requires the band", () => {
+    expect(
+      InboxBulkTriageRequestSchema.parse({ ids: ["el_1"], action: "setPriority", priority: "C" })
+        .priority,
+    ).toBe("C");
+    // setPriority WITHOUT a band is rejected (it carries no separate verb).
+    expect(
+      InboxBulkTriageRequestSchema.safeParse({ ids: ["el_1"], action: "setPriority" }).success,
+    ).toBe(false);
+  });
+
+  it("rejects an empty id list", () => {
+    expect(InboxBulkTriageRequestSchema.safeParse({ ids: [], action: "accept" }).success).toBe(
+      false,
+    );
+  });
+
+  it("rejects an id list over the 1000 cap (KTD-8 main-process guard)", () => {
+    const ids = Array.from({ length: 1001 }, (_, i) => `el_${i}`);
+    expect(InboxBulkTriageRequestSchema.safeParse({ ids, action: "accept" }).success).toBe(false);
+    // Exactly 1000 is allowed.
+    const atCap = Array.from({ length: 1000 }, (_, i) => `el_${i}`);
+    expect(InboxBulkTriageRequestSchema.safeParse({ ids: atCap, action: "accept" }).success).toBe(
+      true,
+    );
+  });
+
+  it("rejects an unknown action kind and an invalid priority label", () => {
+    expect(
+      InboxBulkTriageRequestSchema.safeParse({ ids: ["el_1"], action: "archive" }).success,
+    ).toBe(false);
+    expect(
+      InboxBulkTriageRequestSchema.safeParse({ ids: ["el_1"], action: "accept", priority: "Z" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("rejects a blank id in the list", () => {
+    expect(InboxBulkTriageRequestSchema.safeParse({ ids: [""], action: "accept" }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("InboxBulkTriageUndoRequestSchema (T126)", () => {
+  it("accepts a non-empty batchId and rejects an empty one", () => {
+    expect(InboxBulkTriageUndoRequestSchema.parse({ batchId: "batch-1" })).toEqual({
+      batchId: "batch-1",
+    });
+    expect(InboxBulkTriageUndoRequestSchema.safeParse({ batchId: "" }).success).toBe(false);
+    expect(InboxBulkTriageUndoRequestSchema.safeParse({}).success).toBe(false);
   });
 });
 

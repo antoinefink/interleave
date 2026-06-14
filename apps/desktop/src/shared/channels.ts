@@ -81,6 +81,13 @@ export const IPC_CHANNELS = {
   inboxList: "inbox:list",
   inboxGet: "inbox:get",
   inboxTriage: "inbox:triage",
+  // Bulk inbox triage (T126) — `inbox:bulkTriage` applies ONE triage verb (optionally
+  // + ONE priority band) to N selected inbox ids as ONE transactional, op-logged batch
+  // under one shared `batchId`; `inbox:bulkTriageUndo` reverses that whole batch by its
+  // `batchId` through the op-type-agnostic movement guard. No new op type, no new status
+  // — bulk reuses the four existing per-item triage writes behind local-db.
+  inboxBulkTriage: "inbox:bulkTriage",
+  inboxBulkTriageUndo: "inbox:bulkTriageUndo",
   documentsGet: "documents:get",
   documentsSave: "documents:save",
   documentsExportMarkdown: "documents:exportMarkdown",

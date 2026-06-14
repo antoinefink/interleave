@@ -2976,13 +2976,40 @@ export type InboxBulkTriageAction =
 /** Why an id in a bulk selection was skipped (never thrown — classified + counted). */
 export type InboxBulkTriageSkipReason = "not_inbox" | "deleted" | "wrong_type" | "already_acted";
 
-/** One bulk-triage request: a verb over N ids, optionally + one priority band. */
-export interface InboxBulkTriageRequest {
-  readonly ids: readonly string[];
-  readonly action: InboxBulkTriageAction;
-  /** When present, every applied id ALSO gets this band in the same batch (T126). */
-  readonly priority?: PriorityLabel;
-}
+/**
+ * The verb-kind enum a bulk sweep applies (T126). Derived from the per-item
+ * {@link InboxTriageRequestSchema} action union's `kind` set so the two stay in lockstep,
+ * but FLATTENED to a string enum: the per-item union bundles the band INTO its
+ * `setPriority` variant, whereas a bulk sweep carries ONE optional top-level `priority`
+ * band that can ride ALONGSIDE any verb (KTD-3). A bare `"setPriority"` is a priority-only
+ * sweep — the schema's refine below requires `priority` in that case.
+ */
+export const InboxBulkTriageActionSchema = z.enum(
+  InboxTriageRequestSchema.shape.action.options.map((option) => option.shape.kind.value) as [
+    InboxBulkTriageAction,
+    ...InboxBulkTriageAction[],
+  ],
+);
+
+/**
+ * One bulk-triage request (T126): a verb over N ids (`min(1)`/`max(1000)` — the cap protects
+ * the synchronous main process from a pathological select-all, KTD-8), optionally + one
+ * priority band applied to every item in the same batch. A `setPriority` sweep REQUIRES a
+ * `priority` (it carries no separate verb). The zod schema is the single source of truth —
+ * {@link InboxBulkTriageRequest} is its inferred type, shared by the appApi interface, the
+ * preload bridge, the ipc handler, and the DbService method (no drift).
+ */
+export const InboxBulkTriageRequestSchema = z
+  .object({
+    ids: z.array(ElementIdSchema).min(1).max(1000),
+    action: InboxBulkTriageActionSchema,
+    priority: PriorityLabelSchema.optional(),
+  })
+  .refine((req) => req.action !== "setPriority" || req.priority !== undefined, {
+    message: "A setPriority bulk sweep requires a priority band.",
+    path: ["priority"],
+  });
+export type InboxBulkTriageRequest = z.infer<typeof InboxBulkTriageRequestSchema>;
 
 /** The outcome of one bulk sweep: counts + the per-id skip/error channels (T126). */
 export interface InboxBulkTriageResult {
@@ -2996,10 +3023,15 @@ export interface InboxBulkTriageResult {
   readonly errored: readonly { readonly id: string; readonly error: string }[];
 }
 
-/** Undo a bulk-triage batch by its `batchId` (T126). */
-export interface InboxBulkTriageUndoRequest {
-  readonly batchId: string;
-}
+/**
+ * Undo a bulk-triage batch by its `batchId` (T126). Validated at the IPC boundary like the
+ * other receipt-undo channels (e.g. {@link ExtractAgingUndoReceiptRequestSchema}); the schema
+ * is the single source of truth and {@link InboxBulkTriageUndoRequest} is its inferred type.
+ */
+export const InboxBulkTriageUndoRequestSchema = z.object({
+  batchId: z.string().min(1),
+});
+export type InboxBulkTriageUndoRequest = z.infer<typeof InboxBulkTriageUndoRequestSchema>;
 
 /** The outcome of a bulk-triage undo: how many ops reversed, or a clean refusal (T126). */
 export interface InboxBulkTriageUndoResult {
@@ -7480,6 +7512,13 @@ export interface AppApi {
     get(request: InboxGetRequest): Promise<InboxGetResult>;
     /** Apply one triage action to a source (T012). */
     triage(request: InboxTriageRequest): Promise<InboxTriageResult>;
+    /**
+     * Apply ONE triage verb (optionally + ONE priority band) to N inbox ids as ONE
+     * transactional, op-logged batch sharing one `batchId` (T126).
+     */
+    bulkTriage(request: InboxBulkTriageRequest): Promise<InboxBulkTriageResult>;
+    /** Undo a bulk-triage batch by its `batchId` via the movement guard (T126). */
+    bulkTriageUndo(request: InboxBulkTriageUndoRequest): Promise<InboxBulkTriageUndoResult>;
   };
   readonly documents: {
     /** Load an element's document body (ProseMirror JSON + plain text) (T015). */

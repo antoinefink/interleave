@@ -83,6 +83,8 @@ import {
   ExtractsUpdateStageRequestSchema,
   HealthRequestSchema,
   type HealthResult,
+  InboxBulkTriageRequestSchema,
+  InboxBulkTriageUndoRequestSchema,
   InboxGetRequestSchema,
   InboxListRequestSchema,
   InboxTriageRequestSchema,
@@ -995,6 +997,19 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.inboxTriage, (_event, rawRequest: unknown) => {
     const request = InboxTriageRequestSchema.parse(rawRequest);
     return dbService.triageInboxItem(request);
+  });
+
+  // Bulk inbox triage (T126) — zod-validated at the boundary (`ids` min-1/max-1000, a
+  // known verb, optional priority); dispatches to the main-side batch service. The undo
+  // channel reverses one batch by its `batchId` through the op-type-agnostic guard.
+  ipcMain.handle(IPC_CHANNELS.inboxBulkTriage, (_event, rawRequest: unknown) => {
+    const request = InboxBulkTriageRequestSchema.parse(rawRequest);
+    return dbService.bulkTriageInboxItems(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.inboxBulkTriageUndo, (_event, rawRequest: unknown) => {
+    const request = InboxBulkTriageUndoRequestSchema.parse(rawRequest);
+    return dbService.bulkTriageUndo(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.documentsGet, (_event, rawRequest: unknown) => {

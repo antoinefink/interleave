@@ -266,6 +266,19 @@ describe("preload bridge", () => {
       confirm: true,
       phrase: "START FROM SCRATCH",
     });
+
+    // T126 — bulk inbox triage apply + undo route to their fixed channels unchanged.
+    await api().inbox.bulkTriage({ ids: ["el_1", "el_2"], action: "queueSoon", priority: "B" });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.inboxBulkTriage, {
+      ids: ["el_1", "el_2"],
+      action: "queueSoon",
+      priority: "B",
+    });
+
+    await api().inbox.bulkTriageUndo({ batchId: "batch-bulk-1" });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.inboxBulkTriageUndo, {
+      batchId: "batch-bulk-1",
+    });
   });
 
   it("normalizes optional request payloads to empty objects where the contract expects one", async () => {
