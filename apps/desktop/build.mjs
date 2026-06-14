@@ -43,6 +43,21 @@ const repoRoot = path.resolve(here, "..", "..");
 const distDir = path.join(here, "dist");
 const watch = process.argv.includes("--watch");
 const DEFAULT_EMBEDDING_MODEL_ID = readCoreStringConstant("DEFAULT_EMBEDDING_MODEL_ID");
+const DEFAULT_EMBEDDING_MODEL_DTYPE = readCoreStringConstant("DEFAULT_EMBEDDING_MODEL_DTYPE");
+
+/** transformers.js dtype → the weights filename it fetches under `<modelId>/onnx/`. */
+const EMBEDDING_WEIGHTS_BY_DTYPE = {
+  fp32: "model.onnx",
+  fp16: "model_fp16.onnx",
+  q8: "model_quantized.onnx",
+  int8: "model_quantized.onnx",
+  uint8: "model_uint8.onnx",
+  q4: "model_q4.onnx",
+  q4f16: "model_q4f16.onnx",
+  bnb4: "model_bnb4.onnx",
+};
+const EMBEDDING_WEIGHTS_FILE =
+  EMBEDDING_WEIGHTS_BY_DTYPE[DEFAULT_EMBEDDING_MODEL_DTYPE] ?? "model.onnx";
 
 /**
  * Runtime-provided / never-reached modules that must not be bundled.
@@ -226,10 +241,16 @@ export async function stageEmbeddingModel(stageDir, options = {}) {
       // Build-time acquisition only: packaged/runtime jobs keep this false.
       mod.env.allowRemoteModels = true;
     }
-    await mod.pipeline("feature-extraction", DEFAULT_EMBEDDING_MODEL_ID, { dtype: "q8" });
+    await mod.pipeline("feature-extraction", DEFAULT_EMBEDDING_MODEL_ID, {
+      dtype: DEFAULT_EMBEDDING_MODEL_DTYPE,
+    });
     writeFileSync(
       path.join(modelDir, ".interleave-model-ready.json"),
-      `${JSON.stringify({ modelId: DEFAULT_EMBEDDING_MODEL_ID }, null, 2)}\n`,
+      `${JSON.stringify(
+        { modelId: DEFAULT_EMBEDDING_MODEL_ID, dtype: DEFAULT_EMBEDDING_MODEL_DTYPE },
+        null,
+        2,
+      )}\n`,
     );
   } catch (error) {
     const message =
@@ -243,16 +264,17 @@ export async function stageEmbeddingModel(stageDir, options = {}) {
 
 /**
  * Whether a usable EmbeddingGemma model is already staged under `modelDir`: the ready
- * marker AND the q8 weights file both exist, AND the marker's recorded id matches the
- * current {@link DEFAULT_EMBEDDING_MODEL_ID} (so a model-id bump re-vendors instead of
- * silently keeping stale weights). This is the gate that makes vendoring idempotent.
+ * marker AND the dtype's weights file both exist, AND the marker records the current
+ * model id + dtype (so a model-id OR dtype change re-vendors instead of silently keeping
+ * stale weights). This is the gate that makes vendoring idempotent.
  */
 function isEmbeddingModelStaged(modelDir) {
   const marker = path.join(modelDir, ".interleave-model-ready.json");
-  const weights = path.join(modelDir, DEFAULT_EMBEDDING_MODEL_ID, "onnx", "model_quantized.onnx");
+  const weights = path.join(modelDir, DEFAULT_EMBEDDING_MODEL_ID, "onnx", EMBEDDING_WEIGHTS_FILE);
   if (!existsSync(marker) || !existsSync(weights)) return false;
   try {
-    return JSON.parse(readFileSync(marker, "utf8"))?.modelId === DEFAULT_EMBEDDING_MODEL_ID;
+    const m = JSON.parse(readFileSync(marker, "utf8"));
+    return m?.modelId === DEFAULT_EMBEDDING_MODEL_ID && m?.dtype === DEFAULT_EMBEDDING_MODEL_DTYPE;
   } catch {
     return false;
   }

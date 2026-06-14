@@ -2,21 +2,26 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DEFAULT_EMBEDDING_MODEL_ID } from "@interleave/core";
+import { DEFAULT_EMBEDDING_MODEL_DTYPE, DEFAULT_EMBEDDING_MODEL_ID } from "@interleave/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // @ts-expect-error build.mjs is an executable JavaScript build script with a small exported test seam.
 import { stageEmbeddingModel } from "../../build.mjs";
 
-/** Lay down a fake "already vendored" model tree (ready marker + q8 weights) under `dir`. */
-async function stageFakeModel(dir: string, markerModelId: string = DEFAULT_EMBEDDING_MODEL_ID) {
+// Weights filename for the current dtype ("fp16" -> model_fp16.onnx), matching build.mjs.
+const FAKE_WEIGHTS_FILE = `model_${DEFAULT_EMBEDDING_MODEL_DTYPE}.onnx`;
+
+/** Lay down a fake "already vendored" model tree (ready marker + weights) under `dir`. */
+async function stageFakeModel(dir: string, marker: { modelId?: string; dtype?: string } = {}) {
+  const modelId = marker.modelId ?? DEFAULT_EMBEDDING_MODEL_ID;
+  const dtype = marker.dtype ?? DEFAULT_EMBEDDING_MODEL_DTYPE;
   const modelsDir = path.join(dir, "models");
   const onnxDir = path.join(modelsDir, DEFAULT_EMBEDDING_MODEL_ID, "onnx");
   await mkdir(onnxDir, { recursive: true });
-  await writeFile(path.join(onnxDir, "model_quantized.onnx"), "fake-weights");
+  await writeFile(path.join(onnxDir, FAKE_WEIGHTS_FILE), "fake-weights");
   await writeFile(
     path.join(modelsDir, ".interleave-model-ready.json"),
-    `${JSON.stringify({ modelId: markerModelId })}\n`,
+    `${JSON.stringify({ modelId, dtype })}\n`,
   );
 }
 
@@ -74,12 +79,15 @@ describe("desktop build script embedding model staging", () => {
       allowRemoteModels: true,
     });
     expect(pipeline).toHaveBeenCalledWith("feature-extraction", DEFAULT_EMBEDDING_MODEL_ID, {
-      dtype: "q8",
+      dtype: DEFAULT_EMBEDDING_MODEL_DTYPE,
     });
     const marker = JSON.parse(
       readFileSync(path.join(tempDir, "models", ".interleave-model-ready.json"), "utf8"),
     );
-    expect(marker).toEqual({ modelId: DEFAULT_EMBEDDING_MODEL_ID });
+    expect(marker).toEqual({
+      modelId: DEFAULT_EMBEDDING_MODEL_ID,
+      dtype: DEFAULT_EMBEDDING_MODEL_DTYPE,
+    });
   });
 
   it("preserves an already-vendored model on a flagless rebuild (no re-download)", async () => {
@@ -107,14 +115,26 @@ describe("desktop build script embedding model staging", () => {
   });
 
   it("re-vendors when the staged marker records a different model id", async () => {
-    await stageFakeModel(tempDir, "stale/old-model");
+    await stageFakeModel(tempDir, { modelId: "stale/old-model" });
     const pipeline = vi.fn(async () => ({ dispose: vi.fn() }));
 
     await stageEmbeddingModel(tempDir, { required: true, transformers: { env: {}, pipeline } });
 
     // A model-id bump must not be masked by stale weights — re-acquire.
     expect(pipeline).toHaveBeenCalledWith("feature-extraction", DEFAULT_EMBEDDING_MODEL_ID, {
-      dtype: "q8",
+      dtype: DEFAULT_EMBEDDING_MODEL_DTYPE,
+    });
+  });
+
+  it("re-vendors when the staged marker records a different dtype", async () => {
+    await stageFakeModel(tempDir, { dtype: "q8" });
+    const pipeline = vi.fn(async () => ({ dispose: vi.fn() }));
+
+    await stageEmbeddingModel(tempDir, { required: true, transformers: { env: {}, pipeline } });
+
+    // A dtype switch (e.g. q8 -> fp16) must re-acquire, not keep stale weights.
+    expect(pipeline).toHaveBeenCalledWith("feature-extraction", DEFAULT_EMBEDDING_MODEL_ID, {
+      dtype: DEFAULT_EMBEDDING_MODEL_DTYPE,
     });
   });
 });

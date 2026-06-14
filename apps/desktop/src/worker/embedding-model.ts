@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import {
+  DEFAULT_EMBEDDING_MODEL_DTYPE,
   DEFAULT_EMBEDDING_MODEL_ID,
   EMBEDDING_DIM,
   embedTextLocal,
@@ -85,6 +86,35 @@ function loadTransformers(): TransformersModule {
   }
 }
 
+/**
+ * Build the feature-extraction pipeline, preferring the macOS CoreML execution provider
+ * (Apple Neural Engine) and falling back to the portable CPU EP when CoreML is unavailable
+ * (non-macOS, CI, or an EP init failure). The model loads at {@link DEFAULT_EMBEDDING_MODEL_DTYPE}
+ * (fp16), which has no int8 ops — so neither EP can hit the onnxruntime `DequantizeLinear<int8>`
+ * crash the q8 build triggered on Apple Silicon.
+ */
+async function buildEmbeddingPipeline(mod: TransformersModule): Promise<FeatureExtractionPipeline> {
+  const devices = ["coreml", "cpu"] as const;
+  let lastErr: unknown;
+  for (const device of devices) {
+    try {
+      return await mod.pipeline("feature-extraction", EMBEDDINGGEMMA_MODEL_REPO, {
+        dtype: DEFAULT_EMBEDDING_MODEL_DTYPE,
+        device,
+      });
+    } catch (err) {
+      lastErr = err;
+      if (device !== "cpu") {
+        console.warn(
+          `[embedding] "${device}" execution provider unavailable — falling back to cpu:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
 async function loadLocalModel(): Promise<FeatureExtractionPipeline | null> {
   if (localModel !== undefined) return localModel;
   if (process.env.VITEST) {
@@ -107,9 +137,7 @@ async function loadLocalModel(): Promise<FeatureExtractionPipeline | null> {
         mod.env.allowLocalModels = true;
         mod.env.allowRemoteModels = false;
       }
-      const model = await mod.pipeline("feature-extraction", EMBEDDINGGEMMA_MODEL_REPO, {
-        dtype: "q8",
-      });
+      const model = await buildEmbeddingPipeline(mod);
       localModel = model;
       return model;
     } catch (err) {

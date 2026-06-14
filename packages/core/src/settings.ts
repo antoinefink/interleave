@@ -309,6 +309,14 @@ export const SETTINGS_KEYS = {
 export const DEFAULT_EMBEDDING_MODEL_ID = "onnx-community/embeddinggemma-300m-ONNX";
 
 /**
+ * The ONNX weight precision the embedding worker loads (T087). `fp16` is the
+ * macOS-native choice: it runs on the CoreML execution provider (Apple Neural Engine)
+ * and, having no int8 ops, avoids the onnxruntime `DequantizeLinear<int8>` crash the
+ * `q8` build hit on Apple Silicon. transformers.js maps this to `model_fp16.onnx`.
+ */
+export const DEFAULT_EMBEDDING_MODEL_DTYPE = "fp16";
+
+/**
  * The pinned local instruction-model id (T093). `node-llama-cpp` running
  * `Llama-3.2-3B-Instruct` Q4_K_M GGUF (~2 GB int4) is the named on-device generation
  * model — the explicitly-experimental option (CPU-only output is best-effort). The id
