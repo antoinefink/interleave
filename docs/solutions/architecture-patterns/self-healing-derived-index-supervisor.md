@@ -1,6 +1,7 @@
 ---
 title: Self-healing derived-index supervisor for a silently-degradable producer
 date: 2026-06-13
+last_updated: 2026-06-14
 category: architecture-patterns
 module: semantic-search
 problem_type: architecture_pattern
@@ -11,6 +12,7 @@ applies_when:
   - "The index producer can silently fall back to a DEGRADED result instead of failing loudly"
   - "A deterministic input can fail every attempt (oversized item, malformed data, dimension mismatch)"
   - "The index is rebuildable derived state (no operation_log), maintained by a main-process service"
+  - "The maintainer can be paused by a power/cost policy, or its producer depends on a vendored build artifact"
 related_components: [database, service_object]
 tags:
   - semantic-search
@@ -20,6 +22,7 @@ tags:
   - fallback-guard
   - idempotency
   - electron
+  - build-vendoring
 ---
 
 # Self-healing derived-index supervisor for a silently-degradable producer
@@ -117,6 +120,43 @@ runs a real embed to learn real-vs-fallback. A cold model load takes seconds, so
 800 ms search-query timeout would misreport a healthy model as `fallback`. Give the probe its own
 ceiling (60 s) and a transient `loading` state while it resolves; cache only terminal results.
 
+**7. A power/cost gate must defer the expensive WORK, not the cheap honest SIGNAL.** The supervisor
+originally returned at an `isOnBattery()` check placed *before* the model probe and the reindex, to
+spare the battery — but that also skipped the probe, so on battery the status never resolved: the
+panel showed a permanent "Loading model…" and a frozen "0 of N" with no hint indexing was
+*deliberately* paused. Order the gate so only the heavy bulk reindex defers; the cheap probe + prune
+always run, keeping the reported model state honest:
+
+```ts
+// apps/desktop/src/main/embedding-maintenance-service.ts — tick()
+const modelState = await this.deps.probeModelState();   // cheap: one transient embed, then cached
+if (modelState !== "ready") return;
+const { embedded, total } = this.deps.stats();
+if (embedded >= total) return;
+if (this.deps.isOnBattery()) return;   // defer ONLY the expensive reindex below — never the probe above
+```
+
+Then *surface the pause* rather than letting it read as a stall: derive `autoIndexPaused: "battery"`
+from the live `powerMonitor` (only when work remains and nothing is draining) and render "Indexing
+paused" + "plug in to finish indexing, or rebuild now". The ungated manual Rebuild stays the escape
+hatch. General rule: power/idle/cost gates defer the work, never the signal that reports the truth.
+
+**8. The producer's vendored model must survive an incremental rebuild, or it silently degrades.**
+The worker is local-only — it never fetches the model at runtime, so the real EmbeddingGemma ONNX
+weights are vendored at build time into `dist/resources/transformers/models/`. `stageTransformers()`
+wiped that entire tree on *every* build and only re-downloaded behind a flag, so a plain flagless
+`pnpm dev` deleted the vendored model and dropped the worker to the deterministic hash fallback — the
+exact "silently degraded to keyword-only" failure this doc is about, reintroduced from the build side.
+Make staging preserve the expensive artifact and be idempotent:
+
+```js
+// apps/desktop/build.mjs
+rmSync(path.join(stageDir, "node_modules"), { recursive: true, force: true }); // NOT the whole stageDir
+// stageEmbeddingModel: skip when a valid model (ready marker + q8 weights + matching id) is already
+// staged — vendor once, every later build keeps it; a model-id bump still re-vendors.
+if (isEmbeddingModelStaged(modelDir)) return;
+```
+
 ## Why This Matters
 
 The headline failure ("0 of N embedded, forever, silently") is a *missing trigger*, but the
@@ -128,6 +168,12 @@ states *structurally* impossible rather than relying on the happy path. For a kn
 silently-meaningless "related by meaning" results are the worst failure mode — they destroy trust
 in the core feature.
 
+An honest status surface is also *debugging infrastructure*, not only UX. Making the probe run on
+battery (point 7) is precisely what exposed the silent build regression (point 8): the panel had been
+showing a fake "Loading model…" that masked a real "fallback", and the moment the signal stopped lying
+the root cause was obvious. A status that can only ever report the comforting state hides the bugs
+underneath it.
+
 ## When to Apply
 
 - A derived index/projection is auto-(re)built in the background, not only on explicit user action.
@@ -135,6 +181,8 @@ in the core feature.
   cannot tell "done" from "done but worthless").
 - Some inputs can fail every attempt, so naive auto-retry would loop.
 - The maintainer is a main-process service holding a DB reference (must join the restore/reset drain).
+- A power/cost policy can pause the maintainer, or the producer depends on a vendored build artifact an
+  incremental rebuild could wipe.
 
 ## Examples
 
@@ -148,6 +196,15 @@ else if (total === 0) indexHealth = "healthy";          // empty vault is health
 else if (building) indexHealth = "building";
 else if (coverageRatio < SEMANTIC_COVERAGE_THRESHOLD) indexHealth = "stale";
 else indexHealth = "healthy";
+```
+
+A deliberate pause must read differently from a stall — derive the reason from the live power source
+so the panel can say so instead of showing a frozen "building":
+
+```ts
+// apps/desktop/src/main/db-service.ts — semanticStatus()
+autoIndexPaused:
+  isOnBattery() && embedded < total && queued + running === 0 ? "battery" : null,
 ```
 
 ETA from observed throughput (resets per launch; null until enough samples — never false
