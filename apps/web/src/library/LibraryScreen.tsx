@@ -15,7 +15,16 @@
  */
 
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  startTransition,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ConceptGraph } from "../components/ConceptGraph";
 import { Icon } from "../components/Icon";
 import {
@@ -368,8 +377,9 @@ export function LibraryScreen() {
   // settled — which, for a normal-speed typist, is every character. Deferring the
   // highlight + memoizing the rows (so an unchanged deferred query lets the row memo
   // skip) keeps the keystroke-adjacent render cheap; the result list catches up a frame
-  // later. The results-arrival reconciliation is additionally wrapped in a transition
-  // (see the search effect) so it is interruptible too.
+  // later. The results-arrival reconciliation (setResults/setSearchCounts/setSearchMode/
+  // setLoading) is additionally wrapped in `startTransition` (see the search effect) so it
+  // commits at LOW priority and yields to keystrokes too — not just the highlight.
   const deferredQuery = useDeferredValue(debouncedQuery);
   const hasActiveFacet = typeFilter !== null || conceptFilter !== null || priorityFilter !== null;
   const showSemanticBuildIndex =
@@ -496,9 +506,31 @@ export function LibraryScreen() {
   // Run the search whenever the query or the type/concept filters change.
   useEffect(() => {
     if (!isDesktop()) return;
+    let cancelled = false;
     const q = debouncedTerm;
+
+    // Apply a settled response's result state at LOW priority via startTransition, so the
+    // heavy grouped-list reconcile (highlight() per row) is interruptible and yields to
+    // keystrokes. setLoading(false) co-commits with the rows so a cold search never flashes
+    // an empty state between "loading off" and the deferred results. setError(null) stays
+    // URGENT (clearing an error is instant). Callers check `cancelled` before calling.
+    const applyResults = (apply: () => void) => {
+      setError(null);
+      startTransition(() => {
+        apply();
+        setLoading(false);
+      });
+    };
+    // Failure is URGENT so the error message + cleared spinner appear instantly. This
+    // (plus the success setLoading inside applyResults) replaces the old `.finally`, so
+    // loading is cleared on exactly one of the two outcomes — never both, never neither.
+    const handleError = (e: unknown) => {
+      if (cancelled) return;
+      setError(e instanceof Error ? e.message : String(e));
+      setLoading(false);
+    };
+
     if (q.length === 0) {
-      let cancelled = false;
       setLoading(true);
       setError(null);
       setResults([]);
@@ -513,22 +545,18 @@ export function LibraryScreen() {
         )
         .then((res) => {
           if (cancelled) return;
-          setSearchCounts(searchCountsFromBrowse(res.counts));
-          setResults([]);
-          setSearchMode(semanticAvailable ? "fts" : "disabled");
-          setError(null);
+          // Rows were already cleared synchronously above; only counts/mode apply here.
+          applyResults(() => {
+            setSearchCounts(searchCountsFromBrowse(res.counts));
+            setSearchMode(semanticAvailable ? "fts" : "disabled");
+          });
         })
-        .catch((e) => {
-          if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-        })
-        .finally(() => {
-          if (!cancelled) setLoading(false);
-        });
+        .catch(handleError);
       return () => {
         cancelled = true;
       };
     }
-    let cancelled = false;
+
     // Only flash the "Searching…" placeholder on a COLD search (nothing on screen yet).
     // A warm search-as-you-type keeps its existing rows visible — no loading churn (Fix 3).
     if (!hasResultsRef.current) setLoading(true);
@@ -545,17 +573,18 @@ export function LibraryScreen() {
         .semanticSearch({ q, ...(typeFilter ? { type: typeFilter } : {}) })
         .then((res) => {
           if (cancelled) return;
-          setResults(res.results);
-          setSearchCounts(res.counts);
-          setSearchMode(res.mode);
-          setError(null);
+          // Reflect "results are about to land" SYNCHRONOUSLY: the `[results]` effect that
+          // maintains hasResultsRef only runs after the low-priority transition commits, so
+          // a rapid follow-up query's (urgent) effect would otherwise read a stale ref and
+          // re-flash the spinner the warm-search guard above is meant to suppress.
+          hasResultsRef.current = res.results.length > 0;
+          applyResults(() => {
+            setResults(res.results);
+            setSearchCounts(res.counts);
+            setSearchMode(res.mode);
+          });
         })
-        .catch((e) => {
-          if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-        })
-        .finally(() => {
-          if (!cancelled) setLoading(false);
-        });
+        .catch(handleError);
       return () => {
         cancelled = true;
       };
@@ -570,19 +599,18 @@ export function LibraryScreen() {
       })
       .then((res) => {
         if (cancelled) return;
-        setResults(res.results);
-        // Guarded by the SAME cancelled flag as setResults so an out-of-order
-        // response can never leave the chip counts pointing at a different query.
-        setSearchCounts(res.counts);
-        setSearchMode(semanticAvailable ? "fts" : "disabled");
-        setError(null);
+        // Keep hasResultsRef in sync eagerly (see the semantic path) — the `[results]`
+        // effect trails the low-priority transition commit. Guarded by the SAME cancelled
+        // flag as the result setters so an out-of-order response can never leave the
+        // rows/chip counts pointing at a different query.
+        hasResultsRef.current = res.results.length > 0;
+        applyResults(() => {
+          setResults(res.results);
+          setSearchCounts(res.counts);
+          setSearchMode(semanticAvailable ? "fts" : "disabled");
+        });
       })
-      .catch((e) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+      .catch(handleError);
     return () => {
       cancelled = true;
     };

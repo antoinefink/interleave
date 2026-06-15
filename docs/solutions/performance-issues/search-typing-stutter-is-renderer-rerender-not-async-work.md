@@ -1,6 +1,7 @@
 ---
 title: "Search typing stutter is renderer re-render cost, not the nearby async work"
 date: "2026-06-15"
+last_updated: "2026-06-15"
 category: "performance-issues"
 module: "apps/web Collection Explorer search input"
 problem_type: "performance_issue"
@@ -24,6 +25,9 @@ tags:
   - "memoization"
   - "renderer-performance"
   - "embeddings"
+  - "startTransition"
+  - "concurrent-react"
+  - "render-priority"
 ---
 
 # Search typing stutter is renderer re-render cost, not the nearby async work
@@ -127,6 +131,78 @@ drop or duplicate emissions. Pinning the latest callback in a ref and depending 
   expect(searchInput.value).toBe("intelligencee");   // input updates immediately…
   expect(h.prioRenderCount.current).toBe(before);    // …heavy subtree did NOT re-render
   ```
+
+## Follow-up (2026-06-15): the residual stutter was the *result-arrival* reconcile — fixed with `startTransition`
+
+Isolating the input (above) removed the keystroke→parent-render cost, but typing at a
+normal cadence still stuttered. At a ~150 ms debounce ≈ a normal inter-keystroke interval,
+the debounce settles between essentially every character, and each settle applied the
+search response with **urgent** `setState` (`setResults`/`setSearchCounts`/`setSearchMode`).
+Because each IPC response is a fresh array with new row object identities, that busts the
+`ResultRow` memo and forces a full, synchronous, non-interruptible reconcile of the whole
+grouped list (`highlight()` per row) — landing right between keystrokes.
+
+Two comments in `LibraryScreen.tsx` already *claimed* this reconcile was "wrapped in a
+transition (see the search effect)". **It wasn't** — `grep -r startTransition apps/web/src`
+returned zero hits. Lesson: verify the mechanism exists; don't trust a "we already do this"
+comment. The fix was to actually do it — wrap the result-application setters in React 19
+`startTransition` in all three async paths (empty-query browse, semantic, FTS):
+
+```tsx
+const applyResults = (apply: () => void) => {
+  setError(null);                 // URGENT: clearing an error is instant
+  startTransition(() => {         // LOW priority: interruptible, yields to keystrokes
+    apply();                      // setResults / setSearchCounts / setSearchMode
+    setLoading(false);            // co-commit with the rows (no cold-search empty flash)
+  });
+};
+const handleError = (e: unknown) => {            // URGENT on failure
+  if (cancelled) return;
+  setError(e instanceof Error ? e.message : String(e));
+  setLoading(false);
+};
+// each .then: `if (cancelled) return;` <eager ref sync>; `applyResults(() => { ...setters })`
+```
+
+### Gotchas this surfaced
+
+- **`startTransition` is complementary to `useDeferredValue`, not redundant.** The existing
+  `useDeferredValue(query)` defers only the *highlight* relative to the query; it does
+  nothing for the *result-data* reconcile that `setResults` forces (new identities every
+  response). You need the transition around the setState for that.
+- **State derived-via-effect from transition-committed state can be read stale by urgent
+  code.** `hasResultsRef` (the warm-search "keep old rows, skip the spinner" guard) was
+  maintained by `useEffect(() => { hasResultsRef.current = results.length > 0 }, [results])`.
+  Once `results` commits via a *low-priority* transition, that effect lags — a rapid
+  follow-up query's *urgent* search effect can read the stale ref and re-flash the spinner.
+  Fix: set the ref **eagerly/synchronously** in each success handler (before
+  `startTransition`), where the urgent path needs it.
+- **`.finally(() => setLoading(false))` doesn't survive being split across a transition.**
+  Moving `setLoading(false)` into the success transition *and* the `.catch` scattered it to
+  six sites (a stuck-spinner trap). An `applyResults()`/`handleError()` helper pair restores
+  "loading clears on exactly one outcome — never both, never neither".
+
+### Testing impact (important)
+
+Wrapping result application in a transition breaks tests that read result-derived DOM
+**synchronously right after `await waitFor(() => expect(mock).toHaveBeenCalled())`** —
+`waitFor` resolves when the mock was *called*, before the `.then`/transition *commits*. The
+correct idiom is to await the **content**, not the mock:
+
+```tsx
+// BEFORE (flaky under transitions): waitFor on the mock, then a sync DOM read
+await waitFor(() => expect(h.searchQuery).toHaveBeenCalled());
+expect(within(chip).getByText("7")).toBeTruthy();          // reads pre-commit state -> fails
+// AFTER: await the rendered value
+await waitFor(() => expect(within(chip).getByText("7")).toBeTruthy());
+```
+
+`await act(async () => promise.resolve())` **does** flush transitions in jsdom, so
+`act`-based tests keep passing — which can *mask* the issue and means jsdom cannot observe
+the interruptibility itself. Verify the actual smoothness in the running app (`pnpm dev`).
+A falsifiable signature: a fast *continuous* typing burst stays smooth (the debounce never
+settles mid-burst) while *deliberate* typing is what stutters — so the cost is on the
+debounce-settle path, not the keystroke path.
 
 ## Related
 

@@ -340,21 +340,25 @@ describe("LibraryScreen", () => {
     // is bounded to source/extract/card and reads the browse drill-down count (6).
     render(<LibraryScreen />);
     await waitFor(() => expect(h.libraryBrowse).toHaveBeenCalled());
-    expect(
-      within(screen.getByTestId("library-filter-type-source")).getByText("11", {
-        selector: ".filter-opt__count",
-      }),
-    ).toBeTruthy();
-    expect(
-      within(screen.getByTestId("library-filter-type-extract")).getByText("5", {
-        selector: ".filter-opt__count",
-      }),
-    ).toBeTruthy();
-    expect(
-      within(screen.getByTestId("library-filter-type-card")).getByText("7", {
-        selector: ".filter-opt__count",
-      }),
-    ).toBeTruthy();
+    // Counts apply via startTransition, so wait for the commit rather than reading
+    // synchronously right after the browse mock was merely called.
+    await waitFor(() => {
+      expect(
+        within(screen.getByTestId("library-filter-type-source")).getByText("11", {
+          selector: ".filter-opt__count",
+        }),
+      ).toBeTruthy();
+      expect(
+        within(screen.getByTestId("library-filter-type-extract")).getByText("5", {
+          selector: ".filter-opt__count",
+        }),
+      ).toBeTruthy();
+      expect(
+        within(screen.getByTestId("library-filter-type-card")).getByText("7", {
+          selector: ".filter-opt__count",
+        }),
+      ).toBeTruthy();
+    });
     const chip = await screen.findByTestId("library-filter-concept-concept-1");
     await waitFor(() =>
       expect(within(chip).getByText("6", { selector: ".filter-opt__count" })).toBeTruthy(),
@@ -606,21 +610,23 @@ describe("LibraryScreen", () => {
     });
     await waitFor(() => expect(h.searchQuery).toHaveBeenCalled());
 
-    expect(
-      within(screen.getByTestId("library-filter-type-source")).getByText("7", {
-        selector: ".filter-opt__count",
-      }),
-    ).toBeTruthy();
-    expect(
-      within(screen.getByTestId("library-filter-type-extract")).getByText("3", {
-        selector: ".filter-opt__count",
-      }),
-    ).toBeTruthy();
-    expect(
-      within(screen.getByTestId("library-filter-type-card")).getByText("2", {
-        selector: ".filter-opt__count",
-      }),
-    ).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        within(screen.getByTestId("library-filter-type-source")).getByText("7", {
+          selector: ".filter-opt__count",
+        }),
+      ).toBeTruthy();
+      expect(
+        within(screen.getByTestId("library-filter-type-extract")).getByText("3", {
+          selector: ".filter-opt__count",
+        }),
+      ).toBeTruthy();
+      expect(
+        within(screen.getByTestId("library-filter-type-card")).getByText("2", {
+          selector: ".filter-opt__count",
+        }),
+      ).toBeTruthy();
+    });
   });
 
   it("renders backend byPriority counts on Priority chips after a keyword query", async () => {
@@ -639,18 +645,20 @@ describe("LibraryScreen", () => {
     });
     await waitFor(() => expect(h.searchQuery).toHaveBeenCalled());
 
-    for (const [priority, count] of [
-      ["A", "5"],
-      ["B", "4"],
-      ["C", "3"],
-      ["D", "2"],
-    ] as const) {
-      expect(
-        within(screen.getByTestId(`library-filter-prio-${priority}`)).getByText(count, {
-          selector: ".filter-opt__count",
-        }),
-      ).toBeTruthy();
-    }
+    await waitFor(() => {
+      for (const [priority, count] of [
+        ["A", "5"],
+        ["B", "4"],
+        ["C", "3"],
+        ["D", "2"],
+      ] as const) {
+        expect(
+          within(screen.getByTestId(`library-filter-prio-${priority}`)).getByText(count, {
+            selector: ".filter-opt__count",
+          }),
+        ).toBeTruthy();
+      }
+    });
   });
 
   it("renders semantic-search counts instead of zeroing the filterbar", async () => {
@@ -691,16 +699,18 @@ describe("LibraryScreen", () => {
       expect(h.semanticSearch).toHaveBeenCalledWith(expect.objectContaining({ q: "intelligence" })),
     );
     expect(h.searchQuery).not.toHaveBeenCalled();
-    expect(
-      within(screen.getByTestId("library-filter-type-source")).getByText("3", {
-        selector: ".filter-opt__count",
-      }),
-    ).toBeTruthy();
-    expect(
-      within(screen.getByTestId("library-filter-prio-A")).getByText("5", {
-        selector: ".filter-opt__count",
-      }),
-    ).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        within(screen.getByTestId("library-filter-type-source")).getByText("3", {
+          selector: ".filter-opt__count",
+        }),
+      ).toBeTruthy();
+      expect(
+        within(screen.getByTestId("library-filter-prio-A")).getByText("5", {
+          selector: ".filter-opt__count",
+        }),
+      ).toBeTruthy();
+    });
   });
 
   it("shows NO standing hint on the happy path — semantic ran, index healthy (per-row badge carries it)", async () => {
@@ -850,16 +860,18 @@ describe("LibraryScreen", () => {
         expect.objectContaining({ q: "intelligence", type: "card" }),
       ),
     );
-    expect(
-      within(screen.getByTestId("library-filter-type-extract")).getByText("2", {
-        selector: ".filter-opt__count",
-      }),
-    ).toBeTruthy();
-    expect(
-      within(screen.getByTestId("library-filter-type-card")).getByText("3", {
-        selector: ".filter-opt__count",
-      }),
-    ).toBeTruthy();
+    await waitFor(() => {
+      expect(
+        within(screen.getByTestId("library-filter-type-extract")).getByText("2", {
+          selector: ".filter-opt__count",
+        }),
+      ).toBeTruthy();
+      expect(
+        within(screen.getByTestId("library-filter-type-card")).getByText("3", {
+          selector: ".filter-opt__count",
+        }),
+      ).toBeTruthy();
+    });
   });
 
   it("restores empty-query counts and prompt when the query becomes empty", async () => {
@@ -877,11 +889,13 @@ describe("LibraryScreen", () => {
       target: { value: "intelligence" },
     });
     await waitFor(() => expect(h.searchQuery).toHaveBeenCalled());
-    expect(
-      within(screen.getByTestId("library-filter-type-source")).getByText("7", {
-        selector: ".filter-opt__count",
-      }),
-    ).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        within(screen.getByTestId("library-filter-type-source")).getByText("7", {
+          selector: ".filter-opt__count",
+        }),
+      ).toBeTruthy(),
+    );
 
     h.searchQuery.mockClear();
     h.libraryBrowse.mockClear();
@@ -947,16 +961,20 @@ describe("LibraryScreen", () => {
       });
     });
 
-    expect(
-      within(screen.getByTestId("library-filter-type-source")).getByText("4", {
-        selector: ".filter-opt__count",
-      }),
-    ).toBeTruthy();
-    expect(
-      within(screen.getByTestId("library-filter-prio-A")).getByText("9", {
-        selector: ".filter-opt__count",
-      }),
-    ).toBeTruthy();
+    // Counts now apply via startTransition; wait for the commit (act flushes it, but the
+    // waitFor keeps this read robust to future flush-order changes).
+    await waitFor(() => {
+      expect(
+        within(screen.getByTestId("library-filter-type-source")).getByText("4", {
+          selector: ".filter-opt__count",
+        }),
+      ).toBeTruthy();
+      expect(
+        within(screen.getByTestId("library-filter-prio-A")).getByText("9", {
+          selector: ".filter-opt__count",
+        }),
+      ).toBeTruthy();
+    });
 
     await act(async () => {
       first.resolve({
@@ -1297,6 +1315,10 @@ describe("LibraryScreen", () => {
         expect.objectContaining({ q: "intelligence", type: "card" }),
       ),
     );
+    // Result application runs in a startTransition; the warm list keeps the old rows
+    // until it commits. Wait for the type=card set to settle (sources gone) so we
+    // select a live card row, not a stale node the transition is about to replace.
+    await waitFor(() => expect(screen.queryByTestId("library-group-source")).toBeNull());
     const cardGroup = await screen.findByTestId("library-group-card");
     fireEvent.click(within(cardGroup).getByTestId("library-result"));
     fireEvent.click(await screen.findByTestId("library-detail-open"));
@@ -1399,6 +1421,66 @@ describe("LibraryScreen", () => {
     const delta = h.prioRenderCount.current - before;
     expect(delta).toBeLessThanOrEqual(3);
     expect(delta).toBeLessThan(rows.length);
+  });
+
+  it("applies a cold search via a transition: Searching… then results, never the empty flash (solution #1)", async () => {
+    // Result application (setResults/setSearchCounts/setSearchMode/setLoading) is wrapped
+    // in startTransition so the heavy reconcile is interruptible and yields to keystrokes.
+    // setLoading(false) co-commits with the rows so a COLD search never flashes the empty
+    // state between the spinner turning off and the deferred results landing. (The
+    // interruptibility itself isn't observable in jsdom, where act() flushes transitions;
+    // it's verified before/after in the running app. This guards the loading↔results
+    // coordination + that we don't drop/reorder the applied result set.)
+    const pending = deferred<SearchQueryResult>();
+    h.searchQuery.mockReturnValue(pending.promise);
+
+    render(<LibraryScreen />);
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+
+    // Cold search (no prior rows): the loading placeholder shows while in flight, and the
+    // empty state is NOT rendered for a query that will return matches.
+    expect(await screen.findByTestId("library-loading")).toBeTruthy();
+    expect(screen.queryByTestId("library-empty")).toBeNull();
+
+    await act(async () => {
+      pending.resolve({
+        results: [h.sourceHit, h.cardHit],
+        counts: {
+          byType: { source: 1, extract: 0, card: 1 },
+          byConcept: { "concept-1": 2 },
+          byPriority: { A: 2, B: 0, C: 0, D: 0 },
+        },
+      });
+    });
+
+    // Both rows applied; the spinner cleared WITH the results (no lingering spinner) and
+    // the empty state never appeared for this non-empty result.
+    await waitFor(() => expect(screen.getAllByTestId("library-result").length).toBe(2));
+    expect(screen.queryByTestId("library-loading")).toBeNull();
+    expect(screen.queryByTestId("library-empty")).toBeNull();
+  });
+
+  it("clears the spinner and shows an error when a search rejects (.catch, no stuck loading)", async () => {
+    // Guards the removal of `.finally`: setLoading(false) now lives in the success
+    // transition AND the failure `.catch`. A rejected search must still clear the spinner
+    // (urgently) and surface the error — never leave "Searching…" stuck.
+    const pending = deferred<SearchQueryResult>();
+    h.searchQuery.mockReturnValue(pending.promise);
+
+    render(<LibraryScreen />);
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+    expect(await screen.findByTestId("library-loading")).toBeTruthy();
+
+    await act(async () => {
+      pending.reject(new Error("search failed"));
+    });
+
+    expect((await screen.findByTestId("library-error")).textContent).toContain("search failed");
+    expect(screen.queryByTestId("library-loading")).toBeNull();
   });
 
   it("shows the scheduler chip + due badge in the selection detail (kit parity)", async () => {
