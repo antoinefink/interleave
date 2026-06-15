@@ -1,0 +1,109 @@
+/*
+ * ContextMenu primitive styles (lineage-tree context menu, U1).
+ *
+ * Token-only (no hard-coded colors/spacing/radii), mirroring lineage-delete-menu.css:
+ * the popover reuses the surface/border/shadow tokens the rest of the app uses, and
+ * supports light + dark automatically because the tokens flip under
+ * [data-theme="dark"] — nothing here branches on theme.
+ *
+ * EVERY selector is namespaced under the `.ctxmenu` root class. In this Vite renderer
+ * `import "./context-menu.css"` is GLOBAL, so a bare `.menu`/`.item` would leak
+ * app-wide; scoping under `.ctxmenu` keeps the primitive self-contained.
+ *
+ * The container is positioned `fixed` by the component via inline left/top (it measures
+ * + flips after mount); this file only owns the visual skin, not the coordinates.
+ */
+
+.ctxmenu {
+  position: fixed;
+  z-index: 60;
+  min-width: 200px;
+  max-width: 320px;
+  padding: 6px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ctxmenu__submenu {
+  position: relative;
+  display: flex;
+}
+
+.ctxmenu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--fast) var(--ease);
+}
+.ctxmenu__item:hover:not(:disabled),
+.ctxmenu__item:focus-visible {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text);
+  outline: none;
+}
+.ctxmenu__item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Destructive items (Delete / purge) carry the --danger tint on hover/focus. */
+.ctxmenu__item--danger:hover:not(:disabled),
+.ctxmenu__item--danger:focus-visible {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.ctxmenu__icon {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-3);
+}
+
+.ctxmenu__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.ctxmenu__label {
+  font-size: var(--t-sm);
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ctxmenu__hint {
+  font-size: var(--t-2xs);
+  color: var(--text-3);
+  line-height: 1.3;
+}
+
+/* The right-pointing chevron on a submenu parent. */
+.ctxmenu__chevron {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-3);
+}
+
+.ctxmenu__separator {
+  height: 1px;
+  margin: 4px 6px;
+  border: none;
+  background: var(--border);
+}
