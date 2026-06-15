@@ -15,6 +15,18 @@ import {
 
 const PRESETS = [15, 25, 45] as const;
 
+/**
+ * Budget-meter / chip categories. Distillation = due Extract work (attention
+ * scheduler), Cards = FSRS active recall, Other work = sources / topics / tasks.
+ * Colors come from the element-type tokens so the meter matches each row's
+ * `TypeIcon` tone.
+ */
+const CATEGORIES = [
+  { minutesKey: "distillationMinutes", label: "Distillation", color: "var(--el-extract)" },
+  { minutesKey: "cardMinutes", label: "Cards", color: "var(--el-card)" },
+  { minutesKey: "otherMinutes", label: "Other work", color: "var(--el-source)" },
+] as const;
+
 export function SessionAssemblyPreview({
   open,
   origin,
@@ -56,6 +68,14 @@ export function SessionAssemblyPreview({
     [fullRequest],
   );
 
+  // Request shape shared by every preset preview (everything but the time box).
+  // Stable across the panel's own re-renders, so preset outcomes only refetch
+  // when the filters/clock actually change — not when the user edits the box.
+  const baseRequest = useMemo<Omit<QueueSessionPlanRequest, "targetMinutes">>(
+    () => ({ ...(request ?? {}), ...(asOf ? { asOf } : {}) }),
+    [asOf, request],
+  );
+
   const load = useCallback(async () => {
     if (!open || !fullRequest || !requestKey) return;
     const seq = loadSeqRef.current + 1;
@@ -81,6 +101,33 @@ export function SessionAssemblyPreview({
     }
   }, [fullRequest, open, requestKey]);
 
+  // Best-effort per-preset previews that power each card's "N items / X% full"
+  // consequence. Seq-guarded like `load`; failures are swallowed because the
+  // main load owns the visible error surface.
+  const [presetOutcomes, setPresetOutcomes] = useState<ReadonlyMap<number, QueueSessionPlanResult>>(
+    () => new Map(),
+  );
+  const presetSeqRef = useRef(0);
+  useEffect(() => {
+    if (!open) return;
+    const seq = presetSeqRef.current + 1;
+    presetSeqRef.current = seq;
+    setPresetOutcomes(new Map());
+    for (const minutes of PRESETS) {
+      void appApi
+        .previewSessionPlan({ ...baseRequest, targetMinutes: minutes })
+        .then((result) => {
+          if (presetSeqRef.current !== seq) return;
+          setPresetOutcomes((prev) => {
+            const nextMap = new Map(prev);
+            nextMap.set(minutes, result);
+            return nextMap;
+          });
+        })
+        .catch(() => undefined);
+    }
+  }, [baseRequest, open]);
+
   useEffect(() => {
     if (!open) return;
     setTarget(defaultTargetMinutes);
@@ -95,15 +142,38 @@ export function SessionAssemblyPreview({
   if (!open) return null;
 
   const approximate = plan?.usesDefaultEstimate ?? false;
-  const canStart =
-    !!plan && planRequestKey === requestKey && plan.items.length > 0 && !loading && !confirming;
+  const planReady = !!plan && planRequestKey === requestKey;
+  const canStart = planReady && (plan?.items.length ?? 0) > 0 && !loading && !confirming;
+  const compositionCopy = plan ? sessionCompositionCopy(plan) : null;
+  // `composition` is required on the live result, but stay tolerant of plans
+  // that omit it (older fixtures / partial mocks) so the meter degrades to "no
+  // breakdown" instead of crashing the panel.
+  const composition = plan?.composition ?? null;
+  const isPresetActive = (PRESETS as readonly number[]).includes(target);
+  const mainRole = invalid || error ? "alert" : "status";
+
+  const pctOf = (minutes: number): string => {
+    if (!plan || plan.targetMinutes <= 0) return "0%";
+    return `${Math.min(100, (minutes / plan.targetMinutes) * 100)}%`;
+  };
+  const freeMinutes = plan ? Math.max(0, Math.round(plan.targetMinutes - plan.plannedMinutes)) : 0;
+  const showFloor =
+    !!plan &&
+    !!composition &&
+    composition.status === "active" &&
+    composition.quotaFloorMinutes > 0 &&
+    composition.quotaFloorMinutes < plan.targetMinutes;
 
   return (
     <section className="q-session-preview" data-testid="session-preview" aria-labelledby={titleId}>
       <div className="q-session-preview__head">
         <div>
-          <h2 id={titleId}>Plan session</h2>
-          <p>Choose a time box, then start the exact deck shown here.</p>
+          <h2 id={titleId} className="q-session-preview__title">
+            Plan session
+          </h2>
+          <p className="q-session-preview__sub">
+            Set a box on the left; the deck assembles on the right.
+          </p>
         </div>
         <button
           type="button"
@@ -111,143 +181,234 @@ export function SessionAssemblyPreview({
           aria-label="Close session preview"
           onClick={onClose}
         >
-          <Icon name="x" size={14} />
+          <Icon name="x" size={15} />
         </button>
       </div>
 
-      <div className="q-session-preview__controls">
-        <fieldset className="q-session-preview__presets">
-          <legend className="sr-only">Session length presets</legend>
-          {PRESETS.map((minutes) => (
-            <button
-              key={minutes}
-              type="button"
-              className={`q-session-preview__preset${target === minutes ? " q-session-preview__preset--on" : ""}`}
-              aria-pressed={target === minutes}
-              onClick={() => setTarget(minutes)}
-            >
-              {minutes}
-            </button>
-          ))}
-        </fieldset>
-        <label className="q-session-preview__field">
-          <span>Minutes</span>
-          <input
-            ref={inputRef}
-            data-testid="session-target-minutes"
-            inputMode="numeric"
-            type="number"
-            min={0}
-            step={1}
-            value={target}
-            onChange={(event) => setTarget(Number(event.currentTarget.value))}
-          />
-        </label>
-        <button
-          type="button"
-          className="q-overload-banner__btn"
-          disabled={invalid || loading}
-          onClick={() => void load()}
-        >
-          <Icon name="review" size={13} />
-          Preview
-        </button>
-      </div>
+      <div className="q-session-preview__split">
+        <div className="q-session-preview__rail">
+          <fieldset className="q-session-preview__presets">
+            <legend className="q-session-preview__rail-label">Time box</legend>
+            <div className="q-session-preview__cards">
+              {PRESETS.map((minutes) => {
+                const outcome = presetOutcomes.get(minutes);
+                const pct =
+                  outcome && outcome.targetMinutes > 0
+                    ? Math.round((outcome.plannedMinutes / outcome.targetMinutes) * 100)
+                    : null;
+                return (
+                  <button
+                    key={minutes}
+                    type="button"
+                    className={`q-session-preview__card${target === minutes ? " q-session-preview__card--on" : ""}`}
+                    aria-pressed={target === minutes}
+                    onClick={() => setTarget(minutes)}
+                  >
+                    <span className="q-session-preview__card-min">
+                      {minutes}
+                      <i>min</i>
+                    </span>
+                    <span className="q-session-preview__card-meta">
+                      {outcome
+                        ? `${outcome.plannedCount} item${outcome.plannedCount === 1 ? "" : "s"} · ${pct}% full`
+                        : " "}
+                    </span>
+                  </button>
+                );
+              })}
+              <label
+                className={`q-session-preview__card q-session-preview__card--custom${isPresetActive ? "" : " q-session-preview__card--on"}`}
+              >
+                <span className="q-session-preview__card-min">
+                  <input
+                    ref={inputRef}
+                    data-testid="session-target-minutes"
+                    aria-label="Custom session minutes"
+                    inputMode="numeric"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={target}
+                    onChange={(event) => setTarget(Number(event.currentTarget.value))}
+                  />
+                  <i>min</i>
+                </span>
+                <span className="q-session-preview__card-meta">custom box</span>
+              </label>
+            </div>
+          </fieldset>
 
-      {invalid ? (
-        <div
-          ref={statusRef}
-          tabIndex={-1}
-          className="q-session-preview__status"
-          data-testid="session-preview-error"
-          role="alert"
-        >
-          Enter a whole number of minutes.
-        </div>
-      ) : loading ? (
-        <div
-          ref={statusRef}
-          tabIndex={-1}
-          className="q-session-preview__status"
-          role="status"
-          aria-live="polite"
-        >
-          Planning session...
-        </div>
-      ) : error ? (
-        <div
-          ref={statusRef}
-          tabIndex={-1}
-          className="q-session-preview__status q-session-preview__status--error"
-          data-testid="session-preview-error"
-          role="alert"
-        >
-          {error}
-        </div>
-      ) : plan ? (
-        <div ref={statusRef} tabIndex={-1} role="status" aria-live="polite">
-          <div className="q-session-preview__summary">
-            <span>
-              Plan {plan.plannedCount} of {plan.candidateCount} due item
-              {plan.candidateCount === 1 ? "" : "s"}
-            </span>
-            <strong data-testid="session-planned-minutes">
-              {sessionMinuteLabel(plan.plannedMinutes, approximate)}
-            </strong>
-          </div>
-          {sessionCompositionCopy(plan) ? (
-            <p className="q-session-preview__note" data-testid="session-composition">
-              {sessionCompositionCopy(plan)}
-            </p>
-          ) : null}
-          {plan.overTarget ? (
-            <p className="q-session-preview__note">
-              The first item is larger than the target, so this session starts with that one item.
-            </p>
-          ) : approximate ? (
-            <p className="q-session-preview__note">Minute estimates include documented defaults.</p>
-          ) : null}
-
-          {plan.items.length === 0 ? (
-            <div className="q-session-preview__empty">No due work fits this target.</div>
-          ) : (
-            <ul className="q-session-preview__list" aria-label="Planned session items">
-              {plan.items.slice(0, 6).map((row) => (
-                <li key={row.item.id} className="q-session-preview__row">
-                  <TypeIcon type={row.item.type} />
-                  <span className="q-session-preview__row-title">{row.item.title}</span>
-                  <span data-testid="session-planned-row-minutes">
-                    {sessionMinuteLabel(row.estimatedMinutes, row.estimateConfidence === "default")}
+          {plan && composition ? (
+            <>
+              <div className="q-session-preview__meter">
+                <div className="q-session-preview__meter-head">
+                  <span>
+                    <b>{sessionMinuteLabel(plan.plannedMinutes, approximate)}</b> planned
                   </span>
-                </li>
-              ))}
-            </ul>
-          )}
+                  <span className="q-session-preview__meter-free">
+                    {freeMinutes > 0 ? `${freeMinutes} min free` : "box full"}
+                  </span>
+                </div>
+                <div className="q-session-preview__bar">
+                  {CATEGORIES.map((category) => (
+                    <div
+                      key={category.label}
+                      className="q-session-preview__bar-seg"
+                      style={{
+                        width: pctOf(composition[category.minutesKey]),
+                        background: category.color,
+                      }}
+                    />
+                  ))}
+                  <div
+                    className="q-session-preview__bar-free"
+                    style={{ width: pctOf(freeMinutes) }}
+                  />
+                  {showFloor ? (
+                    <span
+                      className="q-session-preview__floor"
+                      style={{ left: pctOf(composition.quotaFloorMinutes) }}
+                    >
+                      <i />
+                      <em>floor {composition.quotaFloorMinutes}m</em>
+                    </span>
+                  ) : null}
+                </div>
+                <div className="q-session-preview__chips">
+                  {CATEGORIES.filter((category) => composition[category.minutesKey] > 0).map(
+                    (category) => (
+                      <span className="q-session-preview__chip" key={category.label}>
+                        <span
+                          className="q-session-preview__dot"
+                          style={{ background: category.color }}
+                        />
+                        {category.label} <b>{Math.round(composition[category.minutesKey])}m</b>
+                      </span>
+                    ),
+                  )}
+                </div>
+              </div>
 
-          <div className="q-session-preview__cut" data-testid="session-cut-list">
-            <span data-testid="session-cut-count">
-              Left out {plan.cut.totalCount} item{plan.cut.totalCount === 1 ? "" : "s"}
-            </span>
-            <strong>{sessionMinuteLabel(plan.cut.totalMinutes, approximate)}</strong>
-          </div>
-          {plan.cut.items.length > 0 ? (
-            <ul className="q-session-preview__list" aria-label="Left-out session items">
-              {plan.cut.items.slice(0, 4).map((row) => (
-                <li key={row.item.id} className="q-session-preview__row">
-                  <TypeIcon type={row.item.type} />
-                  <span className="q-session-preview__row-title">{row.item.title}</span>
-                  <span>{row.reason === "did_not_fit" ? "Did not fit" : row.reason}</span>
-                </li>
-              ))}
-            </ul>
+              {composition.status === "active" ? (
+                <p className="q-session-preview__floornote">
+                  <Icon name="flame" size={12} />
+                  Distillation floor active — {composition.quotaFloorMinutes} min held.
+                </p>
+              ) : null}
+            </>
           ) : null}
         </div>
-      ) : null}
 
-      <div className="q-session-preview__actions">
+        <div
+          ref={statusRef}
+          tabIndex={-1}
+          className="q-session-preview__main"
+          role={mainRole}
+          {...(mainRole === "status" ? { "aria-live": "polite" as const } : {})}
+        >
+          {invalid ? (
+            <div
+              className="q-session-preview__state q-session-preview__state--error"
+              data-testid="session-preview-error"
+            >
+              Enter a whole number of minutes.
+            </div>
+          ) : loading ? (
+            <div className="q-session-preview__state">Planning session...</div>
+          ) : error ? (
+            <div
+              className="q-session-preview__state q-session-preview__state--error"
+              data-testid="session-preview-error"
+            >
+              {error}
+            </div>
+          ) : plan ? (
+            <>
+              {compositionCopy ? (
+                <p className="sr-only" data-testid="session-composition">
+                  {compositionCopy}
+                </p>
+              ) : null}
+              <div className="q-session-preview__summary">
+                <span className="q-session-preview__summary-title">
+                  Plan <b>{plan.plannedCount}</b> of {plan.candidateCount} due item
+                  {plan.candidateCount === 1 ? "" : "s"}
+                </span>
+                <strong className="q-session-preview__total" data-testid="session-planned-minutes">
+                  {sessionMinuteLabel(plan.plannedMinutes, approximate)}
+                </strong>
+              </div>
+              {plan.overTarget ? (
+                <p className="q-session-preview__note">
+                  The first item is larger than the target, so this session starts with that one
+                  item.
+                </p>
+              ) : approximate ? (
+                <p className="q-session-preview__note">
+                  Minute estimates include documented defaults.
+                </p>
+              ) : null}
+
+              {plan.items.length === 0 ? (
+                <div className="q-session-preview__empty">No due work fits this target.</div>
+              ) : (
+                <ul className="q-session-preview__list" aria-label="Planned session items">
+                  {plan.items.map((row) => (
+                    <li key={row.item.id} className="q-session-preview__row">
+                      <TypeIcon type={row.item.type} />
+                      <span className="q-session-preview__row-title" title={row.item.title}>
+                        {row.item.title}
+                      </span>
+                      <span
+                        className="q-session-preview__row-est"
+                        data-testid="session-planned-row-minutes"
+                      >
+                        {sessionMinuteLabel(
+                          row.estimatedMinutes,
+                          row.estimateConfidence === "default",
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="q-session-preview__leftout">
+                <div className="q-session-preview__leftout-head" data-testid="session-cut-list">
+                  <span data-testid="session-cut-count">
+                    Left out {plan.cut.totalCount} item{plan.cut.totalCount === 1 ? "" : "s"}
+                  </span>
+                  <strong>{sessionMinuteLabel(plan.cut.totalMinutes, approximate)}</strong>
+                </div>
+                {plan.cut.items.length > 0 ? (
+                  <ul className="q-session-preview__list" aria-label="Left-out session items">
+                    {plan.cut.items.map((row) => (
+                      <li
+                        key={row.item.id}
+                        className="q-session-preview__row q-session-preview__row--out"
+                      >
+                        <TypeIcon type={row.item.type} />
+                        <span className="q-session-preview__row-title" title={row.item.title}>
+                          {row.item.title}
+                        </span>
+                        <span className="q-session-preview__tag">
+                          <Icon name="ban" size={11} />
+                          {row.reason === "did_not_fit" ? "Didn't fit" : row.reason}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            </>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="q-session-preview__foot">
         <button
           type="button"
-          className="q-overload-banner__btn"
+          className="q-session-preview__btn q-session-preview__btn--ghost"
           disabled={confirming}
           onClick={onClose}
         >
@@ -255,7 +416,7 @@ export function SessionAssemblyPreview({
         </button>
         <button
           type="button"
-          className="sessionbar__start"
+          className="q-session-preview__btn q-session-preview__btn--primary"
           data-testid="session-preview-start"
           disabled={!canStart}
           onClick={() => {

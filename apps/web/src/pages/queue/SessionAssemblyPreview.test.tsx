@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   QueueItemSummary,
   QueueQuotaComposition,
+  QueueSessionPlanRequest,
   QueueSessionPlanResult,
 } from "../../lib/appApi";
 import { SessionAssemblyPreview } from "./SessionAssemblyPreview";
@@ -132,35 +133,50 @@ describe("SessionAssemblyPreview", () => {
   });
 
   it("does not enable start from a stale preview response", async () => {
+    // Non-preset target values (30, 20) keep the two main loads we care about
+    // unambiguous from the best-effort preset previews (15/25/45), which the
+    // split layout fires on open to populate each preset card's consequence.
     const first = deferred<QueueSessionPlanResult>();
     const second = deferred<QueueSessionPlanResult>();
-    h.previewSessionPlan.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    h.previewSessionPlan.mockImplementation((req: QueueSessionPlanRequest) => {
+      if (req.targetMinutes === 30) return first.promise;
+      if (req.targetMinutes === 20) return second.promise;
+      return Promise.resolve(plan(req.targetMinutes, item(`p${req.targetMinutes}`, "Preset row")));
+    });
 
     render(
       <SessionAssemblyPreview
         open
         origin="queue"
-        defaultTargetMinutes={25}
+        defaultTargetMinutes={30}
         request={{ mode: "full" }}
         onClose={() => undefined}
       />,
     );
 
-    await waitFor(() => expect(h.previewSessionPlan).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(h.previewSessionPlan).toHaveBeenCalledWith(
+        expect.objectContaining({ targetMinutes: 30 }),
+      ),
+    );
     fireEvent.change(screen.getByTestId("session-target-minutes"), {
-      target: { value: "15" },
+      target: { value: "20" },
     });
-    await waitFor(() => expect(h.previewSessionPlan).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(h.previewSessionPlan).toHaveBeenCalledWith(
+        expect.objectContaining({ targetMinutes: 20 }),
+      ),
+    );
 
     await act(async () => {
-      first.resolve(plan(25, item("old", "Old plan")));
+      first.resolve(plan(30, item("old", "Old plan")));
       await first.promise;
     });
     await waitFor(() => expect(screen.getByTestId("session-preview-start")).toBeDisabled());
     expect(screen.queryByText("Old plan")).not.toBeInTheDocument();
 
     await act(async () => {
-      second.resolve(plan(15, item("new", "New plan")));
+      second.resolve(plan(20, item("new", "New plan")));
       await second.promise;
     });
     await screen.findByText("New plan");
@@ -177,6 +193,88 @@ describe("SessionAssemblyPreview", () => {
       to: "/process",
       search: { assembled: 1 },
     });
+  });
+
+  it("renders preset consequences, budget meter chips, and the floor note", async () => {
+    h.previewSessionPlan.mockImplementation((req: QueueSessionPlanRequest) =>
+      Promise.resolve(plan(req.targetMinutes, item("row", "Planned row"))),
+    );
+
+    render(
+      <SessionAssemblyPreview
+        open
+        origin="home"
+        defaultTargetMinutes={25}
+        request={{ mode: "full" }}
+        onClose={() => undefined}
+      />,
+    );
+
+    await screen.findByText("Planned row");
+    // plan() reports plannedMinutes:2; pct = round(2 / box * 100): 15→13, 25→8, 45→4.
+    await waitFor(() => expect(screen.getByText(/13% full/)).toBeInTheDocument());
+    expect(screen.getByText(/8% full/)).toBeInTheDocument();
+    expect(screen.getByText(/4% full/)).toBeInTheDocument();
+    // category chips from composition (distillation 6m, cards 2m; other 0 → no chip)
+    expect(screen.getByText("6m")).toBeInTheDocument();
+    expect(screen.getByText("2m")).toBeInTheDocument();
+    // floor note + meter free-space readout
+    expect(screen.getByText(/Distillation floor active.*4 min held/)).toBeInTheDocument();
+    expect(screen.getByText(/min free|box full/)).toBeInTheDocument();
+  });
+
+  it("renders left-out rows with a didn't-fit tag", async () => {
+    const base = plan(15, item("kept", "Kept row"));
+    const withCut: QueueSessionPlanResult = {
+      ...base,
+      cut: {
+        totalCount: 1,
+        totalMinutes: 10,
+        detailLimit: 25,
+        items: [
+          {
+            item: item("cut", "Cut row"),
+            estimatedMinutes: 10,
+            estimateConfidence: "learned",
+            estimateBasis: "test",
+            reason: "did_not_fit",
+          },
+        ],
+        byReason: { did_not_fit: { count: 1, minutes: 10 } },
+        byType: {},
+      },
+    };
+    h.previewSessionPlan.mockResolvedValue(withCut);
+
+    render(
+      <SessionAssemblyPreview
+        open
+        origin="queue"
+        defaultTargetMinutes={15}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(await screen.findByText("Cut row")).toBeInTheDocument();
+    expect(screen.getByText(/Didn't fit/)).toBeInTheDocument();
+    expect(screen.getByTestId("session-cut-count")).toHaveTextContent("Left out 1 item");
+  });
+
+  it("keeps the left-out summary visible when nothing is cut", async () => {
+    h.previewSessionPlan.mockResolvedValue(plan(45, item("kept", "Everything fits")));
+
+    render(
+      <SessionAssemblyPreview
+        open
+        origin="queue"
+        defaultTargetMinutes={45}
+        onClose={() => undefined}
+      />,
+    );
+
+    await screen.findByText("Everything fits");
+    expect(screen.getByTestId("session-cut-list")).toBeVisible();
+    expect(screen.getByTestId("session-cut-count")).toHaveTextContent("Left out 0 items");
   });
 
   it("renders returned quota copy", async () => {

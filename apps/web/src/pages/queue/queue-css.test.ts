@@ -43,4 +43,24 @@ describe("queue CSS", () => {
     expect(protectedBar).toContain("width: 3px;");
     expect(protectedBar).toContain("background: var(--prio-a);");
   });
+
+  it("keeps the session-preview time-box card flat on hover (border emphasis, no shadow)", () => {
+    const cardHover = cssBlock(".q-session-preview__card:hover");
+
+    expect(cardHover).toContain("border-color: var(--border-strong);");
+    expect(cardHover).not.toMatch(/\bbox-shadow\s*:/);
+  });
+
+  it("keeps the session-preview planned row flat on hover (no drop shadow)", () => {
+    const rowHover = cssBlock(".q-session-preview__row:hover");
+
+    expect(rowHover).not.toMatch(/\bbox-shadow\s*:/);
+  });
+
+  it("marks the distillation floor with a token-driven dashed border", () => {
+    const floorTick = cssBlock(".q-session-preview__floor i");
+
+    expect(floorTick).toContain("border-left");
+    expect(floorTick).toContain("var(--text)");
+  });
 });
