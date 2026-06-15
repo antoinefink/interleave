@@ -82,6 +82,7 @@ describe("schema migration", () => {
       "ocr_pages",
       "operation_log",
       "read_points",
+      "reread_proposal_dismissals",
       "retirement_suggestion_dismissals",
       "review_logs",
       "review_states",

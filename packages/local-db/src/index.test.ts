@@ -50,6 +50,7 @@ describe("local-db repository factory", () => {
       "chronicPostponeService",
       "fallow",
       "retirementSuggestions",
+      "rereadProposals",
       "embeddings",
       "semanticSearch",
       "tasks",

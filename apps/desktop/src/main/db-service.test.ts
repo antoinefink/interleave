@@ -922,6 +922,8 @@ describe("DbService", () => {
       lapseClusterMinLapses: 5,
       lapseClusterWindowDays: 30,
       lapseClusterMinCards: 2,
+      rereadProposalsEnabled: true,
+      rereadProposalWeeklyCap: 2,
       extractAgingPolicy: "off",
       extractAgingReturnThreshold: 5,
       extractAgingAgeDays: 30,
