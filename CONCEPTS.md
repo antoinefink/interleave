@@ -188,6 +188,12 @@ A group of two or more live cards that share a source-region ancestor (the extra
 
 A lapse cluster is a read-only derived signal, never a schedule change: it surfaces a struggling region for the user to re-read, and it leaves every member card's FSRS review state untouched. Its lapse evidence is window-scoped, so it deliberately differs from the leech screen's cumulative per-card lapse count — a card can be a leech without being in a cluster, and a region can cluster without holding any leeches. It shares one lapse definition with [[Descendant health]] (which carries the same evidence upward to the Source's schedule), so the two surfaces can never contradict the leech screen.
 
+### Re-read proposal
+
+A quiet, capped, dismissible suggestion to re-read the source region a [[Lapse cluster]] names — the advisory action layer above the read-only cluster signal. It is advisory until accepted (nothing auto-enqueues): accepting it schedules a re-read item (an attention-scheduled task targeting the region, arriving with the failing cards attached); dismissing it is remembered against the cluster's evidence and honored until the cluster is *materially worse* (more lapses or a new member card), so a dismissal sticks through improvement.
+
+A re-read proposal is computed live from the current cluster set, never stored; only dismissals and accepted re-read items persist. Proposals are surfacing-throttled (a small number active at once, not an accept budget), and a region with an open or recently-completed re-read is not re-proposed. Completing a re-read repairs the comprehension trace by re-exposure; it never touches the failing cards' FSRS state, so the underlying cards recover only at their next review — the proposal quiets on completion via a grace window rather than by mutating the schedule.
+
 ### Due queue
 
 The currently actionable processing set: due active-recall cards plus due attention-scheduled sources, topics, extracts, and similar non-card work.

@@ -96,7 +96,7 @@ from unrelated `UNDO_EVENT`s.
 # T129 — Re-read proposals
 
 - **Milestone:** M28 — Lapse-driven re-reading
-- **Status:** `[ ]` not started
+- **Status:** `[x]` done — `feat(T129): re-read proposals`
 - **Depends on:** T128
 - **Roadmap line:** accepting a proposal schedules a re-read attention item targeting the exact
   source region (via anchors) arriving with the failing cards attached for context; proposals
@@ -124,26 +124,51 @@ card rewrite on the spot.
 
 ## Deliverables
 
-- [ ] Proposal lifecycle: cluster → proposal (visible in maintenance/source page + a quiet
-      daily-summary line when one is fresh) → accept (creates the scheduled re-read item,
-      op-logged) or dismiss (remembered against the cluster's state-hash — reappears only if
-      the cluster materially worsens).
-- [ ] Re-read item + surface: due like any attention item; opening it lands in the reader at
-      the region (anchor jump) with a side panel listing the failing cards (prompt + lapse
-      count, click-through to card detail); completing it offers the standard processing verbs
-      (extract, rewrite-card → T125 barrier when present, done).
-- [ ] Caps + settings: weekly active-proposal cap, cluster thresholds passthrough, feature
-      toggle.
-- [ ] Tests: unit (lifecycle, cap enforcement, dismissal memory, item creation ops); e2e —
-      seeded cluster → accept → item appears in queue → opening lands at the region with cards
-      attached → complete → cluster quiets; restart-safe.
+- [x] Proposal lifecycle: cluster → proposal (visible in the maintenance panel + a source-page
+      count + a fresh-only quiet daily queue line) → accept (creates the scheduled re-read item,
+      op-logged) or dismiss (remembered against the cluster's state-hash — honored until the
+      cluster is MATERIALLY worse, i.e. a lapse band step or a new member card; sticks through
+      improvement). `RereadProposalService.listProposals` computes the set (read-only).
+- [x] Re-read item + surface: a system-owned `reread_region` `task` element, due like any
+      attention item; opening it from the queue routes to `/source/$id?reread=…`, the reader jumps
+      to the region and renders a `RereadPanel` of failing cards (prompt + live in-window lapse
+      count + card-detail click-through); "Mark re-read done" completes via the standard verb with
+      NO FSRS bump; extract uses the reader affordance, card rewrite via card detail (T125).
+- [x] Caps + settings: a surfacing throttle (`rereadProposalWeeklyCap`, default 2 active at once —
+      NOT an accept budget), cluster thresholds passthrough from T128, feature toggle
+      (`rereadProposalsEnabled`). Wired into `SettingsPatchSchema` (`.strict()`).
+- [x] Tests: unit (lifecycle, cap-as-surfacing-throttle, dismissal material-worsening memory,
+      item-creation ops, atomic-rollback, stranded-index repair, clear-on-accept, FSRS-untouched,
+      read-only proof), migration test (lineage survival + both partial indexes), component
+      (maintenance accept/dismiss/undo/notes, RereadPanel, queue line), and Electron e2e
+      (`tests/electron/reread-proposals.spec.ts`: bridge wiring, read-only laws, toggle restart).
 
 ## Done when
 
 - A struggling cluster becomes, with one tap, a scheduled re-read that opens at the exact
   region with its failing cards attached; dismissals stick; proposals never exceed the cap;
-  everything is undoable and restart-safe.
-- Standard gates pass.
+  everything is undoable and restart-safe. ✓
+- Standard gates pass. ✓ (`pnpm lint`, `pnpm typecheck`, `pnpm test` (4587),
+  `pnpm e2e tests/electron/reread-proposals.spec.ts`)
+
+## Outcome
+
+Done via ce-plan → ce-doc-review (6-persona) → ce-work → ce-code-review (6-persona) → fixes →
+ce-compound. Plan:
+[`../plans/2026-06-15-005-feat-t129-reread-proposals-plan.md`](../plans/2026-06-15-005-feat-t129-reread-proposals-plan.md).
+Key decisions: re-read item = a system-owned `reread_region` `task` (reuse T092/T110, not a new
+element type); proposals are COMPUTED not stored (mirror T103); accept reversal = a soft-delete of
+the task because `create_element`/`add_relation` are NOT globally invertible (KTD-10, the
+doc-review's critical catch); the cap is a SURFACING THROTTLE not an accept budget (doc-review
+rejected the budget reading as punishing engagement); completion suppresses the proposal for a
+grace window (the completed task is the memory — honest "cluster quiets" given FSRS is untouched);
+dismissal is honored until MATERIALLY worse (banded hash + stored counters, so it sticks through
+improvement — code-review catch). Migration `0042` is additive and found SAFE (mirrors 0035; no
+`elements` rebuild). Code-review also fixed a stranded one-open-index (generic soft-delete leaves
+`tasks.status` open) and pre-cap suppression truncation.
+Follow-ups (deferred, non-blocking): a stable completed-at column for the grace window (vs
+`elements.updatedAt`); extract SourceReader's reread fetch/jump into a `useRereadItem` hook; a
+card-id-filtered "Review these cards now" panel action.
 
 ## Notes / risks
 
