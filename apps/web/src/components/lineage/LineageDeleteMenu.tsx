@@ -88,13 +88,19 @@ export function LineageDeleteMenu({
   const popRef = useRef<HTMLDivElement>(null);
   const submittingRef = useRef(false);
   const fetchingRef = useRef(false);
-  const mountedRef = useRef(true);
+  const mountedRef = useRef(false);
   const triggerSignalRef = useRef(triggerSignal);
 
   const isExtract = target?.type === "extract";
   const isTopic = target?.type === "topic";
 
+  // Set on mount and clear on unmount. Initialising `true` and only clearing on
+  // cleanup is wrong under React StrictMode: the dev-only mount→unmount→remount cycle
+  // leaves a `useRef(true)` permanently `false` (the ref survives the cycle and the
+  // remount never restores it), which silently kills the post-await `mountedRef`
+  // guards in `handleTrigger`. Mirrors the correct pattern in ReviewScreen.tsx.
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
     };

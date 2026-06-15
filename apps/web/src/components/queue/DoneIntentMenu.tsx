@@ -123,14 +123,19 @@ export function DoneIntentMenu({
   const laterRef = useRef<HTMLButtonElement>(null);
   const submittingRef = useRef(false);
   const fetchingRef = useRef(false);
-  const mountedRef = useRef(true);
+  const mountedRef = useRef(false);
   const busyRef = useRef(busy);
   const triggerSignalRef = useRef(triggerSignal);
   const forceOpenSignalRef = useRef(forceOpenSignal);
   const suggestedIntentRef = useRef(suggestedIntent);
   const forceOpenRequestRef = useRef(0);
 
+  // Set on mount and clear on unmount. Initialising `true` and only clearing on cleanup
+  // is wrong under React StrictMode: the dev-only mount→unmount→remount cycle leaves a
+  // `useRef(true)` permanently `false`, silently killing the post-await `mountedRef` guard
+  // in `handleTrigger`. Mirrors the correct pattern in ReviewScreen.tsx.
   useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       forceOpenRequestRef.current += 1;

@@ -12,6 +12,7 @@
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -276,5 +277,42 @@ describe("LineageDeleteMenu", () => {
     fireEvent.click(branch);
     fireEvent.click(branch);
     expect(actions.deleteBranch).toHaveBeenCalledTimes(1);
+  });
+
+  // Regression (real-app bug): the delete trigger did nothing in the running app
+  // because `mountedRef` was initialised `true` and only ever set `false` on cleanup.
+  // Under React StrictMode (active in apps/web/src/main.tsx), the dev-only
+  // mount→unmount→remount cycle left `mountedRef.current === false` for the component's
+  // whole life, so `handleTrigger` always bailed at `if (!mountedRef.current) return`
+  // right after awaiting `countDescendants` — the delete never fired. RTL's plain
+  // `render` does not apply StrictMode, so the rest of this suite could not catch it.
+  describe("under StrictMode (regression: mountedRef must reset on remount)", () => {
+    it("leaf fast path still quietly deletes after the StrictMode remount cycle", async () => {
+      const actions = stubActions();
+      h.countDescendants.mockResolvedValue(count({ total: 0 }));
+      render(
+        <StrictMode>
+          <LineageDeleteMenu target={EXTRACT} actions={actions} />
+        </StrictMode>,
+      );
+
+      fireEvent.click(screen.getByTestId("lineage-delete-trigger"));
+
+      await waitFor(() => expect(actions.quiet).toHaveBeenCalledWith(EXTRACT));
+    });
+
+    it("still opens the intent popover for a non-leaf after the StrictMode remount cycle", async () => {
+      const actions = stubActions();
+      h.countDescendants.mockResolvedValue(count({ extracts: 1, total: 1 }));
+      render(
+        <StrictMode>
+          <LineageDeleteMenu target={EXTRACT} actions={actions} />
+        </StrictMode>,
+      );
+
+      fireEvent.click(screen.getByTestId("lineage-delete-trigger"));
+
+      expect(await screen.findByTestId("lineage-delete-pop")).toBeInTheDocument();
+    });
   });
 });

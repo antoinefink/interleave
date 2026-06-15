@@ -1,5 +1,6 @@
 import type { SourceBlockProcessingState } from "@interleave/core";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SourceBlockProcessingSummaryPayload } from "../../lib/appApi";
 import { DoneIntentMenu } from "./DoneIntentMenu";
@@ -346,5 +347,28 @@ describe("DoneIntentMenu", () => {
     fireEvent.mouseDown(document.body);
     await waitFor(() => expect(screen.queryByTestId("done-intent-pop")).toBeNull());
     expect(onResolved).not.toHaveBeenCalled();
+  });
+
+  // Regression: same `mountedRef` defect as LineageDeleteMenu. Under React StrictMode
+  // (active in apps/web/src/main.tsx) a `useRef(true)` cleared only on cleanup stays
+  // `false` after the dev mount→unmount→remount cycle, so `handleTrigger` bailed at
+  // `if (!mountedRef.current) return` after awaiting `getSummary` and the fast path never
+  // resolved. RTL's plain `render` does not apply StrictMode, hence the gap.
+  describe("under StrictMode (regression: mountedRef must reset on remount)", () => {
+    it("fast path still marks done after the StrictMode remount cycle", async () => {
+      const onResolved = vi.fn();
+      const getSummary = vi
+        .fn()
+        .mockResolvedValue(summary({ canMarkDoneWithoutConfirmation: true }));
+      render(
+        <StrictMode>
+          <DoneIntentMenu getSummary={getSummary} onResolved={onResolved} />
+        </StrictMode>,
+      );
+
+      fireEvent.click(screen.getByTestId("done-intent-trigger"));
+
+      await waitFor(() => expect(onResolved).toHaveBeenCalledWith("finished"));
+    });
   });
 });
