@@ -90,6 +90,7 @@ export function BulkActionPanel({
   onVerb,
   onArmPriority,
   onSetPriority,
+  onApplySuggestions,
 }: {
   selectedCount: number;
   breakdown: readonly string[];
@@ -101,6 +102,11 @@ export function BulkActionPanel({
   onArmPriority: (label: PriorityLabelInput) => void;
   /** Commit the armed band as a priority-only sweep (keeps the selection + band). */
   onSetPriority: () => void;
+  /**
+   * Bulk-accept each selected item's OWN suggested band as one batch (T127). Ids with
+   * no suggestion are skipped; the parent surfaces the honest applied/skipped tally.
+   */
+  onApplySuggestions: () => void;
 }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col" data-testid="inbox-bulk-panel">
@@ -162,6 +168,20 @@ export function BulkActionPanel({
             {pendingPriority
               ? `Band ${pendingPriority} is armed — it rides with the next verb in one sweep, or apply it alone with “Set priority”.`
               : "Arm a band to combine it with a verb in one sweep, or set it on the selection alone."}
+          </p>
+          <button
+            type="button"
+            data-testid="inbox-bulk-apply-suggestions"
+            disabled={busy}
+            onClick={onApplySuggestions}
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-md border border-accent-soft-bd border-dashed bg-accent-soft px-3 py-2 font-medium text-accent-text text-sm hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
+          >
+            <Icon name="sparkle" size={14} />
+            Apply suggestions
+          </button>
+          <p className="mt-1.5 text-text-3 text-xs">
+            Accepts each selected item’s own suggested band in one sweep. Items with no suggestion
+            are skipped.
           </p>
         </section>
 

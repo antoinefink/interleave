@@ -124,7 +124,9 @@ function mediaSourceLabel(kind: MediaKind): string {
  * Exported so the DB service's per-item summary builder (`summaryForId`) derives the
  * `domain` field through the SAME rule the list query uses — no divergent parse.
  */
-export function inboxSourceDomain(source: Source | null): string | null {
+export function inboxSourceDomain(
+  source: { readonly canonicalUrl?: string | null; readonly url?: string | null } | null,
+): string | null {
   const raw = source?.canonicalUrl ?? source?.url ?? null;
   if (!raw) return null;
   try {

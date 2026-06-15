@@ -82,6 +82,8 @@ import {
   TASK_TYPES,
   type TaskType,
   THEMES,
+  type TriageInsufficientReason,
+  type TriageJustification,
   WEEKLY_REVIEW_CADENCE_DAYS_MAX,
   WEEKLY_REVIEW_CADENCE_DAYS_MIN,
 } from "@interleave/core";
@@ -2943,7 +2945,25 @@ export const InboxTriageRequestSchema = z.object({
     z.object({ kind: z.literal("accept") }),
     z.object({ kind: z.literal("queueSoon") }),
     z.object({ kind: z.literal("keepForLater") }),
-    z.object({ kind: z.literal("setPriority"), priority: PriorityLabelSchema }),
+    z.object({
+      kind: z.literal("setPriority"),
+      priority: PriorityLabelSchema,
+      /**
+       * Optional T127 suggestion provenance: present only when this priority write came
+       * from a suggestion chip. `accepted` means the user took the suggested band as-is;
+       * `overridden` means they picked a different band. Logged distinguishably on the
+       * `update_element` op (no new op type) so acceptance-vs-override rates are measurable.
+       * Absent ⇒ an ordinary manual priority set carries no marker.
+       */
+      suggestion: z
+        .object({
+          decision: z.enum(["accepted", "overridden"]),
+          suggestedBand: PriorityLabelSchema,
+          signalKinds: z.array(z.enum(["semantic", "authorYield", "domainYield"])).max(3),
+          signalHash: z.string().min(1).max(256),
+        })
+        .optional(),
+    }),
     z.object({ kind: z.literal("delete") }),
   ]),
 });
@@ -2998,7 +3018,13 @@ const _bulkActionsAreTriageKinds: _BulkActionsAreTriageKinds = true;
 void _bulkActionsAreTriageKinds;
 
 /** Why an id in a bulk selection was skipped (never thrown — classified + counted). */
-export type InboxBulkTriageSkipReason = "not_inbox" | "deleted" | "wrong_type" | "already_acted";
+export type InboxBulkTriageSkipReason =
+  | "not_inbox"
+  | "deleted"
+  | "wrong_type"
+  | "already_acted"
+  /** Bulk-accept only (T127): the item had no banded suggestion (`insufficient_signal`). */
+  | "no_suggestion";
 
 /**
  * One bulk-triage request (T126): a verb over N ids (`min(1)`/`max(1000)` — the cap protects
@@ -3042,12 +3068,85 @@ export const InboxBulkTriageUndoRequestSchema = z.object({
 });
 export type InboxBulkTriageUndoRequest = z.infer<typeof InboxBulkTriageUndoRequestSchema>;
 
+/**
+ * Bulk-accept request (T127): apply EACH selected id's OWN suggested band as one batched,
+ * op-logged sweep (the same `min(1)`/`max(1000)` cap). Ids with no banded suggestion are
+ * skipped as `no_suggestion`; the result reuses {@link InboxBulkTriageResult} so the
+ * existing `inbox:bulkTriageUndo` reverses the whole batch by its `batchId`. Bands are
+ * resolved main-side from the read-model — the request carries only the ids.
+ */
+export const InboxBulkApplySuggestionsRequestSchema = z.object({
+  ids: z.array(ElementIdSchema).min(1).max(1000),
+});
+export type InboxBulkApplySuggestionsRequest = z.infer<
+  typeof InboxBulkApplySuggestionsRequestSchema
+>;
+
 /** The outcome of a bulk-triage undo: how many ops reversed, or a clean refusal (T126). */
 export interface InboxBulkTriageUndoResult {
   readonly undone: boolean;
   readonly count: number;
   /** Why nothing was undone (e.g. a victim moved since the batch), when `undone` is false. */
   readonly reason?: string;
+}
+
+// ---------------------------------------------------------------------------
+// triage.suggest() / triage.suggestForMetadata()  (T127 — suggested priority & placement)
+// ---------------------------------------------------------------------------
+
+/**
+ * Batched suggestion request (T127): the inbox ids whose suggested band + placement +
+ * justification to compute (`min(1)`/`max(1000)` — the same synchronous-main cap as the
+ * bulk verbs). The result is a DERIVED, deterministic read over existing signals (semantic
+ * neighbors, author/site yield, reliability) — NO mutation, NO `operation_log`. Nothing is
+ * ever auto-applied; the renderer renders an advisory chip the user accepts or overrides.
+ */
+export const TriageSuggestRequestSchema = z.object({
+  ids: z.array(ElementIdSchema).min(1).max(1000),
+});
+export type TriageSuggestRequest = z.infer<typeof TriageSuggestRequestSchema>;
+
+/**
+ * Metadata-keyed suggestion request (T127) — the import-modal path. Driven by the author/URL
+ * the user entered before the source is persisted or embedded, so the semantic signal is thin
+ * by construction; the suggestion is yield + reliability only. Read-only.
+ */
+export const TriageSuggestMetadataRequestSchema = z.object({
+  author: z.string().max(1024).nullish(),
+  url: z.string().max(4096).nullish(),
+  canonicalUrl: z.string().max(4096).nullish(),
+  confidence: z.enum(CONFIDENCE_LEVELS).nullish(),
+  currentBand: PriorityLabelSchema.optional(),
+});
+export type TriageSuggestMetadataRequest = z.infer<typeof TriageSuggestMetadataRequestSchema>;
+
+/** A banded suggestion: the band, an optional concept placement, a cited justification, a stable hash. */
+export interface TriageSuggestionSuggestionDto {
+  readonly kind: "suggestion";
+  readonly band: PriorityLabel;
+  readonly placement?: { readonly conceptId: string; readonly conceptName: string };
+  readonly justification: TriageJustification;
+  readonly signalHash: string;
+}
+
+/** A suppressed suggestion (the UI renders nothing); the reason rides along for diagnostics. */
+export interface TriageSuggestionInsufficientDto {
+  readonly kind: "insufficient_signal";
+  readonly reason: TriageInsufficientReason;
+}
+
+/** The per-item suggestion verdict crossing IPC (mirrors the local-db read-model result). */
+export type TriageSuggestionDto = TriageSuggestionSuggestionDto | TriageSuggestionInsufficientDto;
+
+/** One id paired with its computed suggestion verdict. */
+export interface TriageSuggestEntry {
+  readonly id: string;
+  readonly suggestion: TriageSuggestionDto;
+}
+
+/** The batched suggestion result: one entry per requested id, in request order. */
+export interface TriageSuggestResult {
+  readonly results: readonly TriageSuggestEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -7528,6 +7627,26 @@ export interface AppApi {
     bulkTriage(request: InboxBulkTriageRequest): Promise<InboxBulkTriageResult>;
     /** Undo a bulk-triage batch by its `batchId` via the movement guard (T126). */
     bulkTriageUndo(request: InboxBulkTriageUndoRequest): Promise<InboxBulkTriageUndoResult>;
+    /**
+     * Bulk-accept each selected id's OWN suggested band (T127) as one batched, op-logged
+     * sweep; ids with no banded suggestion are skipped (`no_suggestion`). Reuses the bulk
+     * result + the `bulkTriageUndo` channel.
+     */
+    bulkApplySuggestions(request: InboxBulkApplySuggestionsRequest): Promise<InboxBulkTriageResult>;
+  };
+  readonly triage: {
+    /**
+     * Suggested priority band + optional concept placement + cited justification for N
+     * inbox ids (T127) — a DERIVED, deterministic read over semantic neighbors, author/
+     * site yield, and reliability. NO mutation, NO op-log; never auto-applied. Thin
+     * signals return `insufficient_signal` (the renderer shows nothing).
+     */
+    suggest(request: TriageSuggestRequest): Promise<TriageSuggestResult>;
+    /**
+     * The import-modal suggestion (T127) — keyed on entered author/URL metadata before
+     * the source exists or is embedded; yield + reliability only. Read-only.
+     */
+    suggestForMetadata(request: TriageSuggestMetadataRequest): Promise<TriageSuggestionDto>;
   };
   readonly documents: {
     /** Load an element's document body (ProseMirror JSON + plain text) (T015). */

@@ -58,10 +58,12 @@
  */
 
 import {
+  authorDomainYieldBand,
   type ElementId,
   type ExtractFate,
   type IsoTimestamp,
   priorityToLabel,
+  type SourceYieldInputs,
   scoreSourceYield,
   type YieldBand,
 } from "@interleave/core";
@@ -78,6 +80,7 @@ import { isCardMature } from "@interleave/scheduler";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { BlockProcessingService } from "./block-processing-service";
 import { DocumentRepository } from "./document-repository";
+import { inboxSourceDomain } from "./inbox-query";
 
 /** Default cap so a broad rollup can't return an unbounded list (like `LibraryQuery`). */
 export const DEFAULT_SOURCE_YIELD_LIMIT = 200;
@@ -172,6 +175,56 @@ export interface SourceYieldOptions {
   readonly limit?: number;
   /** Skip the first `offset` rows (after sorting). */
   readonly offset?: number;
+}
+
+/**
+ * One author's or domain's aggregate yield over its **worked** (non-`neutral`)
+ * prior sources — the T127 "per-source yield history" suggestion signal (KTD4). The
+ * band is NOT a per-row average or majority vote: it is `scoreSourceYield(summed
+ * tallies).band` via the shared {@link authorDomainYieldBand} collapse rule, so the
+ * aggregate and the per-source rollup can never disagree.
+ */
+export interface AuthorDomainYieldEntry {
+  /** How many non-`neutral` worked prior sources backed the aggregate. */
+  readonly workedSourceCount: number;
+  /** The collapsed yield band (`high`/`medium`/`low`/`neutral`) over the summed tallies. */
+  readonly yieldBand: YieldBand;
+  /** Summed cards across the worked sources (an integer cited in the justification). */
+  readonly totalCards: number;
+  /** Summed mature cards across the worked sources (an integer cited in the justification). */
+  readonly totalMatureCards: number;
+}
+
+/**
+ * Per-author and per-domain yield aggregates. Keys are exact-string author and
+ * normalized domain (via {@link inboxSourceDomain}). Known limitations (documented,
+ * acceptable at this scope): author match is exact-string (no fuzzy/normalized
+ * identity — "J. Smith" and "John Smith" do not merge), and subdomains bucket
+ * separately (`blog.example.com` ≠ `example.com`).
+ */
+export interface AuthorDomainYieldAggregate {
+  readonly byAuthor: ReadonlyMap<string, AuthorDomainYieldEntry>;
+  readonly byDomain: ReadonlyMap<string, AuthorDomainYieldEntry>;
+}
+
+/** A single author/domain yield lookup result for the per-item path. */
+export interface AuthorDomainYieldLookup {
+  readonly author: AuthorDomainYieldEntry | null;
+  readonly domain: AuthorDomainYieldEntry | null;
+}
+
+/** Mutable accumulator summing per-source yield tallies for one author/domain key. */
+interface YieldAcc {
+  count: number;
+  /** Sum of per-source readPct — averaged at finalize (readPct is a `[0,1]` ratio per source). */
+  readPctSum: number;
+  extractsCreated: number;
+  honorableExtracts: number;
+  synthesisNotesCreated: number;
+  cardsCreated: number;
+  matureCards: number;
+  leeches: number;
+  timeSpentMs: number;
 }
 
 /** The per-source descendant tallies, accumulated in one grouped pass. */
@@ -497,6 +550,140 @@ export class SourceYieldQuery {
   getSourceYield(sourceId: ElementId, asOf: IsoTimestamp): SourceYieldRow | null {
     const summary = this.listSourceYield(asOf, { limit: Number.MAX_SAFE_INTEGER });
     return summary.rows.find((r) => r.source.id === sourceId) ?? null;
+  }
+
+  /**
+   * Roll the durable per-source yield up into per-author and per-domain aggregates
+   * (the T127 yield suggestion signal — KTD4). Read-only. Reuses {@link listSourceYield}'s
+   * per-source rollup (so it inherits the fate-aware, de-duplicated yield definition —
+   * never a naive card count) and joins it to a fresh `sources` read for `author` +
+   * `canonicalUrl`/`url` (the yield rows carry neither). `neutral` (un-started) sources
+   * are EXCLUDED from both the count and the summed tallies so a pile of un-started
+   * imports is never read as evidence (R8). For each key the worked sources' tallies
+   * are summed and collapsed to one band via {@link authorDomainYieldBand} —
+   * `scoreSourceYield(summed tallies).band`, the single shared collapse rule.
+   *
+   * The N=2 worked-source floor is NOT enforced here — this returns whatever it
+   * computed (including `workedSourceCount`); the floor is applied downstream in the
+   * pure scorer (`scoreTriageSuggestion`) so the floor lives in one tunable place.
+   *
+   * Runs the full library rollup (like {@link getSourceYield}); the per-item suggestion
+   * path calls this ONCE per batch and indexes the returned maps rather than calling it
+   * per item.
+   */
+  aggregateYieldByAuthorAndDomain(asOf: IsoTimestamp): AuthorDomainYieldAggregate {
+    const summary = this.listSourceYield(asOf, { limit: Number.MAX_SAFE_INTEGER });
+
+    // Fresh `sources` read for author + URLs (the yield rows carry only id/title/url).
+    const metaById = new Map<
+      string,
+      { author: string | null; canonicalUrl: string | null; url: string | null }
+    >();
+    const meta = this.db
+      .select({
+        elementId: sourcesTable.elementId,
+        author: sourcesTable.author,
+        canonicalUrl: sourcesTable.canonicalUrl,
+        url: sourcesTable.url,
+      })
+      .from(sourcesTable)
+      .all();
+    for (const m of meta) {
+      metaById.set(m.elementId, {
+        author: m.author ?? null,
+        canonicalUrl: m.canonicalUrl ?? null,
+        url: m.url ?? null,
+      });
+    }
+
+    const byAuthorAcc = new Map<string, YieldAcc>();
+    const byDomainAcc = new Map<string, YieldAcc>();
+    const ensureAcc = (map: Map<string, YieldAcc>, key: string): YieldAcc => {
+      let acc = map.get(key);
+      if (!acc) {
+        acc = {
+          count: 0,
+          readPctSum: 0,
+          extractsCreated: 0,
+          honorableExtracts: 0,
+          synthesisNotesCreated: 0,
+          cardsCreated: 0,
+          matureCards: 0,
+          leeches: 0,
+          timeSpentMs: 0,
+        };
+        map.set(key, acc);
+      }
+      return acc;
+    };
+    const addRow = (acc: YieldAcc, row: SourceYieldRow): void => {
+      acc.count += 1;
+      acc.readPctSum += row.readPct;
+      acc.extractsCreated += row.extractsCreated;
+      acc.honorableExtracts += row.productiveExtracts;
+      acc.synthesisNotesCreated += row.synthesisNotesCreated;
+      acc.cardsCreated += row.cardsCreated;
+      acc.matureCards += row.matureCards;
+      acc.leeches += row.leeches;
+      acc.timeSpentMs += row.timeSpentMs;
+    };
+
+    for (const row of summary.rows) {
+      // Exclude un-started sources — an un-started import (or a suggestion-elevated but
+      // still-un-worked source) is `neutral` and is not evidence of yield (R8).
+      if (row.yieldBand === "neutral") continue;
+      const m = metaById.get(row.source.id);
+      const author = m?.author?.trim() ? m.author.trim() : null;
+      const domain = inboxSourceDomain(m ?? null);
+      if (author) addRow(ensureAcc(byAuthorAcc, author), row);
+      if (domain) addRow(ensureAcc(byDomainAcc, domain), row);
+    }
+
+    const finalize = (map: Map<string, YieldAcc>): Map<string, AuthorDomainYieldEntry> => {
+      const out = new Map<string, AuthorDomainYieldEntry>();
+      for (const [key, acc] of map) {
+        const summed: SourceYieldInputs = {
+          // readPct is a per-source ratio; average it across the key's worked sources
+          // rather than summing (a sum would exceed 1 and distort the barren penalty).
+          readPct: acc.count > 0 ? acc.readPctSum / acc.count : 0,
+          extractsCreated: acc.extractsCreated,
+          honorableExtracts: acc.honorableExtracts,
+          synthesisNotesCreated: acc.synthesisNotesCreated,
+          cardsCreated: acc.cardsCreated,
+          matureCards: acc.matureCards,
+          leeches: acc.leeches,
+          timeSpentMs: acc.timeSpentMs,
+        };
+        out.set(key, {
+          workedSourceCount: acc.count,
+          yieldBand: authorDomainYieldBand(summed),
+          totalCards: acc.cardsCreated,
+          totalMatureCards: acc.matureCards,
+        });
+      }
+      return out;
+    };
+
+    return { byAuthor: finalize(byAuthorAcc), byDomain: finalize(byDomainAcc) };
+  }
+
+  /**
+   * Single-item convenience over {@link aggregateYieldByAuthorAndDomain}: the author and
+   * domain aggregates for one item, or `null` per key when absent. Runs the full rollup
+   * (like {@link getSourceYield}) — the batched per-item suggestion path should call
+   * {@link aggregateYieldByAuthorAndDomain} once and index the maps instead.
+   */
+  getAuthorDomainYield(
+    asOf: IsoTimestamp,
+    author: string | null,
+    domain: string | null,
+  ): AuthorDomainYieldLookup {
+    const agg = this.aggregateYieldByAuthorAndDomain(asOf);
+    const authorKey = author?.trim() ? author.trim() : null;
+    return {
+      author: authorKey ? (agg.byAuthor.get(authorKey) ?? null) : null,
+      domain: domain ? (agg.byDomain.get(domain) ?? null) : null,
+    };
   }
 
   /**

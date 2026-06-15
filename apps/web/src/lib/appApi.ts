@@ -2074,12 +2074,31 @@ export interface InboxGetResult {
   readonly detail: InboxItemDetail | null;
 }
 
+/**
+ * Optional T127 suggestion provenance carried on a `setPriority` triage action.
+ * Present only when the priority write came from a suggestion chip: `accepted`
+ * means the user took the suggested band as-is (Enter / accept affordance);
+ * `overridden` means they picked a DIFFERENT band. The main side logs it
+ * distinguishably on the `update_element` op (no new op type). Absent ⇒ an
+ * ordinary manual priority set carries no marker. Mirrors the desktop contract.
+ */
+export interface InboxTriageSuggestionProvenance {
+  readonly decision: "accepted" | "overridden";
+  readonly suggestedBand: PriorityLabel;
+  readonly signalKinds: readonly ("semantic" | "authorYield" | "domainYield")[];
+  readonly signalHash: string;
+}
+
 /** One triage action applied to an inbox source (discriminated by `kind`). */
 export type InboxTriageAction =
   | { readonly kind: "accept" }
   | { readonly kind: "queueSoon" }
   | { readonly kind: "keepForLater" }
-  | { readonly kind: "setPriority"; readonly priority: PriorityLabelInput }
+  | {
+      readonly kind: "setPriority";
+      readonly priority: PriorityLabelInput;
+      readonly suggestion?: InboxTriageSuggestionProvenance;
+    }
   | { readonly kind: "delete" };
 
 export interface InboxTriageRequest {
@@ -2109,7 +2128,13 @@ export type InboxBulkTriageAction =
   | "setPriority";
 
 /** Why an id in a bulk selection was skipped (classified + counted, never thrown). */
-export type InboxBulkTriageSkipReason = "not_inbox" | "deleted" | "wrong_type" | "already_acted";
+export type InboxBulkTriageSkipReason =
+  | "not_inbox"
+  | "deleted"
+  | "wrong_type"
+  | "already_acted"
+  /** Bulk-accept only (T127): the item had no banded suggestion. */
+  | "no_suggestion";
 
 /** One bulk-triage request: a verb over N ids, optionally + one priority band. */
 export interface InboxBulkTriageRequest {
@@ -2117,6 +2142,11 @@ export interface InboxBulkTriageRequest {
   readonly action: InboxBulkTriageAction;
   /** When present, every applied id ALSO gets this band in the same batch. */
   readonly priority?: PriorityLabelInput;
+}
+
+/** Bulk-accept request (T127): apply each selected id's own suggested band as one batch. */
+export interface InboxBulkApplySuggestionsRequest {
+  readonly ids: readonly string[];
 }
 
 /** The outcome of one bulk sweep: counts + the per-id skip/error channels. */
@@ -2142,6 +2172,87 @@ export interface InboxBulkTriageUndoResult {
   readonly count: number;
   /** Why nothing was undone (e.g. a victim moved since the batch), when `undone` is false. */
   readonly reason?: string;
+}
+
+// ---------------------------------------------------------------------------
+// triage.suggest() / triage.suggestForMetadata()  (T127 — suggested priority & placement)
+// ---------------------------------------------------------------------------
+
+/** The coarse yield band a justification clause cites. */
+export type TriageYieldBand = "high" | "medium" | "low" | "neutral";
+
+/** One justification clause — a discriminated record of integer values the renderer formats. */
+export type TriageJustificationSignal =
+  | { readonly kind: "semantic"; readonly neighborCount: number; readonly lean: PriorityLabel }
+  | {
+      readonly kind: "authorYield";
+      readonly workedSourceCount: number;
+      readonly totalCards: number;
+      readonly totalMatureCards: number;
+      readonly band: TriageYieldBand;
+    }
+  | {
+      readonly kind: "domainYield";
+      readonly workedSourceCount: number;
+      readonly totalCards: number;
+      readonly totalMatureCards: number;
+      readonly band: TriageYieldBand;
+    };
+
+/** The structured justification — only the signals that fired (the renderer never invents prose). */
+export interface TriageJustification {
+  readonly signals: readonly TriageJustificationSignal[];
+}
+
+/** Why a suggestion was suppressed (the UI renders nothing). */
+export type TriageInsufficientReason =
+  | "no_signal_fired"
+  | "conflict_unresolved"
+  | "only_thin_signals"
+  | "matches_current"
+  | "not_inbox_source";
+
+/** Batched suggestion request: the inbox ids to compute suggestions for. */
+export interface TriageSuggestRequest {
+  readonly ids: readonly string[];
+}
+
+/** Import-modal suggestion request, keyed on entered author/URL metadata. */
+export interface TriageSuggestMetadataRequest {
+  readonly author?: string | null;
+  readonly url?: string | null;
+  readonly canonicalUrl?: string | null;
+  readonly confidence?: "high" | "medium" | "low" | null;
+  readonly currentBand?: PriorityLabel;
+}
+
+/** A banded suggestion: band + optional concept placement + cited justification + stable hash. */
+export interface TriageSuggestionSuggestionDto {
+  readonly kind: "suggestion";
+  readonly band: PriorityLabel;
+  readonly placement?: { readonly conceptId: string; readonly conceptName: string };
+  readonly justification: TriageJustification;
+  readonly signalHash: string;
+}
+
+/** A suppressed suggestion (the UI renders nothing); the reason rides along for diagnostics. */
+export interface TriageSuggestionInsufficientDto {
+  readonly kind: "insufficient_signal";
+  readonly reason: TriageInsufficientReason;
+}
+
+/** The per-item suggestion verdict crossing IPC. */
+export type TriageSuggestionDto = TriageSuggestionSuggestionDto | TriageSuggestionInsufficientDto;
+
+/** One id paired with its computed suggestion verdict. */
+export interface TriageSuggestEntry {
+  readonly id: string;
+  readonly suggestion: TriageSuggestionDto;
+}
+
+/** The batched suggestion result: one entry per requested id, in request order. */
+export interface TriageSuggestResult {
+  readonly results: readonly TriageSuggestEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -5024,6 +5135,11 @@ export interface AppApi {
     triage(request: InboxTriageRequest): Promise<InboxTriageResult>;
     bulkTriage(request: InboxBulkTriageRequest): Promise<InboxBulkTriageResult>;
     bulkTriageUndo(request: InboxBulkTriageUndoRequest): Promise<InboxBulkTriageUndoResult>;
+    bulkApplySuggestions(request: InboxBulkApplySuggestionsRequest): Promise<InboxBulkTriageResult>;
+  };
+  readonly triage: {
+    suggest(request: TriageSuggestRequest): Promise<TriageSuggestResult>;
+    suggestForMetadata(request: TriageSuggestMetadataRequest): Promise<TriageSuggestionDto>;
   };
   readonly documents: {
     get(request: DocumentsGetRequest): Promise<DocumentsGetResult>;
@@ -5713,6 +5829,20 @@ export const appApi = {
   /** Undo a bulk-triage batch by its `batchId` via the movement guard (T126). */
   bulkTriageInboxUndo(request: InboxBulkTriageUndoRequest): Promise<InboxBulkTriageUndoResult> {
     return requireAppApi().inbox.bulkTriageUndo(request);
+  },
+  /** Bulk-accept each selected id's own suggested band as one undoable batch (T127). */
+  bulkApplyInboxSuggestions(
+    request: InboxBulkApplySuggestionsRequest,
+  ): Promise<InboxBulkTriageResult> {
+    return requireAppApi().inbox.bulkApplySuggestions(request);
+  },
+  /** Suggested priority band + placement + justification for N inbox ids (T127). Read-only. */
+  suggestTriage(request: TriageSuggestRequest): Promise<TriageSuggestResult> {
+    return requireAppApi().triage.suggest(request);
+  },
+  /** Import-modal suggestion keyed on entered author/URL metadata (T127). Read-only. */
+  suggestTriageForMetadata(request: TriageSuggestMetadataRequest): Promise<TriageSuggestionDto> {
+    return requireAppApi().triage.suggestForMetadata(request);
   },
   /** Load an element's document body (ProseMirror JSON + plain text) (T015). */
   getDocument(request: DocumentsGetRequest): Promise<DocumentsGetResult> {

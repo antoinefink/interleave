@@ -34,10 +34,12 @@ import {
   type InboxBulkTriageResult,
   type InboxItemDetail,
   type InboxItemSummary,
+  type InboxTriageSuggestionProvenance,
   isDesktop,
   PRIORITY_LABELS,
   type PriorityLabelInput,
   type SourceDuplicateSummary,
+  type TriageSuggestionSuggestionDto,
 } from "../../lib/appApi";
 import { useActiveScope } from "../../shell/activeScope";
 import { Kbd } from "../../shell/Kbd";
@@ -46,8 +48,15 @@ import { useSelection } from "../../shell/selection";
 import { BulkActionPanel } from "./BulkActionPanel";
 import { ImportFileModal } from "./ImportFileModal";
 import { ImportUrlModal } from "./ImportUrlModal";
-import { groupInboxItems, type InboxGroupBy, InboxGroupedList } from "./InboxGroupedList";
+import {
+  groupInboxItems,
+  type InboxGroupBy,
+  InboxGroupedList,
+  type InboxRowSuggestion,
+} from "./InboxGroupedList";
 import { NewSourceModal } from "./NewSourceModal";
+import { formatTriageJustification, SuggestionChip } from "./SuggestionChip";
+import { useInboxSuggestions } from "./useInboxSuggestions";
 import { useInboxTriageShortcuts } from "./useInboxTriageShortcuts";
 import "../source/reader.css";
 
@@ -230,18 +239,31 @@ function validBodyDoc(value: unknown): unknown | null {
 function PreviewPane({
   detail,
   busy,
+  suggestion,
+  placementAssigned,
   onReadNow,
   onTriage,
   onSetPriority,
+  onAcceptSuggestion,
+  onAcceptPlacement,
   triageActionsRef,
   readNowButtonRef,
   triageHighlighted,
 }: {
   detail: InboxItemDetail;
   busy: boolean;
+  /** The selected item's triage suggestion (verdict / `"pending"` / `null`). */
+  suggestion: InboxRowSuggestion;
+  /** Whether the suggested placement concept has already been assigned this session. */
+  placementAssigned: boolean;
   onReadNow: () => void;
   onTriage: (kind: "queueSoon" | "keepForLater" | "delete") => void;
+  /** Set a priority band. The caller decides accepted-vs-overridden provenance. */
   onSetPriority: (label: PriorityLabelInput) => void;
+  /** Accept the suggested band as-is (records `accepted` provenance). */
+  onAcceptSuggestion: () => void;
+  /** Accept the suggested placement concept (`assignConcept`); re-accept is a no-op. */
+  onAcceptPlacement: (conceptId: string) => void;
   triageActionsRef: Ref<HTMLElement>;
   readNowButtonRef: Ref<HTMLButtonElement>;
   triageHighlighted: boolean;
@@ -250,6 +272,12 @@ function PreviewPane({
   const bodyDoc = validBodyDoc(detail.bodyDoc);
   const fallbackText = detail.bodyText ?? detail.bodyPreview ?? null;
   const current = priorityToLabel(summary.priority);
+  // A banded suggestion drives the accept affordance + justification + placement;
+  // `insufficient_signal` / `"pending"` / `null` render none of it.
+  const banded: TriageSuggestionSuggestionDto | null =
+    typeof suggestion === "object" && suggestion?.kind === "suggestion" ? suggestion : null;
+  const justification = banded ? formatTriageJustification(banded.justification) : "";
+  const placement = banded?.placement ?? null;
   return (
     <div className="flex min-w-0 flex-1" data-testid="inbox-preview">
       {/* body preview */}
@@ -384,7 +412,55 @@ function PreviewPane({
             })}
           </div>
           <p className="mt-1.5 text-text-3 text-xs">{PRIORITY_HINT[current]}</p>
+
+          {/* Suggested priority (T127 — U6): accept-as-is (Enter does the same), or
+              override by picking a DIFFERENT chip above. Only a banded suggestion
+              renders; `insufficient_signal` shows nothing (never a confident guess). */}
+          {banded ? (
+            <div className="mt-3 flex flex-col gap-1.5" data-testid="inbox-suggestion">
+              <div className="flex items-center gap-2">
+                <SuggestionChip band={banded.band} onAccept={onAcceptSuggestion} busy={busy} />
+                <span className="text-text-3 text-xs">Press Enter to accept</span>
+              </div>
+              {justification ? (
+                <p className="text-text-3 text-xs" data-testid="inbox-suggestion-justification">
+                  {justification}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </section>
+
+        {/* Suggested placement (T127 — U6): assign the concept the neighbors share,
+            via the existing assignConcept command. Re-accept is a no-op (shows the
+            confirmed "assigned" state). */}
+        {placement ? (
+          <section data-testid="inbox-suggestion-placement">
+            <div className="mb-2 font-medium text-text-2 text-xs uppercase tracking-wide">
+              Suggested placement
+            </div>
+            {placementAssigned ? (
+              <span
+                className="inline-flex items-center gap-1.5 rounded-md border border-ok-soft bg-ok-soft px-2 py-1 text-ok text-xs"
+                data-testid="inbox-suggestion-placement-assigned"
+              >
+                <Icon name="check" size={13} />
+                Assigned to {placement.conceptName}
+              </span>
+            ) : (
+              <button
+                type="button"
+                data-testid="inbox-suggestion-placement-accept"
+                disabled={busy}
+                onClick={() => onAcceptPlacement(placement.conceptId)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-accent-soft-bd border-dashed bg-accent-soft px-2 py-1 text-accent-text text-xs hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
+              >
+                <Icon name="sparkle" size={13} />
+                Place in {placement.conceptName}
+              </button>
+            )}
+          </section>
+        ) : null}
 
         <section
           ref={triageActionsRef}
@@ -487,6 +563,28 @@ export function InboxScreen() {
   const bulkInFlightRef = useRef(false);
   // In-flight guard for the snackbar Undo, so a double-click fires only one undo call.
   const undoInFlightRef = useRef(false);
+  // In-flight guard for a single-item priority/placement write — `busy` is async state, so
+  // a held/double Enter could pass its check twice before React flushes; this ref blocks
+  // the second synchronous fire (no duplicate accepted-provenance write).
+  const mutateInFlightRef = useRef(false);
+
+  // The `(elementId, conceptId)` pairs the user has accepted a placement for this
+  // session (so the placement chip flips to the confirmed "assigned" state; re-accept is
+  // a no-op). Keyed by the PAIR, not the concept alone — two inbox items can suggest the
+  // same concept, and assigning one must not mark the other's chip assigned.
+  const [assignedPlacements, setAssignedPlacements] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const placementKey = useCallback(
+    (elementId: string, conceptId: string) => `${elementId}::${conceptId}`,
+    [],
+  );
+
+  // Per-id advisory suggestions (T127 — U6), fetched by a dedicated hook that refetches
+  // only when the inbox id SET changes (not on a single row's priority write) and caps
+  // the batch at the IPC bound. A missing entry renders the neutral pending placeholder.
+  const itemIds = useMemo(() => items.map((it) => it.id), [items]);
+  const { suggestions, dropSuggestion } = useInboxSuggestions(itemIds);
 
   const multiSelect = selectedIds.size >= 2;
 
@@ -763,30 +861,142 @@ export function InboxScreen() {
     [selId, busy, refresh, select],
   );
 
+  /**
+   * The cursor row's banded suggestion, or `null` when there is none (still
+   * computing / insufficient / no fetch). The accept/override provenance reads
+   * this; the row + preview already render from the same map.
+   */
+  const cursorSuggestion: TriageSuggestionSuggestionDto | null = useMemo(() => {
+    if (!selId) return null;
+    const entry = suggestions.get(selId);
+    return typeof entry === "object" && entry?.kind === "suggestion" ? entry : null;
+  }, [selId, suggestions]);
+
+  /**
+   * Drop a stale chip for `id` from the suggestion map (no clobber): the
+   * suggestion no longer applies because the item moved / left the inbox. The row
+   * + preview re-render with no chip. Read-only on the map (never re-writes a band).
+   */
+  /**
+   * Write a priority band on the selected item. `suggestion` carries the T127
+   * accepted/overridden provenance when the write came from the suggestion chip
+   * (Enter / accept) or an override (a different chip than the suggested band);
+   * absent ⇒ an ordinary manual set with no marker. Staleness is re-checked here:
+   * a band that already matches is a no-op (drop the chip, no clobber); an item
+   * that has left the inbox surfaces a clean note.
+   */
   const onSetPriority = useCallback(
-    async (priority: PriorityLabelInput) => {
-      if (!selId || busy) return;
+    async (priority: PriorityLabelInput, suggestion?: InboxTriageSuggestionProvenance) => {
+      if (!selId || busy || mutateInFlightRef.current) return;
+      // Re-read live state at accept (the staleness rule): if the item already
+      // carries this band, accepting is a no-op — drop the chip without a write.
+      const live = items.find((it) => it.id === selId);
+      if (
+        live &&
+        priorityToLabel(live.priority) === priority &&
+        suggestion?.decision !== "overridden"
+      ) {
+        dropSuggestion(selId);
+        return;
+      }
+      mutateInFlightRef.current = true;
       setBusy(true);
       try {
         const result = await appApi.triageInboxItem({
           id: selId,
-          action: { kind: "setPriority", priority },
+          action: { kind: "setPriority", priority, ...(suggestion ? { suggestion } : {}) },
         });
         const updated = result.item;
         if (updated) {
           setItems((prev) => prev.map((item) => (item.id === selId ? updated : item)));
           setDetail((prev) => (prev ? { ...prev, summary: updated } : prev));
+          // The write landed → the suggested band is now the current band, so the
+          // chip would be a no-op; drop it (suppress-when-equal, no clobber).
+          dropSuggestion(selId);
         } else {
+          // The item left the inbox since render — surface cleanly, drop the chip.
+          setError("Inbox item is no longer available.");
+          dropSuggestion(selId);
           await refresh(selId);
         }
+        setError((prev) => (result.item ? null : prev));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        mutateInFlightRef.current = false;
+        setBusy(false);
+      }
+    },
+    [selId, busy, items, refresh, dropSuggestion],
+  );
+
+  /**
+   * Set priority from a priority chip. When the chosen band DIFFERS from a live
+   * suggestion this records `overridden` provenance; choosing the suggested band
+   * via a chip records `accepted`; with no suggestion it is a plain manual set.
+   */
+  const onPickPriority = useCallback(
+    (priority: PriorityLabelInput) => {
+      const sug = cursorSuggestion;
+      if (sug) {
+        const decision = priority === sug.band ? "accepted" : "overridden";
+        void onSetPriority(priority, {
+          decision,
+          suggestedBand: sug.band,
+          signalKinds: sug.justification.signals.map((s) => s.kind),
+          signalHash: sug.signalHash,
+        });
+        return;
+      }
+      void onSetPriority(priority);
+    },
+    [cursorSuggestion, onSetPriority],
+  );
+
+  /**
+   * Accept the suggested band as-is (Enter on the cursor row, or the accept
+   * affordance): write the suggested band with `accepted` provenance. A no-op when
+   * the cursor row has no banded suggestion.
+   */
+  const onAcceptSuggestion = useCallback(() => {
+    const sug = cursorSuggestion;
+    if (!sug) return;
+    void onSetPriority(sug.band, {
+      decision: "accepted",
+      suggestedBand: sug.band,
+      signalKinds: sug.justification.signals.map((s) => s.kind),
+      signalHash: sug.signalHash,
+    });
+  }, [cursorSuggestion, onSetPriority]);
+
+  /**
+   * Accept the suggested placement concept via the existing `assignConcept`
+   * command (an idempotent op-logged membership edge). On success the chip flips to
+   * the confirmed "assigned" state; re-accept is a client-side no-op.
+   */
+  const onAcceptPlacement = useCallback(
+    async (conceptId: string) => {
+      if (!selId || busy || mutateInFlightRef.current) return;
+      const key = placementKey(selId, conceptId);
+      if (assignedPlacements.has(key)) return; // re-accept (this item + concept) is a no-op
+      mutateInFlightRef.current = true;
+      setBusy(true);
+      try {
+        await appApi.assignConcept({ elementId: selId, conceptId });
+        setAssignedPlacements((prev) => {
+          const next = new Set(prev);
+          next.add(key);
+          return next;
+        });
         setError(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
+        mutateInFlightRef.current = false;
         setBusy(false);
       }
     },
-    [selId, busy, refresh],
+    [selId, busy, assignedPlacements, placementKey],
   );
 
   // --- Selection / grouping / bulk dispatch (T126 — U5) ---
@@ -1061,6 +1271,43 @@ export function InboxScreen() {
   );
 
   /**
+   * Bulk-accept each selected item's OWN suggested band (T127) in ONE batch. A
+   * non-removing sweep — keeps the selection so the user can chain — that surfaces the
+   * honest applied / no-suggestion / skipped tally and arms the snackbar Undo.
+   */
+  const onBulkApplySuggestions = useCallback(async () => {
+    if (busy || bulkInFlightRef.current) return;
+    const selected = [...selectedIds];
+    if (selected.length === 0) return;
+    const ids = selected.slice(0, BULK_SELECTION_CAP);
+    bulkInFlightRef.current = true;
+    setBusy(true);
+    try {
+      const result = await appApi.bulkApplyInboxSuggestions({ ids });
+      const noSuggestion = result.skipped.filter((s) => s.reason === "no_suggestion").length;
+      const otherSkipped = result.skipped.length - noSuggestion;
+      const parts = [`Applied suggestions to ${result.applied}`];
+      if (noSuggestion > 0) parts.push(`${noSuggestion} no suggestion`);
+      if (otherSkipped > 0) parts.push(`${otherSkipped} skipped`);
+      if (result.errored.length > 0) parts.push(`${result.errored.length} failed`);
+      setSnack(parts.join(" · "));
+      setSnackBatchId(result.applied > 0 ? result.batchId : null);
+      const cappedNote =
+        selected.length > ids.length ? ` First ${ids.length} of ${selected.length} selected.` : "";
+      setAnnounce(
+        `Applied suggestions to ${result.applied} items. ${result.skipped.length} skipped.${cappedNote}`,
+      );
+      await refresh(null);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      bulkInFlightRef.current = false;
+      setBusy(false);
+    }
+  }, [busy, selectedIds, refresh]);
+
+  /**
    * A bulk verb button: fire the verb + the armed band (if any) in ONE combined
    * batch — so "queue this group at B" is one `bulkTriageInbox`, one snackbar, one
    * undo (AE-2). A removing verb then clears the selection AND the armed band.
@@ -1184,6 +1431,7 @@ export function InboxScreen() {
       clearSelection,
       triageVerb,
       armPriority: onArmBulkPriority,
+      acceptSuggestion: onAcceptSuggestion,
     },
     triageScopeActive,
   );
@@ -1329,6 +1577,7 @@ export function InboxScreen() {
               onGroupByChange={setGroupBy}
               selectedIds={selectedIds}
               cursorId={selId}
+              suggestions={suggestions}
               totalCount={items.length}
               onSelectRow={onSelectRow}
               onSelectGroup={onSelectGroup}
@@ -1344,14 +1593,25 @@ export function InboxScreen() {
                 onVerb={onBulkVerb}
                 onArmPriority={onArmBulkPriority}
                 onSetPriority={onSetBulkPriority}
+                onApplySuggestions={() => void onBulkApplySuggestions()}
               />
             ) : detail && detail.summary.id === selId ? (
               <PreviewPane
                 detail={detail}
                 busy={busy}
+                suggestion={suggestions.get(selId) ?? "pending"}
+                placementAssigned={
+                  selId && cursorSuggestion?.placement
+                    ? assignedPlacements.has(
+                        placementKey(selId, cursorSuggestion.placement.conceptId),
+                      )
+                    : false
+                }
                 onReadNow={onReadNow}
                 onTriage={onTriage}
-                onSetPriority={onSetPriority}
+                onSetPriority={onPickPriority}
+                onAcceptSuggestion={onAcceptSuggestion}
+                onAcceptPlacement={(conceptId) => void onAcceptPlacement(conceptId)}
                 triageActionsRef={triageActionsRef}
                 readNowButtonRef={readNowButtonRef}
                 triageHighlighted={triageHighlighted}

@@ -87,7 +87,10 @@ priority, undo the whole sweep if it was wrong.
 # T127 — Suggested priority & placement
 
 - **Milestone:** M27 — Triage at scale
-- **Status:** `[ ]` not started
+- **Status:** `[x]` done — 2026-06-15, plan
+  [`docs/plans/2026-06-15-001-feat-t127-suggested-priority-placement-plan.md`](../plans/2026-06-15-001-feat-t127-suggested-priority-placement-plan.md),
+  commit `feat: T127 suggested priority & placement`. Learnings:
+  [`docs/solutions/architecture-patterns/advisory-suggestion-engine-patterns.md`](../solutions/architecture-patterns/advisory-suggestion-engine-patterns.md).
 - **Depends on:** T083, T087, T088, T091
 - **Roadmap line:** inbox items show a suggested band + topic placement chip with a one-line
   justification computed from existing signals (semantic neighbors, per-source yield history,
@@ -115,18 +118,27 @@ something real.
 
 ## Deliverables
 
-- [ ] `TriageSuggestionQuery` in `packages/local-db`: per inbox item — suggested band + optional
+- [x] `TriageSuggestionQuery` in `packages/local-db`: per inbox item — suggested band + optional
       topic/concept placement + a structured justification (signal kinds + values), computed
       from semantic-neighbor priorities/yields, author/site yield history, and reliability
-      metadata; explicit `insufficient_signal` result when inputs are thin.
-- [ ] UI: suggestion chip + one-line justification on inbox rows and import modals;
-      accept = one keystroke (writes priority via the existing command), override = pick another
-      chip; bulk-accept for a selection composes with T126.
-- [ ] Suggestion provenance: accepted suggestions logged distinguishably (op-log detail) so
-      future tuning can measure acceptance vs override rates.
-- [ ] Tests: unit — seeded fixtures produce the documented suggestions and justifications;
-      thin-signal fixtures produce none; acceptance writes exactly the normal priority op; e2e —
-      import near an existing high-yield cluster, see the suggestion, accept it.
+      metadata; explicit `insufficient_signal` result when inputs are thin. (Pure scorer in
+      `packages/core/src/triage-suggestion.ts`; net-new author/domain yield rollup in
+      `source-yield-query.ts`; dispersion suppression so a bimodal neighbor set never averages
+      to a phantom band.)
+- [x] UI: suggestion chip + one-line justification on inbox rows and import modals;
+      accept = one keystroke (Enter, writes priority via the existing command), override = pick
+      another chip; bulk-accept for a selection composes with T126 (`inbox:bulkApplySuggestions`,
+      per-item bands under one `batchId`, `no_suggestion` skip). Import-modal coverage is the
+      URL + manual modals; `ImportFileModal` has no intake metadata and is intentionally not wired.
+- [x] Suggestion provenance: accepted suggestions logged distinguishably via an `OpContext.extras`
+      marker on the existing `update_element` op (accepted vs overridden, suggested/final band,
+      signal kinds + hash) so future tuning can measure acceptance vs override rates — and never
+      polluting the yield signal that feeds future suggestions.
+- [x] Tests: unit — seeded fixtures produce the documented suggestions and justifications;
+      thin-signal/dispersed/placement-tie fixtures produce none; acceptance writes exactly the
+      normal priority op (+ marker); e2e (`tests/electron/inbox-suggestions.spec.ts`) — the
+      suppression law + read-only + bulk-accept skip + restart through the real app (the positive
+      accept-with-provenance path is proven at the unit/component layer — see the spec header).
 
 ## Done when
 

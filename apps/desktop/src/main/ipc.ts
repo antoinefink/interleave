@@ -83,6 +83,7 @@ import {
   ExtractsUpdateStageRequestSchema,
   HealthRequestSchema,
   type HealthResult,
+  InboxBulkApplySuggestionsRequestSchema,
   InboxBulkTriageRequestSchema,
   InboxBulkTriageUndoRequestSchema,
   InboxGetRequestSchema,
@@ -198,6 +199,8 @@ import {
   TrashRestoreAncestorChainRequestSchema,
   TrashRestoreBatchRequestSchema,
   TrashRestoreRequestSchema,
+  TriageSuggestMetadataRequestSchema,
+  TriageSuggestRequestSchema,
   UndoLastRequestSchema,
   VaultCollectOrphansRequestSchema,
   VaultFindOrphansRequestSchema,
@@ -1010,6 +1013,24 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.inboxBulkTriageUndo, (_event, rawRequest: unknown) => {
     const request = InboxBulkTriageUndoRequestSchema.parse(rawRequest);
     return dbService.bulkTriageUndo(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.inboxBulkApplySuggestions, (_event, rawRequest: unknown) => {
+    const request = InboxBulkApplySuggestionsRequestSchema.parse(rawRequest);
+    return dbService.bulkApplyInboxSuggestions(request);
+  });
+
+  // Suggested priority & placement (T127) — tolerant reads, strict request validation.
+  // Both channels are read-only (no mutation, no op-log); thin signals return
+  // `insufficient_signal` rather than throwing.
+  ipcMain.handle(IPC_CHANNELS.triageSuggest, (_event, rawRequest: unknown) => {
+    const request = TriageSuggestRequestSchema.parse(rawRequest);
+    return dbService.suggestTriage(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.triageSuggestMetadata, (_event, rawRequest: unknown) => {
+    const request = TriageSuggestMetadataRequestSchema.parse(rawRequest);
+    return dbService.suggestTriageForMetadata(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.documentsGet, (_event, rawRequest: unknown) => {

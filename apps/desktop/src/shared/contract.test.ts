@@ -181,6 +181,8 @@ import {
   type TrashRestoreAncestorChainResult,
   TrashRestoreBatchRequestSchema,
   type TrashRestoreBatchResult,
+  TriageSuggestMetadataRequestSchema,
+  TriageSuggestRequestSchema,
   VaultCollectOrphansRequestSchema,
   type VaultCollectOrphansResult,
   type VaultOrphansResult,
@@ -257,6 +259,9 @@ describe("IPC channels", () => {
         "inbox:triage",
         "inbox:bulkTriage",
         "inbox:bulkTriageUndo",
+        "inbox:bulkApplySuggestions",
+        "triage:suggest",
+        "triage:suggestMetadata",
         "documents:get",
         "documents:save",
         "documents:exportMarkdown",
@@ -441,6 +446,43 @@ describe("PriorityIntegrityGetRequestSchema (T105)", () => {
     for (const topicLimit of [0, 51, 1.5]) {
       expect(() => PriorityIntegrityGetRequestSchema.parse({ topicLimit })).toThrow();
     }
+  });
+});
+
+describe("TriageSuggestRequestSchema (T127)", () => {
+  it("accepts a bounded id list", () => {
+    expect(TriageSuggestRequestSchema.parse({ ids: ["a", "b"] })).toEqual({ ids: ["a", "b"] });
+  });
+
+  it("rejects an empty list and an over-cap list", () => {
+    expect(() => TriageSuggestRequestSchema.parse({ ids: [] })).toThrow();
+    const tooMany = Array.from({ length: 1001 }, (_, i) => `id-${i}`);
+    expect(() => TriageSuggestRequestSchema.parse({ ids: tooMany })).toThrow();
+  });
+});
+
+describe("TriageSuggestMetadataRequestSchema (T127)", () => {
+  it("accepts entered author/URL metadata, a confidence level, and a current band", () => {
+    expect(
+      TriageSuggestMetadataRequestSchema.parse({
+        author: "Ada Lovelace",
+        url: "https://example.com/x",
+        confidence: "high",
+        currentBand: "C",
+      }),
+    ).toEqual({
+      author: "Ada Lovelace",
+      url: "https://example.com/x",
+      confidence: "high",
+      currentBand: "C",
+    });
+    // All fields are optional — an empty request is valid (yields insufficient_signal downstream).
+    expect(TriageSuggestMetadataRequestSchema.parse({})).toEqual({});
+  });
+
+  it("rejects an unknown confidence level and a malformed band", () => {
+    expect(() => TriageSuggestMetadataRequestSchema.parse({ confidence: "certain" })).toThrow();
+    expect(() => TriageSuggestMetadataRequestSchema.parse({ currentBand: "Z" })).toThrow();
   });
 });
 

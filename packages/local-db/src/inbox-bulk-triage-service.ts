@@ -60,7 +60,20 @@ export type InboxBulkTriageSkipReason =
   /** A live element that is not a `type:"source"` (e.g. a card/extract/task). */
   | "wrong_type"
   /** The id matched no element row at all (e.g. concurrently hard-deleted / never existed). */
-  | "already_acted";
+  | "already_acted"
+  /** Bulk-accept only (T127): the item had no banded suggestion (`insufficient_signal`). */
+  | "no_suggestion";
+
+/** One item to bulk-accept its own suggested band (T127 — KTD-8). */
+export interface InboxBulkSuggestionItem {
+  readonly id: string;
+  /** The suggested band the read-model resolved for this id. */
+  readonly band: PriorityLabel;
+  /** The fired signal kinds, carried into the accepted-suggestion provenance marker. */
+  readonly signalKinds: readonly ("semantic" | "authorYield" | "domainYield")[];
+  /** The versioned signal hash, carried into the provenance marker. */
+  readonly signalHash: string;
+}
 
 /** One skipped id with its classified reason. */
 export interface InboxBulkTriageSkipped {
@@ -173,6 +186,73 @@ export class InboxBulkTriageService {
         applied: 0,
         skipped: [],
         errored: uniqueIds.map((id) => ({ id, error: message })),
+      };
+    }
+  }
+
+  /**
+   * Bulk-accept each item's OWN suggested band (T127 — KTD-8). Unlike {@link apply}
+   * (one uniform priority for all), this applies a DIFFERENT band per id, each through
+   * the SAME per-item `setPriority` `update_element` write under ONE shared `batchId`,
+   * carrying the `accepted`-suggestion provenance marker. Ineligible rows skip-and-classify
+   * exactly like {@link apply} (never throws for staleness); the movement guard reverses
+   * the whole batch via {@link undoBatch}. The caller (db-service) resolves the bands and
+   * classifies `no_suggestion` ids before calling this; here every item already carries a band.
+   */
+  applySuggestions(items: readonly InboxBulkSuggestionItem[]): InboxBulkTriageResult {
+    const batchId = newRowId();
+    // Dedupe by id (first-seen) so the op order is deterministic.
+    const seen = new Set<string>();
+    const uniqueItems = items.filter((it) => {
+      if (seen.has(it.id)) return false;
+      seen.add(it.id);
+      return true;
+    });
+    if (uniqueItems.length === 0) {
+      return { batchId, applied: 0, skipped: [], errored: [] };
+    }
+
+    const skipped: InboxBulkTriageSkipped[] = [];
+    try {
+      const applied = this.db.transaction((tx) => {
+        let appliedCount = 0;
+        for (const item of uniqueItems) {
+          const id = item.id as ElementId;
+          const current = tx.select().from(elements).where(eq(elements.id, id)).get();
+          const reason = this.skipReason(current);
+          if (reason) {
+            skipped.push({ id: item.id, reason });
+            continue;
+          }
+          this.elements.updateWithin(
+            tx,
+            id,
+            { priority: priorityFromLabel(item.band) },
+            {
+              batchId,
+              extras: {
+                triageSuggestion: {
+                  decision: "accepted",
+                  suggestedBand: item.band,
+                  finalBand: item.band,
+                  signalKinds: item.signalKinds,
+                  signalHash: item.signalHash,
+                },
+              },
+            },
+          );
+          appliedCount += 1;
+        }
+        return appliedCount;
+      });
+      return { batchId, applied, skipped, errored: [] };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        batchId,
+        applied: 0,
+        skipped: [],
+        errored: uniqueItems.map((it) => ({ id: it.id, error: message })),
       };
     }
   }

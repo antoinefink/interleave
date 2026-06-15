@@ -88,6 +88,15 @@ export const IPC_CHANNELS = {
   // — bulk reuses the four existing per-item triage writes behind local-db.
   inboxBulkTriage: "inbox:bulkTriage",
   inboxBulkTriageUndo: "inbox:bulkTriageUndo",
+  // Bulk-accept each selected id's own suggested band (T127) — one batch, reuses
+  // `inbox:bulkTriageUndo` for undo. Ids with no banded suggestion are skipped.
+  inboxBulkApplySuggestions: "inbox:bulkApplySuggestions",
+  // Suggested priority & placement (T127) — `triage:suggest` returns an advisory band +
+  // concept placement + justification for N inbox ids; `triage:suggestMetadata` is the
+  // import-modal path keyed on entered author/URL before the source exists. Read-only:
+  // NO mutation, NO op-log, never auto-applied.
+  triageSuggest: "triage:suggest",
+  triageSuggestMetadata: "triage:suggestMetadata",
   documentsGet: "documents:get",
   documentsSave: "documents:save",
   documentsExportMarkdown: "documents:exportMarkdown",

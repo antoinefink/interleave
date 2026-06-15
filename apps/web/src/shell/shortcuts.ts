@@ -407,6 +407,13 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     group: "Inbox",
     scope: "triage",
   },
+  {
+    id: "inbox-accept-suggestion",
+    label: "Accept suggested priority",
+    keys: ["Enter"],
+    group: "Inbox",
+    scope: "triage",
+  },
 ] as const;
 
 /** The cheat-sheet group display order. */

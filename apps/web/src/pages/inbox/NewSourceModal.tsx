@@ -20,6 +20,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import { appApi, type PriorityLabelInput, type SourcesImportManualRequest } from "../../lib/appApi";
 import { Kbd } from "../../shell/Kbd";
+import { formatTriageJustification, SuggestionChip } from "./SuggestionChip";
+import { useTriageMetadataSuggestion } from "./useTriageMetadataSuggestion";
 
 const PRIORITY_LABELS: readonly PriorityLabelInput[] = ["A", "B", "C", "D"];
 
@@ -64,6 +66,16 @@ export function NewSourceModal({
   // the preview is faithful; the renderer still never persists it — it only
   // sends the raw URL and the main process re-derives + stores it.
   const canonicalPreview = useMemo(() => canonicalizeUrl(url), [url]);
+
+  // T127: a metadata-keyed suggestion (yield + reliability) from the entered author/URL.
+  // Advisory — defaults the picker but never auto-submits; semantic is thin at intake.
+  const suggestion = useTriageMetadataSuggestion({
+    open,
+    url,
+    author,
+    canonicalUrl: canonicalPreview,
+    currentBand: priority,
+  });
 
   // Reset the form once per open. Keep this guarded so an async Settings load
   // can update the untouched priority without wiping already-entered content.
@@ -340,6 +352,25 @@ export function NewSourceModal({
                   );
                 })}
               </div>
+              {suggestion ? (
+                <div className="mt-2 flex flex-col gap-1" data-testid="new-source-suggestion">
+                  <SuggestionChip
+                    band={suggestion.band}
+                    onAccept={() => {
+                      setPriority(suggestion.band);
+                      setPriorityTouched(true);
+                    }}
+                  />
+                  {formatTriageJustification(suggestion.justification) ? (
+                    <p
+                      className="text-text-3 text-xs"
+                      data-testid="new-source-suggestion-justification"
+                    >
+                      {formatTriageJustification(suggestion.justification)}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
 
             {error ? (

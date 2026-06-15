@@ -23,6 +23,8 @@ import {
   type SourceDuplicateSummary,
 } from "../../lib/appApi";
 import { Kbd } from "../../shell/Kbd";
+import { formatTriageJustification, SuggestionChip } from "./SuggestionChip";
+import { useTriageMetadataSuggestion } from "./useTriageMetadataSuggestion";
 
 const PRIORITY_LABELS: readonly PriorityLabelInput[] = ["A", "B", "C", "D"];
 
@@ -83,6 +85,16 @@ export function ImportUrlModal({
   // A live read-back of the canonical URL the main process WILL derive — uses the
   // same pure `@interleave/core` normalizer; the renderer never persists it.
   const canonicalPreview = useMemo(() => canonicalizeUrl(url), [url]);
+
+  // T127: a metadata-keyed suggestion (yield + reliability; semantic is thin at intake)
+  // from the entered URL. Advisory — defaults the picker but never auto-submits.
+  const suggestion = useTriageMetadataSuggestion({
+    open,
+    url,
+    author: "",
+    canonicalUrl: canonicalPreview,
+    currentBand: priority,
+  });
 
   // Reset the form once per open. Keep this guarded so an async Settings load
   // can update the untouched priority without wiping already-entered content.
@@ -290,6 +302,25 @@ export function ImportUrlModal({
                   );
                 })}
               </div>
+              {suggestion ? (
+                <div className="mt-2 flex flex-col gap-1" data-testid="import-url-suggestion">
+                  <SuggestionChip
+                    band={suggestion.band}
+                    onAccept={() => {
+                      setPriority(suggestion.band);
+                      setPriorityTouched(true);
+                    }}
+                  />
+                  {formatTriageJustification(suggestion.justification) ? (
+                    <p
+                      className="text-text-3 text-xs"
+                      data-testid="import-url-suggestion-justification"
+                    >
+                      {formatTriageJustification(suggestion.justification)}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
 
             {error ? (

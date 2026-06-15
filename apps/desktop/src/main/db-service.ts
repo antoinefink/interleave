@@ -84,6 +84,7 @@ import {
   emptySearchFacetCounts,
   foldSearchFacetCounts,
   HEAVY_FIT_REVIEW_THRESHOLD,
+  type InboxBulkSuggestionItem,
   type InboxBulkTriageResult,
   InboxBulkTriageService,
   InboxQuery,
@@ -125,6 +126,7 @@ import {
   type SynthesisData,
   type SynthesisLinkedElement,
   TimeCostQuery,
+  TriageSuggestionQuery,
   type UndoResult,
   UndoService,
   WorkloadService,
@@ -273,6 +275,7 @@ import type {
   ExtractsUpdateStageRequest,
   ExtractsUpdateStageResult,
   FactLifetimeSummary,
+  InboxBulkApplySuggestionsRequest,
   InboxBulkTriageRequest,
   InboxBulkTriageUndoRequest,
   InboxBulkTriageUndoResult,
@@ -437,6 +440,10 @@ import type {
   TrashRestoreBatchResult,
   TrashRestoreRequest,
   TrashRestoreResult,
+  TriageSuggestionDto,
+  TriageSuggestMetadataRequest,
+  TriageSuggestRequest,
+  TriageSuggestResult,
   UndoLastResult,
   VacationPreview,
   VaultCollectOrphansRequest,
@@ -592,6 +599,8 @@ export class DbService {
   private queue: QueueQuery | null = null;
   private sessionPlan: SessionPlanQuery | null = null;
   private conversionSession: ConversionSessionQuery | null = null;
+  /** Suggested priority & placement read-model (T127) — read-only, no op-log. */
+  private triageSuggestion: TriageSuggestionQuery | null = null;
   private conversionSnapshots = new Map<string, ConversionSessionSnapshot>();
   private conversionDraftRequests = new Map<string, number>();
   private timeCost: TimeCostQuery | null = null;
@@ -910,6 +919,10 @@ export class DbService {
     this.timeCost = new TimeCostQuery(this.handle.db);
     this.sessionPlan = new SessionPlanQuery(this.handle.db, this.repositories);
     this.conversionSession = new ConversionSessionQuery(this.handle.db, this.repositories);
+    // The suggested-priority read-model (T127): an advisory band + concept placement +
+    // justification per inbox item, derived from semantic neighbors / author-site yield /
+    // reliability. Read-only — no mutation, no `operation_log`, never auto-applied.
+    this.triageSuggestion = new TriageSuggestionQuery(this.repositories);
     // The facet-driven browse-all read behind `/library` (distinct from search):
     // lists ALL live elements narrowed by type/concept/priority/status facets,
     // including topic/synthesis_note/task which the FTS index never covers.
@@ -1376,6 +1389,52 @@ export class DbService {
       throw new Error("DbService: database is not open");
     }
     return this.conversionSession;
+  }
+
+  private get triageSuggestionQuery(): TriageSuggestionQuery {
+    if (!this.triageSuggestion) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.triageSuggestion;
+  }
+
+  /**
+   * Suggested priority & placement for N inbox ids (T127). A DERIVED, deterministic read
+   * over semantic neighbors / author-site yield / reliability — no mutation, no
+   * `operation_log`. Returns one verdict per id in request order; thin signals are
+   * `insufficient_signal` (the renderer shows nothing).
+   */
+  suggestTriage(request: TriageSuggestRequest): TriageSuggestResult {
+    const asOf = nowIso() as IsoTimestamp;
+    const ids = request.ids as ElementId[];
+    const verdicts = this.triageSuggestionQuery.suggestForInboxItems(ids, asOf);
+    return {
+      results: ids.map((id) => ({
+        id,
+        suggestion: (verdicts.get(id) ?? {
+          kind: "insufficient_signal" as const,
+          reason: "not_inbox_source" as const,
+        }) satisfies TriageSuggestionDto,
+      })),
+    };
+  }
+
+  /**
+   * The import-modal suggestion (T127) — keyed on entered author/URL metadata before the
+   * source exists or is embedded; yield + reliability only. Read-only.
+   */
+  suggestTriageForMetadata(request: TriageSuggestMetadataRequest): TriageSuggestionDto {
+    const asOf = nowIso() as IsoTimestamp;
+    return this.triageSuggestionQuery.suggestForMetadata(
+      {
+        author: request.author ?? null,
+        url: request.url ?? null,
+        canonicalUrl: request.canonicalUrl ?? null,
+        confidence: request.confidence ?? null,
+        ...(request.currentBand ? { currentBand: request.currentBand } : {}),
+      },
+      asOf,
+    );
   }
 
   /**
@@ -3482,9 +3541,28 @@ export class DbService {
           break;
         }
         case "setPriority": {
-          this.repos.elements.updateWithin(tx, id, {
-            priority: priorityFromLabel(action.priority),
-          });
+          // T127: when the write came from a suggestion chip, carry the provenance marker
+          // on the SAME `update_element` op (no new op type). The marker is for measurement
+          // only — priority is not a yield input, so it never feeds the next suggestion.
+          const suggestionExtras = action.suggestion
+            ? {
+                extras: {
+                  triageSuggestion: {
+                    decision: action.suggestion.decision,
+                    suggestedBand: action.suggestion.suggestedBand,
+                    finalBand: action.priority,
+                    signalKinds: action.suggestion.signalKinds,
+                    signalHash: action.suggestion.signalHash,
+                  },
+                },
+              }
+            : undefined;
+          this.repos.elements.updateWithin(
+            tx,
+            id,
+            { priority: priorityFromLabel(action.priority) },
+            suggestionExtras,
+          );
           break;
         }
         case "delete": {
@@ -3528,6 +3606,38 @@ export class DbService {
    */
   bulkTriageInboxItems(request: InboxBulkTriageRequest): InboxBulkTriageResult {
     return this.inboxBulkTriage.apply(request.ids, request.action, request.priority ?? null);
+  }
+
+  /**
+   * Bulk-accept each selected inbox item's OWN suggested band (T127 — KTD-8). Resolves
+   * the bands server-side via the read-model, classifies ids with no banded suggestion
+   * as `no_suggestion`, and applies the rest through the per-item `setPriority` write
+   * under ONE `batchId` with the `accepted` provenance marker. Composes with the existing
+   * `bulkTriageUndo` (the movement guard reverses the whole batch). Read path is
+   * advisory; the user explicitly invoked the accept.
+   */
+  bulkApplyInboxSuggestions(request: InboxBulkApplySuggestionsRequest): InboxBulkTriageResult {
+    const asOf = nowIso() as IsoTimestamp;
+    const ids = request.ids as ElementId[];
+    const verdicts = this.triageSuggestionQuery.suggestForInboxItems(ids, asOf);
+    const items: InboxBulkSuggestionItem[] = [];
+    const noSuggestion: { id: string; reason: "no_suggestion" }[] = [];
+    for (const id of ids) {
+      const verdict = verdicts.get(id);
+      if (verdict && verdict.kind === "suggestion") {
+        items.push({
+          id,
+          band: verdict.band,
+          signalKinds: verdict.justification.signals.map((s) => s.kind),
+          signalHash: verdict.signalHash,
+        });
+      } else {
+        noSuggestion.push({ id, reason: "no_suggestion" });
+      }
+    }
+    const result = this.inboxBulkTriage.applySuggestions(items);
+    // Merge the no-suggestion skips so the snackbar reports them honestly.
+    return { ...result, skipped: [...result.skipped, ...noSuggestion] };
   }
 
   /**

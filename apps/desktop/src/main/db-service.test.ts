@@ -348,6 +348,101 @@ describe("DbService", () => {
     svc.close();
   });
 
+  it("logs an accepted-suggestion provenance marker on the setPriority op (T127)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { id } = svc.importManualSource({ title: "Suggested item" });
+
+    svc.triageInboxItem({
+      id,
+      action: {
+        kind: "setPriority",
+        priority: "A",
+        suggestion: {
+          decision: "accepted",
+          suggestedBand: "A",
+          signalKinds: ["authorYield"],
+          signalHash: "t127-v1|band:A|authorYield:2",
+        },
+      },
+    });
+
+    const ops = svc.repos.operationLog
+      .listForElement(id as never)
+      .filter((o) => o.opType === "update_element");
+    expect(ops.at(-1)?.payload).toMatchObject({
+      triageSuggestion: {
+        decision: "accepted",
+        suggestedBand: "A",
+        finalBand: "A",
+        signalKinds: ["authorYield"],
+        signalHash: "t127-v1|band:A|authorYield:2",
+      },
+    });
+    svc.close();
+  });
+
+  it("logs an overridden marker when the final band differs from the suggested band (T127)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { id } = svc.importManualSource({ title: "Overridden item" });
+
+    svc.triageInboxItem({
+      id,
+      action: {
+        kind: "setPriority",
+        priority: "B",
+        suggestion: {
+          decision: "overridden",
+          suggestedBand: "A",
+          signalKinds: ["semantic"],
+          signalHash: "t127-v1|band:A|semantic:2",
+        },
+      },
+    });
+
+    const ops = svc.repos.operationLog
+      .listForElement(id as never)
+      .filter((o) => o.opType === "update_element");
+    expect(ops.at(-1)?.payload).toMatchObject({
+      triageSuggestion: { decision: "overridden", suggestedBand: "A", finalBand: "B" },
+    });
+    svc.close();
+  });
+
+  it("writes NO suggestion marker for an ordinary manual setPriority (T127)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { id } = svc.importManualSource({ title: "Manual item" });
+
+    svc.triageInboxItem({ id, action: { kind: "setPriority", priority: "A" } });
+
+    const ops = svc.repos.operationLog
+      .listForElement(id as never)
+      .filter((o) => o.opType === "update_element");
+    expect(ops.at(-1)?.payload).not.toHaveProperty("triageSuggestion");
+    svc.close();
+  });
+
+  it("bulk-accept skips items with no banded suggestion as no_suggestion (T127)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    // Fresh manual sources have no author/URL/embeddings → no signal → no suggestion.
+    const { id: a } = svc.importManualSource({ title: "Fresh A" });
+    const { id: b } = svc.importManualSource({ title: "Fresh B" });
+
+    const result = svc.bulkApplyInboxSuggestions({ ids: [a, b] });
+
+    expect(result.applied).toBe(0);
+    expect(result.skipped).toEqual(
+      expect.arrayContaining([
+        { id: a, reason: "no_suggestion" },
+        { id: b, reason: "no_suggestion" },
+      ]),
+    );
+    svc.close();
+  });
+
   it("rejects stale inbox triage without mutating non-inbox or deleted sources", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });

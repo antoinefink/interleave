@@ -15,7 +15,7 @@
 
 import type { BlockId, ElementId, ExtractFate, IsoTimestamp } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
-import { cards, reviewLogs, reviewStates } from "@interleave/db";
+import { cards, reviewLogs, reviewStates, sources } from "@interleave/db";
 import { CARD_MATURE_STABILITY_DAYS } from "@interleave/scheduler";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BlockProcessingService } from "./block-processing-service";
@@ -413,5 +413,118 @@ describe("SourceYieldQuery.listSourceYield", () => {
     expect(summary.rows).toHaveLength(2);
     // lowYieldCount is over the FULL set, not the page.
     expect(summary.lowYieldCount).toBe(5);
+  });
+});
+
+/** Insert the `sources` side-table row carrying author + URL for an existing source element. */
+function setSourceMeta(
+  handle: DbHandle,
+  id: ElementId,
+  meta: { author?: string | null; url?: string | null; canonicalUrl?: string | null },
+): void {
+  handle.db
+    .insert(sources)
+    .values({
+      elementId: id,
+      author: meta.author ?? null,
+      url: meta.url ?? null,
+      canonicalUrl: meta.canonicalUrl ?? null,
+    })
+    .run();
+}
+
+/** A fully-read source with 2 mature cards (+ reviews) → unambiguously a worked, high-yield source. */
+function seedWorkedSource(
+  handle: DbHandle,
+  title: string,
+  meta: { author?: string | null; url?: string | null; canonicalUrl?: string | null } = {},
+): ElementId {
+  const src = seedSource(handle, title, 4);
+  setReadPoint(handle, src, 3);
+  const m1 = seedCard(handle, src, { stability: CARD_MATURE_STABILITY_DAYS + 5 });
+  const m2 = seedCard(handle, src, { stability: CARD_MATURE_STABILITY_DAYS + 5 });
+  seedReview(handle, m1, 1500, "2026-05-30T08:00:00.000Z");
+  seedReview(handle, m2, 1500, "2026-05-30T08:05:00.000Z");
+  setSourceMeta(handle, src, meta);
+  return src;
+}
+
+describe("SourceYieldQuery.aggregateYieldByAuthorAndDomain", () => {
+  it("aggregates an author's worked sources via the shared collapse rule", () => {
+    seedWorkedSource(handle, "Ada 1", { author: "Ada Lovelace" });
+    seedWorkedSource(handle, "Ada 2", { author: "Ada Lovelace" });
+    seedWorkedSource(handle, "Ada 3", { author: "Ada Lovelace" });
+
+    const agg = new SourceYieldQuery(handle.db).aggregateYieldByAuthorAndDomain(ASOF);
+    const ada = agg.byAuthor.get("Ada Lovelace");
+    expect(ada).toBeDefined();
+    expect(ada?.workedSourceCount).toBe(3);
+    // 3 sources × 2 mature cards = 6 mature → scoreSourceYield(summed) is well past "high".
+    expect(ada?.yieldBand).toBe("high");
+    expect(ada?.totalMatureCards).toBe(6);
+    expect(ada?.totalCards).toBe(6);
+  });
+
+  it("excludes neutral (un-started) sources from the count and the tallies (R8)", () => {
+    // 2 worked + 1 neutral (no read, no output) by the same author.
+    seedWorkedSource(handle, "Cy 1", { author: "Cy" });
+    seedWorkedSource(handle, "Cy 2", { author: "Cy" });
+    const neutral = seedSource(handle, "Cy neutral", 4);
+    setSourceMeta(handle, neutral, { author: "Cy" });
+
+    const agg = new SourceYieldQuery(handle.db).aggregateYieldByAuthorAndDomain(ASOF);
+    expect(agg.byAuthor.get("Cy")?.workedSourceCount).toBe(2);
+  });
+
+  it("an author with only neutral sources is absent from the aggregate", () => {
+    const n = seedSource(handle, "Ben neutral", 4);
+    setSourceMeta(handle, n, { author: "Ben" });
+
+    const agg = new SourceYieldQuery(handle.db).aggregateYieldByAuthorAndDomain(ASOF);
+    expect(agg.byAuthor.has("Ben")).toBe(false);
+  });
+
+  it("buckets subdomains separately (blog.example.com ≠ example.com)", () => {
+    seedWorkedSource(handle, "Blog A", { canonicalUrl: "https://blog.example.com/a" });
+    seedWorkedSource(handle, "Blog B", { canonicalUrl: "https://www.blog.example.com/b" });
+    seedWorkedSource(handle, "Root C", { canonicalUrl: "https://example.com/c" });
+
+    const agg = new SourceYieldQuery(handle.db).aggregateYieldByAuthorAndDomain(ASOF);
+    expect(agg.byDomain.get("blog.example.com")?.workedSourceCount).toBe(2);
+    expect(agg.byDomain.get("example.com")?.workedSourceCount).toBe(1);
+  });
+
+  it("a worked source with null author and null domain lands in neither map", () => {
+    seedWorkedSource(handle, "Anon", {}); // sources row exists but author + urls null
+    const agg = new SourceYieldQuery(handle.db).aggregateYieldByAuthorAndDomain(ASOF);
+    expect(agg.byAuthor.size).toBe(0);
+    expect(agg.byDomain.size).toBe(0);
+  });
+
+  it("the single-key lookup helper returns the author and domain entries", () => {
+    seedWorkedSource(handle, "Site 1", {
+      author: "Carl Sagan",
+      canonicalUrl: "https://cosmos.example.org/1",
+    });
+    seedWorkedSource(handle, "Site 2", {
+      author: "Carl Sagan",
+      canonicalUrl: "https://cosmos.example.org/2",
+    });
+
+    const q = new SourceYieldQuery(handle.db);
+    const lookup = q.getAuthorDomainYield(ASOF, "Carl Sagan", "cosmos.example.org");
+    expect(lookup.author?.workedSourceCount).toBe(2);
+    expect(lookup.domain?.workedSourceCount).toBe(2);
+    expect(q.getAuthorDomainYield(ASOF, "Unknown", "nowhere.example").author).toBeNull();
+  });
+
+  it("is deterministic across back-to-back calls", () => {
+    seedWorkedSource(handle, "D1", { author: "Det", canonicalUrl: "https://det.example/1" });
+    seedWorkedSource(handle, "D2", { author: "Det", canonicalUrl: "https://det.example/2" });
+    const q = new SourceYieldQuery(handle.db);
+    const first = q.aggregateYieldByAuthorAndDomain(ASOF);
+    const second = q.aggregateYieldByAuthorAndDomain(ASOF);
+    expect([...first.byAuthor.entries()]).toEqual([...second.byAuthor.entries()]);
+    expect([...first.byDomain.entries()]).toEqual([...second.byDomain.entries()]);
   });
 });

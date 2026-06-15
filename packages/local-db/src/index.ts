@@ -255,6 +255,7 @@ export {
   nowIso,
 } from "./ids";
 export {
+  type InboxBulkSuggestionItem,
   type InboxBulkTriageAction,
   type InboxBulkTriageDeps,
   type InboxBulkTriageErrored,
@@ -612,6 +613,13 @@ export {
   type TrashItem,
   TrashRepository,
 } from "./trash-query";
+export {
+  type TriageMetadataInput,
+  type TriageSuggestionInsufficient,
+  TriageSuggestionQuery,
+  type TriageSuggestionResult,
+  type TriageSuggestionSuggestion,
+} from "./triage-suggestion-query";
 export type { DbClient, TransactionClient } from "./types";
 export { type UndoResult, UndoService } from "./undo-service";
 export {

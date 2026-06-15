@@ -425,6 +425,24 @@ export {
   TASK_TYPES,
   taskTypeLabel,
 } from "./task";
+// Suggested-priority scorer (T127) — pure band/placement/justification rule (./triage-suggestion).
+export type {
+  TriageInsufficientReason,
+  TriageInsufficientSignal,
+  TriageJustification,
+  TriageJustificationSignal,
+  TriagePlacementCandidate,
+  TriageSemanticSignal,
+  TriageSignalInputs,
+  TriageSuggestion,
+  TriageSuggestionVerdict,
+  TriageYieldSignal,
+} from "./triage-suggestion";
+export {
+  authorDomainYieldBand,
+  computeTriageSignalHash,
+  scoreTriageSuggestion,
+} from "./triage-suggestion";
 // URL canonicalization for provenance/duplicate detection — pure, fetch-free (./url).
 export { canonicalizeUrl } from "./url";
 // Desktop pivot: filesystem asset vault vocabulary (./vault).

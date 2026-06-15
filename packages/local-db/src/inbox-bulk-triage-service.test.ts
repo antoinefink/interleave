@@ -494,3 +494,67 @@ describe("InboxBulkTriageService.undoBatch — symmetry across ALL FIVE verbs", 
     expect(undo.undone).toBe(false);
   });
 });
+
+describe("InboxBulkTriageService.applySuggestions (T127)", () => {
+  it("applies each item's OWN band under one batchId with an accepted marker", () => {
+    const a = seedInboxSource("Alpha");
+    const b = seedInboxSource("Beta");
+    const result = service().applySuggestions([
+      { id: a, band: "A", signalKinds: ["authorYield"], signalHash: "h-a" },
+      { id: b, band: "B", signalKinds: ["semantic"], signalHash: "h-b" },
+    ]);
+
+    expect(result.applied).toBe(2);
+    expect(result.skipped).toEqual([]);
+    expect(result.errored).toEqual([]);
+    expect(rowFor(a)?.priority).toBe(priorityFromLabel("A"));
+    expect(rowFor(b)?.priority).toBe(priorityFromLabel("B"));
+
+    // Both ops share the one batchId and carry the accepted-suggestion marker.
+    const opA = opsFor(a)
+      .filter((o) => o.opType === "update_element")
+      .at(-1);
+    expect(opA?.payload).toMatchObject({
+      batchId: result.batchId,
+      triageSuggestion: { decision: "accepted", suggestedBand: "A", finalBand: "A" },
+    });
+    const opB = opsFor(b)
+      .filter((o) => o.opType === "update_element")
+      .at(-1);
+    expect(opB?.payload).toMatchObject({ batchId: result.batchId });
+  });
+
+  it("skips an ineligible (non-inbox) id without aborting the rest", () => {
+    const a = seedInboxSource("Alpha");
+    const parked = seedInboxSource("Parked");
+    new ElementRepository(handle.db).update(parked, { status: "parked", dueAt: null });
+
+    const result = service().applySuggestions([
+      { id: a, band: "A", signalKinds: ["authorYield"], signalHash: "h-a" },
+      { id: parked, band: "B", signalKinds: ["semantic"], signalHash: "h-b" },
+    ]);
+
+    expect(result.applied).toBe(1);
+    expect(result.skipped).toEqual([{ id: parked, reason: "not_inbox" }]);
+    expect(rowFor(a)?.priority).toBe(priorityFromLabel("A"));
+  });
+
+  it("undo restores the pre-accept priorities", () => {
+    const a = seedInboxSource("Alpha", priorityFromLabel("C"));
+    const svc = service();
+    const result = svc.applySuggestions([
+      { id: a, band: "A", signalKinds: ["authorYield"], signalHash: "h-a" },
+    ]);
+    expect(rowFor(a)?.priority).toBe(priorityFromLabel("A"));
+
+    const undo = svc.undoBatch(result.batchId);
+    expect(undo.undone).toBe(true);
+    expect(rowFor(a)?.priority).toBe(priorityFromLabel("C"));
+  });
+
+  it("an empty item list is a no-op", () => {
+    const result = service().applySuggestions([]);
+    expect(result.applied).toBe(0);
+    expect(result.skipped).toEqual([]);
+  });
+});

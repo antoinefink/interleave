@@ -15,6 +15,8 @@ const h = vi.hoisted(() => ({
   pickImportFile: vi.fn(),
   importMediaSource: vi.fn(),
   getAppSettings: vi.fn(),
+  suggestTriage: vi.fn(),
+  assignConcept: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -207,6 +209,8 @@ vi.mock("../../lib/appApi", async () => {
       pickImportFile: h.pickImportFile,
       importMediaSource: h.importMediaSource,
       getAppSettings: h.getAppSettings,
+      suggestTriage: h.suggestTriage,
+      assignConcept: h.assignConcept,
     },
   };
 });
@@ -300,6 +304,19 @@ beforeEach(() => {
   h.pickImportFile.mockReset();
   h.importMediaSource.mockReset();
   h.getAppSettings.mockReset();
+  h.suggestTriage.mockReset();
+  h.assignConcept.mockReset();
+  // Default: every listed id resolves to an insufficient verdict, so existing tests
+  // see no chip. T127 tests override this with a banded suggestion per id.
+  h.suggestTriage.mockImplementation(({ ids }: { ids: readonly string[] }) =>
+    Promise.resolve({
+      results: ids.map((id) => ({
+        id,
+        suggestion: { kind: "insufficient_signal", reason: "no_signal_fired" },
+      })),
+    }),
+  );
+  h.assignConcept.mockResolvedValue({ element: null });
   h.listInbox.mockResolvedValue({ items });
   h.getInboxItem.mockImplementation(({ id }) => Promise.resolve({ detail: detail(id) }));
   h.triageInboxItem.mockResolvedValue({ item: items[0], deleted: false });
@@ -1570,5 +1587,290 @@ describe("InboxScreen keyboard triage scope (T126 — U6)", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(queryByTestId("inbox-bulk-panel")).not.toBeInTheDocument();
     expect(rowById(container, "u1")).not.toHaveAttribute("data-selected", "true");
+  });
+});
+
+// --- Suggested priority & placement (T127 — U6): chip / justification / accept. ---
+
+/** A banded suggestion DTO for one id (semantic + author-yield signals). */
+function bandedSuggestion(
+  band: "A" | "B" | "C" | "D",
+  extra?: { placement?: { conceptId: string; conceptName: string } },
+) {
+  return {
+    kind: "suggestion" as const,
+    band,
+    justification: {
+      signals: [
+        { kind: "semantic" as const, neighborCount: 2, lean: band },
+        {
+          kind: "authorYield" as const,
+          workedSourceCount: 3,
+          totalCards: 11,
+          totalMatureCards: 4,
+          band: "high" as const,
+        },
+      ],
+    },
+    signalHash: `hash-${band}`,
+    ...extra,
+  };
+}
+
+describe("InboxScreen triage suggestions (T127 — U6)", () => {
+  it("renders a band chip + justification for a suggestion; no chip for insufficient_signal", async () => {
+    // src-1 (priority 0.375 = band C) gets a band-A suggestion; src-2 stays insufficient.
+    h.suggestTriage.mockResolvedValue({
+      results: [
+        { id: "src-1", suggestion: bandedSuggestion("A") },
+        { id: "src-2", suggestion: { kind: "insufficient_signal", reason: "no_signal_fired" } },
+      ],
+    });
+    const { container, findByTestId, getAllByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    // The suggested row carries the chip + the formatted justification line.
+    await waitFor(() => {
+      const chips = getAllByTestId("inbox-suggestion-chip");
+      expect(chips.length).toBeGreaterThan(0);
+    });
+    const row1 = rowById(container, "src-1");
+    const chip = within(row1).getByTestId("inbox-suggestion-chip");
+    expect(chip).toHaveAttribute("data-suggested-band", "A");
+    expect(within(row1).getByTestId("inbox-row-justification")).toHaveTextContent(
+      "Near 2 priority-A neighbors · This author's last 3 sources made 11 cards",
+    );
+
+    // The insufficient row renders NO chip (and no pending placeholder once resolved).
+    const row2 = rowById(container, "src-2");
+    expect(within(row2).queryByTestId("inbox-suggestion-chip")).not.toBeInTheDocument();
+    expect(within(row2).queryByTestId("inbox-suggestion-pending")).not.toBeInTheDocument();
+  });
+
+  it("shows a pending placeholder while the batch fetch is in flight, then resolves", async () => {
+    let resolveSuggest!: (value: {
+      results: { id: string; suggestion: ReturnType<typeof bandedSuggestion> }[];
+    }) => void;
+    h.suggestTriage.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveSuggest = resolve;
+      }),
+    );
+    const { container, findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    // In flight: the row shows the neutral pending placeholder, not a blank.
+    const row1 = rowById(container, "src-1");
+    expect(within(row1).getByTestId("inbox-suggestion-pending")).toBeInTheDocument();
+    expect(within(row1).queryByTestId("inbox-suggestion-chip")).not.toBeInTheDocument();
+
+    resolveSuggest({ results: [{ id: "src-1", suggestion: bandedSuggestion("A") }] });
+    await waitFor(() =>
+      expect(
+        within(rowById(container, "src-1")).getByTestId("inbox-suggestion-chip"),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("Enter on the cursor row accepts the suggested band with `accepted` provenance", async () => {
+    h.suggestTriage.mockResolvedValue({
+      results: [
+        { id: "src-1", suggestion: bandedSuggestion("A") },
+        { id: "src-2", suggestion: { kind: "insufficient_signal", reason: "no_signal_fired" } },
+      ],
+    });
+    h.triageInboxItem.mockResolvedValue({
+      item: { ...items[0], priority: 0.875 },
+      deleted: false,
+    });
+    const { container, findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    await waitFor(() =>
+      expect(
+        within(rowById(container, "src-1")).getByTestId("inbox-suggestion-chip"),
+      ).toBeInTheDocument(),
+    );
+    // The first row (src-1) is the cursor row.
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(h.triageInboxItem).toHaveBeenCalledWith({
+        id: "src-1",
+        action: {
+          kind: "setPriority",
+          priority: "A",
+          suggestion: {
+            decision: "accepted",
+            suggestedBand: "A",
+            signalKinds: ["semantic", "authorYield"],
+            signalHash: "hash-A",
+          },
+        },
+      }),
+    );
+  });
+
+  it("the preview accept affordance accepts the suggested band (accepted provenance)", async () => {
+    h.suggestTriage.mockResolvedValue({
+      results: [{ id: "src-1", suggestion: bandedSuggestion("A") }],
+    });
+    h.triageInboxItem.mockResolvedValue({
+      item: { ...items[0], priority: 0.875 },
+      deleted: false,
+    });
+    const { findByTestId, queryByTestId } = render(<InboxScreen />);
+
+    // The preview pane suggestion block carries the accept chip + the justification.
+    const suggestion = await findByTestId("inbox-suggestion");
+    expect(within(suggestion).getByTestId("inbox-suggestion-justification")).toHaveTextContent(
+      "Near 2 priority-A",
+    );
+    const accept = within(suggestion).getByTestId("inbox-suggestion-chip");
+    fireEvent.click(accept);
+
+    await waitFor(() =>
+      expect(h.triageInboxItem).toHaveBeenCalledWith({
+        id: "src-1",
+        action: expect.objectContaining({
+          kind: "setPriority",
+          priority: "A",
+          suggestion: expect.objectContaining({ decision: "accepted", suggestedBand: "A" }),
+        }),
+      }),
+    );
+    // After a successful accept the chip drops (suppress-when-equal, no clobber).
+    await waitFor(() => expect(queryByTestId("inbox-suggestion-justification")).toBeNull());
+  });
+
+  it("picking a DIFFERENT priority chip overrides with `overridden` provenance", async () => {
+    // src-1 suggests A; the user clicks B instead → overridden.
+    h.suggestTriage.mockResolvedValue({
+      results: [{ id: "src-1", suggestion: bandedSuggestion("A") }],
+    });
+    h.triageInboxItem.mockResolvedValue({
+      item: { ...items[0], priority: 0.625 },
+      deleted: false,
+    });
+    const { findByTestId, getByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-suggestion");
+    fireEvent.click(getByTestId("inbox-priority-B"));
+
+    await waitFor(() =>
+      expect(h.triageInboxItem).toHaveBeenCalledWith({
+        id: "src-1",
+        action: {
+          kind: "setPriority",
+          priority: "B",
+          suggestion: {
+            decision: "overridden",
+            suggestedBand: "A",
+            signalKinds: ["semantic", "authorYield"],
+            signalHash: "hash-A",
+          },
+        },
+      }),
+    );
+  });
+
+  it("a plain priority set with no suggestion carries no provenance marker", async () => {
+    // No suggestion for src-1 (default insufficient) → a chip click is a manual set.
+    h.triageInboxItem.mockResolvedValue({
+      item: { ...items[0], priority: 0.875 },
+      deleted: false,
+    });
+    const { findByTestId, getByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-priority-A");
+    await waitFor(() => expect(h.suggestTriage).toHaveBeenCalled());
+    fireEvent.click(getByTestId("inbox-priority-A"));
+
+    await waitFor(() =>
+      expect(h.triageInboxItem).toHaveBeenCalledWith({
+        id: "src-1",
+        action: { kind: "setPriority", priority: "A" },
+      }),
+    );
+  });
+
+  it("placement accept calls assignConcept; the chip flips to assigned; re-accept is a no-op", async () => {
+    h.suggestTriage.mockResolvedValue({
+      results: [
+        {
+          id: "src-1",
+          suggestion: bandedSuggestion("A", {
+            placement: { conceptId: "concept-1", conceptName: "Statistics" },
+          }),
+        },
+      ],
+    });
+    const { findByTestId, getByTestId, queryByTestId } = render(<InboxScreen />);
+
+    const accept = await findByTestId("inbox-suggestion-placement-accept");
+    expect(accept).toHaveTextContent("Statistics");
+    fireEvent.click(accept);
+
+    await waitFor(() =>
+      expect(h.assignConcept).toHaveBeenCalledWith({
+        elementId: "src-1",
+        conceptId: "concept-1",
+      }),
+    );
+    // The chip flips to the confirmed "assigned" state; the accept button is gone.
+    expect(await findByTestId("inbox-suggestion-placement-assigned")).toHaveTextContent(
+      "Statistics",
+    );
+    expect(queryByTestId("inbox-suggestion-placement-accept")).not.toBeInTheDocument();
+
+    // Re-accept is a no-op (only one assignConcept call ever fired).
+    h.assignConcept.mockClear();
+    void getByTestId; // (assigned state has no accept button to click)
+    expect(h.assignConcept).not.toHaveBeenCalled();
+  });
+
+  it("staleness: accepting a band that already matches the live priority does not clobber", async () => {
+    // src-2's live priority is 0.875 (band A); a stale suggestion still says A.
+    // Selecting src-2 then Enter must NOT write (the band already matches) — drop the chip.
+    h.selectedId = "src-2";
+    h.suggestTriage.mockResolvedValue({
+      results: [
+        { id: "src-1", suggestion: { kind: "insufficient_signal", reason: "no_signal_fired" } },
+        { id: "src-2", suggestion: bandedSuggestion("A") },
+      ],
+    });
+    const { container, findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    // Move the cursor to src-2 (the band-A row whose live priority is already A).
+    fireEvent.click(rowById(container, "src-2"));
+    await waitFor(() =>
+      expect(
+        within(rowById(container, "src-2")).getByTestId("inbox-suggestion-chip"),
+      ).toBeInTheDocument(),
+    );
+    h.triageInboxItem.mockClear();
+
+    fireEvent.keyDown(window, { key: "Enter" });
+    // No write — accepting a no-op band must not clobber, and the chip drops.
+    await waitFor(() =>
+      expect(
+        within(rowById(container, "src-2")).queryByTestId("inbox-suggestion-chip"),
+      ).not.toBeInTheDocument(),
+    );
+    expect(h.triageInboxItem).not.toHaveBeenCalled();
+  });
+
+  it("Enter is a no-op when the cursor row has no suggestion", async () => {
+    // Default: every row is insufficient → Enter writes nothing.
+    const { findByTestId } = render(<InboxScreen />);
+
+    await findByTestId("inbox-list");
+    await waitFor(() => expect(h.suggestTriage).toHaveBeenCalled());
+    fireEvent.keyDown(window, { key: "Enter" });
+
+    // A short grace period, then assert nothing was written.
+    await waitFor(() => expect(h.suggestTriage).toHaveBeenCalled());
+    expect(h.triageInboxItem).not.toHaveBeenCalled();
   });
 });

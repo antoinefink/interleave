@@ -25,6 +25,10 @@
  *                          handler
  *   a / b / c / d        → arm the A/B/C/D priority band (rides with the next verb
  *                          in one batch, or commits alone via "Set priority")
+ *   Enter                → accept the cursor row's SUGGESTED priority band (T127) —
+ *                          a no-op when the row carries no suggestion. Enter is free
+ *                          in this scope (a/b/c/d + 1/2/3/6 + the selection keys are
+ *                          all taken), so it is the dedicated accept key.
  *
  * The verb keys operate on the SELECTION SET when it is non-empty, FALLING BACK to
  * the cursor row (today's single-item behavior) when the set is empty — so the
@@ -68,6 +72,11 @@ export interface InboxTriageShortcutHandlers {
   triageVerb(kind: "accept" | "queueSoon" | "keepForLater" | "delete"): void;
   /** Arm / disarm a priority band (rides with the next verb, or "Set priority"). */
   armPriority(label: PriorityLabelInput): void;
+  /**
+   * Accept the cursor row's suggested priority band (T127 — U6). The parent re-reads
+   * the live suggestion; a cursor row with no suggestion makes this a no-op.
+   */
+  acceptSuggestion(): void;
 }
 
 /** Map a band letter key to its A/B/C/D label. */
@@ -101,6 +110,7 @@ export const INBOX_TRIAGE_BOUND_KEYS: ReadonlySet<string> = new Set([
   "s",
   "a",
   "escape",
+  "enter",
   "1",
   "2",
   "3",
@@ -187,6 +197,12 @@ export function useInboxTriageShortcuts(
         case "s":
           e.preventDefault();
           h.selectRestOfGroup();
+          return;
+        case "Enter":
+          // Accept the cursor row's suggested band (T127). A no-op when the row has
+          // no suggestion — the parent re-reads the live suggestion and bails.
+          e.preventDefault();
+          h.acceptSuggestion();
           return;
         case "Escape":
           // Only consume Escape when there is something to clear (so it stays

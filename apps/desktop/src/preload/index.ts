@@ -79,6 +79,7 @@ import type {
   ExtractsRewriteRequest,
   ExtractsSetFateRequest,
   ExtractsUpdateStageRequest,
+  InboxBulkApplySuggestionsRequest,
   InboxBulkTriageRequest,
   InboxBulkTriageUndoRequest,
   InboxGetRequest,
@@ -180,6 +181,8 @@ import type {
   TrashRestoreAncestorChainRequest,
   TrashRestoreBatchRequest,
   TrashRestoreRequest,
+  TriageSuggestMetadataRequest,
+  TriageSuggestRequest,
   VaultCollectOrphansRequest,
   VaultFindOrphansRequest,
   VaultVerifyRequest,
@@ -327,6 +330,14 @@ const appApi: AppApi = {
       ipcRenderer.invoke(IPC_CHANNELS.inboxBulkTriage, request),
     bulkTriageUndo: (request: InboxBulkTriageUndoRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.inboxBulkTriageUndo, request),
+    bulkApplySuggestions: (request: InboxBulkApplySuggestionsRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.inboxBulkApplySuggestions, request),
+  },
+  triage: {
+    suggest: (request: TriageSuggestRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.triageSuggest, request),
+    suggestForMetadata: (request: TriageSuggestMetadataRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.triageSuggestMetadata, request),
   },
   documents: {
     get: (request: DocumentsGetRequest) => ipcRenderer.invoke(IPC_CHANNELS.documentsGet, request),
