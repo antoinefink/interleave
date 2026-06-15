@@ -61,10 +61,12 @@ import { useSelection } from "../../shell/selection";
 import { ConflictSection } from "../ConflictSection";
 import { ExternalUrlLink } from "../ExternalUrlLink";
 import { Icon } from "../Icon";
+import type { ContextMenuPosition } from "../menu/types";
 import { requestQueueRefresh } from "../queue/queueRefresh";
 import { ScheduleMenu } from "../queue/ScheduleMenu";
 import { RefBlock } from "../RefBlock";
 import "./inspector.css";
+import { LineageContextMenu } from "./LineageContextMenu";
 import { LineageTree } from "./LineageTree";
 import {
   ConceptTag,
@@ -2319,6 +2321,11 @@ function InspectorBody({
     elementId: string;
     showDeleted: boolean;
   } | null>(null);
+  // The right-clicked lineage node + cursor position driving the LineageContextMenu (U6).
+  const [lineageMenu, setLineageMenu] = useState<{
+    node: LineageNode;
+    position: ContextMenuPosition;
+  } | null>(null);
   const showDeletedLineage =
     lineageDeletedVisibility?.elementId === element.id
       ? lineageDeletedVisibility.showDeleted
@@ -2583,6 +2590,19 @@ function InspectorBody({
             onPick={onPickLineageNode}
             onRestore={onRestoreTombstone}
             restoringId={restoringId}
+            onNodeContextMenu={(node, position) => setLineageMenu({ node, position })}
+          />
+          {/* U6 — the in-app right-click menu for a lineage node. Inspector owns the
+              target state; Open navigates away (onPickLineageNode) so close explicitly,
+              while mutations refresh the surface via requestInspectorRefresh. */}
+          <LineageContextMenu
+            target={lineageMenu}
+            onClose={() => setLineageMenu(null)}
+            onOpen={(node) => {
+              setLineageMenu(null);
+              onPickLineageNode(node);
+            }}
+            onAfterMutation={requestInspectorRefresh}
           />
           {/* T096 — review the CARDS in this branch (lineage subtree) as a targeted
               session. For a source/topic/extract root this reviews its cards outside
