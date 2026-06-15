@@ -111,11 +111,19 @@ type LoadState =
 export function WeeklyReviewScreen() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
-  const load = useCallback(async () => {
-    setState({ status: "loading" });
+  const load = useCallback(async (opts?: { background?: boolean }) => {
+    // Background reloads (every user-triggered refetch) keep the current `ready`
+    // data rendered — stale-while-revalidate — so `<WeeklyReviewBody>` never
+    // unmounts and the scroll container keeps its position. Only the initial load
+    // shows the full-page loading placeholder.
+    if (!opts?.background) setState({ status: "loading" });
     try {
       setState({ status: "ready", data: await appApi.getWeeklyReviewSummary() });
     } catch (error) {
+      // In background mode, re-throw so the calling action handler surfaces the
+      // error inline via its try/catch → `setActionError`, instead of blowing the
+      // mounted body away with the full-page error state.
+      if (opts?.background) throw error;
       setState({
         status: "error",
         message: error instanceof Error ? error.message : String(error),
@@ -150,7 +158,7 @@ export function WeeklyReviewScreen() {
     );
   }
 
-  return <WeeklyReviewBody summary={state.data} onReload={load} />;
+  return <WeeklyReviewBody summary={state.data} onReload={() => load({ background: true })} />;
 }
 
 function WeeklyReviewBody({

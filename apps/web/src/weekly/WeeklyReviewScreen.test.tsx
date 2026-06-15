@@ -363,6 +363,83 @@ describe("WeeklyReviewScreen", () => {
     expect(screen.getByText("apply failed")).toBeInTheDocument();
   });
 
+  it("never flashes the full-page loading placeholder when toggling Done (scroll preserved via background reload)", async () => {
+    // Gate the SECOND summary fetch (the post-toggle reload) on a promise we resolve
+    // by hand. This freezes the in-flight window so we can assert the body never
+    // unmounts into the full-page `Loading weekly review...` placeholder mid-reload.
+    // That placeholder zeroing the scroll container is the documented scroll-jump
+    // cause; jsdom has no layout/scroll, so "placeholder never rendered" is the
+    // provable proxy for "body not remounted → scroll preserved".
+    const reloadGate: { resolve: ((value: WeeklyReviewSummaryResult) => void) | null } = {
+      resolve: null,
+    };
+    h.getWeeklyReviewSummary.mockReset();
+    h.getWeeklyReviewSummary.mockResolvedValueOnce(BASE_SUMMARY).mockImplementationOnce(
+      () =>
+        new Promise<WeeklyReviewSummaryResult>((resolve) => {
+          reloadGate.resolve = resolve;
+        }),
+    );
+
+    render(<WeeklyReviewScreen />);
+    await screen.findByTestId("weekly-review");
+
+    // Once the body is shown the loading placeholder must be gone for good.
+    expect(screen.queryByText(/Loading weekly review/i)).toBeNull();
+
+    // Click Done on the Ledger section (scoped to its frame).
+    const ledger = screen.getByText("Ledger").closest("section") as HTMLElement;
+    fireEvent.click(within(ledger).getByRole("button", { name: /Done/ }));
+
+    // (a) The section is persisted as done…
+    await waitFor(() =>
+      expect(h.updateWeeklyReviewProgress).toHaveBeenCalledWith({
+        taskId: "weekly-1",
+        sections: { ledger: "done" },
+      }),
+    );
+    // (b) …and a background re-fetch is dispatched.
+    await waitFor(() => expect(h.getWeeklyReviewSummary).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(reloadGate.resolve).not.toBeNull());
+
+    // (c) WHILE the reload is in flight, the full-page loading placeholder must NOT
+    // appear and the body must stay mounted. Against the unmodified component this
+    // is exactly when `load()` flips to `status: "loading"` and unmounts the body.
+    expect(screen.queryByText(/Loading weekly review/i)).toBeNull();
+    expect(screen.getByTestId("weekly-review")).toBeInTheDocument();
+
+    // Let the reload settle; still no placeholder, body intact.
+    reloadGate.resolve?.(BASE_SUMMARY);
+    await waitFor(() => expect(screen.getByTestId("weekly-review")).toBeInTheDocument());
+    expect(screen.queryByText(/Loading weekly review/i)).toBeNull();
+  });
+
+  it("surfaces a failed background reload inline without tearing down the body", async () => {
+    // First fetch (initial load) succeeds; the second fetch (the background reload
+    // after a toggle) rejects. The screen must stay on the body and show the inline
+    // action-error banner — it must NOT switch to the full-page error state.
+    h.getWeeklyReviewSummary
+      .mockResolvedValueOnce(BASE_SUMMARY)
+      .mockRejectedValueOnce(new Error("reload failed"));
+
+    render(<WeeklyReviewScreen />);
+    await screen.findByTestId("weekly-review");
+
+    const ledger = screen.getByText("Ledger").closest("section") as HTMLElement;
+    fireEvent.click(within(ledger).getByRole("button", { name: /Done/ }));
+
+    // The error surfaces inline.
+    expect(await screen.findByTestId("weekly-action-error")).toBeInTheDocument();
+    expect(screen.getByText("reload failed")).toBeInTheDocument();
+
+    // The body remains mounted: a stable section title is still present, the screen
+    // did not switch to the full-page error state, and no loading placeholder showed.
+    expect(screen.getByTestId("weekly-review")).toBeInTheDocument();
+    expect(screen.getByText("Ledger")).toBeInTheDocument();
+    expect(screen.queryByTestId("weekly-error")).toBeNull();
+    expect(screen.queryByText(/Loading weekly review/i)).toBeNull();
+  });
+
   it("toggles a finished section back to pending (Done un-toggles done→pending)", async () => {
     h.getWeeklyReviewSummary.mockResolvedValue(
       makeSummary({
