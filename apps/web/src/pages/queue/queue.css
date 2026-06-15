@@ -350,7 +350,6 @@
 }
 .qitem:hover {
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
 }
 .qitem--active {
   border-color: var(--border-strong);

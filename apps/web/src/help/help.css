@@ -549,8 +549,6 @@
 }
 .hc-cat:hover {
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
-  transform: translateY(-1px);
 }
 .hc-cat__top {
   display: flex;

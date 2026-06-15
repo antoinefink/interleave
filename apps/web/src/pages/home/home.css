@@ -178,7 +178,6 @@
 }
 .home-prow:hover {
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
 }
 .home-prow--protected::before {
   content: "";
@@ -248,7 +247,6 @@
 }
 .home-tile:hover {
   border-color: var(--border-strong);
-  box-shadow: var(--shadow-sm);
 }
 .home-tile__icon {
   display: inline-flex;

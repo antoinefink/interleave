@@ -391,15 +391,9 @@
   cursor: pointer;
   transition: all var(--fast) var(--ease);
 }
-.grade:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
-}
 .grade:disabled {
   opacity: 0.55;
   cursor: default;
-  transform: none;
-  box-shadow: none;
 }
 .grade__label {
   font-size: var(--t-base);
