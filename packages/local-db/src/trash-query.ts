@@ -218,7 +218,10 @@ export class TrashRepository {
         .where(
           and(
             eq(operationLog.opType, "soft_delete_element"),
-            sql`json_extract(${operationLog.payload}, '$.batchId') = ${deleteBatchId}`,
+            // Indexed `batch_id` lookup (migration 0041) — was a `json_extract(payload)`
+            // scan over every soft_delete_element row. Same result set: the column is
+            // dual-written at append time and backfilled for historical rows.
+            eq(operationLog.batchId, deleteBatchId),
           ),
         )
         .orderBy(operationLog.createdAt, sql`rowid`)

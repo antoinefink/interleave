@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "c17beed0-814e-4ca4-8c26-ffd41f3aa7c8",
+  "id": "9df6e8f8-5a8a-43e5-ac68-b0d44a5fc945",
   "prevId": "c55b2db9-dd18-486c-bbc8-9b7c04c79701",
   "tables": {
     "ai_suggestions": {
@@ -2897,7 +2897,8 @@
         "operation_log_batch_idx": {
           "name": "operation_log_batch_idx",
           "columns": ["batch_id"],
-          "isUnique": false
+          "isUnique": false,
+          "where": "\"batch_id\" IS NOT NULL"
         }
       },
       "foreignKeys": {

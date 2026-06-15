@@ -20,6 +20,7 @@
  */
 
 import { ASSET_KINDS, OPERATION_TYPES, VAULT_ROOTS } from "@interleave/core";
+import { sql } from "drizzle-orm";
 import { check, index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { inList } from "./_shared";
 import { elements } from "./elements";
@@ -85,7 +86,14 @@ export const operationLog = sqliteTable(
     check("operation_log_op_type_check", inList(table.opType, OPERATION_TYPES)),
     index("operation_log_element_idx").on(table.elementId),
     index("operation_log_created_idx").on(table.createdAt),
-    index("operation_log_batch_idx").on(table.batchId),
+    // PARTIAL index: the vast majority of op-log rows are single-op actions with a
+    // NULL `batch_id`, and batch undo only ever looks up a concrete batch id. Indexing
+    // only the non-NULL rows keeps the index tiny and removes index-maintenance cost
+    // from the hot single-op `append` path. SQLite still uses it for `batch_id = ?`
+    // (an equality literal implies `IS NOT NULL`). NOTE: Drizzle's SQLite generator can
+    // drop the `.where()` predicate — the generated migration is hand-verified to emit
+    // `WHERE "batch_id" IS NOT NULL` (see migration 0041 + the migration-level test).
+    index("operation_log_batch_idx").on(table.batchId).where(sql`"batch_id" IS NOT NULL`),
   ],
 );
 

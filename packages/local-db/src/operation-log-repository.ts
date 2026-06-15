@@ -33,6 +33,8 @@ interface RawOpRow {
   payload: string;
   elementId: string | null;
   createdAt: string;
+  /** Denormalized `payload.batchId` (migration 0041); `null` for single-op rows. */
+  batchId: string | null;
 }
 
 export type CurrentScheduleReasonKind =

@@ -86,6 +86,49 @@ describe("migration 0041 — operation_log.batch_id index", () => {
         readonly name: string;
       }[];
       expect(indexes.some((i) => i.name === "operation_log_batch_idx")).toBe(true);
+
+      // The index is PARTIAL (`WHERE "batch_id" IS NOT NULL`). Drizzle's SQLite
+      // generator can silently drop the predicate from the CREATE INDEX; pin it here
+      // so a dropped WHERE (a full index over millions of NULL rows) fails CI.
+      const indexSql = handle.sqlite
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
+        .get("operation_log_batch_idx") as { sql: string };
+      expect(indexSql.sql).toMatch(/WHERE\s+"?batch_id"?\s+IS\s+NOT\s+NULL/i);
+    });
+  });
+
+  it("survives a malformed-JSON payload row: backfill skips it instead of aborting", () => {
+    withDbThrough40((handle) => {
+      // SQLite's json_type/json_extract RAISE "malformed JSON" (not NULL) on non-JSON
+      // text. Without the migration's json_valid() guard this would roll back all of
+      // 0041 and brick startup. No write path produces such rows today, but a dirty/
+      // corrupted vault (this repo has 0030 history) must still migrate cleanly.
+      handle.sqlite
+        .prepare(
+          `INSERT INTO operation_log (id, op_type, payload, element_id, created_at)
+           VALUES (?, 'reschedule_element', ?, NULL, ?)`,
+        )
+        .run("bad", "this-is-not-json", CREATED);
+      handle.sqlite
+        .prepare(
+          `INSERT INTO operation_log (id, op_type, payload, element_id, created_at)
+           VALUES (?, 'reschedule_element', ?, NULL, ?)`,
+        )
+        .run("empty", "", CREATED);
+      seedOp(handle, "good", { batchId: "batch-1" });
+
+      expect(() => migrateDatabase(handle.db, MIGRATIONS_DIR)).not.toThrow();
+
+      const batchId = (id: string) =>
+        (
+          handle.sqlite.prepare("SELECT batch_id FROM operation_log WHERE id = ?").get(id) as {
+            batch_id: string | null;
+          }
+        ).batch_id;
+
+      expect(batchId("bad")).toBeNull(); // malformed → skipped → NULL
+      expect(batchId("empty")).toBeNull();
+      expect(batchId("good")).toBe("batch-1"); // valid rows still backfilled
     });
   });
 

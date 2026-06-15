@@ -23,9 +23,10 @@ import {
   elementDetachSnapshot,
   elementReverifyProvenance,
   elements,
+  operationLog,
   reviewStates,
 } from "@interleave/db";
-import { eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BlockProcessingService } from "./block-processing-service";
 import { CardEditService } from "./card-edit-service";
@@ -878,7 +879,11 @@ describe("UndoService — reverifyResolution is receipt-only (T124)", () => {
  * assert its access path and bounded cost without routing through a full `undoBatch`.
  */
 interface CollectBatchPrivate {
-  collectBatch(batchId: string): { id: string; payload: Record<string, unknown> }[];
+  collectBatch(batchId: string): {
+    id: string;
+    opType: string;
+    payload: Record<string, unknown>;
+  }[];
 }
 
 function asCollect(undo: UndoService): CollectBatchPrivate {
@@ -922,20 +927,79 @@ describe("UndoService.collectBatch — index-bound (regression: PERF-01/R-002 fu
   it("uses the operation_log_batch_idx index, never a full table scan", () => {
     seedLargeLog(handle, 20_000, "batch-x", 3);
 
-    // EXPLAIN QUERY PLAN of the exact query `collectBatch` issues. SQLite picks the
-    // selective equality index for the WHERE and only sorts the matched rows.
-    const plan = handle.sqlite
-      .prepare(
-        `EXPLAIN QUERY PLAN
-         SELECT * FROM operation_log WHERE batch_id = ? ORDER BY created_at DESC, rowid DESC`,
-      )
-      .all("batch-x") as { detail: string }[];
+    // Build the EXACT query `collectBatch` issues (same Drizzle builder + ordering) and
+    // EXPLAIN the SQL Drizzle actually emits — not a hand-written approximation that
+    // could drift from production. SQLite picks the selective equality index for the
+    // WHERE and only sorts the handful of matched rows.
+    const { sql: collectSql, params } = handle.db
+      .select()
+      .from(operationLog)
+      .where(eq(operationLog.batchId, "batch-x"))
+      .orderBy(desc(operationLog.createdAt), desc(sql`rowid`))
+      .toSQL();
+    const plan = handle.sqlite.prepare(`EXPLAIN QUERY PLAN ${collectSql}`).all(...params) as {
+      detail: string;
+    }[];
     const details = plan.map((row) => row.detail).join(" | ");
 
     expect(details).toContain("operation_log_batch_idx");
     expect(details).toContain("SEARCH");
     // The regression we are preventing: a SCAN of the whole operation_log table.
     expect(details).not.toMatch(/SCAN operation_log\b/);
+  });
+
+  it("collects a heterogeneous batch (mixed op types) newest-first (T126 inbox sweep)", () => {
+    // A T126 inbox bulk sweep emits DIFFERENT op types under ONE batchId:
+    // reschedule_element (queueSoon), update_element (park/priority), soft_delete_element
+    // (delete). collectBatch is op-type-agnostic — it groups purely by batch_id — and
+    // must return the whole batch newest-first so the inverses replay in reverse order.
+    const insert = handle.sqlite.prepare(
+      `INSERT INTO operation_log (id, op_type, payload, element_id, created_at, batch_id)
+       VALUES (?, ?, ?, NULL, ?, ?)`,
+    );
+    handle.sqlite.transaction(() => {
+      insert.run(
+        "h0",
+        "reschedule_element",
+        JSON.stringify({ batchId: "mix" }),
+        "2026-03-01T00:00:00.000Z",
+        "mix",
+      );
+      insert.run(
+        "h1",
+        "update_element",
+        JSON.stringify({ batchId: "mix" }),
+        "2026-03-01T00:00:00.001Z",
+        "mix",
+      );
+      insert.run(
+        "h2",
+        "soft_delete_element",
+        JSON.stringify({ batchId: "mix" }),
+        "2026-03-01T00:00:00.002Z",
+        "mix",
+      );
+      // A foreign single-op row that must NOT be collected.
+      insert.run("other", "update_element", JSON.stringify({}), "2026-03-01T00:00:00.003Z", null);
+    })();
+
+    const batch = asCollect(new UndoService(handle.db)).collectBatch("mix");
+    expect(batch.map((op) => op.id)).toEqual(["h2", "h1", "h0"]); // newest-first
+    expect(batch.map((op) => op.opType)).toEqual([
+      "soft_delete_element",
+      "update_element",
+      "reschedule_element",
+    ]);
+  });
+
+  it("undoBatch on an unknown batchId is a clean no-op (no throw)", () => {
+    seedLargeLog(handle, 100, "real-batch", 3);
+    const undo = new UndoService(handle.db);
+
+    const result = undo.undoBatch("does-not-exist");
+    expect(result.undone).toBe(false);
+    expect(result.count).toBe(0);
+    expect(result.reason).toBe("Batch not found");
   });
 
   it("returns exactly the batch (newest-first) from a large log", () => {
