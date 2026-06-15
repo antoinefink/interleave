@@ -398,6 +398,24 @@ mark.extracted {
   flex: none;
 }
 
+/* Lapse-cluster indicator (T128) — a quiet line below the metadata, above the actions. */
+.reader-clusters {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: var(--t-sm);
+  color: var(--text-2);
+}
+.reader-clusters:hover {
+  color: var(--accent-text);
+  text-decoration: underline;
+}
+
 /* Action bar — the kit's row of `.btn`s. */
 .reader-actions {
   display: flex;

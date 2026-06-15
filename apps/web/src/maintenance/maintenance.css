@@ -134,6 +134,25 @@
   white-space: nowrap;
 }
 
+/* Lapse-cluster drill-down (T128). */
+.mt-cluster__source {
+  font-weight: 600;
+  font-size: var(--t-sm, 13px);
+  color: var(--text-1, var(--text-2));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 48ch;
+}
+.mt-cluster__meta {
+  font-size: var(--t-xs, 12px);
+  color: var(--text-2);
+  margin-bottom: 8px;
+}
+.mt-clusters__note {
+  margin-top: 0;
+}
+
 .mt-dup-list {
   list-style: none;
   margin: 0;

@@ -91,6 +91,7 @@ import {
   InspectorQuery,
   inboxSourceDomain,
   inboxSourceTypeLabel,
+  LapseClusterQuery,
   type LibraryBrowseFilters,
   LibraryQuery,
   type LineageGetOptions,
@@ -288,6 +289,8 @@ import type {
   InboxTriageResult,
   InspectorGetResult,
   InspectorListResult,
+  LapseClustersListRequest,
+  LapseClustersListResult,
   LeechSummary,
   LibraryBrowseRequest,
   LibraryBrowseResult,
@@ -610,6 +613,8 @@ export class DbService {
   private library: LibraryQuery | null = null;
   /** The per-source yield rollup (T083) — read %, extracts/cards/mature/leeches/time, ranked. */
   private sourceYield: SourceYieldQuery | null = null;
+  /** Lapse-cluster detection (T128) — source regions where sibling cards keep lapsing. */
+  private lapseCluster: LapseClusterQuery | null = null;
   /** The extract-stagnation scan (T084) — extracts that keep returning without progressing. */
   private extractStagnation: ExtractStagnationQuery | null = null;
   private extractAging: ExtractAgingPolicyService | null = null;
@@ -933,6 +938,7 @@ export class DbService {
     // ranked rollup of read %, extracts/cards/mature-cards, leeches, and review time,
     // lowest-yield first. No mutation, no `operation_log`, no schedule change.
     this.sourceYield = new SourceYieldQuery(this.handle.db);
+    this.lapseCluster = new LapseClusterQuery(this.handle.db);
     // The extract-stagnation scan behind `/maintenance/stagnant` (T084): a read-only
     // detection of extracts that keep returning without progressing (stage never
     // advanced, no children, postponed repeatedly), with rewrite/convert/postpone/
@@ -5916,6 +5922,13 @@ export class DbService {
     return this.sourceYield;
   }
 
+  private get lapseClusterQuery(): LapseClusterQuery {
+    if (!this.lapseCluster) {
+      throw new Error("DbService: database is not open");
+    }
+    return this.lapseCluster;
+  }
+
   private get extractStagnationQuery(): ExtractStagnationQuery {
     if (!this.extractStagnation) {
       throw new Error("DbService: database is not open");
@@ -6501,6 +6514,29 @@ export class DbService {
       rows: summary.rows,
       lowYieldCount: summary.lowYieldCount,
     };
+  }
+
+  /**
+   * Lapse-cluster detection (T128) via {@link LapseClusterQuery.list}: source regions
+   * where several live sibling cards keep lapsing together in the window. The
+   * conservative thresholds (enabled / K / window / min-cards) are resolved HERE from
+   * settings so a settings change takes effect on the next read. With `sourceId` it
+   * scopes to one source (the source-page indicator). Read-only — no mutation, no
+   * `operation_log`, no schedule change. `asOf` is "now".
+   */
+  listLapseClusters(request?: LapseClustersListRequest): LapseClustersListResult {
+    const settings = this.repos.settings.getAppSettings();
+    const asOf = nowIso() as IsoTimestamp;
+    const clusters = this.lapseClusterQuery.list({
+      asOf,
+      enabled: settings.lapseClusterDetectionEnabled,
+      minLapses: settings.lapseClusterMinLapses,
+      windowDays: settings.lapseClusterWindowDays,
+      minCards: settings.lapseClusterMinCards,
+      ...(request?.sourceId ? { sourceId: request.sourceId as ElementId } : {}),
+      ...(request?.limit !== undefined ? { limit: request.limit } : {}),
+    });
+    return { asOf, windowDays: settings.lapseClusterWindowDays, clusters };
   }
 
   /**

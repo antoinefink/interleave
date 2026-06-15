@@ -1,15 +1,13 @@
 import type { ElementId, IsoTimestamp } from "@interleave/core";
 import { cards, elements, reviewLogs } from "@interleave/db";
-import { and, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { LIVE_CARD_STATUSES, liveCardLapseWhere, windowStart } from "./lapse-window";
 import type { DbClient } from "./types";
 
 export const DESCENDANT_HEALTH_WINDOW_DAYS = 30;
 export const MIN_DESCENDANT_LAPSE_COUNT = 3;
 export const MIN_DESCENDANT_AFFECTED_CARD_COUNT = 2;
 export const MIN_DESCENDANT_LAPSE_RATE = 0.1;
-
-const DAY_MS = 86_400_000;
-const LIVE_CARD_STATUSES = ["active", "scheduled"] as const;
 
 export interface DescendantHealth {
   readonly descendantLapseCount: number;
@@ -22,14 +20,6 @@ export interface DescendantHealthQueryInput {
   readonly sourceId: ElementId;
   readonly asOf: IsoTimestamp;
   readonly windowDays?: number;
-}
-
-function windowStart(asOf: IsoTimestamp, windowDays: number): IsoTimestamp {
-  const asOfMs = Date.parse(asOf);
-  if (Number.isNaN(asOfMs)) {
-    throw new Error(`Invalid asOf timestamp: ${asOf}`);
-  }
-  return new Date(asOfMs - windowDays * DAY_MS).toISOString() as IsoTimestamp;
 }
 
 export class DescendantHealthQuery {
@@ -59,6 +49,10 @@ export class DescendantHealthQuery {
       return null;
     }
 
+    // Shared lapse predicate (T128 `lapse-window`): live, non-retired cards with true
+    // lapse increments in `[since, asOf]`, marker rows excluded. The per-source scope
+    // (`eq(elements.sourceId, …)`) and the descendant-health thresholds stay local here —
+    // only the lapse DEFINITION is shared, so this query's behavior is unchanged.
     const lapseRow = this.db
       .select({
         lapseCount: sql<number>`sum(${reviewLogs.nextLapses} - ${reviewLogs.prevLapses})`,
@@ -67,25 +61,7 @@ export class DescendantHealthQuery {
       .from(reviewLogs)
       .innerJoin(elements, eq(elements.id, reviewLogs.elementId))
       .innerJoin(cards, eq(cards.elementId, elements.id))
-      .where(
-        and(
-          eq(elements.type, "card"),
-          eq(elements.sourceId, input.sourceId),
-          inArray(elements.status, [...LIVE_CARD_STATUSES]),
-          isNull(elements.deletedAt),
-          eq(cards.isRetired, false),
-          gte(reviewLogs.reviewedAt, since),
-          lte(reviewLogs.reviewedAt, input.asOf),
-          // Exclude T125 re-stabilization marker rows EXPLICITLY (not just by construction):
-          // the `nextLapses > prevLapses` predicate below already drops them today because a
-          // re-stabilization preserves `lapses`, but keying the exclusion off another query's
-          // behaviour is fragile — this makes the invariant local and grep-able like every
-          // other review_logs reader.
-          isNull(reviewLogs.editMarkerAt),
-          // Only true lapse increments.
-          sql`${reviewLogs.nextLapses} > ${reviewLogs.prevLapses}`,
-        ),
-      )
+      .where(liveCardLapseWhere(since, input.asOf, eq(elements.sourceId, input.sourceId)))
       .get();
 
     const descendantLapseCount = Number(lapseRow?.lapseCount ?? 0);

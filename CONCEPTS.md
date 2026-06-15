@@ -182,6 +182,12 @@ The recent review-health signal from cards derived from a Source, used only to d
 
 Descendant health is evidence about the Source's surrounding comprehension debt, not a card schedule. It can influence a Source's Attention scheduler decision while FSRS remains the owner of each descendant card's review state.
 
+### Lapse cluster
+
+A group of two or more live cards that share a source-region ancestor (the extract pulled from a source) and that keep lapsing together within a recent window — read as one comprehension problem in that region, not several independent card-formulation bugs.
+
+A lapse cluster is a read-only derived signal, never a schedule change: it surfaces a struggling region for the user to re-read, and it leaves every member card's FSRS review state untouched. Its lapse evidence is window-scoped, so it deliberately differs from the leech screen's cumulative per-card lapse count — a card can be a leech without being in a cluster, and a region can cluster without holding any leeches. It shares one lapse definition with [[Descendant health]] (which carries the same evidence upward to the Source's schedule), so the two surfaces can never contradict the leech screen.
+
 ### Due queue
 
 The currently actionable processing set: due active-recall cards plus due attention-scheduled sources, topics, extracts, and similar non-card work.

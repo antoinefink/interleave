@@ -292,6 +292,21 @@ export {
   rowToJob,
 } from "./jobs-repository";
 export {
+  DEFAULT_LAPSE_CLUSTER_LIMIT,
+  LAPSE_CLUSTER_DEFAULT_MIN_CARDS,
+  LAPSE_CLUSTER_DEFAULT_MIN_LAPSES,
+  LAPSE_CLUSTER_DEFAULT_WINDOW_DAYS,
+  type LapseCluster,
+  type LapseClusterMember,
+  LapseClusterQuery,
+  type LapseClusterQueryInput,
+  type LapseClusterRegion,
+} from "./lapse-cluster-query";
+// `lapse-cluster-score` (scoring rule) and `lapse-window` (predicate builders) are
+// package-internal — consumed only via relative imports by lapse-cluster-query and
+// descendant-health-query. They are intentionally NOT re-exported here, so the barrel does
+// not promise a stable predicate/score API the package boundary should not own.
+export {
   LIBRARY_STATUSES,
   LIBRARY_TYPES,
   type LibraryBrowseCounts,

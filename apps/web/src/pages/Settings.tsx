@@ -85,6 +85,10 @@ const FALLBACK_SETTINGS: RendererSettings = {
   balanceWarnings: true,
   parkedResurfaceAfterDays: 90,
   chronicPostponeThreshold: 5,
+  lapseClusterDetectionEnabled: true,
+  lapseClusterMinLapses: 5,
+  lapseClusterWindowDays: 30,
+  lapseClusterMinCards: 2,
   weeklyReviewEnabled: true,
   weeklyReviewCadenceDays: 7,
   adaptiveAttentionIntervals: true,
@@ -147,6 +151,13 @@ const EXTRACT_AGING_RETURN_THRESHOLD_MIN = 1;
 const EXTRACT_AGING_RETURN_THRESHOLD_MAX = 50;
 const EXTRACT_AGING_AGE_DAYS_MIN = 1;
 const EXTRACT_AGING_AGE_DAYS_MAX = 3650;
+/** Inclusive UI bounds for lapse-cluster detection (mirror `@interleave/core` LAPSE_CLUSTER_*). */
+const LAPSE_CLUSTER_MIN_LAPSES_MIN = 2;
+const LAPSE_CLUSTER_MIN_LAPSES_MAX = 20;
+const LAPSE_CLUSTER_MIN_CARDS_MIN = 2;
+const LAPSE_CLUSTER_MIN_CARDS_MAX = 10;
+const LAPSE_CLUSTER_WINDOW_DAYS_MIN = 7;
+const LAPSE_CLUSTER_WINDOW_DAYS_MAX = 365;
 const KEYBOARD_LAYOUTS: { value: AppSettings["keyboardLayout"]; label: string }[] = [
   { value: "qwerty", label: "QWERTY" },
   { value: "dvorak", label: "Dvorak" },
@@ -1730,6 +1741,58 @@ export function Settings() {
               data-testid="setting-weekly-cadence"
               disabled={!s.weeklyReviewEnabled}
               onChange={(e) => void patch({ weeklyReviewCadenceDays: Number(e.target.value) })}
+              className="w-20 rounded-md border border-border bg-surface px-2 py-1 text-right font-mono font-semibold text-sm text-text disabled:opacity-50"
+            />
+            <span className="text-sm text-text-3">days</span>
+          </div>
+        </SettingRow>
+
+        <SettingRow
+          label="Lapse-cluster detection"
+          hint="Surface source regions where several cards keep failing together — a comprehension-debt signal, never an alarm. Tune how rare it stays: K lapses across at least N cards in a rolling window."
+        >
+          <div className="flex items-center gap-3">
+            <Toggle
+              name="setting-lapse-cluster"
+              checked={s.lapseClusterDetectionEnabled}
+              onChange={(value) => void patch({ lapseClusterDetectionEnabled: value })}
+            />
+            <input
+              type="number"
+              min={LAPSE_CLUSTER_MIN_LAPSES_MIN}
+              max={LAPSE_CLUSTER_MIN_LAPSES_MAX}
+              step={1}
+              aria-label="Minimum lapses"
+              value={s.lapseClusterMinLapses}
+              data-testid="setting-lapse-cluster-min-lapses"
+              disabled={!s.lapseClusterDetectionEnabled}
+              onChange={(e) => void patch({ lapseClusterMinLapses: Number(e.target.value) })}
+              className="w-16 rounded-md border border-border bg-surface px-2 py-1 text-right font-mono font-semibold text-sm text-text disabled:opacity-50"
+            />
+            <span className="text-sm text-text-3">lapses ·</span>
+            <input
+              type="number"
+              min={LAPSE_CLUSTER_MIN_CARDS_MIN}
+              max={LAPSE_CLUSTER_MIN_CARDS_MAX}
+              step={1}
+              aria-label="Minimum cards"
+              value={s.lapseClusterMinCards}
+              data-testid="setting-lapse-cluster-min-cards"
+              disabled={!s.lapseClusterDetectionEnabled}
+              onChange={(e) => void patch({ lapseClusterMinCards: Number(e.target.value) })}
+              className="w-16 rounded-md border border-border bg-surface px-2 py-1 text-right font-mono font-semibold text-sm text-text disabled:opacity-50"
+            />
+            <span className="text-sm text-text-3">cards ·</span>
+            <input
+              type="number"
+              min={LAPSE_CLUSTER_WINDOW_DAYS_MIN}
+              max={LAPSE_CLUSTER_WINDOW_DAYS_MAX}
+              step={1}
+              aria-label="Window days"
+              value={s.lapseClusterWindowDays}
+              data-testid="setting-lapse-cluster-window"
+              disabled={!s.lapseClusterDetectionEnabled}
+              onChange={(e) => void patch({ lapseClusterWindowDays: Number(e.target.value) })}
               className="w-20 rounded-md border border-border bg-surface px-2 py-1 text-right font-mono font-semibold text-sm text-text disabled:opacity-50"
             />
             <span className="text-sm text-text-3">days</span>

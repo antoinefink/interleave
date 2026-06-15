@@ -60,6 +60,12 @@ import {
   JOB_STATUSES,
   JOB_TYPES,
   KEYBOARD_LAYOUTS,
+  LAPSE_CLUSTER_MIN_CARDS_MAX,
+  LAPSE_CLUSTER_MIN_CARDS_MIN,
+  LAPSE_CLUSTER_MIN_LAPSES_MAX,
+  LAPSE_CLUSTER_MIN_LAPSES_MIN,
+  LAPSE_CLUSTER_WINDOW_DAYS_MAX,
+  LAPSE_CLUSTER_WINDOW_DAYS_MIN,
   MARK_TYPES,
   MAX_REVIEW_MODE_DECK,
   MEDIA_REF_FACES,
@@ -277,6 +283,22 @@ export const SettingsPatchSchema = z
       .int()
       .min(CHRONIC_POSTPONE_THRESHOLD_MIN)
       .max(CHRONIC_POSTPONE_THRESHOLD_MAX),
+    lapseClusterDetectionEnabled: z.boolean(),
+    lapseClusterMinLapses: z
+      .number()
+      .int()
+      .min(LAPSE_CLUSTER_MIN_LAPSES_MIN)
+      .max(LAPSE_CLUSTER_MIN_LAPSES_MAX),
+    lapseClusterWindowDays: z
+      .number()
+      .int()
+      .min(LAPSE_CLUSTER_WINDOW_DAYS_MIN)
+      .max(LAPSE_CLUSTER_WINDOW_DAYS_MAX),
+    lapseClusterMinCards: z
+      .number()
+      .int()
+      .min(LAPSE_CLUSTER_MIN_CARDS_MIN)
+      .max(LAPSE_CLUSTER_MIN_CARDS_MAX),
     weeklyReviewEnabled: z.boolean(),
     weeklyReviewCadenceDays: z
       .number()
@@ -7150,6 +7172,70 @@ export interface SourceYieldListResult {
 }
 
 // ---------------------------------------------------------------------------
+// lapseClusters.list()  (T128 — lapse-cluster detection)
+// ---------------------------------------------------------------------------
+
+/**
+ * Lapse-cluster detection (T128) — a READ-ONLY list of source regions where several
+ * live cards descended from one extract keep lapsing together (comprehension debt, not
+ * N formulation bugs). The MAIN process runs `LapseClusterQuery.list`, resolving the
+ * conservative thresholds (K / window / min-cards / enabled) from settings. With
+ * `sourceId` it scopes to one source (the source-page indicator); without it, the
+ * vault-wide maintenance list. Read-only: NO mutation, NO `operation_log`, no schedule
+ * change. Member lapse counts are WINDOW-scoped (distinct from the leech screen's
+ * cumulative count).
+ */
+export const LapseClustersListRequestSchema = z
+  .object({
+    /** Restrict to clusters whose region points into THIS source. */
+    sourceId: ElementIdSchema.optional(),
+    /** Cap the cluster count (1–1000); defaults main-side. */
+    limit: z.number().int().min(1).max(1000).optional(),
+  })
+  .optional();
+export type LapseClustersListRequest = z.infer<typeof LapseClustersListRequestSchema>;
+
+/** One failing member card of a cluster. */
+export interface LapseClusterMemberDto {
+  readonly cardId: string;
+  readonly prompt: string;
+  /** True lapse increments by this card in the window (window-scoped, not cumulative). */
+  readonly windowLapseCount: number;
+}
+
+/** The shared source region a cluster names. */
+export interface LapseClusterRegionDto {
+  readonly sourceElementId: string;
+  readonly blockIds: readonly string[];
+  /** Human-readable region label, degrading to "Selected text". */
+  readonly label: string;
+  readonly page: number | null;
+}
+
+/** One detected cluster (flat, JSON-serializable). */
+export interface LapseClusterDto {
+  readonly ancestorId: string;
+  readonly sourceId: string;
+  readonly sourceTitle: string;
+  readonly region: LapseClusterRegionDto;
+  readonly members: readonly LapseClusterMemberDto[];
+  readonly totalWindowLapses: number;
+  readonly affectedCardCount: number;
+  readonly strength: number;
+  readonly mostRecentLapseAt: string;
+}
+
+/** The lapse-cluster snapshot the renderer reads. */
+export interface LapseClustersListResult {
+  /** The instant the snapshot was computed for (ISO-8601). */
+  readonly asOf: string;
+  /** The window (days) the counts were taken over (for "in {N}d" labeling). */
+  readonly windowDays: number;
+  /** Clusters, strongest-first; empty when detection is disabled or nothing crosses the floor. */
+  readonly clusters: readonly LapseClusterDto[];
+}
+
+// ---------------------------------------------------------------------------
 // extractStagnation.list()  (T084 — extract-stagnation analytics)
 // ---------------------------------------------------------------------------
 
@@ -8251,6 +8337,14 @@ export interface AppApi {
      * sources are identifiable. Read-only (no mutation, no `operation_log`).
      */
     list(request?: SourceYieldListRequest): Promise<SourceYieldListResult>;
+  };
+  readonly lapseClusters: {
+    /**
+     * Lapse-cluster detection (T128) — source regions where several live sibling cards
+     * keep lapsing together, strongest-first. With `sourceId` it scopes to one source.
+     * Read-only (no mutation, no `operation_log`, no schedule change).
+     */
+    list(request?: LapseClustersListRequest): Promise<LapseClustersListResult>;
   };
   readonly extractStagnation: {
     /**

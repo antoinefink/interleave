@@ -101,6 +101,14 @@ export interface AppSettings {
   readonly parkedResurfaceAfterDays: number;
   /** Effective postpone count that forces an item into the Maintenance reckoning list (T106). */
   readonly chronicPostponeThreshold: number;
+  /** Whether read-only lapse-cluster detection is active (T128). */
+  readonly lapseClusterDetectionEnabled: boolean;
+  /** Min total in-window lapse increments for a cluster to surface (K) — T128. */
+  readonly lapseClusterMinLapses: number;
+  /** Rolling window (days) over which cluster lapses are counted (T128). */
+  readonly lapseClusterWindowDays: number;
+  /** Min distinct live member cards for a cluster to surface (T128). */
+  readonly lapseClusterMinCards: number;
   /** Whether the system-owned weekly ledger/integrity session is active (T110). */
   readonly weeklyReviewEnabled: boolean;
   /** Attention cadence, in days, for the weekly ledger/integrity session (T110). */
@@ -4921,6 +4929,56 @@ export interface SourceYieldListResult {
 }
 
 // ---------------------------------------------------------------------------
+// lapseClusters.*  (T128 — lapse-cluster detection)
+// ---------------------------------------------------------------------------
+
+/** `lapseClusters.list()` request — all fields optional (thresholds applied main-side). */
+export interface LapseClustersListRequest {
+  /** Restrict to clusters whose region points into THIS source. */
+  readonly sourceId?: string;
+  readonly limit?: number;
+}
+
+/** One failing member card of a cluster. */
+export interface LapseClusterMemberDto {
+  readonly cardId: string;
+  readonly prompt: string;
+  /** True lapse increments by this card in the window (window-scoped, not cumulative). */
+  readonly windowLapseCount: number;
+}
+
+/** The shared source region a cluster names. */
+export interface LapseClusterRegionDto {
+  readonly sourceElementId: string;
+  readonly blockIds: readonly string[];
+  /** Human-readable region label, degrading to "Selected text". */
+  readonly label: string;
+  readonly page: number | null;
+}
+
+/** One detected cluster the maintenance/source/leech surfaces render. */
+export interface LapseClusterDto {
+  readonly ancestorId: string;
+  readonly sourceId: string;
+  readonly sourceTitle: string;
+  readonly region: LapseClusterRegionDto;
+  readonly members: readonly LapseClusterMemberDto[];
+  readonly totalWindowLapses: number;
+  readonly affectedCardCount: number;
+  /** Ordering heuristic (strongest first); never rendered as a raw number. */
+  readonly strength: number;
+  readonly mostRecentLapseAt: string;
+}
+
+/** The lapse-cluster snapshot the renderer reads (strongest first). */
+export interface LapseClustersListResult {
+  readonly asOf: string;
+  /** The window (days) counts were taken over, for "in {N}d" labeling. */
+  readonly windowDays: number;
+  readonly clusters: readonly LapseClusterDto[];
+}
+
+// ---------------------------------------------------------------------------
 // extractStagnation.*  (T084 — extract-stagnation analytics)
 // ---------------------------------------------------------------------------
 
@@ -5348,6 +5406,9 @@ export interface AppApi {
   };
   readonly sourceYield: {
     list(request?: SourceYieldListRequest): Promise<SourceYieldListResult>;
+  };
+  readonly lapseClusters: {
+    list(request?: LapseClustersListRequest): Promise<LapseClustersListResult>;
   };
   readonly extractStagnation: {
     list(request?: ExtractStagnationListRequest): Promise<ExtractStagnationListResult>;
@@ -6685,6 +6746,14 @@ export const appApi = {
    */
   getSourceYield(request?: SourceYieldListRequest): Promise<SourceYieldListResult> {
     return requireAppApi().sourceYield.list(request);
+  },
+  /**
+   * Lapse-cluster detection (T128) — source regions where several live sibling cards
+   * keep lapsing together, strongest-first. With `sourceId` it scopes to one source
+   * (the source-page indicator). Read-only — no mutation, no schedule change.
+   */
+  getLapseClusters(request?: LapseClustersListRequest): Promise<LapseClustersListResult> {
+    return requireAppApi().lapseClusters.list(request);
   },
   /**
    * The extract-stagnation scan (T084) — every live extract that keeps returning

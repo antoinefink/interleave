@@ -32,6 +32,7 @@
  */
 
 import type { CardEditBody } from "@interleave/core";
+import { useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { Prio, priorityLabel } from "../components/inspector/primitives";
@@ -556,12 +557,18 @@ type EditorMode = "rewrite" | "split" | "context";
 
 export function LeechRemediation() {
   const desktop = isDesktop();
+  const navigate = useNavigate();
   const navigateToLocation = useNavigateToLocation();
   const [cards, setCards] = useState<readonly LeechSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editor, setEditor] = useState<{ id: string; mode: EditorMode } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Lapse-cluster membership (T128): cardId → the size of the struggling group it belongs
+  // to. Cross-links a leech to its cluster; absent for a solo leech (no cross-link shown).
+  const [clusterSizeByCard, setClusterSizeByCard] = useState<ReadonlyMap<string, number>>(
+    new Map(),
+  );
 
   const load = useCallback(async () => {
     if (!isDesktop()) {
@@ -576,6 +583,18 @@ export function LeechRemediation() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
+    }
+    // Cluster membership is a read-only, non-fatal enrichment — a failure just hides the
+    // cross-link rather than blocking the leech list.
+    try {
+      const res = await appApi.getLapseClusters();
+      const map = new Map<string, number>();
+      for (const cluster of res.clusters) {
+        for (const member of cluster.members) map.set(member.cardId, cluster.affectedCardCount);
+      }
+      setClusterSizeByCard(map);
+    } catch {
+      setClusterSizeByCard(new Map());
     }
   }, []);
 
@@ -748,6 +767,21 @@ export function LeechRemediation() {
                     <div className="lc-card__lineage" data-testid="leech-card-lineage">
                       <Icon name="extract" size={12} /> From an extract
                     </div>
+                  ) : null}
+                  {clusterSizeByCard.has(card.id) ? (
+                    // Membership only — NO per-card lapse count here, so it never reads as
+                    // contradicting the cumulative `{card.lapses} lapses` badge above (T128).
+                    <button
+                      type="button"
+                      className="lc-card__cluster"
+                      data-testid="leech-card-cluster"
+                      onClick={() => void navigate({ to: "/maintenance" })}
+                    >
+                      <Icon name="layers" size={12} />
+                      <span>
+                        Part of a struggling group ({clusterSizeByCard.get(card.id)} cards)
+                      </span>
+                    </button>
                   ) : null}
                 </div>
 

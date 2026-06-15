@@ -96,6 +96,7 @@ import {
   type JobSummary,
   JobsListRequestSchema,
   type JobsListResult,
+  LapseClustersListRequestSchema,
   LibraryBrowseRequestSchema,
   LibraryParkedActionRequestSchema,
   LineageGetRequestSchema,
@@ -1032,6 +1033,12 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.triageSuggest, (_event, rawRequest: unknown) => {
     const request = TriageSuggestRequestSchema.parse(rawRequest);
     return dbService.suggestTriage(request);
+  });
+
+  // Lapse-cluster detection (T128) — read-only; thresholds resolved main-side from settings.
+  ipcMain.handle(IPC_CHANNELS.lapseClusters, (_event, rawRequest: unknown) => {
+    const request = LapseClustersListRequestSchema.parse(rawRequest);
+    return dbService.listLapseClusters(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.triageSuggestMetadata, (_event, rawRequest: unknown) => {

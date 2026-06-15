@@ -139,6 +139,24 @@
   color: var(--text-3);
 }
 
+/* Lapse-cluster cross-link (T128) — a contextual info line, not an action button. */
+.lc-card__cluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: var(--t-2xs);
+  color: var(--text-2);
+}
+.lc-card__cluster:hover {
+  color: var(--accent-text);
+  text-decoration: underline;
+}
+
 /* The split editor's per-part blocks + the helper hint (T085). */
 .rv-edit__hint {
   font-size: var(--t-sm, 13px);

@@ -63,9 +63,15 @@ const h = vi.hoisted(() => {
     backToExtractCard: vi.fn(),
     setElementPriority: vi.fn(),
     getInspectorData: vi.fn(),
+    getLapseClusters: vi.fn(),
     navigateToLocation: vi.fn(),
+    navigate: vi.fn(),
   };
 });
+
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => h.navigate,
+}));
 
 vi.mock("../lib/appApi", async () => {
   const actual = await vi.importActual<typeof import("../lib/appApi")>("../lib/appApi");
@@ -83,6 +89,7 @@ vi.mock("../lib/appApi", async () => {
       backToExtractCard: h.backToExtractCard,
       setElementPriority: h.setElementPriority,
       getInspectorData: h.getInspectorData,
+      getLapseClusters: h.getLapseClusters,
     },
   };
 });
@@ -96,6 +103,27 @@ import { LeechRemediation } from "./LeechRemediation";
 beforeEach(() => {
   vi.clearAllMocks();
   h.reviewLeeches.mockResolvedValue({ cards: [h.leechQa] });
+  // By default the rendered leech is part of a 2-card struggling group (T128 cross-link).
+  h.getLapseClusters.mockResolvedValue({
+    asOf: "",
+    windowDays: 30,
+    clusters: [
+      {
+        ancestorId: "extract-1",
+        sourceId: "src-1",
+        sourceTitle: "On the Measure of Intelligence",
+        region: { sourceElementId: "src-1", blockIds: ["b1"], label: "¶ 4", page: null },
+        members: [
+          { cardId: "card-leech", prompt: "Q", windowLapseCount: 3 },
+          { cardId: "card-sibling", prompt: "Q2", windowLapseCount: 3 },
+        ],
+        totalWindowLapses: 6,
+        affectedCardCount: 2,
+        strength: 9,
+        mostRecentLapseAt: "2026-06-10T00:00:00.000Z",
+      },
+    ],
+  });
   h.updateCard.mockResolvedValue({ card: { id: "card-leech" }, reStabilized: null });
   h.markLeechCard.mockResolvedValue({ card: { id: "card-leech" } });
   h.suspendCard.mockResolvedValue({ card: { id: "card-leech" } });
@@ -352,5 +380,34 @@ describe("LeechRemediation", () => {
     h.reviewLeeches.mockResolvedValue({ cards: [] });
     render(<LeechRemediation />);
     expect(await screen.findByTestId("leech-empty")).toBeTruthy();
+  });
+
+  it("shows the cluster cross-link (membership only) for a clustered leech (T128)", async () => {
+    render(<LeechRemediation />);
+    const link = await screen.findByTestId("leech-card-cluster");
+    expect(link.textContent).toContain("Part of a struggling group (2 cards)");
+    // Membership only — no per-card lapse count next to the cumulative "5 lapses" badge.
+    expect(link.textContent).not.toContain("lapses");
+    fireEvent.click(link);
+    await waitFor(() =>
+      expect(h.navigate).toHaveBeenCalledWith(expect.objectContaining({ to: "/maintenance" })),
+    );
+  });
+
+  it("shows no cross-link for a leech that is not in any cluster (T128)", async () => {
+    h.getLapseClusters.mockResolvedValue({ asOf: "", windowDays: 30, clusters: [] });
+    render(<LeechRemediation />);
+    await screen.findByTestId("leech-card");
+    await waitFor(() => expect(h.getLapseClusters).toHaveBeenCalledWith());
+    expect(screen.queryByTestId("leech-card-cluster")).toBeNull();
+  });
+
+  it("suppresses the cross-link silently when the cluster fetch fails (T128)", async () => {
+    h.getLapseClusters.mockRejectedValue(new Error("ipc down"));
+    render(<LeechRemediation />);
+    // The leech list still renders; the cross-link enrichment fails closed.
+    await screen.findByTestId("leech-card");
+    await waitFor(() => expect(h.getLapseClusters).toHaveBeenCalled());
+    expect(screen.queryByTestId("leech-card-cluster")).toBeNull();
   });
 });

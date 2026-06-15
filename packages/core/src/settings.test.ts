@@ -31,6 +31,12 @@ import {
   EXTRACT_AGING_RETURN_THRESHOLD_MIN,
   isKeyboardLayout,
   isThemePreference,
+  LAPSE_CLUSTER_MIN_CARDS_MAX,
+  LAPSE_CLUSTER_MIN_CARDS_MIN,
+  LAPSE_CLUSTER_MIN_LAPSES_MAX,
+  LAPSE_CLUSTER_MIN_LAPSES_MIN,
+  LAPSE_CLUSTER_WINDOW_DAYS_MAX,
+  LAPSE_CLUSTER_WINDOW_DAYS_MIN,
   PARKED_RESURFACE_AFTER_DAYS_MAX,
   PARKED_RESURFACE_AFTER_DAYS_MIN,
   projectToRendererSettings,
@@ -63,6 +69,10 @@ describe("AppSettings defaults", () => {
       balanceWarnings: "balance.warnings",
       parkedResurfaceAfterDays: "parked.resurfaceAfterDays",
       chronicPostponeThreshold: "scheduler.chronicPostponeThreshold",
+      lapseClusterDetectionEnabled: "lapseCluster.enabled",
+      lapseClusterMinLapses: "lapseCluster.minLapses",
+      lapseClusterWindowDays: "lapseCluster.windowDays",
+      lapseClusterMinCards: "lapseCluster.minCards",
       weeklyReviewEnabled: "weeklyReview.enabled",
       weeklyReviewCadenceDays: "weeklyReview.cadenceDays",
       adaptiveAttentionIntervals: "scheduler.adaptiveAttentionIntervals",
@@ -105,6 +115,57 @@ describe("AppSettings defaults", () => {
 
   it("keeps adaptive attention intervals off by default until explainability lands", () => {
     expect(DEFAULT_APP_SETTINGS.adaptiveAttentionIntervals).toBe(true);
+  });
+
+  it("enables lapse-cluster detection by default with conservative thresholds (T128)", () => {
+    expect(DEFAULT_APP_SETTINGS.lapseClusterDetectionEnabled).toBe(true);
+    expect(DEFAULT_APP_SETTINGS.lapseClusterMinLapses).toBe(5);
+    expect(DEFAULT_APP_SETTINGS.lapseClusterWindowDays).toBe(30);
+    expect(DEFAULT_APP_SETTINGS.lapseClusterMinCards).toBe(2);
+  });
+});
+
+describe("lapse-cluster settings coercion (T128)", () => {
+  it("coerces the enable toggle, falling back on a non-boolean", () => {
+    expect(coerceSettingValue("lapseClusterDetectionEnabled", false)).toBe(false);
+    expect(coerceSettingValue("lapseClusterDetectionEnabled", "nope")).toBe(true);
+  });
+
+  it("clamps + rounds the threshold/window/min-cards into range", () => {
+    expect(coerceSettingValue("lapseClusterMinLapses", 1)).toBe(LAPSE_CLUSTER_MIN_LAPSES_MIN);
+    expect(coerceSettingValue("lapseClusterMinLapses", 999)).toBe(LAPSE_CLUSTER_MIN_LAPSES_MAX);
+    expect(coerceSettingValue("lapseClusterMinLapses", 6.4)).toBe(6);
+    expect(coerceSettingValue("lapseClusterMinLapses", "x")).toBe(
+      DEFAULT_APP_SETTINGS.lapseClusterMinLapses,
+    );
+
+    expect(coerceSettingValue("lapseClusterWindowDays", 1)).toBe(LAPSE_CLUSTER_WINDOW_DAYS_MIN);
+    expect(coerceSettingValue("lapseClusterWindowDays", 99999)).toBe(LAPSE_CLUSTER_WINDOW_DAYS_MAX);
+
+    expect(coerceSettingValue("lapseClusterMinCards", 1)).toBe(LAPSE_CLUSTER_MIN_CARDS_MIN);
+    expect(coerceSettingValue("lapseClusterMinCards", 50)).toBe(LAPSE_CLUSTER_MIN_CARDS_MAX);
+    expect(coerceSettingValue("lapseClusterMinCards", Number.NaN)).toBe(
+      DEFAULT_APP_SETTINGS.lapseClusterMinCards,
+    );
+  });
+
+  it("round-trips a patch through stored → typed", () => {
+    const patch = coerceSettingsPatch({
+      lapseClusterDetectionEnabled: false,
+      lapseClusterMinLapses: 7,
+      lapseClusterWindowDays: 14,
+      lapseClusterMinCards: 3,
+    });
+    const stored = appSettingsFromStored({
+      "lapseCluster.enabled": patch.lapseClusterDetectionEnabled,
+      "lapseCluster.minLapses": patch.lapseClusterMinLapses,
+      "lapseCluster.windowDays": patch.lapseClusterWindowDays,
+      "lapseCluster.minCards": patch.lapseClusterMinCards,
+    });
+    expect(stored.lapseClusterDetectionEnabled).toBe(false);
+    expect(stored.lapseClusterMinLapses).toBe(7);
+    expect(stored.lapseClusterWindowDays).toBe(14);
+    expect(stored.lapseClusterMinCards).toBe(3);
   });
 });
 
@@ -401,6 +462,10 @@ describe("stored ↔ model round-trip", () => {
       balanceWarnings: false,
       parkedResurfaceAfterDays: 120,
       chronicPostponeThreshold: 6,
+      lapseClusterDetectionEnabled: true,
+      lapseClusterMinLapses: 5,
+      lapseClusterWindowDays: 30,
+      lapseClusterMinCards: 2,
       weeklyReviewEnabled: false,
       weeklyReviewCadenceDays: 14,
       adaptiveAttentionIntervals: true,
@@ -518,6 +583,10 @@ describe("stored ↔ model round-trip", () => {
       balanceWarnings: false,
       parkedResurfaceAfterDays: 45,
       chronicPostponeThreshold: 7,
+      lapseClusterDetectionEnabled: false,
+      lapseClusterMinLapses: 6,
+      lapseClusterWindowDays: 21,
+      lapseClusterMinCards: 3,
       weeklyReviewEnabled: true,
       weeklyReviewCadenceDays: 10,
       adaptiveAttentionIntervals: true,

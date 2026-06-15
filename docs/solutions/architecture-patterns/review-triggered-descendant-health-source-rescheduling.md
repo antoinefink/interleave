@@ -149,6 +149,7 @@ Read-model and UI tests should cover both visibility and suppression:
 
 ## Related
 
+- [Sibling clustering over the lineage DAG: the nearest-live-source-ancestor read model](./sibling-clustering-over-the-lineage-dag.md) — the SIDEWAYS counterpart (T128). Since T128, this query's lapse predicate (`nextLapses > prevLapses`, marker-excluded, live non-retired cards, inclusive window) lives in the SHARED `lapse-window.ts` helper that both queries import — so the cluster list and this upward reschedule can never disagree about what a lapse is. This doc carries review pain *up* the lineage (child → parent reschedule); T128 reads sibling lapses *sideways* (grouped under a shared source-region ancestor) without mutating anything.
 - [Propagate content-staleness down the lineage DAG when a source block is edited](./downward-dirty-bit-propagation-through-lineage-dag.md) — the DOWNWARD/forward counterpart of this back edge: this doc carries review pain *up* the lineage (child → parent); that one carries edit staleness *down* it (source → descendants). Same same-transaction, backend-owned-signal discipline; opposite direction.
 - [Trust schedule reasons only from the governing reschedule operation](./trusted-schedule-reasons-from-governing-reschedule-ops.md)
 - [Persist adaptive attention intervals as bounded, undoable scheduler state](./yield-adaptive-attention-interval-multiplier.md)

@@ -109,6 +109,19 @@ export interface AppSettings {
   readonly balanceWarnings: boolean;
   readonly parkedResurfaceAfterDays: number;
   readonly chronicPostponeThreshold: number;
+  /**
+   * Lapse-cluster detection (T128). When `true`, the read-only `LapseClusterQuery`
+   * surfaces groups of live cards that share a source-region (extract) ancestor and
+   * keep lapsing together — a comprehension-debt signal, never a mutation. `false`
+   * short-circuits the query to an empty list and hides every cluster surface.
+   */
+  readonly lapseClusterDetectionEnabled: boolean;
+  /** Min total in-window lapse increments for a cluster to surface (K). Conservative. */
+  readonly lapseClusterMinLapses: number;
+  /** Rolling window (days) over which cluster lapses are counted. */
+  readonly lapseClusterWindowDays: number;
+  /** Min distinct live member cards for a cluster to surface. */
+  readonly lapseClusterMinCards: number;
   readonly weeklyReviewEnabled: boolean;
   readonly weeklyReviewCadenceDays: number;
   readonly adaptiveAttentionIntervals: boolean;
@@ -279,6 +292,10 @@ export const SETTINGS_KEYS = {
   balanceWarnings: "balance.warnings",
   parkedResurfaceAfterDays: "parked.resurfaceAfterDays",
   chronicPostponeThreshold: "scheduler.chronicPostponeThreshold",
+  lapseClusterDetectionEnabled: "lapseCluster.enabled",
+  lapseClusterMinLapses: "lapseCluster.minLapses",
+  lapseClusterWindowDays: "lapseCluster.windowDays",
+  lapseClusterMinCards: "lapseCluster.minCards",
   weeklyReviewEnabled: "weeklyReview.enabled",
   weeklyReviewCadenceDays: "weeklyReview.cadenceDays",
   adaptiveAttentionIntervals: "scheduler.adaptiveAttentionIntervals",
@@ -363,6 +380,13 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   balanceWarnings: true,
   parkedResurfaceAfterDays: 90,
   chronicPostponeThreshold: 5,
+  // Lapse-cluster detection (T128) — ON by default (read-only, no queue impact, quiet
+  // help). Conservative thresholds (K=5 / 30d / ≥2 cards, within the spec's ~4–6 band)
+  // keep clusters rare so the surfaces never read as an alarm.
+  lapseClusterDetectionEnabled: true,
+  lapseClusterMinLapses: 5,
+  lapseClusterWindowDays: 30,
+  lapseClusterMinCards: 2,
   weeklyReviewEnabled: true,
   weeklyReviewCadenceDays: 7,
   adaptiveAttentionIntervals: true,
@@ -454,6 +478,14 @@ export const PARKED_RESURFACE_AFTER_DAYS_MAX = 3650;
 /** Inclusive bounds for chronic-postpone reckoning threshold (T106). */
 export const CHRONIC_POSTPONE_THRESHOLD_MIN = 2;
 export const CHRONIC_POSTPONE_THRESHOLD_MAX = 50;
+
+/** Inclusive bounds for lapse-cluster detection thresholds (T128). */
+export const LAPSE_CLUSTER_MIN_LAPSES_MIN = 2;
+export const LAPSE_CLUSTER_MIN_LAPSES_MAX = 20;
+export const LAPSE_CLUSTER_WINDOW_DAYS_MIN = 7;
+export const LAPSE_CLUSTER_WINDOW_DAYS_MAX = 365;
+export const LAPSE_CLUSTER_MIN_CARDS_MIN = 2;
+export const LAPSE_CLUSTER_MIN_CARDS_MAX = 10;
 
 /** Inclusive bounds for extract aging's returns-without-progress threshold (T121). */
 export const EXTRACT_AGING_RETURN_THRESHOLD_MIN = 1;
@@ -611,6 +643,26 @@ export function coerceSettingValue<K extends keyof AppSettings>(
           ? clampInt(raw, CHRONIC_POSTPONE_THRESHOLD_MIN, CHRONIC_POSTPONE_THRESHOLD_MAX)
           : fallback
       ) as AppSettings[K];
+    case "lapseClusterDetectionEnabled":
+      return (typeof raw === "boolean" ? raw : fallback) as AppSettings[K];
+    case "lapseClusterMinLapses":
+      return (
+        isFiniteNumber(raw) && raw > 0
+          ? clampInt(raw, LAPSE_CLUSTER_MIN_LAPSES_MIN, LAPSE_CLUSTER_MIN_LAPSES_MAX)
+          : fallback
+      ) as AppSettings[K];
+    case "lapseClusterWindowDays":
+      return (
+        isFiniteNumber(raw) && raw > 0
+          ? clampInt(raw, LAPSE_CLUSTER_WINDOW_DAYS_MIN, LAPSE_CLUSTER_WINDOW_DAYS_MAX)
+          : fallback
+      ) as AppSettings[K];
+    case "lapseClusterMinCards":
+      return (
+        isFiniteNumber(raw) && raw > 0
+          ? clampInt(raw, LAPSE_CLUSTER_MIN_CARDS_MIN, LAPSE_CLUSTER_MIN_CARDS_MAX)
+          : fallback
+      ) as AppSettings[K];
     case "weeklyReviewEnabled":
       return (typeof raw === "boolean" ? raw : fallback) as AppSettings[K];
     case "weeklyReviewCadenceDays":
@@ -757,6 +809,22 @@ export function appSettingsFromStored(stored: Readonly<Record<string, unknown>>)
     chronicPostponeThreshold: coerceSettingValue(
       "chronicPostponeThreshold",
       stored[SETTINGS_KEYS.chronicPostponeThreshold],
+    ),
+    lapseClusterDetectionEnabled: coerceSettingValue(
+      "lapseClusterDetectionEnabled",
+      stored[SETTINGS_KEYS.lapseClusterDetectionEnabled],
+    ),
+    lapseClusterMinLapses: coerceSettingValue(
+      "lapseClusterMinLapses",
+      stored[SETTINGS_KEYS.lapseClusterMinLapses],
+    ),
+    lapseClusterWindowDays: coerceSettingValue(
+      "lapseClusterWindowDays",
+      stored[SETTINGS_KEYS.lapseClusterWindowDays],
+    ),
+    lapseClusterMinCards: coerceSettingValue(
+      "lapseClusterMinCards",
+      stored[SETTINGS_KEYS.lapseClusterMinCards],
     ),
     weeklyReviewEnabled: coerceSettingValue(
       "weeklyReviewEnabled",

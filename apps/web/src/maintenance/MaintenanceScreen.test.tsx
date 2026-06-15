@@ -33,11 +33,14 @@ const h = vi.hoisted(() => ({
   parkedResurfacingApply: vi.fn(),
   chronicPostpones: vi.fn(),
   chronicPostponesApply: vi.fn(),
+  getLapseClusters: vi.fn(),
   undoLast: vi.fn(),
+  navigate: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+  useNavigate: () => h.navigate,
 }));
 
 vi.mock("../lib/appApi", async () => {
@@ -63,10 +66,26 @@ vi.mock("../lib/appApi", async () => {
         chronicPostpones: h.chronicPostpones,
         chronicPostponesApply: h.chronicPostponesApply,
       },
+      getLapseClusters: h.getLapseClusters,
       undoLast: h.undoLast,
     },
   };
 });
+
+const CLUSTER = {
+  ancestorId: "ext-1",
+  sourceId: "src-1",
+  sourceTitle: "Deep Paper",
+  region: { sourceElementId: "src-1", blockIds: ["b1"], label: "Chapter 2 · ¶4", page: null },
+  members: [
+    { cardId: "c1", prompt: "Q1", windowLapseCount: 3 },
+    { cardId: "c2", prompt: "Q2", windowLapseCount: 3 },
+  ],
+  totalWindowLapses: 6,
+  affectedCardCount: 2,
+  strength: 9,
+  mostRecentLapseAt: "2026-06-10T00:00:00.000Z",
+};
 
 import { MaintenanceScreen } from "./MaintenanceScreen";
 
@@ -186,6 +205,11 @@ beforeEach(() => {
     limit: 50,
   });
   h.chronicPostponesApply.mockResolvedValue({ applied: 1, skipped: [], batchId: "b6" });
+  h.getLapseClusters.mockResolvedValue({
+    asOf: "2026-06-12T00:00:00.000Z",
+    windowDays: 30,
+    clusters: [CLUSTER],
+  });
   h.undoLast.mockResolvedValue({
     undone: true,
     count: 1,
@@ -504,5 +528,44 @@ describe("MaintenanceScreen", () => {
     await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
     fireEvent.click(screen.getByTestId("metric-sourceless-toggle"));
     await waitFor(() => expect(screen.getByTestId("maintenance-empty-row")).toBeInTheDocument());
+  });
+
+  it("renders the struggling-card-groups card and its read-only cluster row (T128)", async () => {
+    render(<MaintenanceScreen />);
+    await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId("metric-clusters-value").textContent).toContain("1"),
+    );
+    fireEvent.click(screen.getByTestId("metric-clusters-toggle"));
+    await waitFor(() => expect(screen.getByTestId("clusters-panel")).toBeInTheDocument());
+    const row = screen.getByTestId("cluster-row");
+    expect(row.textContent).toContain("Deep Paper");
+    expect(row.textContent).toContain("Chapter 2 · ¶4");
+    // Window-scoped, explicitly labeled "in 30d"; the raw strength score is NOT shown.
+    expect(row.textContent).toContain("2 cards · 6 lapses in 30d");
+    expect(row.textContent).not.toContain("9");
+    // The only affordance is navigating to the source region (the interim re-read verb).
+    fireEvent.click(screen.getByTestId("cluster-open"));
+    expect(h.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: "/source/$id",
+        params: { id: "src-1" },
+        search: expect.objectContaining({ block: "b1", label: "Chapter 2 · ¶4" }),
+      }),
+    );
+  });
+
+  it("shows a calm explanatory empty state when there are no clusters (T128)", async () => {
+    h.getLapseClusters.mockResolvedValue({ asOf: "", windowDays: 30, clusters: [] });
+    render(<MaintenanceScreen />);
+    await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByTestId("metric-clusters-value").textContent).toContain("0"),
+    );
+    fireEvent.click(screen.getByTestId("metric-clusters-toggle"));
+    await waitFor(() => expect(screen.getByTestId("maintenance-empty-row")).toBeInTheDocument());
+    expect(screen.getByTestId("maintenance-empty-row").textContent).toContain(
+      "No struggling card groups",
+    );
   });
 });

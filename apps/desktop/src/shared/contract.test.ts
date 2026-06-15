@@ -85,6 +85,7 @@ import {
   type JobSummary,
   JobsListRequestSchema,
   type JobsListResult,
+  LapseClustersListRequestSchema,
   LibraryBrowseRequestSchema,
   LibraryParkedActionRequestSchema,
   LineageGetRequestSchema,
@@ -312,6 +313,7 @@ describe("IPC channels", () => {
         "review:preview",
         "review:grade",
         "review:leeches",
+        "lapse:clusters",
         "review:mode:deck",
         "review:mode:count",
         "concepts:create",
@@ -485,6 +487,49 @@ describe("TriageSuggestMetadataRequestSchema (T127)", () => {
   it("rejects an unknown confidence level and a malformed band", () => {
     expect(() => TriageSuggestMetadataRequestSchema.parse({ confidence: "certain" })).toThrow();
     expect(() => TriageSuggestMetadataRequestSchema.parse({ currentBand: "Z" })).toThrow();
+  });
+});
+
+describe("LapseClustersListRequestSchema (T128)", () => {
+  it("accepts an omitted request and a bounded scoped request", () => {
+    expect(LapseClustersListRequestSchema.parse(undefined)).toBeUndefined();
+    expect(LapseClustersListRequestSchema.parse({ sourceId: "src-1", limit: 25 })).toEqual({
+      sourceId: "src-1",
+      limit: 25,
+    });
+  });
+
+  it("rejects an out-of-range limit and a malformed sourceId", () => {
+    expect(() => LapseClustersListRequestSchema.parse({ limit: 0 })).toThrow();
+    expect(() => LapseClustersListRequestSchema.parse({ limit: 1001 })).toThrow();
+    expect(() => LapseClustersListRequestSchema.parse({ sourceId: "" })).toThrow();
+    expect(() => LapseClustersListRequestSchema.parse({ sourceId: 42 })).toThrow();
+  });
+});
+
+describe("SettingsPatchSchema lapse-cluster fields (T128)", () => {
+  it("accepts in-range lapse-cluster threshold patches", () => {
+    expect(
+      SettingsPatchSchema.parse({
+        lapseClusterDetectionEnabled: false,
+        lapseClusterMinLapses: 6,
+        lapseClusterWindowDays: 14,
+        lapseClusterMinCards: 3,
+      }),
+    ).toEqual({
+      lapseClusterDetectionEnabled: false,
+      lapseClusterMinLapses: 6,
+      lapseClusterWindowDays: 14,
+      lapseClusterMinCards: 3,
+    });
+  });
+
+  it("rejects out-of-range lapse-cluster thresholds", () => {
+    expect(() => SettingsPatchSchema.parse({ lapseClusterMinLapses: 1 })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ lapseClusterMinLapses: 21 })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ lapseClusterMinCards: 1 })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ lapseClusterWindowDays: 6 })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ lapseClusterWindowDays: 366 })).toThrow();
   });
 });
 

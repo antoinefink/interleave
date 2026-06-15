@@ -161,6 +161,9 @@ export const IPC_CHANNELS = {
   reviewPreview: "review:preview",
   reviewGrade: "review:grade",
   reviewLeeches: "review:leeches",
+  // Lapse-cluster detection (T128) — read-only: groups of live cards sharing a
+  // source-region ancestor that keep lapsing. No `operation_log`, no schedule change.
+  lapseClusters: "lapse:clusters",
   // Targeted review modes (T096) — resolve a chosen card SUBSET outside scheduling.
   reviewModeDeck: "review:mode:deck",
   reviewModeCount: "review:mode:count",

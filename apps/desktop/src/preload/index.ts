@@ -88,6 +88,7 @@ import type {
   InspectorGetRequest,
   JobSummary,
   JobsListRequest,
+  LapseClustersListRequest,
   LibraryBrowseRequest,
   LibraryParkedActionRequest,
   LineageGetRequest,
@@ -592,6 +593,10 @@ const appApi: AppApi = {
   sourceYield: {
     list: (request?: SourceYieldListRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.sourceYieldList, request),
+  },
+  lapseClusters: {
+    list: (request?: LapseClustersListRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.lapseClusters, request),
   },
   extractStagnation: {
     list: (request?: ExtractStagnationListRequest) =>

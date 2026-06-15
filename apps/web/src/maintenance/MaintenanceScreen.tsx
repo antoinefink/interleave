@@ -17,7 +17,7 @@
  * on-demand only (never auto-run on view open).
  */
 
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { Icon, type IconName } from "../components/Icon";
 import { Snackbar } from "../components/Snackbar";
@@ -30,6 +30,7 @@ import {
   type ChronicPostponeRowSummary,
   type DuplicateReportResult,
   isDesktop,
+  type LapseClustersListResult,
   type LineageGapRowSummary,
   type LowValueRowSummary,
   type MaintenanceIntegrityResult,
@@ -95,12 +96,16 @@ type ExpandedReport =
   | "lowValue"
   | "parked"
   | "chronic"
+  | "clusters"
   | "orphan"
   | null;
 
 export function MaintenanceScreen() {
   const desktop = isDesktop();
+  const navigate = useNavigate();
   const [report, setReport] = useState<MaintenanceReportResult | null>(null);
+  // Lapse clusters (T128) load eagerly: the count drives the card, the list the drill-down.
+  const [clusters, setClusters] = useState<LapseClustersListResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<ExpandedReport>(null);
@@ -133,6 +138,13 @@ export function MaintenanceScreen() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
+    }
+    // Lapse clusters come from their own read-only channel (not the maintenance report).
+    // A failed fetch is non-fatal — the card just shows "—" rather than blocking the hub.
+    try {
+      setClusters(await appApi.getLapseClusters());
+    } catch {
+      setClusters({ asOf: "", windowDays: 30, clusters: [] });
     }
   }, []);
 
@@ -171,9 +183,29 @@ export function MaintenanceScreen() {
     async (which: Exclude<ExpandedReport, null>) => {
       const next = expanded === which ? null : which;
       setExpanded(next);
-      if (next && next !== "orphan") await reloadExpanded(next);
+      // Clusters load eagerly; everything else (except orphan) lazy-loads on expand.
+      if (next && next !== "orphan" && next !== "clusters") await reloadExpanded(next);
     },
     [expanded, reloadExpanded],
+  );
+
+  /**
+   * The interim remedy verb (T128 → T129): open the source AT the struggling region so
+   * the user can re-read the context. Read-only navigation by stable block id.
+   */
+  const openClusterRegion = useCallback(
+    (region: { sourceElementId: string; blockIds: readonly string[]; label: string }) => {
+      const block = region.blockIds[0];
+      void navigate({
+        to: "/source/$id",
+        params: { id: region.sourceElementId },
+        search: (block ? { block, label: region.label, n: Date.now() } : {}) as Record<
+          string,
+          unknown
+        >,
+      });
+    },
+    [navigate],
   );
 
   /** Run a reversible cleanup action, then toast an Undo + refresh. */
@@ -506,6 +538,19 @@ export function MaintenanceScreen() {
               busy={busy}
               onApply={(decisions) => void runChronicPostpones(decisions)}
             />
+          </MetricCard>
+
+          {/* Struggling card groups (T128) — read-only; navigation is the only affordance */}
+          <MetricCard
+            icon="layers"
+            title="Struggling card groups"
+            value={clusters?.clusters.length}
+            unit="cards failing together"
+            testId="metric-clusters"
+            expanded={expanded === "clusters"}
+            onToggle={() => void toggle("clusters")}
+          >
+            <ClusterPanel data={clusters} onOpenRegion={openClusterRegion} />
           </MetricCard>
 
           {/* Integrity (on-demand) */}
@@ -1267,6 +1312,64 @@ function EmptyRow({ message }: { message: string }) {
     <div className="mt-empty" data-testid="maintenance-empty-row">
       <Icon name="checkCircle" size={16} />
       <span>{message}</span>
+    </div>
+  );
+}
+
+/**
+ * Lapse-cluster drill-down (T128). READ-ONLY: unlike every other panel here, it has NO
+ * mutation buttons — the only affordance is opening the source at the struggling region
+ * (the interim remedy verb until T129's re-read proposals). The raw strength score is not
+ * shown (it only orders the list); member counts are labeled "in {N}d" so they never read
+ * as the leech screen's cumulative lapse count.
+ */
+function ClusterPanel({
+  data,
+  onOpenRegion,
+}: {
+  data: LapseClustersListResult | null;
+  onOpenRegion: (region: {
+    sourceElementId: string;
+    blockIds: readonly string[];
+    label: string;
+  }) => void;
+}) {
+  if (!data) return <p className="mt-muted">Loading…</p>;
+  if (data.clusters.length === 0) {
+    return (
+      <EmptyRow message="No struggling card groups. Cards that fail together under the same source region will appear here." />
+    );
+  }
+  return (
+    <div data-testid="clusters-panel">
+      <p className="mt-muted mt-clusters__note">
+        These groups are read-only. Open the source to re-read the region the cards share.
+      </p>
+      {data.clusters.map((cluster) => (
+        <div className="mt-cluster" key={cluster.ancestorId} data-testid="cluster-row">
+          <div className="mt-cluster__head">
+            <span className="mt-cluster__source" title={cluster.sourceTitle}>
+              {cluster.sourceTitle || "Untitled source"}
+            </span>
+            <span className="badge badge--soft">{cluster.region.label}</span>
+          </div>
+          <div className="mt-cluster__meta">
+            {cluster.affectedCardCount} cards · {cluster.totalWindowLapses} lapses in{" "}
+            {data.windowDays}d
+          </div>
+          <div className="mt-bulkbar">
+            <button
+              type="button"
+              className="rv-repair__btn"
+              data-testid="cluster-open"
+              onClick={() => onOpenRegion(cluster.region)}
+            >
+              <Icon name="link" size={13} />
+              Open source
+            </button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

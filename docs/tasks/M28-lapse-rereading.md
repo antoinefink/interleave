@@ -29,7 +29,7 @@
 # T128 — Lapse-cluster detection
 
 - **Milestone:** M28 — Lapse-driven re-reading
-- **Status:** `[ ]` not started
+- **Status:** `[x]` done — `feat: T128 lapse-cluster detection`
 - **Depends on:** T040, T083
 - **Roadmap line:** a read model over `review_logs` joined to lineage anchors detects
   K-lapses-in-window clusters sharing an extract/source-region ancestor — thresholds tuned to
@@ -54,22 +54,37 @@ the exact source region they share.
 
 ## Deliverables
 
-- [ ] `LapseClusterQuery` in `packages/local-db`: clusters = K+ lapses within a rolling window
-      across 2+ live cards sharing an extract/source-region ancestor (defaults ~K=4–6 lapses /
-      30d / ≥2 cards — settings-tunable, documented); returns the shared region (source +
-      block range), member cards with lapse counts, and a cluster strength score.
-- [ ] Surfacing: a maintenance section listing active clusters; a quiet indicator on the source
-      page ("2 struggling card clusters") linking to them; per-card leech screen (T085) gains a
-      "part of a cluster" cross-link.
-- [ ] Tests: unit — seeded review-log fixtures produce exactly the expected clusters (and
-      near-miss fixtures produce none: below-K, single-card, dead lineage, outside-window);
-      contract tests.
+- [x] `LapseClusterQuery` in `packages/local-db`: clusters = K+ lapses within a rolling window
+      across 2+ live cards sharing an extract/source-region ancestor (defaults K=5 / 30d / ≥2
+      cards — settings-tunable, documented); returns the shared region (source + block range),
+      member cards with lapse counts, and a cluster strength score. Built on a SHARED
+      `lapse-window` predicate extracted from T114's descendant-health (one lapse definition).
+- [x] Surfacing: a maintenance "Struggling card groups" section listing active clusters; a quiet
+      indicator on the source page linking to them; the leech screen (T085) gains a "part of a
+      struggling group" cross-link. All navigation-only (no mutation paths).
+- [x] Tests: unit — seeded review-log fixtures produce exactly the expected clusters and
+      near-miss fixtures produce none (below-K, single-card, dead/tombstoned lineage,
+      outside-window, marker-only, sourceless, retired member, source-shared-not-extract-shared,
+      multi-anchor determinism, soft-deleted source, topic-anchored, partial-window, inclusive
+      boundary); read-only "no writes to any table" + contract + component + Electron E2E.
 
 ## Done when
 
 - A seeded sibling-failure fixture yields one cluster naming the right region and cards;
-  healthy and noisy fixtures yield none; surfaces render with no mutation paths.
-- Standard gates pass.
+  healthy and noisy fixtures yield none; surfaces render with no mutation paths. ✓
+- Standard gates pass. ✓ (`pnpm lint`, `pnpm typecheck`, `pnpm test` (4428),
+  `pnpm e2e tests/electron/lapse-clusters.spec.ts`)
+
+## Outcome
+
+Done via ce-plan → ce-doc-review → ce-work → ce-code-review → fixes → ce-compound.
+Plan: [`../plans/2026-06-15-003-feat-t128-lapse-cluster-detection-plan.md`](../plans/2026-06-15-003-feat-t128-lapse-cluster-detection-plan.md).
+Learning: [`../solutions/architecture-patterns/sibling-clustering-over-the-lineage-dag.md`](../solutions/architecture-patterns/sibling-clustering-over-the-lineage-dag.md).
+Key decisions: cluster key = nearest live source-region ancestor (not `source_id`, not direct
+parent); read-only with all-tables no-write proof; deterministic source-anchor resolution
+(non-unique `source_locations.elementId` required a `type='source'`+live join with `ORDER BY`).
+Follow-up (deferred): ancestor-walk batch-prefetch + decouple the maintenance cluster re-read
+from unrelated `UNDO_EVENT`s.
 
 ## Notes / risks
 

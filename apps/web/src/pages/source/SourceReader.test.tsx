@@ -8,6 +8,7 @@ const h = vi.hoisted(() => ({
   navigate: vi.fn(),
   select: vi.fn(),
   getInspectorData: vi.fn(),
+  getLapseClusters: vi.fn(),
   actOnQueueItem: vi.fn(),
   countDescendants: vi.fn(),
   softDeleteSubtree: vi.fn(),
@@ -173,6 +174,7 @@ vi.mock("../../lib/appApi", async () => {
       setElementPriority: h.setElementPriority,
       createExtraction: h.createExtraction,
       getBlockProcessingSummary: h.getBlockProcessingSummary,
+      getLapseClusters: h.getLapseClusters,
     },
   };
 });
@@ -354,6 +356,9 @@ beforeEach(() => {
   h.navigate.mockReset();
   h.select.mockReset();
   h.getInspectorData.mockReset();
+  // T128 source-page cluster indicator: default to no clusters (renders nothing).
+  h.getLapseClusters.mockReset();
+  h.getLapseClusters.mockResolvedValue({ asOf: "", windowDays: 30, clusters: [] });
   h.actOnQueueItem.mockReset();
   // The source-delete control now reads the blast radius first (T135 / U7). Default to a
   // LEAF (total 0) so the quiet path runs the existing `actOnQueueItem({delete})` op.
@@ -517,6 +522,73 @@ describe("SourceReader", () => {
     fireEvent.click(await findByRole("button", { name: "Library" }));
 
     expect(h.navigate).toHaveBeenCalledWith({ to: "/library" });
+  });
+
+  it("shows the quiet cluster indicator for a struggling source and links to maintenance (T128)", async () => {
+    h.getLapseClusters.mockResolvedValue({
+      asOf: "",
+      windowDays: 30,
+      clusters: [
+        {
+          ancestorId: "ext-1",
+          sourceId: "src-1",
+          sourceTitle: "Reader source",
+          region: { sourceElementId: "src-1", blockIds: ["b1"], label: "¶1", page: null },
+          members: [
+            { cardId: "c1", prompt: "Q1", windowLapseCount: 3 },
+            { cardId: "c2", prompt: "Q2", windowLapseCount: 3 },
+          ],
+          totalWindowLapses: 6,
+          affectedCardCount: 2,
+          strength: 9,
+          mostRecentLapseAt: "2026-06-10T00:00:00.000Z",
+        },
+      ],
+    });
+    const { findByTestId } = render(<SourceReader />);
+    const indicator = await findByTestId("source-cluster-indicator");
+    expect(indicator.textContent).toContain("1 struggling card group");
+    expect(h.getLapseClusters).toHaveBeenCalledWith({ sourceId: "src-1" });
+    fireEvent.click(indicator);
+    expect(h.navigate).toHaveBeenCalledWith({ to: "/maintenance" });
+  });
+
+  it("hides the cluster indicator when the source has no clusters (T128)", async () => {
+    const { findByTestId, queryByTestId } = render(<SourceReader />);
+    await findByTestId("reader-title");
+    await waitFor(() => expect(h.getLapseClusters).toHaveBeenCalledWith({ sourceId: "src-1" }));
+    expect(queryByTestId("source-cluster-indicator")).toBeNull();
+  });
+
+  it("pluralizes the indicator and suppresses it silently on a fetch error (T128)", async () => {
+    const cluster = (id: string, block: string) => ({
+      ancestorId: id,
+      sourceId: "src-1",
+      sourceTitle: "Reader source",
+      region: { sourceElementId: "src-1", blockIds: [block], label: "¶1", page: null },
+      members: [{ cardId: `c-${id}`, prompt: "Q", windowLapseCount: 3 }],
+      totalWindowLapses: 3,
+      affectedCardCount: 2,
+      strength: 9,
+      mostRecentLapseAt: "2026-06-10T00:00:00.000Z",
+    });
+    h.getLapseClusters.mockResolvedValue({
+      asOf: "",
+      windowDays: 30,
+      clusters: [cluster("e1", "b1"), cluster("e2", "b2")],
+    });
+    const plural = render(<SourceReader />);
+    expect((await plural.findByTestId("source-cluster-indicator")).textContent).toContain(
+      "2 struggling card groups",
+    );
+    plural.unmount();
+
+    // A fetch rejection is swallowed — no indicator, no thrown error in the reading surface.
+    h.getLapseClusters.mockRejectedValue(new Error("ipc down"));
+    const errored = render(<SourceReader />);
+    await errored.findByTestId("reader-title");
+    await waitFor(() => expect(h.getLapseClusters).toHaveBeenCalledWith({ sourceId: "src-1" }));
+    expect(errored.queryByTestId("source-cluster-indicator")).toBeNull();
   });
 
   it("sets read-points and soft-deletes through the bridge", async () => {

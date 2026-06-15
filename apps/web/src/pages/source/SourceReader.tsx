@@ -154,8 +154,52 @@ function SourceHeader({ actions, data }: { data: InspectorData | null; actions?:
           </>
         ) : null}
       </div>
+      <SourceClusterIndicator sourceId={data?.element.id ?? null} />
       {actions ? <div className="reader-actions">{actions}</div> : null}
     </header>
+  );
+}
+
+/**
+ * A quiet "N struggling card groups" line (T128) below the source metadata, above the
+ * action bar. Read-only navigation into the maintenance cluster list. Renders NOTHING at
+ * 0 clusters, while loading, or on error (the "quiet help, not alarm" tone) — and never
+ * reserves layout, so a clean source page is unchanged. A stale-response guard keyed on
+ * `sourceId` keeps a slow A→B navigation from flashing A's count on B.
+ */
+function SourceClusterIndicator({ sourceId }: { sourceId: string | null }) {
+  const navigate = useNavigate();
+  const [count, setCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!sourceId || !isDesktop()) {
+      setCount(null);
+      return;
+    }
+    let active = true;
+    setCount(null);
+    void appApi.getLapseClusters({ sourceId }).then(
+      (res) => {
+        if (active) setCount(res.clusters.length);
+      },
+      () => {
+        if (active) setCount(0); // suppress infra errors silently in a reading surface
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [sourceId]);
+  if (!count) return null; // null (loading) or 0 → render nothing, no reserved slot
+  return (
+    <button
+      type="button"
+      className="reader-clusters"
+      data-testid="source-cluster-indicator"
+      onClick={() => void navigate({ to: "/maintenance" })}
+    >
+      <Icon name="layers" size={13} />
+      {count === 1 ? "1 struggling card group" : `${count} struggling card groups`}
+    </button>
   );
 }
 
