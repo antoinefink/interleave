@@ -118,6 +118,11 @@ import type {
   QueueVacationRequest,
   ReadPointGetRequest,
   ReadPointSetRequest,
+  RereadProposalsAcceptRequest,
+  RereadProposalsDismissRequest,
+  RereadProposalsItemRequest,
+  RereadProposalsListRequest,
+  RereadProposalsUndoAcceptRequest,
   RetentionResolveForRequest,
   RetentionSetBandEnabledRequest,
   RetentionSetBandRequest,
@@ -597,6 +602,18 @@ const appApi: AppApi = {
   lapseClusters: {
     list: (request?: LapseClustersListRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.lapseClusters, request),
+  },
+  rereadProposals: {
+    list: (request?: RereadProposalsListRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.rereadProposalsList, request),
+    item: (request: RereadProposalsItemRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.rereadProposalsItem, request),
+    accept: (request: RereadProposalsAcceptRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.rereadProposalsAccept, request),
+    dismiss: (request: RereadProposalsDismissRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.rereadProposalsDismiss, request),
+    undoAccept: (request: RereadProposalsUndoAcceptRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.rereadProposalsUndoAccept, request),
   },
   extractStagnation: {
     list: (request?: ExtractStagnationListRequest) =>

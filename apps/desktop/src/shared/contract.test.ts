@@ -314,6 +314,11 @@ describe("IPC channels", () => {
         "review:grade",
         "review:leeches",
         "lapse:clusters",
+        "rereadProposals:list",
+        "rereadProposals:item",
+        "rereadProposals:accept",
+        "rereadProposals:dismiss",
+        "rereadProposals:undoAccept",
         "review:mode:deck",
         "review:mode:count",
         "concepts:create",
@@ -522,6 +527,16 @@ describe("SettingsPatchSchema lapse-cluster fields (T128)", () => {
       lapseClusterWindowDays: 14,
       lapseClusterMinCards: 3,
     });
+  });
+
+  it("accepts in-range re-read proposal settings and rejects an out-of-range cap (T129)", () => {
+    expect(
+      SettingsPatchSchema.parse({ rereadProposalsEnabled: false, rereadProposalWeeklyCap: 3 }),
+    ).toEqual({ rereadProposalsEnabled: false, rereadProposalWeeklyCap: 3 });
+    expect(() => SettingsPatchSchema.parse({ rereadProposalWeeklyCap: 0 })).toThrow();
+    expect(() => SettingsPatchSchema.parse({ rereadProposalWeeklyCap: 11 })).toThrow();
+    // `.strict()` still rejects an unknown key.
+    expect(() => SettingsPatchSchema.parse({ bogusRereadKey: 1 })).toThrow();
   });
 
   it("rejects out-of-range lapse-cluster thresholds", () => {

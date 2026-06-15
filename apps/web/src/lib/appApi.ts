@@ -4979,6 +4979,87 @@ export interface LapseClustersListResult {
 }
 
 // ---------------------------------------------------------------------------
+// rereadProposals.*  (T129 — re-read proposals)
+// ---------------------------------------------------------------------------
+
+/** `rereadProposals.list()` request — `sourceId` scopes to one source (optional). */
+export interface RereadProposalsListRequest {
+  readonly sourceId?: string;
+}
+
+/** One surfaced proposal — a live cluster plus its dismissal state-hash. */
+export interface RereadProposalDto extends LapseClusterDto {
+  /** Passed back to `dismiss` so a stale dismissal is rejected. */
+  readonly stateHash: string;
+  readonly dismissable: boolean;
+}
+
+/** The proposal snapshot the renderer reads (strongest first, capped). */
+export interface RereadProposalsListResult {
+  readonly asOf: string;
+  /** The window (days) counts were taken over, for "in {N}d" labeling + freshness. */
+  readonly windowDays: number;
+  readonly proposals: readonly RereadProposalDto[];
+}
+
+export interface RereadProposalsItemRequest {
+  readonly taskElementId: string;
+}
+
+export interface RereadItemMemberDto {
+  readonly cardId: string;
+  readonly prompt: string;
+  readonly windowLapseCount: number;
+}
+
+export interface RereadItemRegionDto {
+  readonly sourceElementId: string;
+  readonly blockIds: readonly string[];
+  readonly label: string;
+  readonly page: number | null;
+}
+
+export interface RereadItemDetailDto {
+  readonly taskElementId: string;
+  readonly region: RereadItemRegionDto;
+  readonly members: readonly RereadItemMemberDto[];
+}
+
+/** The reader side-panel payload — `null` when the task is missing/closed/not a re-read. */
+export interface RereadProposalsItemResult {
+  readonly item: RereadItemDetailDto | null;
+}
+
+export interface RereadProposalsAcceptRequest {
+  readonly ancestorId: string;
+}
+
+export interface RereadProposalsAcceptResult {
+  readonly created: boolean;
+  readonly taskElementId: string | null;
+  readonly alreadyOpen: boolean;
+  readonly stale: boolean;
+}
+
+export interface RereadProposalsDismissRequest {
+  readonly ancestorId: string;
+  readonly stateHash: string;
+}
+
+export interface RereadProposalsDismissResult {
+  readonly dismissed: boolean;
+  readonly stale: boolean;
+}
+
+export interface RereadProposalsUndoAcceptRequest {
+  readonly taskElementId: string;
+}
+
+export interface RereadProposalsUndoAcceptResult {
+  readonly removed: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // extractStagnation.*  (T084 — extract-stagnation analytics)
 // ---------------------------------------------------------------------------
 
@@ -5409,6 +5490,13 @@ export interface AppApi {
   };
   readonly lapseClusters: {
     list(request?: LapseClustersListRequest): Promise<LapseClustersListResult>;
+  };
+  readonly rereadProposals: {
+    list(request?: RereadProposalsListRequest): Promise<RereadProposalsListResult>;
+    item(request: RereadProposalsItemRequest): Promise<RereadProposalsItemResult>;
+    accept(request: RereadProposalsAcceptRequest): Promise<RereadProposalsAcceptResult>;
+    dismiss(request: RereadProposalsDismissRequest): Promise<RereadProposalsDismissResult>;
+    undoAccept(request: RereadProposalsUndoAcceptRequest): Promise<RereadProposalsUndoAcceptResult>;
   };
   readonly extractStagnation: {
     list(request?: ExtractStagnationListRequest): Promise<ExtractStagnationListResult>;
@@ -6754,6 +6842,32 @@ export const appApi = {
    */
   getLapseClusters(request?: LapseClustersListRequest): Promise<LapseClustersListResult> {
     return requireAppApi().lapseClusters.list(request);
+  },
+  /**
+   * Re-read proposals (T129) — capped, dismissible scheduled re-read work over the T128
+   * clusters. `getRereadProposals`/`getRereadProposalItem` are read-only; `accept`/`dismiss`/
+   * `undoAccept` mutate. With `sourceId` the list scopes to one source.
+   */
+  getRereadProposals(request?: RereadProposalsListRequest): Promise<RereadProposalsListResult> {
+    return requireAppApi().rereadProposals.list(request);
+  },
+  getRereadProposalItem(request: RereadProposalsItemRequest): Promise<RereadProposalsItemResult> {
+    return requireAppApi().rereadProposals.item(request);
+  },
+  acceptRereadProposal(
+    request: RereadProposalsAcceptRequest,
+  ): Promise<RereadProposalsAcceptResult> {
+    return requireAppApi().rereadProposals.accept(request);
+  },
+  dismissRereadProposal(
+    request: RereadProposalsDismissRequest,
+  ): Promise<RereadProposalsDismissResult> {
+    return requireAppApi().rereadProposals.dismiss(request);
+  },
+  undoAcceptRereadProposal(
+    request: RereadProposalsUndoAcceptRequest,
+  ): Promise<RereadProposalsUndoAcceptResult> {
+    return requireAppApi().rereadProposals.undoAccept(request);
   },
   /**
    * The extract-stagnation scan (T084) — every live extract that keeps returning

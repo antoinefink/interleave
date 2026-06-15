@@ -175,8 +175,7 @@ function parseBlockIds(raw: string): string[] {
 /** Whether an error is the `tasks_open_link_type_uq` (one-open-per-region) unique violation. */
 function isOpenRereadUniqueViolation(err: unknown): boolean {
   return (
-    err instanceof Error &&
-    /UNIQUE constraint failed|tasks_open_link_type_uq/i.test(err.message)
+    err instanceof Error && /UNIQUE constraint failed|tasks_open_link_type_uq/i.test(err.message)
   );
 }
 

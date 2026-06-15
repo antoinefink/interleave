@@ -324,6 +324,16 @@ import type {
   ReadPointSetRequest,
   ReadPointSetResult,
   RecoveryApplyResult,
+  RereadProposalsAcceptRequest,
+  RereadProposalsAcceptResult,
+  RereadProposalsDismissRequest,
+  RereadProposalsDismissResult,
+  RereadProposalsItemRequest,
+  RereadProposalsItemResult,
+  RereadProposalsListRequest,
+  RereadProposalsListResult,
+  RereadProposalsUndoAcceptRequest,
+  RereadProposalsUndoAcceptResult,
   RetentionGetResult,
   RetentionResolveForRequest,
   RetentionResolveForResult,
@@ -6537,6 +6547,79 @@ export class DbService {
       ...(request?.limit !== undefined ? { limit: request.limit } : {}),
     });
     return { asOf, windowDays: settings.lapseClusterWindowDays, clusters };
+  }
+
+  /**
+   * Re-read proposals (T129) — capped, dismissible scheduled re-read work over the T128
+   * clusters. The feature toggle, surfacing cap, and cluster thresholds resolve HERE from
+   * settings. Read-only — no mutation, no `operation_log`. With `sourceId` it scopes to one
+   * source (the source-page indicator).
+   */
+  listRereadProposals(request?: RereadProposalsListRequest): RereadProposalsListResult {
+    const settings = this.repos.settings.getAppSettings();
+    const asOf = nowIso() as IsoTimestamp;
+    const proposals = this.repos.rereadProposals.listProposals({
+      asOf,
+      enabled: settings.rereadProposalsEnabled,
+      cap: settings.rereadProposalWeeklyCap,
+      thresholds: {
+        minLapses: settings.lapseClusterMinLapses,
+        windowDays: settings.lapseClusterWindowDays,
+        minCards: settings.lapseClusterMinCards,
+      },
+      ...(request?.sourceId ? { sourceId: request.sourceId as ElementId } : {}),
+    });
+    return { asOf, windowDays: settings.lapseClusterWindowDays, proposals };
+  }
+
+  /** The reader side-panel payload (region + live failing cards) for a re-read item (T129). */
+  rereadProposalItem(request: RereadProposalsItemRequest): RereadProposalsItemResult {
+    const settings = this.repos.settings.getAppSettings();
+    const asOf = nowIso() as IsoTimestamp;
+    const item = this.repos.rereadProposals.itemDetail({
+      taskElementId: request.taskElementId as ElementId,
+      asOf,
+      windowDays: settings.lapseClusterWindowDays,
+    });
+    return { item };
+  }
+
+  /** Accept a re-read proposal — schedule the `reread_region` task (op-logged) (T129). */
+  acceptRereadProposal(request: RereadProposalsAcceptRequest): RereadProposalsAcceptResult {
+    const settings = this.repos.settings.getAppSettings();
+    const asOf = nowIso() as IsoTimestamp;
+    return this.repos.rereadProposals.accept({
+      ancestorId: request.ancestorId as ElementId,
+      asOf,
+      thresholds: {
+        minLapses: settings.lapseClusterMinLapses,
+        windowDays: settings.lapseClusterWindowDays,
+        minCards: settings.lapseClusterMinCards,
+      },
+    });
+  }
+
+  /** Dismiss a re-read proposal — remember the cluster's state-hash (op-logged) (T129). */
+  dismissRereadProposal(request: RereadProposalsDismissRequest): RereadProposalsDismissResult {
+    const settings = this.repos.settings.getAppSettings();
+    const asOf = nowIso() as IsoTimestamp;
+    return this.repos.rereadProposals.dismiss({
+      ancestorId: request.ancestorId as ElementId,
+      stateHash: request.stateHash,
+      asOf,
+      thresholds: {
+        minLapses: settings.lapseClusterMinLapses,
+        windowDays: settings.lapseClusterWindowDays,
+        minCards: settings.lapseClusterMinCards,
+      },
+    });
+  }
+
+  /** Reverse an accept by soft-deleting the re-read task element (op-logged) (T129). */
+  undoAcceptRereadProposal(
+    request: RereadProposalsUndoAcceptRequest,
+  ): RereadProposalsUndoAcceptResult {
+    return this.repos.rereadProposals.undoAccept(request.taskElementId as ElementId);
   }
 
   /**

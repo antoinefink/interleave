@@ -355,6 +355,8 @@ export {
   PARKED_RESURFACE_AFTER_DAYS_MAX,
   PARKED_RESURFACE_AFTER_DAYS_MIN,
   projectToRendererSettings,
+  REREAD_PROPOSAL_WEEKLY_CAP_MAX,
+  REREAD_PROPOSAL_WEEKLY_CAP_MIN,
   SETTINGS_KEYS,
   settingsPatchToStored,
   sourcePriorityFromLabel,

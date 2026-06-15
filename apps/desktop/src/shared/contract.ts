@@ -75,6 +75,8 @@ import {
   PARKED_RESURFACE_AFTER_DAYS_MIN,
   type PriorityLabel,
   RELIABILITY_TIERS,
+  REREAD_PROPOSAL_WEEKLY_CAP_MAX,
+  REREAD_PROPOSAL_WEEKLY_CAP_MIN,
   REVIEW_RATINGS,
   type ReliabilityTier,
   type RendererSettings,
@@ -299,6 +301,12 @@ export const SettingsPatchSchema = z
       .int()
       .min(LAPSE_CLUSTER_MIN_CARDS_MIN)
       .max(LAPSE_CLUSTER_MIN_CARDS_MAX),
+    rereadProposalsEnabled: z.boolean(),
+    rereadProposalWeeklyCap: z
+      .number()
+      .int()
+      .min(REREAD_PROPOSAL_WEEKLY_CAP_MIN)
+      .max(REREAD_PROPOSAL_WEEKLY_CAP_MAX),
     weeklyReviewEnabled: z.boolean(),
     weeklyReviewCadenceDays: z
       .number()
@@ -7236,6 +7244,107 @@ export interface LapseClustersListResult {
 }
 
 // ---------------------------------------------------------------------------
+// rereadProposals.*  (T129 — re-read proposals)
+// ---------------------------------------------------------------------------
+
+/**
+ * Re-read proposals (T129) — a detected lapse cluster (T128) turned into capped, dismissible
+ * scheduled re-read work. `list`/`item` are READ-ONLY (no mutation, no `operation_log`);
+ * `accept` schedules a system-owned `reread_region` task (reversal = `undoAccept` soft-delete),
+ * `dismiss` remembers the cluster's state-hash. Thresholds + the surfacing cap resolve main-side
+ * from settings.
+ */
+export const RereadProposalsListRequestSchema = z
+  .object({
+    /** Restrict to proposals whose region points into THIS source. */
+    sourceId: ElementIdSchema.optional(),
+  })
+  .optional();
+export type RereadProposalsListRequest = z.infer<typeof RereadProposalsListRequestSchema>;
+
+/** One surfaced proposal — a live cluster plus its dismissal state-hash. */
+export interface RereadProposalDto extends LapseClusterDto {
+  /** The cluster state-hash; passed back to `dismiss` so a stale dismissal is rejected. */
+  readonly stateHash: string;
+  /** Always `true` for a surfaced proposal — the dismiss affordance gate. */
+  readonly dismissable: boolean;
+}
+
+/** The proposal snapshot the renderer reads (strongest first, capped). */
+export interface RereadProposalsListResult {
+  readonly asOf: string;
+  /** The window (days) counts were taken over, for "in {N}d" labeling + freshness. */
+  readonly windowDays: number;
+  readonly proposals: readonly RereadProposalDto[];
+}
+
+export const RereadProposalsItemRequestSchema = z.object({
+  taskElementId: ElementIdSchema,
+});
+export type RereadProposalsItemRequest = z.infer<typeof RereadProposalsItemRequestSchema>;
+
+export interface RereadItemMemberDto {
+  readonly cardId: string;
+  readonly prompt: string;
+  /** Current true in-window lapse increments (re-derived live; 0 if the card recovered). */
+  readonly windowLapseCount: number;
+}
+
+export interface RereadItemRegionDto {
+  readonly sourceElementId: string;
+  readonly blockIds: readonly string[];
+  readonly label: string;
+  readonly page: number | null;
+}
+
+export interface RereadItemDetailDto {
+  readonly taskElementId: string;
+  readonly region: RereadItemRegionDto;
+  readonly members: readonly RereadItemMemberDto[];
+}
+
+/** The reader side-panel payload — `null` when the task is missing/closed/not a re-read. */
+export interface RereadProposalsItemResult {
+  readonly item: RereadItemDetailDto | null;
+}
+
+export const RereadProposalsAcceptRequestSchema = z.object({
+  ancestorId: ElementIdSchema,
+});
+export type RereadProposalsAcceptRequest = z.infer<typeof RereadProposalsAcceptRequestSchema>;
+
+export interface RereadProposalsAcceptResult {
+  readonly created: boolean;
+  readonly taskElementId: string | null;
+  /** The region already has an open re-read item. */
+  readonly alreadyOpen: boolean;
+  /** The cluster no longer crosses the floor (cards recovered). */
+  readonly stale: boolean;
+}
+
+export const RereadProposalsDismissRequestSchema = z.object({
+  ancestorId: ElementIdSchema,
+  stateHash: z.string().trim().min(1).max(512),
+});
+export type RereadProposalsDismissRequest = z.infer<typeof RereadProposalsDismissRequestSchema>;
+
+export interface RereadProposalsDismissResult {
+  readonly dismissed: boolean;
+  readonly stale: boolean;
+}
+
+export const RereadProposalsUndoAcceptRequestSchema = z.object({
+  taskElementId: ElementIdSchema,
+});
+export type RereadProposalsUndoAcceptRequest = z.infer<
+  typeof RereadProposalsUndoAcceptRequestSchema
+>;
+
+export interface RereadProposalsUndoAcceptResult {
+  readonly removed: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // extractStagnation.list()  (T084 — extract-stagnation analytics)
 // ---------------------------------------------------------------------------
 
@@ -8345,6 +8454,18 @@ export interface AppApi {
      * Read-only (no mutation, no `operation_log`, no schedule change).
      */
     list(request?: LapseClustersListRequest): Promise<LapseClustersListResult>;
+  };
+  readonly rereadProposals: {
+    /** Capped, dismissible re-read proposals (T129) — read-only, strongest-first. */
+    list(request?: RereadProposalsListRequest): Promise<RereadProposalsListResult>;
+    /** The reader side-panel payload (region + live failing cards) for a re-read item. */
+    item(request: RereadProposalsItemRequest): Promise<RereadProposalsItemResult>;
+    /** Schedule a re-read item for a cluster (op-logged). */
+    accept(request: RereadProposalsAcceptRequest): Promise<RereadProposalsAcceptResult>;
+    /** Remember a dismissal against the cluster's state-hash (op-logged). */
+    dismiss(request: RereadProposalsDismissRequest): Promise<RereadProposalsDismissResult>;
+    /** Reverse an accept by soft-deleting the re-read task (op-logged). */
+    undoAccept(request: RereadProposalsUndoAcceptRequest): Promise<RereadProposalsUndoAcceptResult>;
   };
   readonly extractStagnation: {
     /**

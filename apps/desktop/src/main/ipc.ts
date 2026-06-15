@@ -131,6 +131,11 @@ import {
   QueueVacationRequestSchema,
   ReadPointGetRequestSchema,
   ReadPointSetRequestSchema,
+  RereadProposalsAcceptRequestSchema,
+  RereadProposalsDismissRequestSchema,
+  RereadProposalsItemRequestSchema,
+  RereadProposalsListRequestSchema,
+  RereadProposalsUndoAcceptRequestSchema,
   RetentionGetRequestSchema,
   RetentionResolveForRequestSchema,
   RetentionSetBandEnabledRequestSchema,
@@ -1039,6 +1044,28 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.lapseClusters, (_event, rawRequest: unknown) => {
     const request = LapseClustersListRequestSchema.parse(rawRequest);
     return dbService.listLapseClusters(request);
+  });
+
+  // Re-read proposals (T129). `list`/`item` read-only; `accept`/`dismiss`/`undoAccept` mutate.
+  ipcMain.handle(IPC_CHANNELS.rereadProposalsList, (_event, rawRequest: unknown) => {
+    const request = RereadProposalsListRequestSchema.parse(rawRequest);
+    return dbService.listRereadProposals(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.rereadProposalsItem, (_event, rawRequest: unknown) => {
+    const request = RereadProposalsItemRequestSchema.parse(rawRequest);
+    return dbService.rereadProposalItem(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.rereadProposalsAccept, (_event, rawRequest: unknown) => {
+    const request = RereadProposalsAcceptRequestSchema.parse(rawRequest);
+    return dbService.acceptRereadProposal(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.rereadProposalsDismiss, (_event, rawRequest: unknown) => {
+    const request = RereadProposalsDismissRequestSchema.parse(rawRequest);
+    return dbService.dismissRereadProposal(request);
+  });
+  ipcMain.handle(IPC_CHANNELS.rereadProposalsUndoAccept, (_event, rawRequest: unknown) => {
+    const request = RereadProposalsUndoAcceptRequestSchema.parse(rawRequest);
+    return dbService.undoAcceptRereadProposal(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.triageSuggestMetadata, (_event, rawRequest: unknown) => {
