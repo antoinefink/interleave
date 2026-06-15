@@ -112,16 +112,12 @@
       "indexes": {
         "ai_suggestions_owning_idx": {
           "name": "ai_suggestions_owning_idx",
-          "columns": [
-            "owning_element_id"
-          ],
+          "columns": ["owning_element_id"],
           "isUnique": false
         },
         "ai_suggestions_status_idx": {
           "name": "ai_suggestions_status_idx",
-          "columns": [
-            "status"
-          ],
+          "columns": ["status"],
           "isUnique": false
         }
       },
@@ -130,12 +126,8 @@
           "name": "ai_suggestions_owning_element_id_elements_id_fk",
           "tableFrom": "ai_suggestions",
           "tableTo": "elements",
-          "columnsFrom": [
-            "owning_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["owning_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -143,12 +135,8 @@
           "name": "ai_suggestions_source_element_id_elements_id_fk",
           "tableFrom": "ai_suggestions",
           "tableTo": "elements",
-          "columnsFrom": [
-            "source_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -298,30 +286,22 @@
       "indexes": {
         "cards_source_location_idx": {
           "name": "cards_source_location_idx",
-          "columns": [
-            "source_location_id"
-          ],
+          "columns": ["source_location_id"],
           "isUnique": false
         },
         "cards_is_leech_idx": {
           "name": "cards_is_leech_idx",
-          "columns": [
-            "is_leech"
-          ],
+          "columns": ["is_leech"],
           "isUnique": false
         },
         "cards_is_retired_idx": {
           "name": "cards_is_retired_idx",
-          "columns": [
-            "is_retired"
-          ],
+          "columns": ["is_retired"],
           "isUnique": false
         },
         "cards_review_by_idx": {
           "name": "cards_review_by_idx",
-          "columns": [
-            "review_by"
-          ],
+          "columns": ["review_by"],
           "isUnique": false
         }
       },
@@ -330,12 +310,8 @@
           "name": "cards_element_id_elements_id_fk",
           "tableFrom": "cards",
           "tableTo": "elements",
-          "columnsFrom": [
-            "element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -343,12 +319,8 @@
           "name": "cards_source_location_id_source_locations_id_fk",
           "tableFrom": "cards",
           "tableTo": "source_locations",
-          "columnsFrom": [
-            "source_location_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_location_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -569,16 +541,12 @@
       "indexes": {
         "review_logs_element_idx": {
           "name": "review_logs_element_idx",
-          "columns": [
-            "element_id"
-          ],
+          "columns": ["element_id"],
           "isUnique": false
         },
         "review_logs_reviewed_idx": {
           "name": "review_logs_reviewed_idx",
-          "columns": [
-            "reviewed_at"
-          ],
+          "columns": ["reviewed_at"],
           "isUnique": false
         }
       },
@@ -587,12 +555,8 @@
           "name": "review_logs_element_id_elements_id_fk",
           "tableFrom": "review_logs",
           "tableTo": "elements",
-          "columnsFrom": [
-            "element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -714,9 +678,7 @@
       "indexes": {
         "review_states_due_idx": {
           "name": "review_states_due_idx",
-          "columns": [
-            "due_at"
-          ],
+          "columns": ["due_at"],
           "isUnique": false
         }
       },
@@ -725,12 +687,8 @@
           "name": "review_states_element_id_elements_id_fk",
           "tableFrom": "review_states",
           "tableTo": "elements",
-          "columnsFrom": [
-            "element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -800,17 +758,12 @@
       "indexes": {
         "document_blocks_stable_idx": {
           "name": "document_blocks_stable_idx",
-          "columns": [
-            "document_id",
-            "stable_block_id"
-          ],
+          "columns": ["document_id", "stable_block_id"],
           "isUnique": true
         },
         "document_blocks_document_idx": {
           "name": "document_blocks_document_idx",
-          "columns": [
-            "document_id"
-          ],
+          "columns": ["document_id"],
           "isUnique": false
         }
       },
@@ -819,12 +772,8 @@
           "name": "document_blocks_document_id_documents_element_id_fk",
           "tableFrom": "document_blocks",
           "tableTo": "documents",
-          "columnsFrom": [
-            "document_id"
-          ],
-          "columnsTo": [
-            "element_id"
-          ],
+          "columnsFrom": ["document_id"],
+          "columnsTo": ["element_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -882,16 +831,12 @@
       "indexes": {
         "document_marks_document_idx": {
           "name": "document_marks_document_idx",
-          "columns": [
-            "document_id"
-          ],
+          "columns": ["document_id"],
           "isUnique": false
         },
         "document_marks_block_idx": {
           "name": "document_marks_block_idx",
-          "columns": [
-            "block_id"
-          ],
+          "columns": ["block_id"],
           "isUnique": false
         }
       },
@@ -900,12 +845,8 @@
           "name": "document_marks_document_id_documents_element_id_fk",
           "tableFrom": "document_marks",
           "tableTo": "documents",
-          "columnsFrom": [
-            "document_id"
-          ],
-          "columnsTo": [
-            "element_id"
-          ],
+          "columnsFrom": ["document_id"],
+          "columnsTo": ["element_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -961,12 +902,8 @@
           "name": "documents_element_id_elements_id_fk",
           "tableFrom": "documents",
           "tableTo": "elements",
-          "columnsFrom": [
-            "element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1059,17 +996,12 @@
       "indexes": {
         "element_detach_snapshot_element_idx": {
           "name": "element_detach_snapshot_element_idx",
-          "columns": [
-            "element_id"
-          ],
+          "columns": ["element_id"],
           "isUnique": false
         },
         "element_detach_snapshot_source_block_idx": {
           "name": "element_detach_snapshot_source_block_idx",
-          "columns": [
-            "source_element_id",
-            "stable_block_id"
-          ],
+          "columns": ["source_element_id", "stable_block_id"],
           "isUnique": false
         }
       },
@@ -1078,12 +1010,8 @@
           "name": "element_detach_snapshot_element_id_elements_id_fk",
           "tableFrom": "element_detach_snapshot",
           "tableTo": "elements",
-          "columnsFrom": [
-            "element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1091,12 +1019,8 @@
           "name": "element_detach_snapshot_source_element_id_elements_id_fk",
           "tableFrom": "element_detach_snapshot",
           "tableTo": "elements",
-          "columnsFrom": [
-            "source_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1154,26 +1078,17 @@
       "indexes": {
         "element_reverify_provenance_unique_idx": {
           "name": "element_reverify_provenance_unique_idx",
-          "columns": [
-            "element_id",
-            "source_element_id",
-            "stable_block_id"
-          ],
+          "columns": ["element_id", "source_element_id", "stable_block_id"],
           "isUnique": true
         },
         "element_reverify_provenance_element_idx": {
           "name": "element_reverify_provenance_element_idx",
-          "columns": [
-            "element_id"
-          ],
+          "columns": ["element_id"],
           "isUnique": false
         },
         "element_reverify_provenance_source_block_idx": {
           "name": "element_reverify_provenance_source_block_idx",
-          "columns": [
-            "source_element_id",
-            "stable_block_id"
-          ],
+          "columns": ["source_element_id", "stable_block_id"],
           "isUnique": false
         }
       },
@@ -1182,12 +1097,8 @@
           "name": "element_reverify_provenance_element_id_elements_id_fk",
           "tableFrom": "element_reverify_provenance",
           "tableTo": "elements",
-          "columnsFrom": [
-            "element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1195,12 +1106,8 @@
           "name": "element_reverify_provenance_source_element_id_elements_id_fk",
           "tableFrom": "element_reverify_provenance",
           "tableTo": "elements",
-          "columnsFrom": [
-            "source_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1293,24 +1200,17 @@
       "indexes": {
         "source_block_processing_source_block_idx": {
           "name": "source_block_processing_source_block_idx",
-          "columns": [
-            "source_element_id",
-            "stable_block_id"
-          ],
+          "columns": ["source_element_id", "stable_block_id"],
           "isUnique": true
         },
         "source_block_processing_source_idx": {
           "name": "source_block_processing_source_idx",
-          "columns": [
-            "source_element_id"
-          ],
+          "columns": ["source_element_id"],
           "isUnique": false
         },
         "source_block_processing_state_idx": {
           "name": "source_block_processing_state_idx",
-          "columns": [
-            "state"
-          ],
+          "columns": ["state"],
           "isUnique": false
         }
       },
@@ -1319,12 +1219,8 @@
           "name": "source_block_processing_source_element_id_elements_id_fk",
           "tableFrom": "source_block_processing",
           "tableTo": "elements",
-          "columnsFrom": [
-            "source_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1394,26 +1290,17 @@
       "indexes": {
         "source_block_processing_outputs_unique_idx": {
           "name": "source_block_processing_outputs_unique_idx",
-          "columns": [
-            "source_element_id",
-            "stable_block_id",
-            "output_element_id"
-          ],
+          "columns": ["source_element_id", "stable_block_id", "output_element_id"],
           "isUnique": true
         },
         "source_block_processing_outputs_source_block_idx": {
           "name": "source_block_processing_outputs_source_block_idx",
-          "columns": [
-            "source_element_id",
-            "stable_block_id"
-          ],
+          "columns": ["source_element_id", "stable_block_id"],
           "isUnique": false
         },
         "source_block_processing_outputs_output_idx": {
           "name": "source_block_processing_outputs_output_idx",
-          "columns": [
-            "output_element_id"
-          ],
+          "columns": ["output_element_id"],
           "isUnique": false
         }
       },
@@ -1422,12 +1309,8 @@
           "name": "source_block_processing_outputs_source_element_id_elements_id_fk",
           "tableFrom": "source_block_processing_outputs",
           "tableTo": "elements",
-          "columnsFrom": [
-            "source_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1435,12 +1318,8 @@
           "name": "source_block_processing_outputs_output_element_id_elements_id_fk",
           "tableFrom": "source_block_processing_outputs",
           "tableTo": "elements",
-          "columnsFrom": [
-            "output_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["output_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1448,12 +1327,8 @@
           "name": "source_block_processing_outputs_source_location_id_source_locations_id_fk",
           "tableFrom": "source_block_processing_outputs",
           "tableTo": "source_locations",
-          "columnsFrom": [
-            "source_location_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_location_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -1616,46 +1491,32 @@
       "indexes": {
         "elements_parent_idx": {
           "name": "elements_parent_idx",
-          "columns": [
-            "parent_id"
-          ],
+          "columns": ["parent_id"],
           "isUnique": false
         },
         "elements_source_idx": {
           "name": "elements_source_idx",
-          "columns": [
-            "source_id"
-          ],
+          "columns": ["source_id"],
           "isUnique": false
         },
         "elements_type_status_idx": {
           "name": "elements_type_status_idx",
-          "columns": [
-            "type",
-            "status"
-          ],
+          "columns": ["type", "status"],
           "isUnique": false
         },
         "elements_due_idx": {
           "name": "elements_due_idx",
-          "columns": [
-            "due_at"
-          ],
+          "columns": ["due_at"],
           "isUnique": false
         },
         "elements_type_created_idx": {
           "name": "elements_type_created_idx",
-          "columns": [
-            "type",
-            "created_at"
-          ],
+          "columns": ["type", "created_at"],
           "isUnique": false
         },
         "elements_deleted_at_idx": {
           "name": "elements_deleted_at_idx",
-          "columns": [
-            "deleted_at"
-          ],
+          "columns": ["deleted_at"],
           "isUnique": false
         }
       },
@@ -1664,12 +1525,8 @@
           "name": "elements_parent_id_elements_id_fk",
           "tableFrom": "elements",
           "tableTo": "elements",
-          "columnsFrom": [
-            "parent_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["parent_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -1677,12 +1534,8 @@
           "name": "elements_source_id_elements_id_fk",
           "tableFrom": "elements",
           "tableTo": "elements",
-          "columnsFrom": [
-            "source_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -1783,23 +1636,17 @@
       "indexes": {
         "embeddings_vec_rowid_idx": {
           "name": "embeddings_vec_rowid_idx",
-          "columns": [
-            "vec_rowid"
-          ],
+          "columns": ["vec_rowid"],
           "isUnique": true
         },
         "embeddings_type_idx": {
           "name": "embeddings_type_idx",
-          "columns": [
-            "element_type"
-          ],
+          "columns": ["element_type"],
           "isUnique": false
         },
         "embeddings_model_idx": {
           "name": "embeddings_model_idx",
-          "columns": [
-            "model_id"
-          ],
+          "columns": ["model_id"],
           "isUnique": false
         }
       },
@@ -1808,12 +1655,8 @@
           "name": "embeddings_element_id_elements_id_fk",
           "tableFrom": "embeddings",
           "tableTo": "elements",
-          "columnsFrom": [
-            "element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1941,16 +1784,12 @@
       "indexes": {
         "jobs_status_idx": {
           "name": "jobs_status_idx",
-          "columns": [
-            "status"
-          ],
+          "columns": ["status"],
           "isUnique": false
         },
         "jobs_created_idx": {
           "name": "jobs_created_idx",
-          "columns": [
-            "created_at"
-          ],
+          "columns": ["created_at"],
           "isUnique": false
         }
       },
@@ -2024,16 +1863,12 @@
       "indexes": {
         "occlusion_masks_image_idx": {
           "name": "occlusion_masks_image_idx",
-          "columns": [
-            "image_element_id"
-          ],
+          "columns": ["image_element_id"],
           "isUnique": false
         },
         "occlusion_masks_card_idx": {
           "name": "occlusion_masks_card_idx",
-          "columns": [
-            "card_element_id"
-          ],
+          "columns": ["card_element_id"],
           "isUnique": true
         }
       },
@@ -2042,12 +1877,8 @@
           "name": "occlusion_masks_image_element_id_elements_id_fk",
           "tableFrom": "occlusion_masks",
           "tableTo": "elements",
-          "columnsFrom": [
-            "image_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["image_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -2055,12 +1886,8 @@
           "name": "occlusion_masks_card_element_id_elements_id_fk",
           "tableFrom": "occlusion_masks",
           "tableTo": "elements",
-          "columnsFrom": [
-            "card_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["card_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -2149,17 +1976,12 @@
       "indexes": {
         "ocr_pages_source_page_idx": {
           "name": "ocr_pages_source_page_idx",
-          "columns": [
-            "source_element_id",
-            "page"
-          ],
+          "columns": ["source_element_id", "page"],
           "isUnique": true
         },
         "ocr_pages_source_idx": {
           "name": "ocr_pages_source_idx",
-          "columns": [
-            "source_element_id"
-          ],
+          "columns": ["source_element_id"],
           "isUnique": false
         }
       },
@@ -2168,12 +1990,8 @@
           "name": "ocr_pages_source_element_id_elements_id_fk",
           "tableFrom": "ocr_pages",
           "tableTo": "elements",
-          "columnsFrom": [
-            "source_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -2181,12 +1999,8 @@
           "name": "ocr_pages_source_location_id_source_locations_id_fk",
           "tableFrom": "ocr_pages",
           "tableTo": "source_locations",
-          "columnsFrom": [
-            "source_location_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_location_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -2242,9 +2056,7 @@
       "indexes": {
         "concepts_parent_idx": {
           "name": "concepts_parent_idx",
-          "columns": [
-            "parent_concept_id"
-          ],
+          "columns": ["parent_concept_id"],
           "isUnique": false
         }
       },
@@ -2253,12 +2065,8 @@
           "name": "concepts_id_elements_id_fk",
           "tableFrom": "concepts",
           "tableTo": "elements",
-          "columnsFrom": [
-            "id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -2266,12 +2074,8 @@
           "name": "concepts_parent_concept_id_concepts_id_fk",
           "tableFrom": "concepts",
           "tableTo": "concepts",
-          "columnsFrom": [
-            "parent_concept_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["parent_concept_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -2301,9 +2105,7 @@
       "indexes": {
         "element_tags_tag_idx": {
           "name": "element_tags_tag_idx",
-          "columns": [
-            "tag_id"
-          ],
+          "columns": ["tag_id"],
           "isUnique": false
         }
       },
@@ -2312,12 +2114,8 @@
           "name": "element_tags_element_id_elements_id_fk",
           "tableFrom": "element_tags",
           "tableTo": "elements",
-          "columnsFrom": [
-            "element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -2325,22 +2123,15 @@
           "name": "element_tags_tag_id_tags_id_fk",
           "tableFrom": "element_tags",
           "tableTo": "tags",
-          "columnsFrom": [
-            "tag_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["tag_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {
         "element_tags_element_id_tag_id_pk": {
-          "columns": [
-            "element_id",
-            "tag_id"
-          ],
+          "columns": ["element_id", "tag_id"],
           "name": "element_tags_element_id_tag_id_pk"
         }
       },
@@ -2368,9 +2159,7 @@
       "indexes": {
         "tags_name_unique": {
           "name": "tags_name_unique",
-          "columns": [
-            "name"
-          ],
+          "columns": ["name"],
           "isUnique": true
         }
       },
@@ -2428,32 +2217,23 @@
       "indexes": {
         "tasks_due_idx": {
           "name": "tasks_due_idx",
-          "columns": [
-            "due_at"
-          ],
+          "columns": ["due_at"],
           "isUnique": false
         },
         "tasks_linked_element_idx": {
           "name": "tasks_linked_element_idx",
-          "columns": [
-            "linked_element_id"
-          ],
+          "columns": ["linked_element_id"],
           "isUnique": false
         },
         "tasks_open_link_type_uq": {
           "name": "tasks_open_link_type_uq",
-          "columns": [
-            "linked_element_id",
-            "task_type"
-          ],
+          "columns": ["linked_element_id", "task_type"],
           "isUnique": true,
           "where": "status NOT IN ('done', 'parked', 'dismissed', 'deleted')"
         },
         "tasks_open_weekly_review_uq": {
           "name": "tasks_open_weekly_review_uq",
-          "columns": [
-            "task_type"
-          ],
+          "columns": ["task_type"],
           "isUnique": true,
           "where": "task_type = 'weekly_review' AND status NOT IN ('done', 'parked', 'dismissed', 'deleted')"
         }
@@ -2463,12 +2243,8 @@
           "name": "tasks_element_id_elements_id_fk",
           "tableFrom": "tasks",
           "tableTo": "elements",
-          "columnsFrom": [
-            "element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -2476,12 +2252,8 @@
           "name": "tasks_linked_element_id_elements_id_fk",
           "tableFrom": "tasks",
           "tableTo": "elements",
-          "columnsFrom": [
-            "linked_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["linked_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -2548,23 +2320,17 @@
       "indexes": {
         "element_relations_from_idx": {
           "name": "element_relations_from_idx",
-          "columns": [
-            "from_element_id"
-          ],
+          "columns": ["from_element_id"],
           "isUnique": false
         },
         "element_relations_to_idx": {
           "name": "element_relations_to_idx",
-          "columns": [
-            "to_element_id"
-          ],
+          "columns": ["to_element_id"],
           "isUnique": false
         },
         "element_relations_sibling_idx": {
           "name": "element_relations_sibling_idx",
-          "columns": [
-            "sibling_group_id"
-          ],
+          "columns": ["sibling_group_id"],
           "isUnique": false
         }
       },
@@ -2573,12 +2339,8 @@
           "name": "element_relations_from_element_id_elements_id_fk",
           "tableFrom": "element_relations",
           "tableTo": "elements",
-          "columnsFrom": [
-            "from_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["from_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -2586,12 +2348,8 @@
           "name": "element_relations_to_element_id_elements_id_fk",
           "tableFrom": "element_relations",
           "tableTo": "elements",
-          "columnsFrom": [
-            "to_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["to_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -2655,9 +2413,7 @@
       "indexes": {
         "read_points_element_idx": {
           "name": "read_points_element_idx",
-          "columns": [
-            "element_id"
-          ],
+          "columns": ["element_id"],
           "isUnique": false
         }
       },
@@ -2666,12 +2422,8 @@
           "name": "read_points_element_id_elements_id_fk",
           "tableFrom": "read_points",
           "tableTo": "elements",
-          "columnsFrom": [
-            "element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -2679,12 +2431,8 @@
           "name": "read_points_document_id_documents_element_id_fk",
           "tableFrom": "read_points",
           "tableTo": "documents",
-          "columnsFrom": [
-            "document_id"
-          ],
-          "columnsTo": [
-            "element_id"
-          ],
+          "columnsFrom": ["document_id"],
+          "columnsTo": ["element_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -2784,16 +2532,12 @@
       "indexes": {
         "source_locations_element_idx": {
           "name": "source_locations_element_idx",
-          "columns": [
-            "element_id"
-          ],
+          "columns": ["element_id"],
           "isUnique": false
         },
         "source_locations_source_idx": {
           "name": "source_locations_source_idx",
-          "columns": [
-            "source_element_id"
-          ],
+          "columns": ["source_element_id"],
           "isUnique": false
         }
       },
@@ -2802,12 +2546,8 @@
           "name": "source_locations_element_id_elements_id_fk",
           "tableFrom": "source_locations",
           "tableTo": "elements",
-          "columnsFrom": [
-            "element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -2815,12 +2555,8 @@
           "name": "source_locations_source_element_id_elements_id_fk",
           "tableFrom": "source_locations",
           "tableTo": "elements",
-          "columnsFrom": [
-            "source_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -2941,9 +2677,7 @@
       "indexes": {
         "sources_canonical_url_idx": {
           "name": "sources_canonical_url_idx",
-          "columns": [
-            "canonical_url"
-          ],
+          "columns": ["canonical_url"],
           "isUnique": false
         }
       },
@@ -2952,12 +2686,8 @@
           "name": "sources_element_id_elements_id_fk",
           "tableFrom": "sources",
           "tableTo": "elements",
-          "columnsFrom": [
-            "element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -3074,16 +2804,12 @@
       "indexes": {
         "assets_owning_element_idx": {
           "name": "assets_owning_element_idx",
-          "columns": [
-            "owning_element_id"
-          ],
+          "columns": ["owning_element_id"],
           "isUnique": false
         },
         "assets_content_hash_idx": {
           "name": "assets_content_hash_idx",
-          "columns": [
-            "content_hash"
-          ],
+          "columns": ["content_hash"],
           "isUnique": false
         }
       },
@@ -3092,12 +2818,8 @@
           "name": "assets_owning_element_id_elements_id_fk",
           "tableFrom": "assets",
           "tableTo": "elements",
-          "columnsFrom": [
-            "owning_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["owning_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -3164,23 +2886,17 @@
       "indexes": {
         "operation_log_element_idx": {
           "name": "operation_log_element_idx",
-          "columns": [
-            "element_id"
-          ],
+          "columns": ["element_id"],
           "isUnique": false
         },
         "operation_log_created_idx": {
           "name": "operation_log_created_idx",
-          "columns": [
-            "created_at"
-          ],
+          "columns": ["created_at"],
           "isUnique": false
         },
         "operation_log_batch_idx": {
           "name": "operation_log_batch_idx",
-          "columns": [
-            "batch_id"
-          ],
+          "columns": ["batch_id"],
           "isUnique": false,
           "where": "\"batch_id\" IS NOT NULL"
         }
@@ -3190,12 +2906,8 @@
           "name": "operation_log_element_id_elements_id_fk",
           "tableFrom": "operation_log",
           "tableTo": "elements",
-          "columnsFrom": [
-            "element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["element_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -3251,9 +2963,7 @@
       "indexes": {
         "reread_proposal_dismissals_hash_idx": {
           "name": "reread_proposal_dismissals_hash_idx",
-          "columns": [
-            "state_hash"
-          ],
+          "columns": ["state_hash"],
           "isUnique": false
         }
       },
@@ -3262,12 +2972,8 @@
           "name": "reread_proposal_dismissals_ancestor_id_elements_id_fk",
           "tableFrom": "reread_proposal_dismissals",
           "tableTo": "elements",
-          "columnsFrom": [
-            "ancestor_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["ancestor_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -3304,9 +3010,7 @@
       "indexes": {
         "retirement_suggestion_dismissals_hash_idx": {
           "name": "retirement_suggestion_dismissals_hash_idx",
-          "columns": [
-            "signal_hash"
-          ],
+          "columns": ["signal_hash"],
           "isUnique": false
         }
       },
@@ -3315,12 +3019,8 @@
           "name": "retirement_suggestion_dismissals_source_element_id_elements_id_fk",
           "tableFrom": "retirement_suggestion_dismissals",
           "tableTo": "elements",
-          "columnsFrom": [
-            "source_element_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["source_element_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }

@@ -231,8 +231,14 @@ describe("RereadProposalService.listProposals", () => {
 
     const [p] = svc.listProposals(listInput());
     if (!p) throw new Error("expected proposal");
-    expect(svc.dismiss({ ancestorId: extract, stateHash: p.stateHash, asOf: AS_OF, thresholds: THRESHOLDS }))
-      .toEqual({ dismissed: true, stale: false });
+    expect(
+      svc.dismiss({
+        ancestorId: extract,
+        stateHash: p.stateHash,
+        asOf: AS_OF,
+        thresholds: THRESHOLDS,
+      }),
+    ).toEqual({ dismissed: true, stale: false });
     expect(svc.listProposals(listInput())).toHaveLength(0);
 
     // Sub-band worsening (total 6 -> 7, still floor(./5) === 1) stays suppressed.
@@ -252,7 +258,12 @@ describe("RereadProposalService.listProposals", () => {
     const svc = service();
     const [p] = svc.listProposals(listInput());
     if (!p) throw new Error("expected proposal");
-    svc.dismiss({ ancestorId: extract, stateHash: p.stateHash, asOf: AS_OF, thresholds: THRESHOLDS });
+    svc.dismiss({
+      ancestorId: extract,
+      stateHash: p.stateHash,
+      asOf: AS_OF,
+      thresholds: THRESHOLDS,
+    });
     expect(svc.listProposals(listInput())).toHaveLength(0);
 
     const newCard = seedCard({ parentId: extract, sourceId: source, prompt: "new" });
@@ -381,7 +392,9 @@ describe("RereadProposalService.accept", () => {
     const source = seedSource("Source");
     const { extract } = seedCluster(source, { cardCount: 3, lapsesPerCard: 2 });
     const svc = service();
-    expect(svc.accept({ ancestorId: extract, asOf: AS_OF, thresholds: THRESHOLDS }).created).toBe(true);
+    expect(svc.accept({ ancestorId: extract, asOf: AS_OF, thresholds: THRESHOLDS }).created).toBe(
+      true,
+    );
     expect(svc.accept({ ancestorId: extract, asOf: AS_OF, thresholds: THRESHOLDS })).toEqual({
       created: false,
       taskElementId: null,
@@ -418,12 +431,22 @@ describe("RereadProposalService.accept", () => {
       return original(...args);
     }) as typeof repo.addRelationWithin;
 
-    const tasksBefore = (handle.sqlite.prepare("SELECT count(*) AS n FROM tasks").get() as { n: number }).n;
-    expect(() => svc.accept({ ancestorId: extract, asOf: AS_OF, thresholds: THRESHOLDS })).toThrow("boom");
-    const tasksAfter = (handle.sqlite.prepare("SELECT count(*) AS n FROM tasks").get() as { n: number }).n;
+    const tasksBefore = (
+      handle.sqlite.prepare("SELECT count(*) AS n FROM tasks").get() as { n: number }
+    ).n;
+    expect(() => svc.accept({ ancestorId: extract, asOf: AS_OF, thresholds: THRESHOLDS })).toThrow(
+      "boom",
+    );
+    const tasksAfter = (
+      handle.sqlite.prepare("SELECT count(*) AS n FROM tasks").get() as { n: number }
+    ).n;
     expect(tasksAfter).toBe(tasksBefore); // no orphan task row
     expect(
-      (handle.sqlite.prepare("SELECT count(*) AS n FROM elements WHERE type='task'").get() as { n: number }).n,
+      (
+        handle.sqlite.prepare("SELECT count(*) AS n FROM elements WHERE type='task'").get() as {
+          n: number;
+        }
+      ).n,
     ).toBe(0); // no orphan task element
   });
 });
@@ -439,7 +462,9 @@ describe("RereadProposalService.undoAccept", () => {
     expect(svc.undoAccept(taskId)).toEqual({ removed: true });
     expect(svc.itemDetail({ taskElementId: taskId, asOf: AS_OF, windowDays: 30 })).toBeNull();
     // Region freed -> a fresh accept succeeds again.
-    expect(svc.accept({ ancestorId: extract, asOf: AS_OF, thresholds: THRESHOLDS }).created).toBe(true);
+    expect(svc.accept({ ancestorId: extract, asOf: AS_OF, thresholds: THRESHOLDS }).created).toBe(
+      true,
+    );
   });
 });
 
@@ -451,11 +476,23 @@ describe("RereadProposalService.dismiss", () => {
     const [p] = svc.listProposals(listInput());
     if (!p) throw new Error("expected proposal");
 
-    expect(svc.dismiss({ ancestorId: extract, stateHash: "v1:wrong", asOf: AS_OF, thresholds: THRESHOLDS }))
-      .toEqual({ dismissed: false, stale: true });
+    expect(
+      svc.dismiss({
+        ancestorId: extract,
+        stateHash: "v1:wrong",
+        asOf: AS_OF,
+        thresholds: THRESHOLDS,
+      }),
+    ).toEqual({ dismissed: false, stale: true });
 
-    expect(svc.dismiss({ ancestorId: extract, stateHash: p.stateHash, asOf: AS_OF, thresholds: THRESHOLDS }))
-      .toEqual({ dismissed: true, stale: false });
+    expect(
+      svc.dismiss({
+        ancestorId: extract,
+        stateHash: p.stateHash,
+        asOf: AS_OF,
+        thresholds: THRESHOLDS,
+      }),
+    ).toEqual({ dismissed: true, stale: false });
 
     const row = handle.db
       .select()
@@ -485,7 +522,12 @@ describe("RereadProposalService — FSRS untouched", () => {
     const [p] = svc.listProposals(listInput());
     if (!p) throw new Error("expected proposal");
     const accepted = svc.accept({ ancestorId: extract, asOf: AS_OF, thresholds: THRESHOLDS });
-    svc.dismiss({ ancestorId: extract, stateHash: p.stateHash, asOf: AS_OF, thresholds: THRESHOLDS });
+    svc.dismiss({
+      ancestorId: extract,
+      stateHash: p.stateHash,
+      asOf: AS_OF,
+      thresholds: THRESHOLDS,
+    });
     svc.undoAccept(accepted.taskElementId as ElementId);
 
     expect(reviewSnapshot()).toBe(before);

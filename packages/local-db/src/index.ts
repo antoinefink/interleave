@@ -302,24 +302,6 @@ export {
   type LapseClusterQueryInput,
   type LapseClusterRegion,
 } from "./lapse-cluster-query";
-export {
-  type AcceptRereadProposalInput,
-  type AcceptRereadProposalResult,
-  type DismissRereadProposalInput,
-  type DismissRereadProposalResult,
-  type ListRereadProposalsInput,
-  REREAD_GRACE_DAYS,
-  REREAD_STATE_HASH_VERSION,
-  rereadClusterStateHash,
-  type RereadItemDetail,
-  type RereadItemDetailInput,
-  type RereadItemMember,
-  type RereadItemRegion,
-  type RereadProposal,
-  RereadProposalService,
-  type RereadProposalThresholds,
-  type UndoAcceptRereadResult,
-} from "./reread-proposal-service";
 // `lapse-cluster-score` (scoring rule) and `lapse-window` (predicate builders) are
 // package-internal — consumed only via relative imports by lapse-cluster-query and
 // descendant-health-query. They are intentionally NOT re-exported here, so the barrel does
@@ -451,6 +433,24 @@ export {
   type RelatedResult,
   RelatedService,
 } from "./related-service";
+export {
+  type AcceptRereadProposalInput,
+  type AcceptRereadProposalResult,
+  type DismissRereadProposalInput,
+  type DismissRereadProposalResult,
+  type ListRereadProposalsInput,
+  REREAD_GRACE_DAYS,
+  REREAD_STATE_HASH_VERSION,
+  type RereadItemDetail,
+  type RereadItemDetailInput,
+  type RereadItemMember,
+  type RereadItemRegion,
+  type RereadProposal,
+  RereadProposalService,
+  type RereadProposalThresholds,
+  rereadClusterStateHash,
+  type UndoAcceptRereadResult,
+} from "./reread-proposal-service";
 export { type RetentionCardResult, RetentionService } from "./retention-service";
 export {
   type DismissRetirementSuggestionResult,

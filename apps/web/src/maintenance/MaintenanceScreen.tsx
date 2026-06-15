@@ -263,7 +263,10 @@ export function MaintenanceScreen() {
         } else if (res.alreadyOpen) {
           setRereadNote({ ancestorId: proposal.ancestorId, text: "Already scheduled" });
         } else if (res.stale) {
-          setRereadNote({ ancestorId: proposal.ancestorId, text: "This group has already recovered" });
+          setRereadNote({
+            ancestorId: proposal.ancestorId,
+            text: "This group has already recovered",
+          });
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -1521,8 +1524,8 @@ function ClusterPanel({
   return (
     <div data-testid="clusters-panel">
       <p className="mt-muted mt-clusters__note">
-        Re-reading a struggling section can repair the encoding. Accept to schedule it, or dismiss
-        — dismissals stick until the group gets worse.
+        Re-reading a struggling section can repair the encoding. Accept to schedule it, or dismiss —
+        dismissals stick until the group gets worse.
       </p>
       {proposals.proposals.map((proposal) => {
         const busy = busyId === proposal.ancestorId;

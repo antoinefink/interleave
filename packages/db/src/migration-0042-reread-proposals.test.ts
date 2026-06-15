@@ -93,9 +93,7 @@ describe("migration 0042 — re-read proposals", () => {
 
       // Lineage survives the tasks rebuild — parent_id / source_id intact.
       expect(
-        handle.sqlite
-          .prepare("SELECT parent_id, source_id FROM elements WHERE id = 'ext-1'")
-          .get(),
+        handle.sqlite.prepare("SELECT parent_id, source_id FROM elements WHERE id = 'ext-1'").get(),
       ).toEqual({ parent_id: "src-1", source_id: "src-1" });
       expect(
         handle.sqlite
@@ -118,7 +116,9 @@ describe("migration 0042 — re-read proposals", () => {
 
       insertElement(handle, "ext-1", "extract");
       insertElement(handle, "rr-1", "task");
-      expect(() => insertTaskRow(handle, "rr-1", "reread_region", "scheduled", "ext-1")).not.toThrow();
+      expect(() =>
+        insertTaskRow(handle, "rr-1", "reread_region", "scheduled", "ext-1"),
+      ).not.toThrow();
 
       insertElement(handle, "bad-1", "task");
       expect(() => insertTaskRow(handle, "bad-1", "not_a_task_type")).toThrow(
@@ -137,13 +137,15 @@ describe("migration 0042 — re-read proposals", () => {
 
       // A second OPEN reread_region for the same region is rejected.
       insertElement(handle, "rr-open-2", "task");
-      expect(() => insertTaskRow(handle, "rr-open-2", "reread_region", "scheduled", "ext-1")).toThrow(
-        /tasks_open_link_type_uq|UNIQUE constraint failed/,
-      );
+      expect(() =>
+        insertTaskRow(handle, "rr-open-2", "reread_region", "scheduled", "ext-1"),
+      ).toThrow(/tasks_open_link_type_uq|UNIQUE constraint failed/);
 
       // A DONE reread_region for the same region is allowed (the index is partial).
       insertElement(handle, "rr-done", "task");
-      expect(() => insertTaskRow(handle, "rr-done", "reread_region", "done", "ext-1")).not.toThrow();
+      expect(() =>
+        insertTaskRow(handle, "rr-done", "reread_region", "done", "ext-1"),
+      ).not.toThrow();
 
       // The weekly-review singleton index is still intact after the rebuild.
       insertElement(handle, "wk-1", "task");
@@ -170,7 +172,9 @@ describe("migration 0042 — re-read proposals", () => {
         .run();
       expect(
         handle.sqlite
-          .prepare("SELECT state_hash, total_window_lapses, affected_card_count FROM reread_proposal_dismissals WHERE ancestor_id = 'anc-1'")
+          .prepare(
+            "SELECT state_hash, total_window_lapses, affected_card_count FROM reread_proposal_dismissals WHERE ancestor_id = 'anc-1'",
+          )
           .get(),
       ).toEqual({ state_hash: "v1:hash", total_window_lapses: 7, affected_card_count: 3 });
 
