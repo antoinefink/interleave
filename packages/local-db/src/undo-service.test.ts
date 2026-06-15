@@ -27,7 +27,7 @@ import {
   reviewStates,
 } from "@interleave/db";
 import { desc, eq, sql } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BlockProcessingService } from "./block-processing-service";
 import { CardEditService } from "./card-edit-service";
 import { CardService } from "./card-service";
@@ -318,6 +318,57 @@ describe("UndoService.undoLast", () => {
     expect(repos.elements.findById(a)?.dueAt).toBe(dueBefore.a);
     expect(repos.elements.findById(b)?.dueAt).toBe(dueBefore.b);
     expect(repos.elements.findById(c)?.dueAt).toBe(dueBefore.c);
+  });
+
+  it("is ATOMIC: a mid-batch inversion failure rolls back the WHOLE batch (REL-01)", () => {
+    const repos = createRepositories(handle.db);
+    const qa = new QueueActionService(handle.db);
+    const undo = new UndoService(handle.db);
+    const a = createActiveElement(handle, "Alpha");
+    const b = createActiveElement(handle, "Beta");
+    const c = createActiveElement(handle, "Gamma");
+    const origDueA = repos.elements.findById(a)?.dueAt;
+
+    // Bulk-postpone all three under one batchId → three `reschedule_element` ops, in
+    // insertion order a, b, c (so the batch inverts newest-first: c, b, a).
+    qa.bulkPostpone([a, b, c], "2026-06-15T12:00:00.000Z" as IsoTimestamp);
+    const postponed = {
+      a: repos.elements.findById(a)?.dueAt,
+      b: repos.elements.findById(b)?.dueAt,
+      c: repos.elements.findById(c)?.dueAt,
+    };
+    // Sanity: every row actually moved off its original due before we attempt undo.
+    expect(postponed.a).not.toBe(origDueA);
+    const opsAfterBatch = new OperationLogRepository(handle.db).count();
+
+    // Fault-inject a stale-row / constraint-style failure on the inversion of `a` — the
+    // OLDEST op, so it is inverted LAST. `c` and `b` invert cleanly first; in the old
+    // bare loop (N independent transactions) they would already be durably committed
+    // when `a` throws, stranding a HALF-undone batch with no compensation. The fix wraps
+    // the whole batch in ONE transaction, so the throw must roll EVERYTHING back.
+    const realReschedule = ElementRepository.prototype.rescheduleWithin;
+    const spy = vi
+      .spyOn(ElementRepository.prototype, "rescheduleWithin")
+      .mockImplementation(function (
+        this: ElementRepository,
+        ...args: Parameters<typeof realReschedule>
+      ) {
+        if (args[1] === a) throw new Error("simulated stale row during inversion");
+        return realReschedule.apply(this, args);
+      });
+
+    try {
+      expect(() => undo.undoLast()).toThrow(/simulated stale row/);
+    } finally {
+      spy.mockRestore();
+    }
+
+    // ALL-OR-NOTHING: not a single row was reverted (full rollback to the post-postpone
+    // state), and no inverting op leaked into the log — never a partial state.
+    expect(repos.elements.findById(a)?.dueAt).toBe(postponed.a);
+    expect(repos.elements.findById(b)?.dueAt).toBe(postponed.b);
+    expect(repos.elements.findById(c)?.dueAt).toBe(postponed.c);
+    expect(new OperationLogRepository(handle.db).count()).toBe(opsAfterBatch);
   });
 
   it("returns { undone: false } and mutates nothing on a non-invertible last op", () => {

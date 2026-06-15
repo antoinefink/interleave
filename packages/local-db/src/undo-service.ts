@@ -159,20 +159,28 @@ export class UndoService {
     const batchId = typeof last.payload.batchId === "string" ? last.payload.batchId : null;
     const batch = batchId ? this.collectBatch(batchId) : [last];
 
-    // Apply each inverse through the existing write paths (each appends its own
-    // inverting op). One element may appear once per op — that is fine: applying in
-    // reverse insertion order yields the correct prior state. `invert` returns `null`
-    // for a marker op that carries no usable pre-image (see {@link isInvertible}); we
-    // skip those so a batch undoes every op that DID carry a pre-image and never
-    // reports a phantom success for an op that mutated nothing.
+    // Invert every op of the batch inside ONE transaction so a multi-op (bulk) undo is
+    // ALL-OR-NOTHING: if any op's inversion throws (a stale row, a constraint
+    // violation), the whole batch rolls back instead of leaving it half-undone. The old
+    // bare loop committed N INDEPENDENT transactions (each `invertWithin` opens its own),
+    // so a throw on op K durably stranded ops 0..K-1 with no compensation (REL-01). This
+    // mirrors {@link undoBatch}. Each inverse still appends its own inverting op on the
+    // SAME `tx`, so the log stays append-only and the undo is itself redo-able. One
+    // element may appear once per op — applying in reverse insertion order yields the
+    // correct prior state. `invertWithin` returns `null` for a marker op that carries no
+    // usable pre-image (see {@link isInvertible}); we skip those so a batch undoes every
+    // op that DID carry a pre-image and never reports a phantom success for an op that
+    // mutated nothing.
     let label = "";
     let undoneCount = 0;
-    for (const op of batch) {
-      const opLabel = this.invert(op);
-      if (opLabel === null) continue;
-      undoneCount += 1;
-      if (!label && opLabel) label = opLabel;
-    }
+    this.db.transaction((tx) => {
+      for (const op of batch) {
+        const opLabel = this.invertWithin(tx, op);
+        if (opLabel === null) continue;
+        undoneCount += 1;
+        if (!label && opLabel) label = opLabel;
+      }
+    });
 
     if (undoneCount === 0) {
       return {
@@ -368,15 +376,6 @@ export class UndoService {
       .orderBy(desc(operationLog.createdAt), desc(sql`rowid`))
       .all() as RawOpRow[];
     return rows.map((row) => this.parse(row));
-  }
-
-  /**
-   * Apply the inverse of one op; returns a snackbar label, or `null` when the op was
-   * NOT actually invertible (a marker `update_element` with no usable pre-image), so
-   * `undoLast` can skip it rather than report a phantom success.
-   */
-  private invert(op: ParsedOp): string | null {
-    return this.invertWithin(this.db, op);
   }
 
   private currentDueMatchesAppliedWithin(tx: DbClient, op: ParsedOp): boolean {
