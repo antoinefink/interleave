@@ -370,5 +370,24 @@ describe("DoneIntentMenu", () => {
 
       await waitFor(() => expect(onResolved).toHaveBeenCalledWith("finished"));
     });
+
+    it("forceOpenSignal still opens the popover after the StrictMode remount cycle", async () => {
+      // handleForceOpen carries its own post-await mountedRef guard (the proactive-review
+      // nudge path), equally dead pre-fix. Bumping the signal after mount is stable.
+      const getSummary = vi.fn().mockResolvedValue(UNRESOLVED);
+      const { rerender } = render(
+        <StrictMode>
+          <DoneIntentMenu getSummary={getSummary} onResolved={vi.fn()} forceOpenSignal={0} />
+        </StrictMode>,
+      );
+
+      rerender(
+        <StrictMode>
+          <DoneIntentMenu getSummary={getSummary} onResolved={vi.fn()} forceOpenSignal={1} />
+        </StrictMode>,
+      );
+
+      expect(await screen.findByTestId("done-intent-pop")).not.toBeNull();
+    });
   });
 });

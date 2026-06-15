@@ -316,6 +316,11 @@ export function SourceReader() {
   }, []);
 
   useEffect(() => {
+    // Set on mount, clear on unmount. A cleanup-only reset leaves this `false` after
+    // React StrictMode's dev mount→unmount→remount cycle, silently no-oping the
+    // post-await `mountedRef` guards below (dropped toasts, stuck exit-busy, missing
+    // inspector data). Mirrors ReviewScreen.tsx.
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       if (flashTimerRef.current) {

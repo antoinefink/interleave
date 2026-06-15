@@ -314,5 +314,23 @@ describe("LineageDeleteMenu", () => {
 
       expect(await screen.findByTestId("lineage-delete-pop")).toBeInTheDocument();
     });
+
+    it("count-error fallthrough still deletes after the StrictMode remount cycle", async () => {
+      // The catch branch carries the same post-await mountedRef guard as the success
+      // path — it was equally dead pre-fix. Confirms the whole guarded surface recovers.
+      const actions = stubActions();
+      h.countDescendants.mockRejectedValue(new Error("boom"));
+      render(
+        <StrictMode>
+          <LineageDeleteMenu target={EXTRACT} actions={actions} />
+        </StrictMode>,
+      );
+
+      fireEvent.click(screen.getByTestId("lineage-delete-trigger"));
+
+      await waitFor(() =>
+        expect(actions.quietAfterCountError).toHaveBeenCalledWith(EXTRACT, "boom"),
+      );
+    });
   });
 });

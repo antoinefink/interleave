@@ -1212,6 +1212,10 @@ export function Settings() {
   }, [dataRestartRequired, resetPhrase]);
 
   useEffect(() => {
+    // Set on mount, clear on unmount. A cleanup-only reset leaves this `false` after
+    // React StrictMode's dev mount→unmount→remount cycle, silently dropping the
+    // post-await backup-list loader results below. Mirrors ReviewScreen.tsx.
+    mounted.current = true;
     return () => {
       mounted.current = false;
       backupListRequestId.current += 1;
