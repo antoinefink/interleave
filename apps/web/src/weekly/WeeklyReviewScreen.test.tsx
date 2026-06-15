@@ -238,6 +238,26 @@ describe("WeeklyReviewScreen", () => {
     });
   });
 
+  it("hides the success message when a failed background reload surfaces an error (no contradictory banners)", async () => {
+    // Parked apply succeeds (sets the success message), but its follow-up background
+    // reload rejects (sets the inline error). The error takes precedence — the now-stale
+    // success message must NOT render alongside the error banner.
+    h.getWeeklyReviewSummary
+      .mockResolvedValueOnce(BASE_SUMMARY)
+      .mockRejectedValueOnce(new Error("reload failed"));
+
+    render(<WeeklyReviewScreen />);
+    await screen.findByTestId("weekly-review");
+
+    fireEvent.click(screen.getByText("Queue"));
+    fireEvent.click(screen.getByText("Apply parked decisions"));
+
+    expect(await screen.findByTestId("weekly-action-error")).toBeInTheDocument();
+    expect(screen.getByText("reload failed")).toBeInTheDocument();
+    // The success message is suppressed while the error is showing.
+    expect(screen.queryByText("Applied 1 parked decisions")).toBeNull();
+  });
+
   it("renders week-over-week funnel deltas (up and ±0) when prior-window counts are present", async () => {
     render(<WeeklyReviewScreen />);
     await screen.findByTestId("weekly-review");
@@ -504,6 +524,51 @@ describe("WeeklyReviewScreen", () => {
     expect(screen.getByText("snooze failed")).toBeInTheDocument();
     // Snooze dispatches the dismiss command (with the one-day snooze) before failing.
     expect(h.dismissWeeklyReview).toHaveBeenCalledWith({ taskId: "weekly-1", snoozeDays: 1 });
+  });
+
+  it("surfaces a failed background reload after Complete inline without the full-page error", async () => {
+    // completeWeeklyReview succeeds; the follow-up background reload (the SECOND
+    // summary fetch) rejects. complete() shares the same onReload closure as the
+    // section toggles, so the error must surface inline (setActionError) and the
+    // body must stay mounted — never the full-page `weekly-error` state, never the
+    // loading placeholder. Independently verifies the complete() caller, not just
+    // the setSection path.
+    h.getWeeklyReviewSummary
+      .mockResolvedValueOnce(BASE_SUMMARY)
+      .mockRejectedValueOnce(new Error("reload failed"));
+
+    render(<WeeklyReviewScreen />);
+    await screen.findByTestId("weekly-review");
+
+    fireEvent.click(screen.getByRole("button", { name: /Complete/ }));
+
+    expect(await screen.findByTestId("weekly-action-error")).toBeInTheDocument();
+    expect(screen.getByText("reload failed")).toBeInTheDocument();
+    expect(h.completeWeeklyReview).toHaveBeenCalledWith({ taskId: "weekly-1" });
+    // Body intact, no full-page error, no loading flash.
+    expect(screen.getByTestId("weekly-review")).toBeInTheDocument();
+    expect(screen.queryByTestId("weekly-error")).toBeNull();
+    expect(screen.queryByText(/Loading weekly review/i)).toBeNull();
+  });
+
+  it("surfaces a failed background reload after Snooze inline without the full-page error", async () => {
+    // dismissWeeklyReview succeeds; its follow-up background reload rejects. Same
+    // contract as Complete above — inline error, body stays mounted.
+    h.getWeeklyReviewSummary
+      .mockResolvedValueOnce(BASE_SUMMARY)
+      .mockRejectedValueOnce(new Error("reload failed"));
+
+    render(<WeeklyReviewScreen />);
+    await screen.findByTestId("weekly-review");
+
+    fireEvent.click(screen.getByRole("button", { name: /Snooze/ }));
+
+    expect(await screen.findByTestId("weekly-action-error")).toBeInTheDocument();
+    expect(screen.getByText("reload failed")).toBeInTheDocument();
+    expect(h.dismissWeeklyReview).toHaveBeenCalledWith({ taskId: "weekly-1", snoozeDays: 1 });
+    expect(screen.getByTestId("weekly-review")).toBeInTheDocument();
+    expect(screen.queryByTestId("weekly-error")).toBeNull();
+    expect(screen.queryByText(/Loading weekly review/i)).toBeNull();
   });
 
   it("renders the matured-cards funnel delta as 'up' when this week beat the prior window", async () => {

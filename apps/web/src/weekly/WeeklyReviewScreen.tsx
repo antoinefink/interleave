@@ -116,14 +116,15 @@ export function WeeklyReviewScreen() {
     // data rendered — stale-while-revalidate — so `<WeeklyReviewBody>` never
     // unmounts and the scroll container keeps its position. Only the initial load
     // shows the full-page loading placeholder.
-    if (!opts?.background) setState({ status: "loading" });
+    const background = opts?.background ?? false;
+    if (!background) setState({ status: "loading" });
     try {
       setState({ status: "ready", data: await appApi.getWeeklyReviewSummary() });
     } catch (error) {
       // In background mode, re-throw so the calling action handler surfaces the
       // error inline via its try/catch → `setActionError`, instead of blowing the
       // mounted body away with the full-page error state.
-      if (opts?.background) throw error;
+      if (background) throw error;
       setState({
         status: "error",
         message: error instanceof Error ? error.message : String(error),
@@ -341,7 +342,7 @@ function WeeklyReviewBody({
         </div>
       </div>
 
-      {message ? <div className="wk-msg">{message}</div> : null}
+      {message && !actionError ? <div className="wk-msg">{message}</div> : null}
       {actionError ? (
         <div className="wk-msg wk-msg--error" data-testid="weekly-action-error">
           {actionError}
