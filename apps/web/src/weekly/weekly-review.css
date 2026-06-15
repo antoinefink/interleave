@@ -621,6 +621,75 @@
   margin-top: 16px;
 }
 
+/* ---------- Completed / off-state acknowledgment panel ---------- */
+/* Centered card shown when a session exists but is not due (just completed), or
+   when weekly review is turned off. Mirrors the Review/Queue empty-state panels:
+   an `--ok-soft`/`--ok` circle (neutral variant for the off state), a title, a
+   body line, and an optional next-due line. */
+.wk-complete__panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--s-3);
+  max-width: 460px;
+  margin: 0 auto;
+  padding: var(--s-9) var(--s-7);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
+}
+.wk-complete__icon {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-full);
+  flex: none;
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.wk-complete__icon--muted {
+  background: var(--surface-2);
+  color: var(--text-3);
+}
+.wk-complete__title {
+  font-size: var(--t-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  margin: 0;
+}
+.wk-complete__body {
+  font-size: var(--t-base);
+  color: var(--text-2);
+  max-width: 380px;
+  margin: 0;
+}
+.wk-complete__due {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t-sm);
+  color: var(--text-2);
+  margin: 0;
+}
+.wk-complete__due svg {
+  width: 13px;
+  height: 13px;
+  color: var(--text-3);
+}
+.wk-complete__due .mono {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+.wk-complete__actions {
+  display: flex;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+}
+
 /* inline message */
 .wk-msg {
   margin-top: 14px;

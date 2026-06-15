@@ -76,6 +76,18 @@ describe("WeeklyReviewQuery / WeeklyReviewService", () => {
     );
     const afterComplete = repos.weeklyReview.summary(NOW);
     expect(afterComplete.progress?.sections.ledger).toBe("pending");
+
+    // R7: the renderer's `!summary.due` acknowledgment gate depends on this backend contract —
+    // immediately after complete, the surfaced session must not be due and its dueAt must be in
+    // the future (the next session scheduled cadenceDays ahead).
+    expect(afterComplete.due).toBe(false);
+    expect(afterComplete.session).not.toBeNull();
+    expect(afterComplete.session?.id).not.toBe(taskId);
+    const nextDueAt = afterComplete.session?.dueAt;
+    if (!nextDueAt) throw new Error("expected next session dueAt");
+    expect(Date.parse(nextDueAt)).toBeGreaterThan(Date.parse(NOW));
+    // The fixed 7-day cadence (settings default) makes the exact next-due date deterministic.
+    expect(nextDueAt).toBe("2026-06-19T12:00:00.000Z");
   });
 
   it("repairs soft-deleted weekly rows before creating a replacement", () => {

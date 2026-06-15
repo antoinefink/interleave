@@ -96,3 +96,43 @@ describe("weekly review section state (R4)", () => {
     expect(cssBlock(".wk-sec--skipped::before")).toContain("background: var(--border-strong);");
   });
 });
+
+describe("weekly review completion / off-state panel", () => {
+  it("declares the acknowledgment-panel classes the markup depends on", () => {
+    for (const selector of [
+      ".wk-complete__panel",
+      ".wk-complete__icon",
+      ".wk-complete__icon--muted",
+      ".wk-complete__title",
+      ".wk-complete__body",
+      ".wk-complete__due",
+      ".wk-complete__actions",
+    ]) {
+      expect(css).toContain(selector);
+    }
+  });
+
+  it("paints the completed-state icon with the ok tokens", () => {
+    const block = cssBlock(".wk-complete__icon");
+    expect(block).toContain("var(--ok-soft)");
+    expect(block).toContain("var(--ok)");
+  });
+
+  it("uses a neutral (non-ok) tone for the off-state icon", () => {
+    const block = cssBlock(".wk-complete__icon--muted");
+    expect(block).toContain("var(--surface-2)");
+    expect(block).toContain("var(--text-3)");
+    expect(block).not.toContain("var(--ok)");
+  });
+
+  it("styles the panel from surface/border/shadow tokens only", () => {
+    const block = cssBlock(".wk-complete__panel");
+    expect(block).toContain("var(--surface)");
+    expect(block).toContain("var(--border)");
+    expect(block).toContain("var(--shadow-md)");
+  });
+
+  it("renders the next-due value in the mono token", () => {
+    expect(cssBlock(".wk-complete__due .mono")).toContain("var(--font-mono)");
+  });
+});

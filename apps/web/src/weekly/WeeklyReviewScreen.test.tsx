@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WeeklyReviewProgress, WeeklyReviewSummaryResult } from "../lib/appApi";
 
@@ -173,6 +174,41 @@ function makeSummary(
   overrides: Partial<WeeklyReviewSummaryResult> = {},
 ): WeeklyReviewSummaryResult {
   return { ...BASE_SUMMARY, ...overrides };
+}
+
+/**
+ * The next session's due timestamp after a Complete: one cadence (7d) past the
+ * fixture's `asOf`. Used to drive the not-yet-due / acknowledgment branch.
+ */
+const NEXT_DUE_ISO = "2026-06-19T12:00:00.000Z";
+
+/**
+ * Mirror the component's `formatDate` so the expected "Next session due <date>"
+ * text is computed with the same `Intl` rules (en-US short month + numeric day)
+ * in whatever timezone the test runner uses — keeps the assertion deterministic
+ * without hard-coding a TZ-sensitive literal like "Jun 19".
+ */
+function formatDate(iso: string): string {
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(iso));
+}
+
+/**
+ * A completed/not-yet-due summary: `due === false` with the live session pushed a
+ * cadence ahead. `session` is a nested object, so overriding it must re-spread
+ * `BASE_SUMMARY.session` to stay a valid `TaskSummary`.
+ */
+function notDueSummary(
+  overrides: Partial<WeeklyReviewSummaryResult> = {},
+): WeeklyReviewSummaryResult {
+  // `BASE_SUMMARY.session` is typed `TaskSummary | null`; it's always populated in
+  // the fixture, so assert non-null before spreading to keep a valid `TaskSummary`.
+  const base = BASE_SUMMARY.session;
+  if (!base) throw new Error("BASE_SUMMARY.session must be populated");
+  return makeSummary({
+    due: false,
+    session: { ...base, dueAt: NEXT_DUE_ISO },
+    ...overrides,
+  });
 }
 
 /** A calm week: every forced-decision queue empty, no misses, no resting topics. */
@@ -687,5 +723,222 @@ describe("WeeklyReviewScreen", () => {
         ],
       }),
     );
+  });
+
+  // ── Complete-acknowledgment state (U3) ───────────────────────────────────────
+
+  it("renders the acknowledgment panel (idle copy + next-due date) for a not-yet-due session", async () => {
+    // R1/R2: a session exists but `due === false` → the calm acknowledgment, NOT
+    // the editable form, and the next-due date sourced from `session.dueAt`. Reached
+    // by simply landing (no Complete this visit), so the copy is the idle "you're all
+    // caught up" — NOT the celebratory "Weekly review complete" (asserted below).
+    h.getWeeklyReviewSummary.mockResolvedValue(notDueSummary());
+    render(<WeeklyReviewScreen />);
+
+    expect(await screen.findByTestId("weekly-complete")).toBeInTheDocument();
+    expect(screen.getByText("You're all caught up")).toBeInTheDocument();
+    expect(screen.queryByText("Weekly review complete")).toBeNull();
+    // The next-due line shows the dueAt date via the same `formatDate` (e.g. "Jun 19").
+    expect(screen.getByText(formatDate(NEXT_DUE_ISO))).toBeInTheDocument();
+    expect(screen.getByText(/Next session due/)).toBeInTheDocument();
+    // The editable form is absent — none of the sections rendered.
+    expect(screen.queryByTestId("weekly-review")).toBeNull();
+  });
+
+  it("renders the editable form for a due session (regression: due path unchanged)", async () => {
+    // R6: a `due === true` summary still lands on the full editable form, not the
+    // acknowledgment panel.
+    h.getWeeklyReviewSummary.mockResolvedValue(makeSummary({ due: true }));
+    render(<WeeklyReviewScreen />);
+
+    expect(await screen.findByTestId("weekly-review")).toBeInTheDocument();
+    expect(screen.queryByTestId("weekly-complete")).toBeNull();
+  });
+
+  it("reveals the editable form when 'Review now' is clicked from the acknowledgment", async () => {
+    // R4: the not-yet-due session opens early via the renderer-local `reviewNow`
+    // flag — clicking the button swaps the acknowledgment for the editable form.
+    h.getWeeklyReviewSummary.mockResolvedValue(notDueSummary());
+    render(<WeeklyReviewScreen />);
+
+    await screen.findByTestId("weekly-complete");
+    expect(screen.queryByTestId("weekly-review")).toBeNull();
+
+    fireEvent.click(screen.getByTestId("weekly-review-now"));
+
+    expect(await screen.findByTestId("weekly-review")).toBeInTheDocument();
+    expect(screen.queryByTestId("weekly-complete")).toBeNull();
+  });
+
+  it("returns to the acknowledgment (not a reset form) after Complete from 'Review now'", async () => {
+    // Regression: completing a session opened early via 'Review now' must land on
+    // the acknowledgment, not re-render the reset-looking editable form for the next
+    // not-yet-due session. complete() resets `reviewNow`, so `!due && !reviewNow`
+    // holds again. Every load is the not-yet-due session.
+    h.getWeeklyReviewSummary.mockResolvedValue(notDueSummary());
+    render(<WeeklyReviewScreen />);
+
+    await screen.findByTestId("weekly-complete");
+    fireEvent.click(screen.getByTestId("weekly-review-now"));
+    await screen.findByTestId("weekly-review");
+
+    fireEvent.click(screen.getByRole("button", { name: "Complete" }));
+
+    await waitFor(() =>
+      expect(h.completeWeeklyReview).toHaveBeenCalledWith({ taskId: "weekly-1" }),
+    );
+    // Back on the acknowledgment with the celebratory copy — NOT the editable form.
+    expect(await screen.findByTestId("weekly-complete")).toBeInTheDocument();
+    expect(screen.getByText("Weekly review complete")).toBeInTheDocument();
+    expect(screen.queryByTestId("weekly-review")).toBeNull();
+  });
+
+  it("omits the next-due line (no 'Invalid Date') when the session has no dueAt", async () => {
+    // R2 guard: a not-yet-due session whose dueAt is null renders the panel without
+    // the date line rather than formatting null into "Invalid Date".
+    const base = BASE_SUMMARY.session;
+    if (!base) throw new Error("BASE_SUMMARY.session must be populated");
+    h.getWeeklyReviewSummary.mockResolvedValue(
+      makeSummary({ due: false, session: { ...base, dueAt: null } }),
+    );
+    render(<WeeklyReviewScreen />);
+
+    expect(await screen.findByTestId("weekly-complete")).toBeInTheDocument();
+    expect(screen.queryByText(/Next session due/)).toBeNull();
+    expect(screen.queryByText(/Invalid Date/)).toBeNull();
+  });
+
+  it("shows the acknowledgment (not a reset form) after Complete (the 'undo' regression)", async () => {
+    // R3 — the core bug: completing a DUE session must transition into the
+    // acknowledgment panel, never a re-rendered editable form that looks like an
+    // undo. The first fetch is the due session; the post-Complete background
+    // reload returns the next (not-yet-due) session.
+    h.getWeeklyReviewSummary
+      .mockResolvedValueOnce(makeSummary({ due: true }))
+      .mockResolvedValueOnce(notDueSummary());
+
+    render(<WeeklyReviewScreen />);
+    await screen.findByTestId("weekly-review");
+
+    fireEvent.click(screen.getByRole("button", { name: /Complete/ }));
+
+    await waitFor(() =>
+      expect(h.completeWeeklyReview).toHaveBeenCalledWith({ taskId: "weekly-1" }),
+    );
+    // Lands on the acknowledgment — NOT a reset editable form — with the
+    // celebratory copy, since the user completed a session this visit.
+    expect(await screen.findByTestId("weekly-complete")).toBeInTheDocument();
+    expect(screen.getByText("Weekly review complete")).toBeInTheDocument();
+    expect(screen.getByText(formatDate(NEXT_DUE_ISO))).toBeInTheDocument();
+    expect(screen.queryByTestId("weekly-review")).toBeNull();
+  });
+
+  it("reaches the acknowledgment after Complete under StrictMode (mount-guard defect family guard)", async () => {
+    // KTD4: no mount-guard ref was introduced, but StrictMode's double-invoke is the
+    // classic surface for the `mountedRef`-cleared-only-on-cleanup defect family.
+    // The Complete→acknowledgment transition must still land under StrictMode.
+    //
+    // StrictMode double-invokes the mount effect, so call-order (`mockResolvedValueOnce`)
+    // sequencing on the summary fetch is non-deterministic. Drive the transition off
+    // the Complete mutation instead: every load returns the due session until Complete
+    // resolves, after which loads return the not-yet-due session.
+    let completed = false;
+    h.getWeeklyReviewSummary.mockImplementation(async () =>
+      completed ? notDueSummary() : makeSummary({ due: true }),
+    );
+    h.completeWeeklyReview.mockImplementation(async () => {
+      completed = true;
+      return { task: null, progress: null };
+    });
+
+    render(
+      <StrictMode>
+        <WeeklyReviewScreen />
+      </StrictMode>,
+    );
+    await screen.findByTestId("weekly-review");
+
+    fireEvent.click(screen.getByRole("button", { name: /Complete/ }));
+
+    expect(await screen.findByTestId("weekly-complete")).toBeInTheDocument();
+    // Lock the celebratory copy too: under StrictMode's double-invoke, a regressed
+    // `justCompleted` would still render the panel but with the idle copy.
+    expect(screen.getByText("Weekly review complete")).toBeInTheDocument();
+    expect(screen.getByText(formatDate(NEXT_DUE_ISO))).toBeInTheDocument();
+  });
+
+  it("never flashes the full-page loading placeholder during the Complete background reload", async () => {
+    // R3 (loading-flash facet): gate the post-Complete reload on a hand-resolved
+    // promise so we can assert "Loading weekly review..." never reappears while the
+    // background reload is in flight — Complete must transition through the mounted
+    // body, never a `status: "loading"` flip.
+    const reloadGate: { resolve: ((value: WeeklyReviewSummaryResult) => void) | null } = {
+      resolve: null,
+    };
+    h.getWeeklyReviewSummary.mockReset();
+    h.getWeeklyReviewSummary
+      .mockResolvedValueOnce(makeSummary({ due: true }))
+      .mockImplementationOnce(
+        () =>
+          new Promise<WeeklyReviewSummaryResult>((resolve) => {
+            reloadGate.resolve = resolve;
+          }),
+      );
+
+    render(<WeeklyReviewScreen />);
+    await screen.findByTestId("weekly-review");
+    expect(screen.queryByText(/Loading weekly review/i)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Complete/ }));
+
+    // The reload is dispatched and now in flight (held open by the gate).
+    await waitFor(() => expect(h.getWeeklyReviewSummary).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(reloadGate.resolve).not.toBeNull());
+
+    // WHILE in flight: no full-page placeholder, body stays mounted.
+    expect(screen.queryByText(/Loading weekly review/i)).toBeNull();
+    expect(screen.getByTestId("weekly-review")).toBeInTheDocument();
+
+    // Settle the reload → acknowledgment appears, still no placeholder ever shown.
+    reloadGate.resolve?.(notDueSummary());
+    expect(await screen.findByTestId("weekly-complete")).toBeInTheDocument();
+    expect(screen.queryByText(/Loading weekly review/i)).toBeNull();
+  });
+
+  it("surfaces a failed background reload after Complete inline without tearing down the body (banner precedence)", async () => {
+    // Banner precedence / R3 robustness: completeWeeklyReview succeeds but the
+    // follow-up background reload rejects. complete() re-throws the background
+    // error into its catch → setActionError, so the inline `weekly-action-error`
+    // banner shows and the (still-due) body stays mounted — never the full-page
+    // error state, never a loading flash.
+    h.getWeeklyReviewSummary
+      .mockResolvedValueOnce(makeSummary({ due: true }))
+      .mockRejectedValueOnce(new Error("reload failed"));
+
+    render(<WeeklyReviewScreen />);
+    await screen.findByTestId("weekly-review");
+
+    fireEvent.click(screen.getByRole("button", { name: /Complete/ }));
+
+    expect(await screen.findByTestId("weekly-action-error")).toBeInTheDocument();
+    expect(screen.getByText("reload failed")).toBeInTheDocument();
+    expect(h.completeWeeklyReview).toHaveBeenCalledWith({ taskId: "weekly-1" });
+    // Body intact (stable section title present), no full-page error, no loading flash.
+    expect(screen.getByTestId("weekly-review")).toBeInTheDocument();
+    expect(screen.getByText("Ledger")).toBeInTheDocument();
+    expect(screen.queryByTestId("weekly-error")).toBeNull();
+    expect(screen.queryByText(/Loading weekly review/i)).toBeNull();
+  });
+
+  it("renders the off-state panel when no session exists", async () => {
+    // R5: weekly review is off (`session === null`) → the quiet off-state panel,
+    // not a fully-locked editable form.
+    h.getWeeklyReviewSummary.mockResolvedValue(makeSummary({ session: null }));
+    render(<WeeklyReviewScreen />);
+
+    expect(await screen.findByTestId("weekly-off")).toBeInTheDocument();
+    expect(screen.getByText("Weekly review is turned off")).toBeInTheDocument();
+    expect(screen.queryByTestId("weekly-review")).toBeNull();
+    expect(screen.queryByTestId("weekly-complete")).toBeNull();
   });
 });

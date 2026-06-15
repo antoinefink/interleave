@@ -32,6 +32,7 @@ import {
   type ChronicPostponeRowSummary,
   type ParkedResurfacingDecisionKind,
   type ParkedResurfacingRowSummary,
+  type TaskSummary,
   type WeeklyReviewFallowSuggestion,
   type WeeklyReviewLedger,
   type WeeklyReviewPriorityMiss,
@@ -173,6 +174,18 @@ function WeeklyReviewBody({
   const [busySection, setBusySection] = useState<WeeklyReviewSectionId | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // After Complete, the server creates the next session with `dueAt = now + cadence`
+  // so `summary.due` flips false while `summary.session` stays non-null. We gate the
+  // editable form on `due` and otherwise show a calm acknowledgment, so Complete no
+  // longer looks like it silently reset the screen. `reviewNow` is the escape hatch:
+  // it lets the user re-open the (not-yet-due) form on demand without changing data.
+  const [reviewNow, setReviewNow] = useState(false);
+  // Distinguishes the two ways the not-yet-due acknowledgment is reached: a fresh
+  // Complete in this session (celebratory "Weekly review complete") vs. simply
+  // landing on a session that isn't due yet / was never started ("you're all caught
+  // up"). Without this, a brand-new user who enables weekly review would be told the
+  // review is "complete" before ever doing one. Local-only; resets on remount.
+  const [justCompleted, setJustCompleted] = useState(false);
 
   const completion = useMemo(() => {
     if (!progress) return { done: 0, total: SECTION_COUNT };
@@ -254,6 +267,12 @@ function WeeklyReviewBody({
     setBusySection("ledger");
     try {
       await appApi.completeWeeklyReview({ taskId: summary.session.id });
+      // Reset the early-review override too: after a successful Complete the next
+      // session is not-yet-due, and leaving `reviewNow` set would re-render the
+      // editable form (a reset-looking session) instead of the acknowledgment —
+      // the exact regression this screen exists to avoid, reached via "Review now".
+      setReviewNow(false);
+      setJustCompleted(true);
       await onReload();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
@@ -284,6 +303,25 @@ function WeeklyReviewBody({
       busy: busySection === id,
       onToggle: (target: "done" | "skipped") => toggleSection(id, target),
     }) as const;
+
+  // Weekly review is turned off entirely — no live session exists. Show a quiet
+  // off-state panel that points at Settings instead of a fully-locked form.
+  if (!summary.session) {
+    return <WeeklyReviewOff />;
+  }
+
+  // A session exists but is not yet due (e.g. just completed → next session is
+  // scheduled `cadence` ahead). Render the acknowledgment unless the user has
+  // explicitly chosen to review early via "Review now".
+  if (!summary.due && !reviewNow) {
+    return (
+      <WeeklyReviewNotDue
+        session={summary.session}
+        justCompleted={justCompleted}
+        onReviewNow={() => setReviewNow(true)}
+      />
+    );
+  }
 
   return (
     <div className="wk" data-testid="weekly-review">
@@ -333,7 +371,11 @@ function WeeklyReviewBody({
           <button
             type="button"
             className="btn btn--primary"
-            disabled={busySection !== null || locked}
+            // `justCompleted` guards against a double-submit when the Complete
+            // mutation succeeded but the follow-up reload failed: the stale (still
+            // "due") form stays mounted with the button re-enabled, and a second
+            // click would re-complete an already-done session.
+            disabled={busySection !== null || locked || justCompleted}
             onClick={() => void complete()}
           >
             <Icon name="check" size={14} />
@@ -421,6 +463,101 @@ function WeeklyReviewBody({
       <Section {...sectionProps("fallow")}>
         <FallowDecisions rows={summary.decisions.fallowSuggestions} locked={locked} />
       </Section>
+    </div>
+  );
+}
+
+/** Shared kicker/title header for the panel states (off, not-due). The editable
+ * form keeps its own richer header (window line + actions). */
+function WeeklyHeader() {
+  return (
+    <div className="wk-head">
+      <div>
+        <p className="wk-kicker">Weekly session</p>
+        <h1 className="wk-title">Ledger and integrity</h1>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Off-state panel: weekly review is disabled, so there is no session to render.
+ * Mirrors the `.wk-complete` card shell with a neutral (non-`--ok`) icon and a
+ * pointer to Settings, rather than presenting a fully-locked editable form.
+ */
+function WeeklyReviewOff() {
+  return (
+    <div className="wk" data-testid="weekly-off">
+      <WeeklyHeader />
+      <div className="wk-complete">
+        <div className="wk-complete__panel">
+          <span className="wk-complete__icon wk-complete__icon--muted">
+            <Icon name="calendar" size={26} />
+          </span>
+          <h2 className="wk-complete__title">Weekly review is turned off</h2>
+          <p className="wk-complete__body">
+            Enable the weekly session in Settings to run the ledger-and-integrity review.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Not-yet-due acknowledgment: a session exists but is not due. Reached two ways,
+ * which the copy distinguishes via `justCompleted`:
+ *  - just finished a session this visit → celebratory "Weekly review complete";
+ *  - simply landed before the next one is due (or never started one) → calm
+ *    "you're all caught up".
+ * Keeps the kicker/title header for continuity, shows the next due date, and a
+ * "Review now" escape hatch to open the not-yet-due session early.
+ *
+ * Purely presentational — it renders because the body now reads `summary.due`; no
+ * mutation, mount guard, or loading state is involved.
+ */
+function WeeklyReviewNotDue({
+  session,
+  justCompleted,
+  onReviewNow,
+}: {
+  readonly session: TaskSummary;
+  readonly justCompleted: boolean;
+  readonly onReviewNow: () => void;
+}) {
+  const title = justCompleted ? "Weekly review complete" : "You're all caught up";
+  const body = justCompleted
+    ? "Your weekly session is done — the next one is scheduled below."
+    : "No weekly review is due right now.";
+  return (
+    <div className="wk" data-testid="weekly-complete">
+      <WeeklyHeader />
+      <div className="wk-complete">
+        <div className="wk-complete__panel">
+          <span className="wk-complete__icon">
+            <Icon name="checkCircle" size={26} />
+          </span>
+          <h2 className="wk-complete__title">{title}</h2>
+          <p className="wk-complete__body">{body}</p>
+          {session.dueAt ? (
+            <p className="wk-complete__due">
+              <Icon name="calendar" size={13} />
+              Next session due <span className="mono">{formatDate(session.dueAt)}</span>
+            </p>
+          ) : null}
+          <div className="wk-complete__actions">
+            <button
+              type="button"
+              className="btn btn--ghost"
+              data-testid="weekly-review-now"
+              onClick={onReviewNow}
+            >
+              <Icon name="review" size={14} />
+              Review now
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
