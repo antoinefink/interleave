@@ -447,3 +447,22 @@ The destructive local durability action that discards the current knowledge stor
 ### Automatic retention
 
 The policy that thins automatic backups over time and enforces a storage cap while preserving manual backups.
+
+### Operation log
+
+The durable, append-only record of every meaningful mutation, where each entry is a command-shaped row written in the same transaction as the state change it describes.
+*Avoid:* op log, oplog
+
+The operation log is the substrate for command-level undo, audit, backup, and eventual sync. It is never edited or deleted; reversing a command appends a new inverse entry rather than removing the original, so the log stays append-only and auditable. A mutation that changes durable user data without a matching log entry is a defect.
+
+### Operation batch
+
+The set of operation-log entries produced by one bulk action — a bulk postpone, an inbox bulk sweep, an auto-postpone or extract-aging run — tagged with a shared batch id so the whole action can be undone as a single unit.
+
+A single-op action carries no batch id. The batch id is the durable handle a receipt or snackbar targets for undo; entries in one batch are reversed in reverse insertion order so the inverses replay correctly.
+
+### Command-level undo
+
+The general undo that reverses the most recent operation-log entry — or, when that entry belongs to an Operation batch, the whole batch — by applying each entry's inverse through the normal write paths, so the undo is itself logged and re-doable.
+
+Command-level undo is distinct from FSRS review correction, the queue's removing-only recipe undo, and a receipt-scoped undo (auto-postpone, extract-aging, re-verify), each of which has its own narrower affordance. It inverts only entries that carry a usable pre-image; non-invertible commands such as creations and document edits are left untouched.
