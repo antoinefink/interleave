@@ -37,6 +37,8 @@ import {
   type MaintenanceReportResult,
   type ParkedResurfacingDecisionKind,
   type ParkedResurfacingRowSummary,
+  type RereadProposalDto,
+  type RereadProposalsListResult,
 } from "../lib/appApi";
 import { UNDO_EVENT } from "../shell/nav";
 import "../review/review.css";
@@ -106,6 +108,16 @@ export function MaintenanceScreen() {
   const [report, setReport] = useState<MaintenanceReportResult | null>(null);
   // Lapse clusters (T128) load eagerly: the count drives the card, the list the drill-down.
   const [clusters, setClusters] = useState<LapseClustersListResult | null>(null);
+  // Re-read proposals (T129): the capped, dismissible actionable subset over the clusters.
+  // When the feature is off, the panel falls back to the read-only T128 cluster list.
+  const [proposals, setProposals] = useState<RereadProposalsListResult | null>(null);
+  const [rereadEnabled, setRereadEnabled] = useState(true);
+  /** The proposal row (ancestorId) whose accept/dismiss request is in flight. */
+  const [rereadBusyId, setRereadBusyId] = useState<string | null>(null);
+  /** A quiet inline note per proposal row (cap reached / already scheduled / recovered). */
+  const [rereadNote, setRereadNote] = useState<{ ancestorId: string; text: string } | null>(null);
+  /** When set, the Snackbar "Undo" reverses the just-accepted re-read (soft-delete), not undoLast. */
+  const [rereadUndoTaskId, setRereadUndoTaskId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<ExpandedReport>(null);
@@ -145,6 +157,18 @@ export function MaintenanceScreen() {
       setClusters(await appApi.getLapseClusters());
     } catch {
       setClusters({ asOf: "", windowDays: 30, clusters: [] });
+    }
+    // Re-read proposals (T129): the capped, dismissible subset + the feature toggle. When the
+    // toggle is off the panel reverts to the read-only T128 cluster list (Open source only).
+    try {
+      setRereadEnabled((await appApi.getAppSettings()).settings.rereadProposalsEnabled);
+    } catch {
+      setRereadEnabled(true);
+    }
+    try {
+      setProposals(await appApi.getRereadProposals());
+    } catch {
+      setProposals({ asOf: "", windowDays: 30, proposals: [] });
     }
   }, []);
 
@@ -208,6 +232,70 @@ export function MaintenanceScreen() {
     [navigate],
   );
 
+  /**
+   * Accept a re-read proposal (T129): schedule the re-read item, then open the source AT the
+   * region with the `reread` param so the reader shows the failing-cards panel. The Snackbar
+   * "Undo" reverses via the soft-delete path (NOT `undoLast` — a create isn't globally
+   * invertible). `capReached`/`alreadyOpen`/`stale` surface a quiet inline note, not an error.
+   */
+  const onAcceptReread = useCallback(
+    async (proposal: RereadProposalDto) => {
+      setRereadBusyId(proposal.ancestorId);
+      setRereadNote(null);
+      setError(null);
+      try {
+        const res = await appApi.acceptRereadProposal({ ancestorId: proposal.ancestorId });
+        if (res.created && res.taskElementId) {
+          setProposals(await appApi.getRereadProposals());
+          setRereadUndoTaskId(res.taskElementId);
+          setSnack("Re-read scheduled");
+          setSnackUndoable(true);
+          const block = proposal.region.blockIds[0];
+          void navigate({
+            to: "/source/$id",
+            params: { id: proposal.region.sourceElementId },
+            search: {
+              reread: res.taskElementId,
+              ...(block ? { block, label: proposal.region.label } : {}),
+              n: Date.now(),
+            } as Record<string, unknown>,
+          });
+        } else if (res.alreadyOpen) {
+          setRereadNote({ ancestorId: proposal.ancestorId, text: "Already scheduled" });
+        } else if (res.stale) {
+          setRereadNote({ ancestorId: proposal.ancestorId, text: "This group has already recovered" });
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setRereadBusyId(null);
+      }
+    },
+    [navigate],
+  );
+
+  /** Dismiss a re-read proposal (T129): remembered against the cluster's state-hash. */
+  const onDismissReread = useCallback(async (proposal: RereadProposalDto) => {
+    setRereadBusyId(proposal.ancestorId);
+    setRereadNote(null);
+    setError(null);
+    try {
+      const res = await appApi.dismissRereadProposal({
+        ancestorId: proposal.ancestorId,
+        stateHash: proposal.stateHash,
+      });
+      if (res.dismissed) {
+        setProposals(await appApi.getRereadProposals());
+      } else if (res.stale) {
+        setRereadNote({ ancestorId: proposal.ancestorId, text: "This group has changed" });
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRereadBusyId(null);
+    }
+  }, []);
+
   /** Run a reversible cleanup action, then toast an Undo + refresh. */
   const runUndoable = useCallback(
     async (fn: () => Promise<{ affected: number; batchId: string }>, label: string) => {
@@ -233,15 +321,25 @@ export function MaintenanceScreen() {
     [expanded, loadReport, reloadExpanded],
   );
 
-  /** The Snackbar "Undo" reverses the LAST op/batch via the shared command-level undo. */
+  /**
+   * The Snackbar "Undo". A just-accepted re-read reverses via its soft-delete path (T129 —
+   * a create is NOT globally invertible by `undoLast`); everything else reverses the LAST
+   * op/batch via the shared command-level undo.
+   */
   const onUndo = useCallback(() => {
     setSnack(null);
     setSnackUndoable(false);
-    void appApi
-      .undoLast()
+    const taskId = rereadUndoTaskId;
+    setRereadUndoTaskId(null);
+    const reversal = taskId
+      ? appApi.undoAcceptRereadProposal({ taskElementId: taskId }).then(async () => {
+          setProposals(await appApi.getRereadProposals());
+        })
+      : appApi.undoLast().then(() => undefined);
+    void reversal
       .then(() => window.dispatchEvent(new CustomEvent(UNDO_EVENT)))
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-  }, []);
+  }, [rereadUndoTaskId]);
 
   const runIntegrity = useCallback(async () => {
     setIntegrityRunning(true);
@@ -540,17 +638,27 @@ export function MaintenanceScreen() {
             />
           </MetricCard>
 
-          {/* Struggling card groups (T128) — read-only; navigation is the only affordance */}
+          {/* Struggling card groups (T128) + re-read proposals (T129). When proposals are
+              enabled the rows gain Re-read / Dismiss; otherwise the panel stays read-only. */}
           <MetricCard
             icon="layers"
             title="Struggling card groups"
-            value={clusters?.clusters.length}
+            value={rereadEnabled ? proposals?.proposals.length : clusters?.clusters.length}
             unit="cards failing together"
             testId="metric-clusters"
             expanded={expanded === "clusters"}
             onToggle={() => void toggle("clusters")}
           >
-            <ClusterPanel data={clusters} onOpenRegion={openClusterRegion} />
+            <ClusterPanel
+              enabled={rereadEnabled}
+              clusters={clusters}
+              proposals={proposals}
+              busyId={rereadBusyId}
+              note={rereadNote}
+              onOpenRegion={openClusterRegion}
+              onAccept={onAcceptReread}
+              onDismiss={onDismissReread}
+            />
           </MetricCard>
 
           {/* Integrity (on-demand) */}
@@ -1323,53 +1431,142 @@ function EmptyRow({ message }: { message: string }) {
  * shown (it only orders the list); member counts are labeled "in {N}d" so they never read
  * as the leech screen's cumulative lapse count.
  */
-function ClusterPanel({
-  data,
+type ClusterRegion = { sourceElementId: string; blockIds: readonly string[]; label: string };
+
+function OpenSourceButton({
+  region,
   onOpenRegion,
 }: {
-  data: LapseClustersListResult | null;
-  onOpenRegion: (region: {
-    sourceElementId: string;
-    blockIds: readonly string[];
-    label: string;
-  }) => void;
+  region: ClusterRegion;
+  onOpenRegion: (region: ClusterRegion) => void;
 }) {
-  if (!data) return <p className="mt-muted">Loading…</p>;
-  if (data.clusters.length === 0) {
+  return (
+    <button
+      type="button"
+      className="rv-repair__btn"
+      data-testid="cluster-open"
+      onClick={() => onOpenRegion(region)}
+    >
+      <Icon name="link" size={13} />
+      Open source
+    </button>
+  );
+}
+
+/**
+ * The "Struggling card groups" panel. When re-read proposals are ENABLED it renders the capped,
+ * dismissible proposal set with Re-read / Dismiss (+ Open source); dismissed/accepted/recent
+ * clusters are pre-filtered out server-side. When DISABLED it falls back to the read-only T128
+ * cluster list (Open source only). Navigation/region copy is calm — this is help, not an alarm.
+ */
+function ClusterPanel({
+  enabled,
+  clusters,
+  proposals,
+  busyId,
+  note,
+  onOpenRegion,
+  onAccept,
+  onDismiss,
+}: {
+  enabled: boolean;
+  clusters: LapseClustersListResult | null;
+  proposals: RereadProposalsListResult | null;
+  busyId: string | null;
+  note: { ancestorId: string; text: string } | null;
+  onOpenRegion: (region: ClusterRegion) => void;
+  onAccept: (proposal: RereadProposalDto) => void;
+  onDismiss: (proposal: RereadProposalDto) => void;
+}) {
+  // Feature off → the read-only T128 list (navigation only).
+  if (!enabled) {
+    if (!clusters) return <p className="mt-muted">Loading…</p>;
+    if (clusters.clusters.length === 0) {
+      return (
+        <EmptyRow message="No struggling card groups. Cards that fail together under the same source region will appear here." />
+      );
+    }
     return (
-      <EmptyRow message="No struggling card groups. Cards that fail together under the same source region will appear here." />
+      <div data-testid="clusters-panel">
+        <p className="mt-muted mt-clusters__note">
+          These groups are read-only. Open the source to re-read the region the cards share.
+        </p>
+        {clusters.clusters.map((cluster) => (
+          <div className="mt-cluster" key={cluster.ancestorId} data-testid="cluster-row">
+            <div className="mt-cluster__head">
+              <span className="mt-cluster__source" title={cluster.sourceTitle}>
+                {cluster.sourceTitle || "Untitled source"}
+              </span>
+              <span className="badge badge--soft">{cluster.region.label}</span>
+            </div>
+            <div className="mt-cluster__meta">
+              {cluster.affectedCardCount} cards · {cluster.totalWindowLapses} lapses in{" "}
+              {clusters.windowDays}d
+            </div>
+            <div className="mt-bulkbar">
+              <OpenSourceButton region={cluster.region} onOpenRegion={onOpenRegion} />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  if (!proposals) return <p className="mt-muted">Loading…</p>;
+  if (proposals.proposals.length === 0) {
+    return (
+      <EmptyRow message="No re-read proposals. When several cards under one source region keep failing together, a quiet re-read suggestion will appear here." />
     );
   }
   return (
     <div data-testid="clusters-panel">
       <p className="mt-muted mt-clusters__note">
-        These groups are read-only. Open the source to re-read the region the cards share.
+        Re-reading a struggling section can repair the encoding. Accept to schedule it, or dismiss
+        — dismissals stick until the group gets worse.
       </p>
-      {data.clusters.map((cluster) => (
-        <div className="mt-cluster" key={cluster.ancestorId} data-testid="cluster-row">
-          <div className="mt-cluster__head">
-            <span className="mt-cluster__source" title={cluster.sourceTitle}>
-              {cluster.sourceTitle || "Untitled source"}
-            </span>
-            <span className="badge badge--soft">{cluster.region.label}</span>
+      {proposals.proposals.map((proposal) => {
+        const busy = busyId === proposal.ancestorId;
+        return (
+          <div className="mt-cluster" key={proposal.ancestorId} data-testid="cluster-row">
+            <div className="mt-cluster__head">
+              <span className="mt-cluster__source" title={proposal.sourceTitle}>
+                {proposal.sourceTitle || "Untitled source"}
+              </span>
+              <span className="badge badge--soft">{proposal.region.label}</span>
+            </div>
+            <div className="mt-cluster__meta">
+              {proposal.affectedCardCount} cards · {proposal.totalWindowLapses} lapses in{" "}
+              {proposals.windowDays}d
+            </div>
+            <div className="mt-bulkbar">
+              <button
+                type="button"
+                className="rv-repair__btn rv-repair__btn--primary"
+                data-testid="cluster-reread"
+                disabled={busy}
+                onClick={() => onAccept(proposal)}
+              >
+                Re-read
+              </button>
+              <button
+                type="button"
+                className="rv-repair__btn"
+                data-testid="cluster-dismiss"
+                disabled={busy}
+                onClick={() => onDismiss(proposal)}
+              >
+                Dismiss
+              </button>
+              <OpenSourceButton region={proposal.region} onOpenRegion={onOpenRegion} />
+            </div>
+            {note?.ancestorId === proposal.ancestorId ? (
+              <p className="mt-muted mt-cluster__note" role="status" data-testid="cluster-note">
+                {note.text}
+              </p>
+            ) : null}
           </div>
-          <div className="mt-cluster__meta">
-            {cluster.affectedCardCount} cards · {cluster.totalWindowLapses} lapses in{" "}
-            {data.windowDays}d
-          </div>
-          <div className="mt-bulkbar">
-            <button
-              type="button"
-              className="rv-repair__btn"
-              data-testid="cluster-open"
-              onClick={() => onOpenRegion(cluster.region)}
-            >
-              <Icon name="link" size={13} />
-              Open source
-            </button>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

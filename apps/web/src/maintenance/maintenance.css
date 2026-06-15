@@ -152,6 +152,11 @@
 .mt-clusters__note {
   margin-top: 0;
 }
+/* Re-read proposals (T129): a quiet per-row note (cap reached / already scheduled / recovered). */
+.mt-cluster__note {
+  margin: 6px 0 0;
+  font-size: var(--t-xs, 12px);
+}
 
 .mt-dup-list {
   list-style: none;
@@ -269,6 +274,11 @@
 .rv-repair__btn--danger {
   border-color: var(--danger, #c0392b);
   color: var(--danger, #c0392b);
+}
+/* Re-read proposals (T129): the calm primary action (accept) — an accent, never an alarm. */
+.rv-repair__btn--primary {
+  border-color: var(--accent, #3a6ea5);
+  color: var(--accent, #3a6ea5);
 }
 
 .mt-empty {

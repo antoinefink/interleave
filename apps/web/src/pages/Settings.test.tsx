@@ -110,6 +110,8 @@ const settings: RendererSettings = {
   lapseClusterMinLapses: 5,
   lapseClusterWindowDays: 30,
   lapseClusterMinCards: 2,
+  rereadProposalsEnabled: true,
+  rereadProposalWeeklyCap: 2,
   weeklyReviewEnabled: true,
   weeklyReviewCadenceDays: 7,
   adaptiveAttentionIntervals: true,

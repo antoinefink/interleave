@@ -89,6 +89,8 @@ const FALLBACK_SETTINGS: RendererSettings = {
   lapseClusterMinLapses: 5,
   lapseClusterWindowDays: 30,
   lapseClusterMinCards: 2,
+  rereadProposalsEnabled: true,
+  rereadProposalWeeklyCap: 2,
   weeklyReviewEnabled: true,
   weeklyReviewCadenceDays: 7,
   adaptiveAttentionIntervals: true,
@@ -158,6 +160,9 @@ const LAPSE_CLUSTER_MIN_CARDS_MIN = 2;
 const LAPSE_CLUSTER_MIN_CARDS_MAX = 10;
 const LAPSE_CLUSTER_WINDOW_DAYS_MIN = 7;
 const LAPSE_CLUSTER_WINDOW_DAYS_MAX = 365;
+/** Inclusive UI bounds for the re-read proposal cap (mirror `@interleave/core` REREAD_*) — T129. */
+const REREAD_PROPOSAL_WEEKLY_CAP_MIN = 1;
+const REREAD_PROPOSAL_WEEKLY_CAP_MAX = 10;
 const KEYBOARD_LAYOUTS: { value: AppSettings["keyboardLayout"]; label: string }[] = [
   { value: "qwerty", label: "QWERTY" },
   { value: "dvorak", label: "Dvorak" },
@@ -1800,6 +1805,32 @@ export function Settings() {
               className="w-20 rounded-md border border-border bg-surface px-2 py-1 text-right font-mono font-semibold text-sm text-text disabled:opacity-50"
             />
             <span className="text-sm text-text-3">days</span>
+          </div>
+        </SettingRow>
+
+        <SettingRow
+          label="Re-read proposals"
+          hint="Turn a struggling card group into a quiet, capped suggestion to re-read the section. Accept to schedule it; dismiss to hide it until the group gets worse. The cap limits how many active proposals show at once — help, never a pile-on."
+        >
+          <div className="flex items-center gap-3">
+            <Toggle
+              name="setting-reread-proposals"
+              checked={s.rereadProposalsEnabled}
+              onChange={(value) => void patch({ rereadProposalsEnabled: value })}
+            />
+            <input
+              type="number"
+              min={REREAD_PROPOSAL_WEEKLY_CAP_MIN}
+              max={REREAD_PROPOSAL_WEEKLY_CAP_MAX}
+              step={1}
+              aria-label="Active proposals at once"
+              value={s.rereadProposalWeeklyCap}
+              data-testid="setting-reread-proposal-cap"
+              disabled={!s.rereadProposalsEnabled}
+              onChange={(e) => void patch({ rereadProposalWeeklyCap: Number(e.target.value) })}
+              className="w-16 rounded-md border border-border bg-surface px-2 py-1 text-right font-mono font-semibold text-sm text-text disabled:opacity-50"
+            />
+            <span className="text-sm text-text-3">active at once</span>
           </div>
         </SettingRow>
       </SectionPanel>

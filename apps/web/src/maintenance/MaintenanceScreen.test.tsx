@@ -34,6 +34,11 @@ const h = vi.hoisted(() => ({
   chronicPostpones: vi.fn(),
   chronicPostponesApply: vi.fn(),
   getLapseClusters: vi.fn(),
+  getRereadProposals: vi.fn(),
+  getAppSettings: vi.fn(),
+  acceptRereadProposal: vi.fn(),
+  dismissRereadProposal: vi.fn(),
+  undoAcceptRereadProposal: vi.fn(),
   undoLast: vi.fn(),
   navigate: vi.fn(),
 }));
@@ -67,6 +72,11 @@ vi.mock("../lib/appApi", async () => {
         chronicPostponesApply: h.chronicPostponesApply,
       },
       getLapseClusters: h.getLapseClusters,
+      getRereadProposals: h.getRereadProposals,
+      getAppSettings: h.getAppSettings,
+      acceptRereadProposal: h.acceptRereadProposal,
+      dismissRereadProposal: h.dismissRereadProposal,
+      undoAcceptRereadProposal: h.undoAcceptRereadProposal,
       undoLast: h.undoLast,
     },
   };
@@ -86,6 +96,8 @@ const CLUSTER = {
   strength: 9,
   mostRecentLapseAt: "2026-06-10T00:00:00.000Z",
 };
+
+const PROPOSAL = { ...CLUSTER, stateHash: "v1:ext-1|hash", dismissable: true };
 
 import { MaintenanceScreen } from "./MaintenanceScreen";
 
@@ -210,6 +222,20 @@ beforeEach(() => {
     windowDays: 30,
     clusters: [CLUSTER],
   });
+  h.getRereadProposals.mockResolvedValue({
+    asOf: "2026-06-12T00:00:00.000Z",
+    windowDays: 30,
+    proposals: [PROPOSAL],
+  });
+  h.getAppSettings.mockResolvedValue({ settings: { rereadProposalsEnabled: true } });
+  h.acceptRereadProposal.mockResolvedValue({
+    created: true,
+    taskElementId: "task-1",
+    alreadyOpen: false,
+    stale: false,
+  });
+  h.dismissRereadProposal.mockResolvedValue({ dismissed: true, stale: false });
+  h.undoAcceptRereadProposal.mockResolvedValue({ removed: true });
   h.undoLast.mockResolvedValue({
     undone: true,
     count: 1,
@@ -530,7 +556,7 @@ describe("MaintenanceScreen", () => {
     await waitFor(() => expect(screen.getByTestId("maintenance-empty-row")).toBeInTheDocument());
   });
 
-  it("renders the struggling-card-groups card and its read-only cluster row (T128)", async () => {
+  it("renders a re-read proposal row with Re-read / Dismiss / Open source (T129)", async () => {
     render(<MaintenanceScreen />);
     await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
     await waitFor(() =>
@@ -544,7 +570,7 @@ describe("MaintenanceScreen", () => {
     // Window-scoped, explicitly labeled "in 30d"; the raw strength score is NOT shown.
     expect(row.textContent).toContain("2 cards · 6 lapses in 30d");
     expect(row.textContent).not.toContain("9");
-    // The only affordance is navigating to the source region (the interim re-read verb).
+    // Open source still navigates to the region (the read-only verb).
     fireEvent.click(screen.getByTestId("cluster-open"));
     expect(h.navigate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -555,8 +581,53 @@ describe("MaintenanceScreen", () => {
     );
   });
 
-  it("shows a calm explanatory empty state when there are no clusters (T128)", async () => {
-    h.getLapseClusters.mockResolvedValue({ asOf: "", windowDays: 30, clusters: [] });
+  it("accepts a re-read proposal and routes to the reader with the reread param (T129)", async () => {
+    render(<MaintenanceScreen />);
+    await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("metric-clusters-toggle"));
+    await waitFor(() => expect(screen.getByTestId("cluster-reread")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("cluster-reread"));
+    await waitFor(() =>
+      expect(h.acceptRereadProposal).toHaveBeenCalledWith({ ancestorId: "ext-1" }),
+    );
+    await waitFor(() =>
+      expect(h.navigate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: "/source/$id",
+          params: { id: "src-1" },
+          search: expect.objectContaining({ reread: "task-1", block: "b1" }),
+        }),
+      ),
+    );
+  });
+
+  it("dismisses a re-read proposal against its state-hash (T129)", async () => {
+    render(<MaintenanceScreen />);
+    await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("metric-clusters-toggle"));
+    await waitFor(() => expect(screen.getByTestId("cluster-dismiss")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("cluster-dismiss"));
+    await waitFor(() =>
+      expect(h.dismissRereadProposal).toHaveBeenCalledWith({
+        ancestorId: "ext-1",
+        stateHash: "v1:ext-1|hash",
+      }),
+    );
+  });
+
+  it("falls back to the read-only T128 cluster list when proposals are disabled", async () => {
+    h.getAppSettings.mockResolvedValue({ settings: { rereadProposalsEnabled: false } });
+    render(<MaintenanceScreen />);
+    await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("metric-clusters-toggle"));
+    await waitFor(() => expect(screen.getByTestId("cluster-row")).toBeInTheDocument());
+    // No accept/dismiss affordances — only "Open source".
+    expect(screen.queryByTestId("cluster-reread")).not.toBeInTheDocument();
+    expect(screen.getByTestId("cluster-open")).toBeInTheDocument();
+  });
+
+  it("shows a calm explanatory empty state when there are no proposals (T129)", async () => {
+    h.getRereadProposals.mockResolvedValue({ asOf: "", windowDays: 30, proposals: [] });
     render(<MaintenanceScreen />);
     await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
     await waitFor(() =>
@@ -565,7 +636,7 @@ describe("MaintenanceScreen", () => {
     fireEvent.click(screen.getByTestId("metric-clusters-toggle"));
     await waitFor(() => expect(screen.getByTestId("maintenance-empty-row")).toBeInTheDocument());
     expect(screen.getByTestId("maintenance-empty-row").textContent).toContain(
-      "No struggling card groups",
+      "No re-read proposals",
     );
   });
 });

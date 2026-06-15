@@ -109,6 +109,10 @@ export interface AppSettings {
   readonly lapseClusterWindowDays: number;
   /** Min distinct live member cards for a cluster to surface (T128). */
   readonly lapseClusterMinCards: number;
+  /** Whether lapse clusters surface as capped, dismissible re-read proposals (T129). */
+  readonly rereadProposalsEnabled: boolean;
+  /** Max ACTIVE re-read proposals surfaced at once — a surfacing throttle (T129). */
+  readonly rereadProposalWeeklyCap: number;
   /** Whether the system-owned weekly ledger/integrity session is active (T110). */
   readonly weeklyReviewEnabled: boolean;
   /** Attention cadence, in days, for the weekly ledger/integrity session (T110). */
