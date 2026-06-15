@@ -872,3 +872,107 @@ describe("UndoService — reverifyResolution is receipt-only (T124)", () => {
     expect(needsReverify(lineage.extractId)).toBe(true);
   });
 });
+
+/**
+ * Reach `UndoService`'s private `collectBatch` directly so the regression below can
+ * assert its access path and bounded cost without routing through a full `undoBatch`.
+ */
+interface CollectBatchPrivate {
+  collectBatch(batchId: string): { id: string; payload: Record<string, unknown> }[];
+}
+
+function asCollect(undo: UndoService): CollectBatchPrivate {
+  return undo as unknown as CollectBatchPrivate;
+}
+
+/** Seed `n` single-op rows (no `batchId`) + one `size`-op batch sharing `batchId`. */
+function seedLargeLog(handle: DbHandle, n: number, batchId: string, size: number): void {
+  const insert = handle.sqlite.prepare(
+    `INSERT INTO operation_log (id, op_type, payload, element_id, created_at, batch_id)
+     VALUES (?, 'reschedule_element', ?, NULL, ?, ?)`,
+  );
+  const seed = handle.sqlite.transaction(() => {
+    for (let i = 0; i < n; i++) {
+      // Single-op rows: NO batchId in payload, NULL batch_id column.
+      insert.run(
+        `op-${i}`,
+        JSON.stringify({ i }),
+        `2026-01-01T00:00:00.${String(i % 1000).padStart(3, "0")}Z`,
+        null,
+      );
+    }
+    for (let j = 0; j < size; j++) {
+      // The one batch: payload carries `batchId`, column mirrors it.
+      insert.run(
+        `b-${j}`,
+        JSON.stringify({ batchId, postpone: true }),
+        `2026-02-01T00:00:00.00${j}Z`,
+        batchId,
+      );
+    }
+  });
+  seed();
+}
+
+describe("UndoService.collectBatch — index-bound (regression: PERF-01/R-002 full-scan)", () => {
+  // collectBatch used to `SELECT * FROM operation_log` (no WHERE) and filter
+  // `payload.batchId` in JS — an O(total ops) synchronous main-thread scan on every
+  // batch undo. It now reads the indexed `batch_id` column. These pin the bounded cost.
+
+  it("uses the operation_log_batch_idx index, never a full table scan", () => {
+    seedLargeLog(handle, 20_000, "batch-x", 3);
+
+    // EXPLAIN QUERY PLAN of the exact query `collectBatch` issues. SQLite picks the
+    // selective equality index for the WHERE and only sorts the matched rows.
+    const plan = handle.sqlite
+      .prepare(
+        `EXPLAIN QUERY PLAN
+         SELECT * FROM operation_log WHERE batch_id = ? ORDER BY created_at DESC, rowid DESC`,
+      )
+      .all("batch-x") as { detail: string }[];
+    const details = plan.map((row) => row.detail).join(" | ");
+
+    expect(details).toContain("operation_log_batch_idx");
+    expect(details).toContain("SEARCH");
+    // The regression we are preventing: a SCAN of the whole operation_log table.
+    expect(details).not.toMatch(/SCAN operation_log\b/);
+  });
+
+  it("returns exactly the batch (newest-first) from a large log", () => {
+    seedLargeLog(handle, 20_000, "batch-x", 3);
+    const undo = new UndoService(handle.db);
+
+    const batch = asCollect(undo).collectBatch("batch-x");
+    expect(batch).toHaveLength(3);
+    expect(batch.every((op) => op.payload.batchId === "batch-x")).toBe(true);
+    // newest-first: created_at desc, rowid desc → b-2, b-1, b-0.
+    expect(batch.map((op) => op.id)).toEqual(["b-2", "b-1", "b-0"]);
+  });
+
+  it("collect cost is bounded by batch size, not log size", () => {
+    seedLargeLog(handle, 20_000, "batch-x", 3);
+    const undo = new UndoService(handle.db);
+
+    // Indexed collect of the 3-row batch.
+    const t0 = performance.now();
+    asCollect(undo).collectBatch("batch-x");
+    const indexedMs = performance.now() - t0;
+
+    // Replicate the OLD O(total) behaviour on the SAME table: read every row + parse
+    // every payload + filter. Same machine, same data → a fair, non-flaky baseline.
+    const t1 = performance.now();
+    const allRows = handle.sqlite.prepare("SELECT id, payload FROM operation_log").all() as {
+      id: string;
+      payload: string;
+    }[];
+    allRows.filter(
+      (row) => (JSON.parse(row.payload) as { batchId?: string }).batchId === "batch-x",
+    );
+    const fullScanMs = performance.now() - t1;
+
+    // The indexed lookup must beat the full scan it replaced. The gap is ~orders of
+    // magnitude (3 rows vs 20003 rows + 20003 JSON.parse), so this stays green even
+    // under CI jitter; an accidental revert to the scan makes it fail.
+    expect(indexedMs).toBeLessThan(fullScanMs);
+  });
+});

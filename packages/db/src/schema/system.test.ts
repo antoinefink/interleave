@@ -33,6 +33,9 @@ describe("system schema", () => {
       "payload",
       "elementId",
       "createdAt",
+      // Denormalized copy of `payload.batchId` (migration 0041) so batch undo is an
+      // indexed lookup instead of an O(total ops) full-table scan.
+      "batchId",
     ]);
     expect(getTableName(settings)).toBe("settings");
     expect(Object.keys(getTableColumns(settings))).toEqual(["key", "value"]);

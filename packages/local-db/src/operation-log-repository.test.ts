@@ -597,3 +597,84 @@ describe("OperationLogRepository.currentScheduleProjection (T113 — schedule re
     expect(log.currentScheduleProjection(el.id, "2026-05-30T12:00:00.000Z").reason).toBeNull();
   });
 });
+
+describe("OperationLogRepository.append — batch_id dual-write", () => {
+  // `batchId` is the denormalized index column (migration 0041): populated at append
+  // time from `payload.batchId` so batch undo is an indexed lookup, not a full scan.
+  // The payload still carries `batchId` as the canonical command record.
+
+  /** Read the raw `batch_id` column for one op id (the denormalized index value). */
+  function rawBatchId(handle: DbHandle, opId: string): string | null {
+    const row = handle.sqlite
+      .prepare("SELECT batch_id FROM operation_log WHERE id = ?")
+      .get(opId) as { batch_id: string | null } | undefined;
+    return row?.batch_id ?? null;
+  }
+
+  it("writes batch_id from a string payload.batchId", () => {
+    const log = new OperationLogRepository(handle.db);
+    const entry = handle.db.transaction((tx) =>
+      log.append(tx, {
+        opType: "reschedule_element",
+        payload: { batchId: "batch-42", postpone: true },
+        elementId: null,
+      }),
+    );
+    expect(rawBatchId(handle, entry.id)).toBe("batch-42");
+  });
+
+  it("leaves batch_id NULL for a single-op action (no batchId in payload)", () => {
+    const log = new OperationLogRepository(handle.db);
+    const entry = handle.db.transaction((tx) =>
+      log.append(tx, {
+        opType: "update_element",
+        payload: { prev: { status: "active" } },
+        elementId: null,
+      }),
+    );
+    expect(rawBatchId(handle, entry.id)).toBeNull();
+  });
+
+  it("leaves batch_id NULL when payload is null or not an object", () => {
+    const log = new OperationLogRepository(handle.db);
+    const a = handle.db.transaction((tx) =>
+      log.append(tx, { opType: "update_element", payload: null, elementId: null }),
+    );
+    const b = handle.db.transaction((tx) =>
+      log.append(tx, { opType: "update_element", payload: "not-an-object", elementId: null }),
+    );
+    expect(rawBatchId(handle, a.id)).toBeNull();
+    expect(rawBatchId(handle, b.id)).toBeNull();
+  });
+
+  it("leaves batch_id NULL when payload.batchId is present but not a string", () => {
+    const log = new OperationLogRepository(handle.db);
+    const entry = handle.db.transaction((tx) =>
+      log.append(tx, {
+        opType: "update_element",
+        payload: { batchId: 123 },
+        elementId: null,
+      }),
+    );
+    expect(rawBatchId(handle, entry.id)).toBeNull();
+  });
+
+  it("appends the op row inside the caller's transaction (rolled back together)", () => {
+    const log = new OperationLogRepository(handle.db);
+    expect(() =>
+      handle.db.transaction((tx) => {
+        log.append(tx, {
+          opType: "reschedule_element",
+          payload: { batchId: "doomed-batch" },
+          elementId: null,
+        });
+        throw new Error("rollback");
+      }),
+    ).toThrow("rollback");
+    // The op (and its batch_id) never committed.
+    const count = handle.sqlite
+      .prepare("SELECT COUNT(*) AS n FROM operation_log WHERE batch_id = 'doomed-batch'")
+      .get() as { n: number };
+    expect(count.n).toBe(0);
+  });
+});

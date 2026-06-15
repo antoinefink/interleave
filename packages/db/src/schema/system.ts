@@ -70,11 +70,22 @@ export const operationLog = sqliteTable(
     /** The element this op concerns; `null` if it targets no single element. */
     elementId: text("element_id").references(() => elements.id, { onDelete: "set null" }),
     createdAt: text("created_at").notNull(),
+    /**
+     * Denormalized copy of `payload.batchId` for the ops that belong to a bulk
+     * action (bulk-postpone, inbox bulk triage, auto-postpone/extract-aging
+     * receipts), `null` for single-op actions. Promoted out of the JSON payload
+     * into a real indexed column so batch undo (`UndoService.collectBatch`) is an
+     * O(batch) indexed lookup instead of an O(total ops) full-table scan. Written
+     * at append time AND backfilled from the payload for historical rows; the
+     * payload still carries `batchId` as the canonical command record.
+     */
+    batchId: text("batch_id"),
   },
   (table) => [
     check("operation_log_op_type_check", inList(table.opType, OPERATION_TYPES)),
     index("operation_log_element_idx").on(table.elementId),
     index("operation_log_created_idx").on(table.createdAt),
+    index("operation_log_batch_idx").on(table.batchId),
   ],
 );
 

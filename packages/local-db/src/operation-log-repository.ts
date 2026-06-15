@@ -86,6 +86,17 @@ function payloadObject(payload: unknown): Record<string, unknown> | null {
     : null;
 }
 
+/**
+ * The bulk-action id buried in a command payload, or `null` for a single-op
+ * action. Used to dual-write `operation_log.batch_id` at append time so batch
+ * undo is an indexed lookup. Mirrors the `typeof … === "string"` guard the undo
+ * reader uses; a non-string/absent `batchId` denormalizes to `null`.
+ */
+function batchIdFromPayload(payload: unknown): string | null {
+  const obj = payloadObject(payload);
+  return obj && typeof obj.batchId === "string" ? obj.batchId : null;
+}
+
 /** Parse a raw `operation_log` row into an {@link OperationLogEntry}. */
 function rowToEntry(row: RawOpRow): OperationLogEntry {
   return {
@@ -305,8 +316,9 @@ export class OperationLogRepository {
     const id = newOperationId();
     const createdAt = nowIso();
     const payload = JSON.stringify(input.payload ?? null);
+    const batchId = batchIdFromPayload(input.payload);
     tx.insert(operationLog)
-      .values({ id, opType: input.opType, payload, elementId: input.elementId, createdAt })
+      .values({ id, opType: input.opType, payload, elementId: input.elementId, createdAt, batchId })
       .run();
     return {
       id,

@@ -355,17 +355,17 @@ export class UndoService {
    * insertion order — the inverse of how they were applied).
    */
   private collectBatch(batchId: string): ParsedOp[] {
+    // Indexed lookup on the denormalized `batch_id` column (populated at append
+    // time + backfilled by migration 0041) — O(batch size), not the O(total ops)
+    // full-table scan + JS filter this used to be. Ordering is load-bearing:
+    // newest-first so the batch inverts in reverse insertion order.
     const rows = this.db
       .select()
       .from(operationLog)
+      .where(eq(operationLog.batchId, batchId))
       .orderBy(desc(operationLog.createdAt), desc(sql`rowid`))
       .all() as RawOpRow[];
-    const out: ParsedOp[] = [];
-    for (const row of rows) {
-      const op = this.parse(row);
-      if (op.payload.batchId === batchId) out.push(op);
-    }
-    return out;
+    return rows.map((row) => this.parse(row));
   }
 
   /**
