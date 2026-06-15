@@ -13,7 +13,7 @@
  */
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
@@ -79,6 +79,8 @@ function node(overrides: Partial<LineageNode> = {}): LineageNode {
 interface HostProps {
   readonly onOpen?: (n: LineageNode) => void;
   readonly onAfterMutation?: () => void;
+  /** Wrap the host in <StrictMode> to exercise the dev mount→unmount→remount cycle. */
+  readonly strict?: boolean;
 }
 
 /**
@@ -103,7 +105,15 @@ function renderMenu(n: LineageNode, props: HostProps = {}) {
       />
     );
   }
-  const utils = render(<Host />);
+  const utils = render(
+    props.strict ? (
+      <StrictMode>
+        <Host />
+      </StrictMode>
+    ) : (
+      <Host />
+    ),
+  );
   return { ...utils, onOpen, onAfterMutation };
 }
 
@@ -397,5 +407,67 @@ describe("LineageContextMenu", () => {
     fireEvent.click(screen.getByTestId("context-menu-item-advance-stage"));
     await Promise.resolve();
     expect(h.updateExtractStage).not.toHaveBeenCalled();
+  });
+});
+
+// Regression (real-app bug): the right-click → Delete item in the inspector lineage menu
+// did nothing in the running app. Delete is the ONE menu action that does not dispatch
+// from its own onSelect — it bumps a `triggerSignal` that drives the (hidden-trigger)
+// LineageDeleteMenu, whose `handleTrigger` bails at `if (!mountedRef.current) return`
+// after awaiting `countDescendants`. `mountedRef` was initialised `true` and cleared only
+// on cleanup, so under React StrictMode (active in apps/web/src/main.tsx) the dev-only
+// mount→unmount→remount cycle left it permanently `false` and the delete never fired.
+//
+// LineageDeleteMenu.test.tsx covers the fix via its VISIBLE trigger; this exercises the
+// DISTINCT inspector entry point — the hidden trigger bumped by the context-menu Delete
+// item — which had no StrictMode coverage. RTL's plain `render` does not apply StrictMode,
+// which is exactly why the suite stayed green while the real menu was dead.
+describe("LineageContextMenu under StrictMode (regression: context-menu Delete must fire)", () => {
+  it("leaf Delete soft-deletes through the shared flow after the StrictMode remount cycle (Covers R4)", async () => {
+    h.countDescendants.mockResolvedValue({ extracts: 0, cards: 0, cardsWithHistory: 0, total: 0 });
+    h.softDeleteSubtree.mockResolvedValue({ affected: ["card-9"], batchId: null });
+    const { onAfterMutation } = renderMenu(node({ type: "card", id: "card-9" }), { strict: true });
+
+    fireEvent.click(screen.getByTestId("context-menu-item-delete"));
+
+    // The signal-driven pre-flight runs (would NOT, pre-fix: mountedRef stuck false)…
+    await waitFor(() => expect(h.countDescendants).toHaveBeenCalledWith({ id: "card-9" }));
+    // …and the leaf quietly soft-deletes via the shared controller (the fast path).
+    await waitFor(() =>
+      expect(h.softDeleteSubtree).toHaveBeenCalledWith({ id: "card-9", includeSubtree: false }),
+    );
+    // …and the surface refreshes after the mutation settles (the full controller chain ran,
+    // not just the IPC call) — a delete that fired but never refreshed would look just as
+    // broken to the user.
+    await waitFor(() => expect(onAfterMutation).toHaveBeenCalled());
+  });
+
+  it("descendant Delete opens the intent popover after the StrictMode remount cycle", async () => {
+    h.countDescendants.mockResolvedValue({ extracts: 1, cards: 0, cardsWithHistory: 0, total: 1 });
+    renderMenu(node({ type: "extract", id: "ext-1" }), { strict: true });
+
+    fireEvent.click(screen.getByTestId("context-menu-item-delete"));
+
+    // The descendant-aware popover appears (the signal reached LineageDeleteMenu's effect).
+    expect(await screen.findByTestId("lineage-delete-pop")).toBeInTheDocument();
+    // A leaf-only fast path must NOT have fired for a node with descendants.
+    expect(h.softDeleteSubtree).not.toHaveBeenCalled();
+  });
+
+  it("count-error fall-through still soft-deletes after the StrictMode remount cycle", async () => {
+    // The catch block in handleTrigger has the SAME post-await `if (!mountedRef.current)
+    // return` guard as the leaf path. Cover it through the inspector entry point too: when
+    // countDescendants fails we can't quantify the blast radius, so the controller falls
+    // through to a safe single soft-delete (with a no-undo error toast).
+    h.countDescendants.mockRejectedValue(new Error("count blew up"));
+    h.softDeleteSubtree.mockResolvedValue({ affected: ["card-9"], batchId: null });
+    renderMenu(node({ type: "card", id: "card-9" }), { strict: true });
+
+    fireEvent.click(screen.getByTestId("context-menu-item-delete"));
+
+    await waitFor(() => expect(h.countDescendants).toHaveBeenCalledWith({ id: "card-9" }));
+    await waitFor(() =>
+      expect(h.softDeleteSubtree).toHaveBeenCalledWith({ id: "card-9", includeSubtree: false }),
+    );
   });
 });
