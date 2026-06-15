@@ -30,4 +30,12 @@ describe("help CSS", () => {
     expect(hintLink).not.toContain("display: inline;");
     expect(chevron).toContain("flex: none;");
   });
+
+  it("keeps hovered help category cards flat (border emphasis, no drop shadow or lift)", () => {
+    const hover = cssBlock(".hc-cat:hover");
+
+    expect(hover).toContain("border-color: var(--border-strong);");
+    expect(hover).not.toMatch(/\bbox-shadow\s*:/);
+    expect(hover).not.toMatch(/\btransform\s*:/);
+  });
 });

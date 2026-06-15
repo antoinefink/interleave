@@ -26,4 +26,12 @@ describe("review CSS", () => {
     expect(card).toContain("border: 1px solid var(--border);");
     expect(card).not.toMatch(/\bbox-shadow\s*:/);
   });
+
+  it("keeps grade buttons flat on hover (border-colour cue, no drop shadow)", () => {
+    // Grade hover feedback lives in the per-variant rules (.grade--*:hover);
+    // there must be no generic .grade:hover reintroducing a drop shadow/lift.
+    expect(css).not.toMatch(/\.grade:hover\s*\{[^}]*box-shadow/);
+    expect(css).not.toMatch(/\.grade:hover\s*\{[^}]*transform/);
+    expect(cssBlock(".grade--good:hover")).toContain("border-color: var(--accent);");
+  });
 });

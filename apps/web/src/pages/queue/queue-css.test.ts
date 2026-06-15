@@ -30,6 +30,13 @@ describe("queue CSS", () => {
     expect(active).not.toContain("box-shadow: 0 0 0 1px var(--accent);");
   });
 
+  it("keeps the hovered queue row flat (border emphasis, no drop shadow)", () => {
+    const hover = cssBlock(".qitem:hover");
+
+    expect(hover).toContain("border-color: var(--border-strong);");
+    expect(hover).not.toMatch(/\bbox-shadow\s*:/);
+  });
+
   it("keeps protected rows on the priority accent bar", () => {
     const protectedBar = cssBlock(".qitem--protected::before");
 

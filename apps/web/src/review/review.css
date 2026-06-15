@@ -404,6 +404,10 @@
   font-size: var(--t-xs);
   color: var(--text-3);
 }
+/* Per-grade hover cue: the border shifts to each grade's semantic colour.
+   These variant rules are the sole hover affordance — there is no generic
+   .grade:hover (it used to add a drop shadow, removed for a flat hover).
+   Add new grades here rather than reintroducing a generic .grade:hover. */
 .grade--again:hover {
   border-color: var(--danger);
 }
