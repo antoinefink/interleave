@@ -19,6 +19,12 @@ export interface ContextMenuActionItem {
   readonly id: string;
   readonly label: string;
   readonly icon?: IconName;
+  /**
+   * A leading filled color dot instead of an icon — pass a CSS color/token string
+   * (e.g. `"var(--prio-a)"`). Used for the priority A/B/C/D children so they read as a
+   * scannable color scale. Takes precedence over `icon` when both are set.
+   */
+  readonly dot?: string;
   /** Optional secondary line rendered under the label. */
   readonly hint?: string;
   /** Destructive tint (e.g. Delete / purge). */

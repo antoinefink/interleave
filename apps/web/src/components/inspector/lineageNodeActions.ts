@@ -83,12 +83,15 @@ export interface LineageNodeMenuHandlers {
   readonly purge: (node: LineageNode) => void;
 }
 
-/** A/B/C/D priority children, highest → lowest, with a short relative hint. */
-const PRIORITY_LABELS: ReadonlyArray<{ label: PriorityLabel; hint: string }> = [
-  { label: "A", hint: "Highest" },
-  { label: "B", hint: "High" },
-  { label: "C", hint: "Normal" },
-  { label: "D", hint: "Low" },
+/**
+ * A/B/C/D priority children, highest → lowest, with a short relative hint and a leading
+ * color dot from the `--prio-*` tokens (A red → D grey) so the scale reads at a glance.
+ */
+const PRIORITY_LABELS: ReadonlyArray<{ label: PriorityLabel; hint: string; dot: string }> = [
+  { label: "A", hint: "Highest", dot: "var(--prio-a)" },
+  { label: "B", hint: "High", dot: "var(--prio-b)" },
+  { label: "C", hint: "Normal", dot: "var(--prio-c)" },
+  { label: "D", hint: "Low", dot: "var(--prio-d)" },
 ];
 
 function separator(id: string): ContextMenuSeparator {
@@ -237,11 +240,12 @@ export function buildLineageNodeMenu(
     id: "priority",
     label: "Set priority",
     icon: "arrowUp",
-    items: PRIORITY_LABELS.map(({ label, hint }) => ({
+    items: PRIORITY_LABELS.map(({ label, hint, dot }) => ({
       kind: "action",
       id: `priority-${label}`,
       label,
       hint,
+      dot,
       onSelect: () => handlers.setPriority(node, label),
     })),
   };

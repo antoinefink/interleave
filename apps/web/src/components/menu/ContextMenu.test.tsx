@@ -152,25 +152,30 @@ describe("ContextMenu", () => {
     });
   });
 
-  it("focuses the first enabled item on open", async () => {
+  it("does not pre-select any item on a mouse open (the focus ring is keyboard-only)", async () => {
     stubMenuSize(180, 120);
     render(
       <ContextMenu open position={{ x: 100, y: 100 }} items={basicItems()} onClose={vi.fn()} />,
     );
-    await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-open")),
-    );
+    const menu = await screen.findByTestId("context-menu");
+    // A mouse-driven open never focuses a row and never enters keyboard mode.
+    expect(menu).not.toHaveClass("kbd");
+    expect(document.activeElement).not.toBe(screen.getByTestId("context-menu-item-open"));
+    // The keyboard takes over on the first ArrowDown: first item focused + kbd ring enabled.
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-open"));
+    expect(menu).toHaveClass("kbd");
   });
 
-  it("ArrowDown/ArrowUp cycle focus with wraparound", async () => {
+  it("ArrowDown/ArrowUp cycle focus with wraparound (first ArrowDown lands on the first item)", async () => {
     stubMenuSize(180, 120);
     render(
       <ContextMenu open position={{ x: 100, y: 100 }} items={basicItems()} onClose={vi.fn()} />,
     );
-    const menu = screen.getByTestId("context-menu");
-    await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-open")),
-    );
+    const menu = await screen.findByTestId("context-menu");
+    // No pre-select: the first ArrowDown focuses the first item.
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-open"));
     fireEvent.keyDown(menu, { key: "ArrowDown" });
     expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-copy"));
     fireEvent.keyDown(menu, { key: "ArrowDown" });
@@ -192,12 +197,11 @@ describe("ContextMenu", () => {
       { kind: "action", id: "c", label: "C", onSelect },
     ];
     render(<ContextMenu open position={{ x: 100, y: 100 }} items={items} onClose={vi.fn()} />);
-    const menu = screen.getByTestId("context-menu");
-    await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-a")),
-    );
+    const menu = await screen.findByTestId("context-menu");
     fireEvent.keyDown(menu, { key: "ArrowDown" });
-    // B is disabled → skipped → focus lands on C.
+    expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-a"));
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    // B is disabled → excluded from nav → focus lands on C.
     expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-c"));
     // The disabled button does nothing when clicked.
     fireEvent.click(screen.getByTestId("context-menu-item-b"));
@@ -281,7 +285,30 @@ describe("ContextMenu", () => {
     // Arrow nav steps over the separator (only the two actions cycle).
     const menu = screen.getByTestId("context-menu");
     fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-a"));
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
     expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-b"));
+  });
+
+  it("renders a priority color dot instead of an icon when an item carries `dot`", async () => {
+    stubMenuSize(180, 120);
+    const items: ContextMenuItem[] = [
+      {
+        kind: "action",
+        id: "pa",
+        label: "A",
+        hint: "Highest",
+        dot: "var(--prio-a)",
+        onSelect: vi.fn(),
+      },
+    ];
+    render(<ContextMenu open position={{ x: 100, y: 100 }} items={items} onClose={vi.fn()} />);
+    const item = await screen.findByTestId("context-menu-item-pa");
+    const dot = item.querySelector(".ctxmenu__dot");
+    expect(dot).not.toBeNull();
+    expect((dot as HTMLElement).style.background).toContain("--prio-a");
+    // The hint still renders alongside the dot.
+    expect(item.querySelector(".ctxmenu__hint")?.textContent).toBe("Highest");
   });
 
   describe("submenu", () => {
@@ -328,6 +355,24 @@ describe("ContextMenu", () => {
       await waitFor(() =>
         expect(screen.queryByTestId("context-menu-sub-prio")).toBeInTheDocument(),
       );
+    });
+
+    it("dismisses the submenu on a grace delay once the pointer leaves the menu", async () => {
+      stubMenuSize(180, 120);
+      render(
+        <ContextMenu open position={{ x: 100, y: 100 }} items={withSubmenu()} onClose={vi.fn()} />,
+      );
+      const parent = await screen.findByTestId("context-menu-item-prio");
+      fireEvent.mouseEnter(parent);
+      await screen.findByTestId("context-menu-sub-prio");
+      const menu = screen.getByTestId("context-menu");
+      // Leave the parent then the whole menu — neither the parent nor the panel is hovered,
+      // so the grace timer elapses and the submenu closes itself (the old bug: it never did).
+      fireEvent.mouseLeave(parent);
+      fireEvent.mouseLeave(menu);
+      await waitFor(() => expect(screen.queryByTestId("context-menu-sub-prio")).toBeNull());
+      // The root menu itself stays open — only the submenu collapsed.
+      expect(screen.getByTestId("context-menu")).toBeInTheDocument();
     });
 
     it("selecting a submenu child fires its onSelect and closes the whole menu", async () => {
