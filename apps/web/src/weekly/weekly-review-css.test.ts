@@ -23,6 +23,14 @@ const cssPath =
   ].find((candidate) => existsSync(candidate)) ?? "";
 const css = readFileSync(cssPath, "utf8");
 
+function cssBlock(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`).exec(css);
+  const body = match?.groups?.body;
+  if (!body) throw new Error(`Missing CSS block for ${selector}`);
+  return body;
+}
+
 describe("weekly review CSS", () => {
   it("loads the stylesheet from disk", () => {
     expect(cssPath).not.toBe("");
@@ -66,5 +74,25 @@ describe("weekly review CSS", () => {
     ]) {
       expect(css).toContain(selector);
     }
+  });
+});
+
+describe("weekly review section state (R4)", () => {
+  it("no longer paints the green left band on completed sections", () => {
+    // The `.wk-sec--done::before { background: var(--ok); }` rule was removed.
+    // Done-ness is signaled by the border tint + DONE pill, not a 3px green rail.
+    // Guard both structurally (no selector block) and textually (exact declaration
+    // absent) so it is not reintroduced by analogy to `.qitem--protected::before`.
+    expect(() => cssBlock(".wk-sec--done::before")).toThrow();
+    expect(css).not.toMatch(/\.wk-sec--done::before\s*\{[^}]*background:\s*var\(--ok\)/);
+  });
+
+  it("still signals done-ness via the green-tinted border", () => {
+    // The border tint references the green token through color-mix and stays.
+    expect(cssBlock(".wk-sec--done")).toContain("var(--ok)");
+  });
+
+  it("leaves the skipped-state grey rail untouched", () => {
+    expect(cssBlock(".wk-sec--skipped::before")).toContain("background: var(--border-strong);");
   });
 });

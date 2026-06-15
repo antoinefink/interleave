@@ -253,9 +253,6 @@
 .wk-sec--done {
   border-color: color-mix(in oklch, var(--ok) 40%, var(--border));
 }
-.wk-sec--done::before {
-  background: var(--ok);
-}
 .wk-sec--skipped {
   opacity: 0.62;
 }
