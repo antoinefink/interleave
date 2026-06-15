@@ -366,7 +366,10 @@ test("extracts and highlights source text inline inside /process, then persists 
   selected = await selectProcessSourceBodyText(page);
   expect(selected.trim().length).toBeGreaterThanOrEqual(3);
   await page.getByTestId("sel-tool-extract").click();
-  await expect(page.getByTestId("process-flash")).toContainText("Extracted");
+  // selectProcessSourceBodyText triple-clicks the first body block — a single
+  // finite-verb sentence the T122 shape-aware classifier stages as an
+  // `atomic_statement` — so the flash is the atomic confirmation, not "Extracted".
+  await expect(page.getByTestId("process-flash")).toContainText("Atomic extract ready");
   await expect
     .poll(
       async () =>
