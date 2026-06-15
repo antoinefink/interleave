@@ -21,6 +21,10 @@
  * retired/expired card treatments that also use `--text-3` — and carries an
  * ALWAYS-VISIBLE (keyboard-reachable, never hover-only) inline "Restore" control so a
  * focused live card never silently loses its own chain.
+ *
+ * Right-click (U5): when the host passes `onNodeContextMenu`, right-clicking a node
+ * suppresses the native browser menu and reports the node + cursor position so the host
+ * can open the in-app `LineageContextMenu`. The inline Restore control is unaffected.
  */
 
 import type { LineageNode } from "../../lib/appApi";
@@ -33,6 +37,7 @@ export function LineageTree({
   onPick,
   onRestore,
   restoringId = null,
+  onNodeContextMenu,
 }: {
   readonly nodes: readonly LineageNode[];
   /** Called with the picked node; the caller re-selects + navigates. */
@@ -44,6 +49,12 @@ export function LineageTree({
   onRestore?: (node: LineageNode) => void;
   /** The id of the tombstone whose restore is in flight (its control shows a busy state). */
   restoringId?: string | null;
+  /**
+   * Right-click a node (U5): suppress the native menu and report the node + cursor
+   * position so the host can open the in-app `LineageContextMenu`. Omit to keep the
+   * default browser context menu (e.g. surfaces with no per-node actions).
+   */
+  onNodeContextMenu?: (node: LineageNode, position: { x: number; y: number }) => void;
 }) {
   return (
     <div className="tree" data-testid="lineage-tree">
@@ -69,6 +80,12 @@ export function LineageTree({
               data-deleted={n.deleted ? "true" : "false"}
               aria-current={n.active ? "true" : undefined}
               onClick={() => onPick(n)}
+              onContextMenu={(e) => {
+                if (onNodeContextMenu) {
+                  e.preventDefault();
+                  onNodeContextMenu(n, { x: e.clientX, y: e.clientY });
+                }
+              }}
             >
               <TypeIcon type={n.type} />
               <span className="tree-node__title">{n.title}</span>

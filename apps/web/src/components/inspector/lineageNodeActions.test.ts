@@ -12,10 +12,15 @@ import type { LineageNode } from "../../lib/appApi";
 import type { ContextMenuActionItem, ContextMenuItem, ContextMenuSubmenuItem } from "../menu/types";
 import { buildLineageNodeMenu, type LineageNodeMenuHandlers } from "./lineageNodeActions";
 
-/** A full handler bag of stubs; `rename` included so it can be omitted per-test. */
-function makeHandlers(): {
-  [K in keyof Required<LineageNodeMenuHandlers>]: ReturnType<typeof vi.fn>;
-} {
+/**
+ * A full handler bag of stubs, typed as BOTH the real handler interface (so it passes
+ * to `buildLineageNodeMenu` without a per-call cast) and a mock map (so each property
+ * keeps `.toHaveBeenCalledWith`). `rename` is included so it can be omitted per-test.
+ */
+type MockHandlers = LineageNodeMenuHandlers & {
+  readonly [K in keyof Required<LineageNodeMenuHandlers>]: ReturnType<typeof vi.fn>;
+};
+function makeHandlers(): MockHandlers {
   return {
     open: vi.fn(),
     copyReference: vi.fn(),
@@ -33,7 +38,7 @@ function makeHandlers(): {
     restore: vi.fn(),
     restoreAncestorChain: vi.fn(),
     purge: vi.fn(),
-  };
+  } as unknown as MockHandlers;
 }
 
 function makeNode(overrides: Partial<LineageNode> = {}): LineageNode {
@@ -140,8 +145,8 @@ describe("buildLineageNodeMenu", () => {
         "priority-D",
       ]);
       expect(priority?.items.map((c) => c.label)).toEqual(["A", "B", "C", "D"]);
-      expect(priority?.items[0].hint).toBe("Highest");
-      expect(priority?.items[3].hint).toBe("Low");
+      expect(priority?.items[0]?.hint).toBe("Highest");
+      expect(priority?.items[3]?.hint).toBe("Low");
     });
   });
 
@@ -184,7 +189,7 @@ describe("buildLineageNodeMenu", () => {
         const purge = findSubmenu(items, "purge");
         expect(purge?.danger).toBe(true);
         expect(purge?.items.map((c) => c.id)).toEqual(["purge-confirm"]);
-        expect(purge?.items[0].danger).toBe(true);
+        expect(purge?.items[0]?.danger).toBe(true);
         // none of the live-node ids appear
         const ids = allIds(items);
         for (const id of [...ALL_LIVE_IDS, ...EXTRACT_ONLY_IDS, ...CARD_ONLY_IDS]) {
