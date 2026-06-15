@@ -419,6 +419,7 @@ const h = vi.hoisted(() => {
     }),
     undoQueueAction: vi.fn().mockResolvedValue({ item: extractRow }),
     getPriorityIntegrity: vi.fn().mockResolvedValue(priorityIntegrity),
+    getRereadProposals: vi.fn().mockResolvedValue({ asOf: "", windowDays: 30, proposals: [] }),
     getSettings: vi.fn().mockResolvedValue({ settings: { "ui.noticeDismissals": {} } }),
     updateSetting: vi.fn().mockResolvedValue({ key: "ui.noticeDismissals", value: {} }),
     result,
@@ -455,6 +456,7 @@ vi.mock("../../lib/appApi", async () => {
       undoDailyWorkAutoPostponeReceipt: h.undoDailyWorkAutoPostponeReceipt,
       undoQueueAction: h.undoQueueAction,
       getPriorityIntegrity: h.getPriorityIntegrity,
+      getRereadProposals: h.getRereadProposals,
       getSettings: h.getSettings,
       updateSetting: h.updateSetting,
     },
@@ -1695,5 +1697,56 @@ describe("QueueScreen", () => {
     window.dispatchEvent(new CustomEvent("interleave:undo"));
 
     await waitFor(() => expect(h.listQueue).toHaveBeenCalledWith({ includeTimeEstimate: true }));
+  });
+
+  it("shows a single quiet re-read line for a FRESH proposal, linking to maintenance (T129)", async () => {
+    h.getRereadProposals.mockResolvedValueOnce({
+      asOf: "",
+      windowDays: 30,
+      proposals: [
+        {
+          ancestorId: "ext-1",
+          sourceId: "src-1",
+          sourceTitle: "Deep Paper",
+          region: { sourceElementId: "src-1", blockIds: ["b1"], label: "Chapter 2", page: null },
+          members: [],
+          totalWindowLapses: 6,
+          affectedCardCount: 2,
+          strength: 9,
+          mostRecentLapseAt: new Date(Date.now() - 3_600_000).toISOString(),
+          stateHash: "v1:ext-1|hash",
+          dismissable: true,
+        },
+      ],
+    });
+    render(<QueueScreen />);
+    const line = await screen.findByTestId("queue-reread-line");
+    expect(line.textContent).toContain("re-reading it may help");
+    expect(line.querySelector("a")?.getAttribute("href")).toContain("/maintenance");
+  });
+
+  it("hides the re-read line when the proposal is stale (no recent lapse activity) (T129)", async () => {
+    h.getRereadProposals.mockResolvedValueOnce({
+      asOf: "",
+      windowDays: 30,
+      proposals: [
+        {
+          ancestorId: "ext-1",
+          sourceId: "src-1",
+          sourceTitle: "Deep Paper",
+          region: { sourceElementId: "src-1", blockIds: ["b1"], label: "Chapter 2", page: null },
+          members: [],
+          totalWindowLapses: 6,
+          affectedCardCount: 2,
+          strength: 9,
+          mostRecentLapseAt: new Date(Date.now() - 10 * 86_400_000).toISOString(),
+          stateHash: "v1:ext-1|hash",
+          dismissable: true,
+        },
+      ],
+    });
+    render(<QueueScreen />);
+    await screen.findAllByTestId("queue-item");
+    expect(screen.queryByTestId("queue-reread-line")).not.toBeInTheDocument();
   });
 });

@@ -23,7 +23,7 @@
  * math (all of that is `packages/local-db` + `packages/scheduler` behind IPC).
  */
 
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { AutoPostponeReceiptLine } from "../../components/AutoPostponeReceiptLine";
 import { ExtractAgingReceiptLine } from "../../components/ExtractAgingReceiptLine";
@@ -67,6 +67,7 @@ import {
   type QueueItemSummary,
   type QueueListResult,
   type QueueScheduleChoice,
+  type RereadProposalsListResult,
   type SchedulerSignals,
 } from "../../lib/appApi";
 import { formatQueueTimeEstimate } from "../../lib/queueTimeEstimate";
@@ -419,6 +420,8 @@ export function QueueScreen() {
   const concept = typeof search.concept === "string" ? search.concept : undefined;
   const [data, setData] = useState<QueueListResult | null>(null);
   const [dailyWork, setDailyWork] = useState<DailyWorkSummaryResult | null>(null);
+  // Re-read proposals (T129) — only the strongest FRESH one drives a single quiet daily line.
+  const [rereadProposals, setRereadProposals] = useState<RereadProposalsListResult | null>(null);
   const [priorityIntegrity, setPriorityIntegrity] = useState<PriorityIntegrityGetResult | null>(
     null,
   );
@@ -460,18 +463,20 @@ export function QueueScreen() {
       // happens main-side (`QueueQuery.matchesFilters`), never in React. `all` sends
       // no `statuses` (the full due set). The `concept` param is forwarded too (when
       // present) so the documented T041 filter surface is genuinely wired end-to-end.
-      const [queueResult, workResult, priorityResult, noticeResult] = await Promise.allSettled([
-        appApi.listQueue({
-          ...(asOf ? { asOf } : {}),
-          ...(activeTypes ? { types: activeTypes } : {}),
-          ...(activeStatuses ? { statuses: activeStatuses } : {}),
-          ...(concept ? { concept } : {}),
-          includeTimeEstimate: true,
-        }),
-        appApi.getDailyWorkSummary(asOf ? { asOf } : {}),
-        appApi.getPriorityIntegrity(asOf ? { asOf } : undefined),
-        appApi.getSettings({ key: NOTICE_DISMISSALS_KEY }),
-      ]);
+      const [queueResult, workResult, priorityResult, noticeResult, rereadResult] =
+        await Promise.allSettled([
+          appApi.listQueue({
+            ...(asOf ? { asOf } : {}),
+            ...(activeTypes ? { types: activeTypes } : {}),
+            ...(activeStatuses ? { statuses: activeStatuses } : {}),
+            ...(concept ? { concept } : {}),
+            includeTimeEstimate: true,
+          }),
+          appApi.getDailyWorkSummary(asOf ? { asOf } : {}),
+          appApi.getPriorityIntegrity(asOf ? { asOf } : undefined),
+          appApi.getSettings({ key: NOTICE_DISMISSALS_KEY }),
+          appApi.getRereadProposals(),
+        ]);
       if (refreshRequestId.current !== requestId) return;
       let nextError: string | null = null;
       if (queueResult.status === "fulfilled") {
@@ -507,6 +512,8 @@ export function QueueScreen() {
           isNoticeDismissed(parsedDismissals, PRIORITY_INTEGRITY_QUEUE_NOTICE_ID),
         );
       }
+      // Re-read proposals (T129): a non-fatal quiet line; a failed fetch just hides it.
+      setRereadProposals(rereadResult.status === "fulfilled" ? rereadResult.value : null);
       setError(nextError);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -575,6 +582,14 @@ export function QueueScreen() {
   const counts = data?.counts;
   const dueCount = counts?.all ?? 0;
   const estimateLabel = formatQueueTimeEstimate(data?.timeEstimate);
+  // T129 — the single strongest FRESH re-read proposal (recent lapse activity within 48h)
+  // drives one quiet, help-framed line. Not a running tally; absent unless genuinely fresh.
+  const freshReread = useMemo(() => {
+    const list = rereadProposals?.proposals ?? [];
+    if (list.length === 0) return null;
+    const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+    return list.find((p) => Date.parse(p.mostRecentLapseAt) >= cutoff) ?? null;
+  }, [rereadProposals]);
   const today = new Date().toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
@@ -899,6 +914,16 @@ export function QueueScreen() {
         {error ? (
           <p className="q-sub" data-testid="queue-error" style={{ color: "var(--danger)" }}>
             {error}
+          </p>
+        ) : null}
+
+        {freshReread ? (
+          <p className="q-sub" data-testid="queue-reread-line">
+            A section keeps tripping a few cards —{" "}
+            <Link to="/maintenance" className="underline">
+              re-reading it may help
+            </Link>
+            .
           </p>
         ) : null}
 
