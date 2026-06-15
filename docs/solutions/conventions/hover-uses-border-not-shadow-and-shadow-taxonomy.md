@@ -1,20 +1,24 @@
 ---
 title: "Hover states use border-color, not box-shadow: the app's shadow taxonomy"
 date: "2026-06-15"
+last_updated: "2026-06-15"
 category: "docs/solutions/conventions/"
-module: "apps/web screen CSS (queue, home, help, review) and per-screen *-css.test.ts"
+module: "apps/web screen CSS (queue, home, help, review, weekly) and per-screen *-css.test.ts"
 problem_type: "convention"
 component: "frontend_stimulus"
 severity: "low"
 applies_when:
   - "Adding or changing a :hover state on an interactive row, tile, card, or button in apps/web"
   - "Deciding whether a box-shadow on a surface is decorative noise or structural depth"
+  - "Deciding whether a colored ::before state-band (e.g. a 3px left rail) earns its place or is redundant noise"
   - "A reviewer flags a `box-shadow: none` on an --active/--on rule as dead code"
+  - "A reviewer flags a missing state-band as inconsistent with another screen's left rail"
   - "Writing a per-screen *-css.test.ts to pin a styling invariant against regression"
 tags:
   - "box-shadow"
   - "hover-state"
   - "shadow-taxonomy"
+  - "state-band"
   - "css-convention"
   - "regression-test"
   - "border-color"
@@ -24,6 +28,8 @@ related_components:
   - "apps/web/src/pages/home/home.css"
   - "apps/web/src/review/review.css"
   - "apps/web/src/pages/queue/queue-css.test.ts"
+  - "apps/web/src/weekly/weekly-review.css"
+  - "apps/web/src/weekly/weekly-review-css.test.ts"
 ---
 
 # Hover states use border-color, not box-shadow: the app's shadow taxonomy
@@ -87,6 +93,24 @@ The litmus test: **does this surface float above content?** If yes (menu,
 tooltip, popover, toolbar) → keep the shadow. If it sits in flow (row, tile,
 card, button) → the shadow is noise; use border affordance only.
 
+**Corollary — colored `::before` state-bands follow the same principle.** The
+same "state is signaled by border-color, not by an added decorative layer" rule
+extends past `box-shadow` to the app's **3px-left-band idiom** (a
+`position:absolute; left:0; width:3px` `::before` rail filled with a semantic
+token). Keep the band where it is the *only* signal for the state — e.g.
+`.qitem--protected::before { width: 3px; background: var(--prio-a); }` in
+`queue.css` is the sole marker that a queue row is protected, so it stays and is
+pinned by a contract test. **Remove** it where the same state is already carried
+by other cues. On the Weekly Review screen, a completed section was signaled
+*three* ways — a green `.wk-sec--done::before` band, a green-tinted border
+(`.wk-sec--done { border-color: color-mix(in oklch, var(--ok) 40%, var(--border)); }`),
+and the inline `DONE` pill. The band read as visually heavy on the wide section
+frames, so `.wk-sec--done::before` was dropped entirely; done-ness still reads
+clearly from the border tint + pill, and the shared `.wk-sec::before` rail and
+the skipped-state grey rail (`.wk-sec--skipped::before`) are untouched. Removing
+one of several redundant state cues is a legitimate design call — but pin the
+removal so it is not "restored" by analogy to `.qitem--protected::before`.
+
 ## Why This Matters
 
 - A flat hover keeps long lists calm and aligns with two already-documented
@@ -112,6 +136,13 @@ card, button) → the shadow is noise; use border affordance only.
   dead code → keep it; it is a test-pinned flatness guard. Point them here.
 - Deciding whether a new surface should carry a shadow → apply the floats-above-
   content litmus test above.
+- Deciding whether to keep or drop a colored `::before` state-band → keep it
+  where the band is the only cue for the state (`.qitem--protected`); drop it
+  where the border/pill already carry the state (`.wk-sec--done`), and pin the
+  removal with a contract test.
+- A reviewer flags a *missing* state-band as inconsistent with another screen's
+  left rail → it may be an intentional, test-pinned departure; check for the
+  `*-css.test.ts` guard before "restoring" it. Point them here.
 
 ## Examples
 
@@ -147,6 +178,31 @@ change extended the pattern to `.qitem:hover` (queue), `.home-prow:hover` /
 `.home-tile:hover` (new `home-css.test.ts`), `.hc-cat:hover` (help), and the
 grade buttons (review) — converting "no hover shadows" from intent into a
 guarded contract.
+
+The same machinery pins the *removal* of a redundant `::before` state-band.
+`weekly-review-css.test.ts` guards the dropped green done-band both structurally
+(the selector block is gone) and textually, while asserting the remaining cues
+(border tint, skipped grey rail) survive — so the full state-cue intent, not just
+an absence, is documented:
+
+```ts
+it("no longer paints the green left band on completed sections", () => {
+  expect(() => cssBlock(".wk-sec--done::before")).toThrow();          // block removed
+  expect(css).not.toMatch(/\.wk-sec--done::before\s*\{[^}]*background:\s*var\(--ok\)/);
+});
+
+it("still signals done-ness via the green-tinted border", () => {
+  expect(cssBlock(".wk-sec--done")).toContain("var(--ok)");           // border tint kept
+});
+
+it("leaves the skipped-state grey rail untouched", () => {
+  expect(cssBlock(".wk-sec--skipped::before")).toContain("background: var(--border-strong);");
+});
+```
+
+Without the `toThrow()` guard, the next contributor sees `.qitem--protected::before`
+painting a band and "fixes" the missing `.wk-sec--done::before` by analogy,
+silently reintroducing the heavy green rail with no compile error to stop them.
 
 ## Related
 
