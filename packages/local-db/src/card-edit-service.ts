@@ -361,7 +361,7 @@ export class CardEditService {
     // sits in the trash; restoring the old long schedule there would surface it wrong on
     // recovery). A suspended card is still live and recoverable, so undo is allowed.
     const cardRow = this.review.findCardById(cardElementId);
-    if (!cardRow || cardRow.element.type !== "card" || cardRow.element.deletedAt) {
+    if (cardRow?.element.type !== "card" || cardRow.element.deletedAt) {
       return { undone: false, restoredDueAt: null, reason: "Card is not available" };
     }
     // Newer-marker guard: back-to-back re-stabilizations converge to an identical demoted
