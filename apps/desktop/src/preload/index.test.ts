@@ -184,6 +184,13 @@ describe("preload bridge", () => {
       topicId: "topic-1",
     });
 
+    // Lineage rename bridge surface — routes to elements:rename with the payload unchanged.
+    await api().elements.rename({ id: "el-1", title: "New title" });
+    expect(electronMock.invoke).toHaveBeenLastCalledWith(IPC_CHANNELS.elementsRename, {
+      id: "el-1",
+      title: "New title",
+    });
+
     // Lineage-aware delete bridge surface (T135) — the three new functions exist on
     // the typed bridge and route to the right channels with the payload unchanged.
     await api().elements.countDescendants({ id: "el-1" });

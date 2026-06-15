@@ -515,6 +515,28 @@ export interface ElementsSetPriorityResult {
 }
 
 // ---------------------------------------------------------------------------
+// elements.rename()  (lineage context menu — title rename)
+// ---------------------------------------------------------------------------
+
+/**
+ * Rename an element's universal `title`. A NARROW command (id + new title) that
+ * reuses the SAME element-update path `setElementPriority` rides: the main process
+ * persists the title in ONE transaction that appends `update_element` (NO new op
+ * type) with a `prev.title` pre-image for undo. The title is trimmed + validated
+ * (non-empty after trim) at the IPC boundary, so the renderer cannot blank the
+ * NOT-NULL column. There is NO generic element-update bridge method.
+ */
+export interface ElementsRenameRequest {
+  readonly id: string;
+  readonly title: string;
+}
+
+export interface ElementsRenameResult {
+  /** The updated element summary with the NEW `title`, or `null` when unknown / soft-deleted. */
+  readonly element: ElementSummary | null;
+}
+
+// ---------------------------------------------------------------------------
 // elements.countDescendants() / elements.softDeleteSubtree()  (T135)
 // ---------------------------------------------------------------------------
 
@@ -5048,6 +5070,7 @@ export interface AppApi {
   };
   readonly elements: {
     setPriority(request: ElementsSetPriorityRequest): Promise<ElementsSetPriorityResult>;
+    rename(request: ElementsRenameRequest): Promise<ElementsRenameResult>;
     countDescendants(
       request: ElementsCountDescendantsRequest,
     ): Promise<ElementsCountDescendantsResult>;
@@ -5469,6 +5492,14 @@ export const appApi = {
    */
   setElementPriority(request: ElementsSetPriorityRequest): Promise<ElementsSetPriorityResult> {
     return requireAppApi().elements.setPriority(request);
+  },
+  /**
+   * Rename an element's universal `title`. Reuses the existing element-update path
+   * (logs `update_element`, NO new op type); returns the updated summary so the
+   * Inspector can refresh the node.
+   */
+  renameElement(request: ElementsRenameRequest): Promise<ElementsRenameResult> {
+    return requireAppApi().elements.rename(request);
   },
   /**
    * Count an element's LIVE descendants (T135) by kind — the blast-radius inventory

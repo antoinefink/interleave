@@ -248,6 +248,8 @@ import type {
   ElementOrganizeState,
   ElementsCountDescendantsRequest,
   ElementsCountDescendantsResult,
+  ElementsRenameRequest,
+  ElementsRenameResult,
   ElementsSetPriorityRequest,
   ElementsSetPriorityResult,
   ElementsSoftDeleteSubtreeRequest,
@@ -1302,6 +1304,36 @@ export class DbService {
         dueAt: updated.dueAt,
         extractFate: updated.extractFate,
         priorityLabel: priorityToLabel(updated.priority),
+      },
+    };
+  }
+
+  /**
+   * Rename an element's universal `title` (lineage context menu). Like
+   * {@link setElementPriority}, this is a NARROW command that reuses the proven
+   * {@link ElementRepository.update} path: the new title is persisted in ONE
+   * transaction that appends `update_element` (NO new op type) and records a
+   * `prev.title` pre-image for command-level undo. The `title` is already trimmed +
+   * length-validated at the IPC boundary; here we only guard that the element still
+   * exists and is live. Returns the updated summary so the Inspector can refresh the
+   * node without a re-fetch; `null` when the id is unknown / soft-deleted.
+   */
+  renameElement(request: ElementsRenameRequest): ElementsRenameResult {
+    const id = request.id as ElementId;
+    const element = this.repos.elements.findById(id);
+    if (!element || element.deletedAt) return { element: null };
+
+    const updated = this.repos.elements.update(id, { title: request.title });
+    return {
+      element: {
+        id: updated.id,
+        type: updated.type,
+        status: updated.status,
+        stage: updated.stage,
+        priority: updated.priority,
+        title: updated.title,
+        dueAt: updated.dueAt,
+        extractFate: updated.extractFate,
       },
     };
   }

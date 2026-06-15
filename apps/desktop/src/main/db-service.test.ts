@@ -1080,6 +1080,109 @@ describe("DbService", () => {
     svc.close();
   });
 
+  // -------------------------------------------------------------------------
+  // elements.rename — title rename rides the existing element-update path.
+  // -------------------------------------------------------------------------
+
+  it("renameElement updates elements.title, persists across a fresh read, and leaves lineage untouched", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    // Build a real lineage: source → extract, so we can prove FKs are not nulled
+    // (the migration-0030 scar — a rename must never touch parent/source links).
+    const source = svc.repos.elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.375,
+      title: "Original source",
+    });
+    const extract = svc.repos.elements.create({
+      type: "extract",
+      status: "scheduled",
+      stage: "raw_extract",
+      priority: 0.375,
+      title: "Original extract",
+      parentId: source.id,
+      sourceId: source.id,
+    });
+
+    const res = svc.renameElement({ id: extract.id, title: "Renamed extract" });
+    expect(res.element?.id).toBe(extract.id);
+    expect(res.element?.title).toBe("Renamed extract");
+
+    // The new title survives a fresh read from the DB.
+    const reread = svc.repos.elements.findById(extract.id);
+    expect(reread?.title).toBe("Renamed extract");
+
+    // Foreign keys / lineage are untouched — parent and source links are intact.
+    expect(reread?.parentId).toBe(source.id);
+    expect(reread?.sourceId).toBe(source.id);
+
+    svc.close();
+  });
+
+  it("renameElement appends exactly one update_element op carrying the prior title in the pre-image (no new op type)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const el = svc.repos.elements.create({
+      type: "topic",
+      status: "active",
+      stage: "rough_topic",
+      priority: 0.375,
+      title: "Before rename",
+    });
+
+    const updateOps = () =>
+      svc.repos.operationLog.listForElement(el.id).filter((o) => o.opType === "update_element");
+
+    const before = updateOps().length;
+    svc.renameElement({ id: el.id, title: "After rename" });
+
+    const ops = updateOps();
+    expect(ops.length).toBe(before + 1);
+
+    // The single appended op is an `update_element` (no new op type) and its payload
+    // carries the PRE-IMAGE of the title for command-level undo.
+    const op = ops.at(-1);
+    expect(op?.opType).toBe("update_element");
+    const payload = op?.payload as { patch: { title?: string }; prev: { title?: string } };
+    expect(payload.patch.title).toBe("After rename");
+    expect(payload.prev.title).toBe("Before rename");
+
+    svc.close();
+  });
+
+  it("renameElement returns null for an unknown / soft-deleted element and writes no op", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    expect(svc.renameElement({ id: "el_missing", title: "Nope" }).element).toBeNull();
+
+    const el = svc.repos.elements.create({
+      type: "extract",
+      status: "scheduled",
+      stage: "raw_extract",
+      priority: 0.375,
+      title: "Doomed",
+    });
+    svc.repos.elements.softDelete(el.id);
+
+    const updateOpsBefore = svc.repos.operationLog
+      .listForElement(el.id)
+      .filter((o) => o.opType === "update_element").length;
+    expect(svc.renameElement({ id: el.id, title: "Ghost" }).element).toBeNull();
+    // A no-op rename writes nothing to the log and does not change the title.
+    expect(
+      svc.repos.operationLog.listForElement(el.id).filter((o) => o.opType === "update_element")
+        .length,
+    ).toBe(updateOpsBefore);
+    expect(svc.repos.elements.findById(el.id)?.title).toBe("Doomed");
+
+    svc.close();
+  });
+
   it("persists a priority change across a full close + reopen (T027 restart analogue)", () => {
     const first = new DbService();
     first.open(dbPath, { migrationsDir: MIGRATIONS_DIR });

@@ -44,6 +44,18 @@ function fakeDbService() {
     ping: vi.fn(() => true),
     getStatus: vi.fn(() => ({ open: true, migrated: true })),
     setElementPriority: vi.fn(),
+    renameElement: vi.fn(() => ({
+      element: {
+        id: "el_1",
+        type: "extract",
+        status: "scheduled",
+        stage: "raw_extract",
+        priority: 0.375,
+        title: "Renamed",
+        dueAt: null,
+        extractFate: null,
+      },
+    })),
     countDescendants: vi.fn(() => ({ extracts: 1, cards: 2, cardsWithHistory: 1, total: 3 })),
     softDeleteSubtree: vi.fn(() => ({ batchId: "batch_1", affected: ["el_1"], skipped: [] })),
     restoreBatchFromTrash: vi.fn(() => ({ restored: ["el_1"], skipped: [], rootRestored: true })),
@@ -454,6 +466,43 @@ describe("registerIpcHandlers", () => {
       expect(() => handler?.({}, { id: "" })).toThrow();
       expect(() => handler?.({}, {})).toThrow();
       expect(db.countDescendants).not.toHaveBeenCalled();
+    });
+
+    it("validates, trims, and forwards elements:rename", () => {
+      const db = fakeDbService();
+      registerIpcHandlers(db as never);
+      const handler = electron.handlers.get(IPC_CHANNELS.elementsRename);
+
+      const result = handler?.({}, { id: "el_1", title: "  Renamed  " });
+      expect(result).toEqual({
+        element: {
+          id: "el_1",
+          type: "extract",
+          status: "scheduled",
+          stage: "raw_extract",
+          priority: 0.375,
+          title: "Renamed",
+          dueAt: null,
+          extractFate: null,
+        },
+      });
+      // The handler forwards the TRIMMED title (schema strips surrounding whitespace).
+      expect(db.renameElement).toHaveBeenCalledWith({ id: "el_1", title: "Renamed" });
+    });
+
+    it("rejects a malformed elements:rename payload before the DB service", () => {
+      const db = fakeDbService();
+      registerIpcHandlers(db as never);
+      const handler = electron.handlers.get(IPC_CHANNELS.elementsRename);
+
+      // Missing id, non-string title, empty title, and whitespace-only title are all
+      // rejected at the schema boundary — the DB service is never reached.
+      expect(() => handler?.({}, { title: "ok" })).toThrow();
+      expect(() => handler?.({}, { id: "el_1" })).toThrow();
+      expect(() => handler?.({}, { id: "el_1", title: 7 })).toThrow();
+      expect(() => handler?.({}, { id: "el_1", title: "" })).toThrow();
+      expect(() => handler?.({}, { id: "el_1", title: "   " })).toThrow();
+      expect(db.renameElement).not.toHaveBeenCalled();
     });
 
     it("validates and forwards elements:softDeleteSubtree (incl. includeSubtree)", () => {

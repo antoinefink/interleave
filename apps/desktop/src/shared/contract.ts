@@ -701,6 +701,46 @@ export interface ElementsSetPriorityResult {
 }
 
 // ---------------------------------------------------------------------------
+// elements.rename()  (lineage context menu — rename rides the existing
+// element-update / operation_log path; NO new op type, NO migration)
+// ---------------------------------------------------------------------------
+
+/** Bound for a user-visible element title rename. */
+export const ELEMENT_TITLE_MAX = 1000;
+
+/**
+ * Rename ANY element's universal `title` (the stored, NOT-NULL column shared by
+ * sources/topics/extracts/cards/…). This is a NARROW command — it carries only an
+ * id + the new title — and it reuses the SAME `ElementRepository.update` machinery
+ * `setElementPriority` rides: the main process persists the title in ONE transaction
+ * that appends `update_element` (NO new op type — the closed op set is unchanged) and
+ * records a `prev.title` pre-image for command-level undo. There is NO generic
+ * element-update IPC; this is the only title write path the renderer can call.
+ *
+ * The title is trimmed and must be non-empty after trimming (a whitespace-only title
+ * is rejected at the boundary), so the renderer can never blank out the NOT-NULL
+ * column or smuggle untrimmed padding past validation.
+ */
+export const ElementsRenameRequestSchema = z
+  .object({
+    /** The element id to rename (any type — `title` is universal). */
+    id: ElementIdSchema,
+    /** The new title; trimmed, non-empty after trim, length-bounded. */
+    title: z.string().trim().min(1).max(ELEMENT_TITLE_MAX),
+  })
+  .strict();
+export type ElementsRenameRequest = z.infer<typeof ElementsRenameRequestSchema>;
+
+export interface ElementsRenameResult {
+  /**
+   * The updated element summary carrying the NEW `title`, so the Inspector can
+   * refresh the node without a re-fetch. `null` when the id is unknown /
+   * soft-deleted.
+   */
+  readonly element: ElementSummary | null;
+}
+
+// ---------------------------------------------------------------------------
 // topics.fallow() / topics.unfallow()  (T107 — deliberate topic rest)
 // ---------------------------------------------------------------------------
 
@@ -7367,6 +7407,12 @@ export interface AppApi {
      * the numeric value + logs `update_element` in one transaction.
      */
     setPriority(request: ElementsSetPriorityRequest): Promise<ElementsSetPriorityResult>;
+    /**
+     * Rename an element's universal `title` (lineage context menu). A narrow,
+     * title-only command that reuses the SAME element-update path as `setPriority`:
+     * persists the title + logs `update_element` (no new op type) in one transaction.
+     */
+    rename(request: ElementsRenameRequest): Promise<ElementsRenameResult>;
     /**
      * Count an element's LIVE descendants (T135) broken down by kind — the
      * blast-radius inventory the delete intent menu reads. `total === 0` ⇒ quiet

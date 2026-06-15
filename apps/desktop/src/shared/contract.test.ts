@@ -62,6 +62,7 @@ import {
   DocumentsGetRequestSchema,
   DocumentsSaveRequestSchema,
   ElementsCountDescendantsRequestSchema,
+  ElementsRenameRequestSchema,
   ElementsSetPriorityRequestSchema,
   ElementsSoftDeleteSubtreeRequestSchema,
   type ElementsSoftDeleteSubtreeResult,
@@ -204,6 +205,7 @@ describe("IPC channels", () => {
         "inspector:list",
         "inspector:get",
         "elements:setPriority",
+        "elements:rename",
         "elements:countDescendants",
         "elements:softDeleteSubtree",
         "topics:fallow",
@@ -1307,6 +1309,33 @@ describe("ElementsSetPriorityRequestSchema (T027)", () => {
 
   it("rejects a missing id", () => {
     expect(() => ElementsSetPriorityRequestSchema.parse({ action: { kind: "raise" } })).toThrow();
+  });
+});
+
+describe("ElementsRenameRequestSchema (lineage rename)", () => {
+  it("accepts an id + non-empty title and trims surrounding whitespace", () => {
+    const parsed = ElementsRenameRequestSchema.parse({ id: "el_1", title: "  New title  " });
+    expect(parsed).toEqual({ id: "el_1", title: "New title" });
+  });
+
+  it("rejects a missing id", () => {
+    expect(() => ElementsRenameRequestSchema.parse({ title: "New title" })).toThrow();
+  });
+
+  it("rejects a missing, non-string, empty, or whitespace-only title", () => {
+    expect(ElementsRenameRequestSchema.safeParse({ id: "el_1" }).success).toBe(false);
+    expect(ElementsRenameRequestSchema.safeParse({ id: "el_1", title: 42 }).success).toBe(false);
+    expect(ElementsRenameRequestSchema.safeParse({ id: "el_1", title: "" }).success).toBe(false);
+    expect(ElementsRenameRequestSchema.safeParse({ id: "el_1", title: "   " }).success).toBe(false);
+  });
+
+  it("rejects a title longer than the bound and unknown keys (strict)", () => {
+    expect(
+      ElementsRenameRequestSchema.safeParse({ id: "el_1", title: "x".repeat(1001) }).success,
+    ).toBe(false);
+    expect(
+      ElementsRenameRequestSchema.safeParse({ id: "el_1", title: "ok", extra: true }).success,
+    ).toBe(false);
   });
 });
 

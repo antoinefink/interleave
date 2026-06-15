@@ -18,6 +18,10 @@ export const IPC_CHANNELS = {
   inspectorList: "inspector:list",
   inspectorGet: "inspector:get",
   elementsSetPriority: "elements:setPriority",
+  // Lineage context-menu rename. A NARROW title-only write that reuses the existing
+  // element-update / `update_element` machinery (NO new op type, NO migration); there
+  // is still no generic element-update channel.
+  elementsRename: "elements:rename",
   // Lineage-aware deletion (T135). `elements:countDescendants` is the read-only
   // blast-radius inventory that decides quiet-delete vs. the intent menu;
   // `elements:softDeleteSubtree` soft-deletes a node and OPTIONALLY its live

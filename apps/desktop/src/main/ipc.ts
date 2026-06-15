@@ -67,6 +67,7 @@ import {
   DocumentsGetRequestSchema,
   DocumentsSaveRequestSchema,
   ElementsCountDescendantsRequestSchema,
+  ElementsRenameRequestSchema,
   ElementsSetPriorityRequestSchema,
   ElementsSoftDeleteSubtreeRequestSchema,
   ExtractAgingApplyRequestSchema,
@@ -330,6 +331,11 @@ export function registerIpcHandlers(dbService: DbService, context?: IpcHandlerCo
   ipcMain.handle(IPC_CHANNELS.elementsSetPriority, (_event, rawRequest: unknown) => {
     const request = ElementsSetPriorityRequestSchema.parse(rawRequest);
     return dbService.setElementPriority(request);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.elementsRename, (_event, rawRequest: unknown) => {
+    const request = ElementsRenameRequestSchema.parse(rawRequest);
+    return dbService.renameElement(request);
   });
 
   ipcMain.handle(IPC_CHANNELS.elementsCountDescendants, (_event, rawRequest: unknown) => {

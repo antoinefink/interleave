@@ -65,6 +65,7 @@ import type {
   DocumentsGetRequest,
   DocumentsSaveRequest,
   ElementsCountDescendantsRequest,
+  ElementsRenameRequest,
   ElementsSetPriorityRequest,
   ElementsSoftDeleteSubtreeRequest,
   ExtractAgingApplyRequest,
@@ -216,6 +217,8 @@ const appApi: AppApi = {
   elements: {
     setPriority: (request: ElementsSetPriorityRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.elementsSetPriority, request),
+    rename: (request: ElementsRenameRequest) =>
+      ipcRenderer.invoke(IPC_CHANNELS.elementsRename, request),
     countDescendants: (request: ElementsCountDescendantsRequest) =>
       ipcRenderer.invoke(IPC_CHANNELS.elementsCountDescendants, request),
     softDeleteSubtree: (request: ElementsSoftDeleteSubtreeRequest) =>
