@@ -302,6 +302,24 @@ export {
   type LapseClusterQueryInput,
   type LapseClusterRegion,
 } from "./lapse-cluster-query";
+export {
+  type AcceptRereadProposalInput,
+  type AcceptRereadProposalResult,
+  type DismissRereadProposalInput,
+  type DismissRereadProposalResult,
+  type ListRereadProposalsInput,
+  REREAD_GRACE_DAYS,
+  REREAD_STATE_HASH_VERSION,
+  rereadClusterStateHash,
+  type RereadItemDetail,
+  type RereadItemDetailInput,
+  type RereadItemMember,
+  type RereadItemRegion,
+  type RereadProposal,
+  RereadProposalService,
+  type RereadProposalThresholds,
+  type UndoAcceptRereadResult,
+} from "./reread-proposal-service";
 // `lapse-cluster-score` (scoring rule) and `lapse-window` (predicate builders) are
 // package-internal — consumed only via relative imports by lapse-cluster-query and
 // descendant-health-query. They are intentionally NOT re-exported here, so the barrel does
@@ -733,6 +751,12 @@ export interface Repositories {
   readonly fallow: import("./fallow-service").FallowService;
   /** Dismissible source retirement nudges (T103) — visible signal + op-logged dismissal. */
   readonly retirementSuggestions: import("./retirement-suggestion-repository").RetirementSuggestionRepository;
+  /**
+   * Re-read proposals (T129) — turn a detected lapse cluster (T128) into capped, dismissible
+   * scheduled re-read work. `list`/`itemDetail` are read-only; `accept` schedules a system-owned
+   * `reread_region` task (reversal = soft-delete); `dismiss` remembers the cluster's state-hash.
+   */
+  readonly rereadProposals: import("./reread-proposal-service").RereadProposalService;
   /** The on-device semantic-search vector store (T087) — `sqlite-vec` KNN, NO op-log. */
   readonly embeddings: import("./embedding-repository").EmbeddingRepository;
   /** The FTS+vec fusion layer (T087) — fuses keyword + semantic hits, FTS-only degrade. */
@@ -796,6 +820,7 @@ import { ParkedResurfacingService } from "./parked-resurfacing-service";
 import { PriorityIntegrityQuery } from "./priority-integrity-query";
 import { QueueRepository } from "./queue-repository";
 import { RelatedService } from "./related-service";
+import { RereadProposalService } from "./reread-proposal-service";
 import { RetirementSuggestionRepository } from "./retirement-suggestion-repository";
 import { ReviewRepository } from "./review-repository";
 import { SchedulerConsistencyQuery } from "./scheduler-consistency-query";
@@ -874,6 +899,7 @@ export function createRepositories(
     chronicPostponeService: new ChronicPostponeService(db),
     fallow: new FallowService(db),
     retirementSuggestions: new RetirementSuggestionRepository(db),
+    rereadProposals: new RereadProposalService(db),
     embeddings,
     semanticSearch: new SemanticSearchRepository(search, embeddings),
     tasks: new TaskService(db),
