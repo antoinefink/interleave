@@ -90,6 +90,16 @@ export function metaFor(item: QueueItemSummary): ReactElement | null {
     );
   }
   if (item.type === "task") {
+    // A T129 re-read is attention-scheduled help, NOT a verification task — give it the
+    // calm `eye` (re-reading) glyph and a "Re-read a source section" sub-line, never the
+    // `task` shield (it protects nothing) and never the FSRS `brain`/review glyph.
+    if (item.taskType === "reread_region") {
+      return (
+        <span className="qitem__sub">
+          <Icon name="eye" size={13} /> Re-read a source section
+        </span>
+      );
+    }
     const detail = item.linkedElementId
       ? `Protects ${elementTypeNoun(item.linkedElementType)}`
       : "Task";
@@ -154,6 +164,13 @@ export function actionFor(item: QueueItemSummary): { icon: IconName; label: stri
   if (item.type === "extract") return { icon: "extract", label: "Process" };
   if (item.type === "task" && item.taskType === "weekly_review") {
     return { icon: "calendar", label: "Weekly review" };
+  }
+  // A T129 re-read task opens the source reader at the failing region (KTD-7). The `eye`
+  // (re-reading) glyph keeps it on the attention side of the scheduler split — never the
+  // FSRS `RefreshCw`/review glyph. Checked BEFORE the generic linked-task branch so it
+  // doesn't fall through to the extract-linked "Verify" affordance.
+  if (item.type === "task" && item.taskType === "reread_region") {
+    return { icon: "eye", label: "Re-read" };
   }
   // A verification task LINKED to a protected element opens that element's reader (T092),
   // so the affordance reads "Verify" — a free-standing (unlinked) task reads "Open".

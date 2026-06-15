@@ -690,6 +690,12 @@ export interface QueueItemSummary {
   readonly linkedElementId: string | null;
   /** The protected element's TYPE, or `null` — paired with `linkedElementId` for routing. */
   readonly linkedElementType: string | null;
+  /**
+   * The owning SOURCE id of the linked element (T129) — for a `reread_region` task the
+   * linked element is the ancestor EXTRACT, so this resolves its source so the open
+   * affordance can route to `/source/$id?reread=…`. `null` for non-task / unsourced rows.
+   */
+  readonly linkedSourceId: string | null;
   /** True for A-priority items (the `--protected` accent bar). */
   readonly protected: boolean;
   readonly due: QueueDueState;
@@ -3449,6 +3455,7 @@ export type TaskType =
   | "update_outdated_card"
   | "check_current_version"
   | "weekly_review"
+  | "reread_region"
   | "custom";
 
 /** A flat verification-task summary — the inspector/queue read shape. */
@@ -5027,6 +5034,8 @@ export interface RereadItemDetailDto {
   readonly taskElementId: string;
   readonly region: RereadItemRegionDto;
   readonly members: readonly RereadItemMemberDto[];
+  /** The window (days) the member lapse counts were taken over, for "in {N}d" labeling. */
+  readonly windowDays: number;
 }
 
 /** The reader side-panel payload — `null` when the task is missing/closed/not a re-read. */

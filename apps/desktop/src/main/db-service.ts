@@ -6581,7 +6581,9 @@ export class DbService {
       asOf,
       windowDays: settings.lapseClusterWindowDays,
     });
-    return { item };
+    return {
+      item: item ? { ...item, windowDays: settings.lapseClusterWindowDays } : null,
+    };
   }
 
   /** Accept a re-read proposal — schedule the `reread_region` task (op-logged) (T129). */

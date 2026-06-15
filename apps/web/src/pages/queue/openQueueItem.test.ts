@@ -33,6 +33,7 @@ function queueItem(overrides: Partial<QueueItemSummary>): QueueItemSummary {
     taskType: null,
     linkedElementId: null,
     linkedElementType: null,
+    linkedSourceId: null,
     protected: false,
     due: "today",
     dueLabel: "Due today",
@@ -145,6 +146,50 @@ describe("openQueueItem", () => {
     expect(h.navigate).toHaveBeenCalledWith({
       to: "/weekly",
       search: { asOf: "2026-06-06T12:00:00.000Z" },
+    });
+  });
+
+  it("routes a re-read task to the SOURCE reader at the region, not the extract view", () => {
+    const h = harness();
+    openQueueItem({
+      item: queueItem({
+        type: "task",
+        taskType: "reread_region",
+        id: "reread-1",
+        // The task links the ancestor EXTRACT, but routing uses the owning source.
+        linkedElementId: "extract-9",
+        linkedElementType: "extract",
+        linkedSourceId: "source-9",
+      }),
+      ...h,
+    });
+
+    expect(h.select).toHaveBeenLastCalledWith("source-9");
+    expect(h.navigate).toHaveBeenLastCalledWith({
+      to: "/source/$id",
+      params: { id: "source-9" },
+      search: { reread: "reread-1", n: expect.any(Number) },
+    });
+  });
+
+  it("falls back to the generic linked-task surface when a re-read has no owning source", () => {
+    const h = harness();
+    openQueueItem({
+      item: queueItem({
+        type: "task",
+        taskType: "reread_region",
+        id: "reread-2",
+        linkedElementId: "extract-7",
+        linkedElementType: "extract",
+        linkedSourceId: null,
+      }),
+      ...h,
+    });
+
+    // Degrades to the extract surface rather than a broken `/source/$id` with no id.
+    expect(h.navigate).toHaveBeenLastCalledWith({
+      to: "/extract/$id",
+      params: { id: "extract-7" },
     });
   });
 

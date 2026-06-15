@@ -796,3 +796,159 @@ mark.extracted {
   background: var(--accent-soft);
   color: var(--accent-text);
 }
+
+/* ---------- Re-read failing-cards aside (T129) ---------- */
+
+/* The reading column + the re-read aside sit side by side. The wrapper takes the
+   `flex: 1` slot the reading column used to hold, so the column keeps its own scroll
+   while the aside sits beside it (never overlaying the text). */
+.reader-with-aside {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+.reader-with-aside .reader-page {
+  /* The column flexes to fill the space the aside leaves, never below a readable
+     measure (the rail caps its own width at `--reader-text-measure`). */
+  flex: 1 1 auto;
+}
+
+.reread-panel {
+  flex: 0 0 320px;
+  align-self: stretch;
+  overflow-y: auto;
+  min-height: 0;
+  padding: var(--s-5) var(--s-5) var(--s-6);
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  font-family: var(--font-ui);
+  font-size: var(--t-sm);
+  color: var(--text);
+}
+.reread-panel__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+.reread-panel__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--t-lg);
+  font-weight: 600;
+  color: var(--text);
+}
+.reread-panel__title:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 3px;
+  border-radius: var(--r-xs);
+}
+.reread-panel__close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.reread-panel__close:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.reread-panel__lede {
+  margin: var(--s-3) 0 var(--s-4);
+  color: var(--text-2);
+  line-height: var(--lh-snug);
+}
+.reread-panel__cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  margin: 0 0 var(--s-4);
+  padding: 0;
+  list-style: none;
+}
+.reread-panel__card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: var(--s-3);
+  border-bottom: 1px solid var(--border);
+}
+.reread-panel__card:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+.reread-panel__card-link {
+  color: var(--text);
+  font-weight: 500;
+  text-decoration: none;
+  line-height: var(--lh-snug);
+}
+.reread-panel__card-link:hover {
+  color: var(--accent-text);
+  text-decoration: underline;
+}
+.reread-panel__lapses {
+  font-size: var(--t-xs);
+  color: var(--text-3);
+}
+.reread-panel__empty {
+  margin: var(--s-3) 0 var(--s-4);
+  color: var(--text-2);
+}
+.reread-panel__actions {
+  margin-top: var(--s-3);
+}
+.reread-panel__done {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md);
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+.reread-panel__done:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.reread-panel__done:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.reread-panel__error {
+  margin: var(--s-3) 0 0;
+  color: var(--danger);
+  font-size: var(--t-xs);
+}
+.reread-panel__note {
+  margin: var(--s-4) 0 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: var(--lh-snug);
+}
+
+/* On a narrow window the aside drops below the column instead of crushing the
+   reading measure (desktop-first; the Electron window is resizable). */
+@media (max-width: 880px) {
+  .reader-with-aside {
+    flex-direction: column;
+  }
+  .reread-panel {
+    flex: 0 0 auto;
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+}

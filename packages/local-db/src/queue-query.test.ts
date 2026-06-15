@@ -300,11 +300,36 @@ describe("QueueQuery", () => {
     expect(row?.taskType).toBe("verify_claim");
     expect(row?.linkedElementId).toBe(sourceId);
     expect(row?.linkedElementType).toBe("source");
+    // A SOURCE linked element resolves its owning-source id to its own id (T129).
+    expect(row?.linkedSourceId).toBe(sourceId);
 
     // Non-task rows never carry a link (the source/extract/card rows stay null).
     expect(items.find((i) => i.id === sourceId)?.taskType).toBeNull();
     expect(items.find((i) => i.id === sourceId)?.linkedElementId).toBeNull();
     expect(items.find((i) => i.id === sourceId)?.linkedElementType).toBeNull();
+    expect(items.find((i) => i.id === sourceId)?.linkedSourceId).toBeNull();
+  });
+
+  it("resolves linkedSourceId to the linked EXTRACT's owning source (the T129 re-read jump)", () => {
+    // The T129 `reread_region` task links the ancestor EXTRACT, not a source, and the
+    // queue row must surface the extract's OWNING SOURCE so the renderer can route to
+    // /source/$id. The resolution is task-type-agnostic, so a verify task linked to an
+    // extract exercises the same code path without depending on the system-owned type.
+    const { sourceId, extractId } = buildDueSet();
+    const task = repos.tasks.createTask({
+      taskType: "verify_claim",
+      title: "Verify a claim in the extract",
+      linkedElementId: extractId,
+    });
+    repos.elements.reschedule(task.id, iso("2026-05-29T08:00:00.000Z"));
+
+    const row = queue.list({ asOf: NOW }).items.find((i) => i.id === task.id);
+    expect(row).toBeDefined();
+    expect(row?.linkedElementId).toBe(extractId);
+    expect(row?.linkedElementType).toBe("extract");
+    // The owning source of the linked extract — NOT the extract id, NOT the task's
+    // own (null) source.
+    expect(row?.linkedSourceId).toBe(sourceId);
   });
 
   it("carries taskType for the system-owned weekly review task without a protected link", () => {

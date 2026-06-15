@@ -152,6 +152,15 @@ export interface QueueItemSummary {
    * (source → reader, extract → extract view, card → review) WITHOUT a second read.
    */
   readonly linkedElementType: string | null;
+  /**
+   * The OWNING SOURCE id of the linked element, or `null` (T129). A `reread_region`
+   * task links an ancestor EXTRACT, not a source, so routing to the source reader needs
+   * the extract's owning source. Resolved here (a source linked element resolves to its
+   * own id; any other linked element to its `sourceId`) so `openQueueItem` can route a
+   * re-read row to `/source/$id` without a second read. `null` for non-task rows and for
+   * a task whose linked element has no resolvable source.
+   */
+  readonly linkedSourceId: string | null;
   /** True for A-priority items (the `--protected` accent bar). */
   readonly protected: boolean;
   /** Overdue / today / soon, relative to `asOf`. */
@@ -784,6 +793,7 @@ export class QueueQuery {
       // A card is the FSRS leaf — it protects nothing else, never a verification task.
       linkedElementId: null,
       linkedElementType: null,
+      linkedSourceId: null,
       protected: priorityToLabel(element.priority) === "A",
       due,
       dueLabel: inventoryDueLabelFor(
@@ -834,6 +844,17 @@ export class QueueQuery {
     // task-only read (rare), so it stays inline even when batched.
     const task = element.type === "task" ? this.repos.tasks.findTask(element.id) : null;
     const linked = task?.linkedElement ?? null;
+    // The linked element's OWNING SOURCE (T129). A `reread_region` task links an ancestor
+    // EXTRACT; routing to the source reader needs that extract's source. A source linked
+    // element resolves to its own id; any other resolves through `elements.sourceId`. Only
+    // read the full element when the lighter `linkedElement` summary lacks the source.
+    let linkedSourceId: string | null = null;
+    if (linked) {
+      linkedSourceId =
+        linked.type === "source"
+          ? linked.id
+          : (this.repos.elements.findById(linked.id)?.sourceId ?? null);
+    }
     const scheduleProjection = batch
       ? null
       : this.repos.operationLog.currentScheduleProjection(element.id, element.dueAt);
@@ -873,6 +894,7 @@ export class QueueQuery {
       taskType: task?.taskType ?? null,
       linkedElementId: linked?.id ?? null,
       linkedElementType: linked?.type ?? null,
+      linkedSourceId,
       protected: priorityToLabel(element.priority) === "A",
       due,
       dueLabel: inventoryDueLabelFor(

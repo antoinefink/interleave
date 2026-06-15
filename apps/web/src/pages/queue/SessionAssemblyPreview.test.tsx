@@ -70,6 +70,7 @@ function item(id: string, title: string): QueueItemSummary {
     taskType: null,
     linkedElementId: null,
     linkedElementType: null,
+    linkedSourceId: null,
     protected: true,
     due: "today",
     dueLabel: "Due today",

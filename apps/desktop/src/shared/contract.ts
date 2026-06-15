@@ -7301,6 +7301,8 @@ export interface RereadItemDetailDto {
   readonly taskElementId: string;
   readonly region: RereadItemRegionDto;
   readonly members: readonly RereadItemMemberDto[];
+  /** The window (days) the member lapse counts were taken over, for "in {N}d" labeling. */
+  readonly windowDays: number;
 }
 
 /** The reader side-panel payload — `null` when the task is missing/closed/not a re-read. */

@@ -34,6 +34,7 @@ function queueItem(overrides: Partial<QueueItemSummary>): QueueItemSummary {
     taskType: null,
     linkedElementId: null,
     linkedElementType: null,
+    linkedSourceId: null,
     protected: false,
     due: "today",
     dueLabel: "Today",
@@ -77,6 +78,13 @@ describe("queue row helpers", () => {
       icon: "eye",
       label: "Verify",
     });
+    // A T129 re-read opens the source reader — the attention-side `eye` glyph, never
+    // the FSRS `RefreshCw`/`brain` review glyph, and BEFORE the generic linked branch.
+    expect(
+      actionFor(
+        queueItem({ type: "task", taskType: "reread_region", linkedElementId: "extract-1" }),
+      ),
+    ).toEqual({ icon: "eye", label: "Re-read" });
     expect(actionFor(queueItem({ type: "task", linkedElementId: null }))).toEqual({
       icon: "return",
       label: "Open",
@@ -103,6 +111,11 @@ describe("queue row helpers", () => {
       metaFor(queueItem({ type: "task", linkedElementId: "card-1", linkedElementType: "card" })),
     );
     expect(getByText("Protects card")).toBeInTheDocument();
+
+    rerender(
+      metaFor(queueItem({ type: "task", taskType: "reread_region", linkedElementId: "extract-1" })),
+    );
+    expect(getByText("Re-read a source section")).toBeInTheDocument();
   });
 
   it("maps due state to the stable badge classes", () => {
