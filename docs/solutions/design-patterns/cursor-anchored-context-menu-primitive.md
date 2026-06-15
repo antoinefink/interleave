@@ -1,6 +1,7 @@
 ---
-title: "Cursor-anchored context-menu primitive: measure-hidden-then-flip, and the focus/scroll/blur gotchas that dismiss it"
+title: "Cursor-anchored context-menu primitive: measure-hidden-then-flip, hover-intent submenu, and the focus/scroll/blur gotchas that dismiss it"
 date: "2026-06-15"
+last_updated: "2026-06-15"
 category: "docs/solutions/design-patterns/"
 module: "apps/web menu primitive (ContextMenu + LineageContextMenu across the Inspector lineage tree)"
 problem_type: "design_pattern"
@@ -8,8 +9,8 @@ component: "frontend_stimulus"
 severity: "medium"
 applies_when:
   - "Building a reusable right-click / cursor-anchored popover that opens at clientX/clientY with position:fixed and must flip + clamp into the viewport"
-  - "A menu must render hidden on the first frame, self-measure via getBoundingClientRect, then flip left/up and clamp before the first visible paint"
-  - "An open-time focus() (or scroll-into-view) is dismissing the menu, or a scroll while a submenu is open collapses the selection"
+  - "A submenu must open on hover-intent and close on a grace delay, with a safe-triangle so a diagonal sweep toward its children doesn't snap it shut as the pointer crosses sibling rows"
+  - "An open-time focus() (or scroll-into-view) is dismissing the menu, a mouse-opened menu must not pre-select a row, or a scroll while a submenu is open collapses the selection"
   - "Commit-on-blur inline rename can silently lose data or double-fire teardown, and focus-restore can throw because the opener was detached by a refresh"
   - "Cross-component trigger state (target + cursor position + open signal) is racing and needs to be one atomic setState"
 related_components:
@@ -22,6 +23,8 @@ related_components:
 tags:
   - context-menu
   - popover
+  - hover-intent
+  - safe-triangle
   - focus-management
   - viewport-flip
   - blur-commit
@@ -163,6 +166,59 @@ class (`.ctxmenu`). **Tokens only** for spacing/color/radii: the review changed 
 `[data-theme="dark"]` with nothing branching on theme. (See
 [scope-ported-design-kit-css-under-page-root](scope-ported-design-kit-css-under-page-root.md).)
 
+### Submenu hover-intent + the safe-triangle (design polish — commit `d636d8c5`)
+
+The first cut opened the submenu on `onMouseEnter` but had **no close-on-leave** — it lingered
+until Escape/outside-click, which is not how a polished desktop menu behaves. The fix:
+
+- **Open on a 70ms hover-intent delay** (`SUBMENU_OPEN_DELAY`) so a fast sweep across "Set
+  priority" doesn't flicker it open; clicking the parent (or ArrowRight) opens it immediately.
+- **Close on a 260ms grace** (`SUBMENU_CLOSE_GRACE`) whenever the pointer leaves — the **same**
+  grace on every leave path (the panel, a sibling row, or off-menu). *What didn't work:* a
+  naive "close as soon as another row is hovered" snaps the submenu shut the instant you move
+  diagonally toward A/B/C/D, because the cursor crosses Rename/Delete on the way down. (And
+  closing *faster* on a sibling than on the panel reads as the menu fighting you — keep one
+  grace.)
+- **Safe-triangle.** While the pointer is *aiming* into the cone from where it just was toward
+  the submenu's near edge, the pending close is cancelled — so you can cut the corner and it
+  stays. A barycentric point-in-triangle test runs on each `mousemove` (apex = the previous
+  cursor point, base = the submenu's near vertical edge):
+
+```tsx
+const onMenuMouseMove = (e) => {
+  prevPointRef.current = curPointRef.current;
+  curPointRef.current = { x: e.clientX, y: e.clientY };
+  if (openSubmenuIdRef.current && aiming()) clearCloseTimer(); // keep an aimed-at submenu alive
+};
+// aiming(): pointInTriangle(cur, prev, {x: nearX, y: subTop}, {x: nearX, y: subBottom})
+```
+
+  The open/close timers and pointer points live in **refs** (no re-render); `overSubRef` /
+  `overParentRef` guard the grace timer so doubling back onto the parent or into the panel
+  cancels the close. Submenu open via the keyboard sets a `pendingFocusFirst` ref so the panel
+  grabs focus once it mounts; hover open leaves focus untouched (so no ring appears).
+
+**No mouse pre-select — the focus ring is keyboard-only.** A mouse-opened menu must NOT
+auto-focus the first row (that boxed-first-item look is wrong for a pointer open). Drop the
+"focus first item on open" effect entirely; track a `kbd` flag set true on Arrow-key nav (and
+on a keyboard submenu open) and cleared on the next `document` `mousemove`. Gate the ring
+behind `.ctxmenu.kbd .ctxmenu__item:focus` so it only shows once the keyboard is in use. (Same
+keyboard-only-indicator discipline as
+[inbox-row-cursor-selection-single-border](../ui-bugs/inbox-row-cursor-selection-single-border.md).)
+
+**Scannable priority via color dots.** The A/B/C/D children read as a scale through a leading
+filled dot (`--prio-a` red → `--prio-d` grey) instead of an icon — the item model gained an
+optional `dot?: string` adornment the host fills with the token. Hover stays calm (background
+fill only, no border shimmer — see
+[hover-uses-border-not-shadow-and-shadow-taxonomy](../conventions/hover-uses-border-not-shadow-and-shadow-taxonomy.md)).
+
+**Transition-based entrance, not keyframes.** The resting state is fully visible; `.is-entering`
+(opacity 0 + a small scale/translate from the cursor corner, origin set inline from the flip)
+is removed on the next two frames — so a throttled/background tab can never strand the menu at
+opacity 0. The submenu panel row-aligns to its parent (`top: calc(-1 * var(--s-2))`) and
+overlaps a few px (`left: calc(100% - 5px)`) so there's no dead gap to cross. Reduced-motion
+disables both transitions.
+
 ## Why This Matters
 
 Cursor-anchored menus are a swamp of edge cases — off-screen placement, focus theft,
@@ -177,6 +233,8 @@ hardening.
 
 - Any in-app menu/popover anchored to a cursor or arbitrary point rather than a trigger
   element.
+- Any submenu/flyout opened by hover: add a hover-intent open delay + a uniform close grace +
+  a safe-triangle, and never pre-select a row on a mouse open (keyboard-only focus ring).
 - Any popover that performs a mutation which refreshes/replaces the DOM it was opened from
   (restore focus defensively with `isConnected`).
 - Any inline edit field that must not lose work on blur (commit-on-blur + one-shot latch).
@@ -201,7 +259,13 @@ hardening.
 - [non-modal-intent-menu-replacing-confirm-gate](non-modal-intent-menu-replacing-confirm-gate.md)
   — the anchored-popover + focus-management precedent this primitive generalizes.
 - [scope-ported-design-kit-css-under-page-root](scope-ported-design-kit-css-under-page-root.md)
-  — the global-CSS-leak / root-scoping rule the menu CSS follows.
+  — the global-CSS-leak / root-scoping rule the menu CSS follows, and the owner of the
+  `--prio-*` priority-dot token taxonomy.
+- [hover-uses-border-not-shadow-and-shadow-taxonomy](../conventions/hover-uses-border-not-shadow-and-shadow-taxonomy.md)
+  — the hover-affordance convention the calm (no-shimmer) item hover follows; the menu's own
+  `--shadow-lg` is a legitimate floating-overlay shadow, not a hover elevation.
+- [inbox-row-cursor-selection-single-border](../ui-bugs/inbox-row-cursor-selection-single-border.md)
+  — the keyboard-only focus-indicator discipline the no-mouse-pre-select rule mirrors.
 - [large-selection-toolbar-visible-viewport-anchoring](../ui-bugs/large-selection-toolbar-visible-viewport-anchoring.md)
   — sibling "fixed-position surface must clamp to visible viewport geometry" problem.
 - [inspector-deleted-lineage-visibility](../ui-bugs/inspector-deleted-lineage-visibility.md)
