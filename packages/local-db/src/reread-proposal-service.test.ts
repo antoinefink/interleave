@@ -271,6 +271,31 @@ describe("RereadProposalService.listProposals", () => {
     expect(svc.listProposals(listInput())).toHaveLength(1);
   });
 
+  it("stays suppressed when a dismissed cluster IMPROVES (fewer cards, still over the floor)", () => {
+    const source = seedSource("Source");
+    // 3 cards x 3 lapses = 9 (band 1); retiring one leaves 2 cards x 3 = 6, still >= K=5.
+    const { extract, cardIds } = seedCluster(source, { cardCount: 3, lapsesPerCard: 3 });
+    const svc = service();
+    const [p] = svc.listProposals(listInput());
+    if (!p) throw new Error("expected proposal");
+    svc.dismiss({
+      ancestorId: extract,
+      stateHash: p.stateHash,
+      asOf: AS_OF,
+      thresholds: THRESHOLDS,
+    });
+    expect(svc.listProposals(listInput())).toHaveLength(0);
+
+    // Improvement: a card recovers (retired) → cluster shrinks to 2 cards / band 1. The hash
+    // changes (cards3 -> cards2) but the cluster is NOT materially worse, so it stays suppressed.
+    handle.db
+      .update(cards)
+      .set({ isRetired: true })
+      .where(eq(cards.elementId, cardIds[0] as ElementId))
+      .run();
+    expect(svc.listProposals(listInput())).toHaveLength(0);
+  });
+
   it("suppresses while an open re-read exists and during the grace window after completion", () => {
     const source = seedSource("Source");
     const { extract } = seedCluster(source, { cardCount: 3, lapsesPerCard: 2 });
@@ -401,6 +426,60 @@ describe("RereadProposalService.accept", () => {
       alreadyOpen: true,
       stale: false,
     });
+  });
+
+  it("re-accepts a region whose prior re-read was soft-deleted via a generic path (frees the stranded index)", () => {
+    const source = seedSource("Source");
+    const { extract } = seedCluster(source, { cardCount: 3, lapsesPerCard: 2 });
+    const svc = service();
+    const first = svc.accept({ ancestorId: extract, asOf: AS_OF, thresholds: THRESHOLDS });
+    expect(first.created).toBe(true);
+
+    // A GENERIC element soft-delete (e.g. trashing the task from the queue) sets
+    // elements.deleted_at but NOT the tasks.status mirror — stranding the one-open index slot.
+    new ElementRepository(handle.db).softDelete(first.taskElementId as ElementId);
+    expect(
+      (
+        handle.sqlite
+          .prepare("SELECT status FROM tasks WHERE element_id = ?")
+          .get(first.taskElementId) as { status: string }
+      ).status,
+    ).toBe("scheduled"); // index slot still occupied
+
+    // accept repairs the stranded slot and succeeds, instead of a false "Already scheduled".
+    const second = svc.accept({ ancestorId: extract, asOf: AS_OF, thresholds: THRESHOLDS });
+    expect(second.created).toBe(true);
+    expect(second.taskElementId).not.toBe(first.taskElementId);
+  });
+
+  it("clears any prior dismissal for the region (accept supersedes dismiss)", () => {
+    const source = seedSource("Source");
+    const { extract } = seedCluster(source, { cardCount: 3, lapsesPerCard: 2 });
+    const svc = service();
+    const [p] = svc.listProposals(listInput());
+    if (!p) throw new Error("expected proposal");
+    svc.dismiss({
+      ancestorId: extract,
+      stateHash: p.stateHash,
+      asOf: AS_OF,
+      thresholds: THRESHOLDS,
+    });
+    expect(
+      handle.db
+        .select()
+        .from(rereadProposalDismissals)
+        .where(eq(rereadProposalDismissals.ancestorId, extract))
+        .get(),
+    ).toBeTruthy();
+
+    svc.accept({ ancestorId: extract, asOf: AS_OF, thresholds: THRESHOLDS });
+    expect(
+      handle.db
+        .select()
+        .from(rereadProposalDismissals)
+        .where(eq(rereadProposalDismissals.ancestorId, extract))
+        .get(),
+    ).toBeUndefined();
   });
 
   it("refuses to accept a cluster that no longer crosses the floor (stale)", () => {

@@ -590,15 +590,20 @@ describe("MaintenanceScreen", () => {
     await waitFor(() =>
       expect(h.acceptRereadProposal).toHaveBeenCalledWith({ ancestorId: "ext-1" }),
     );
+    // Only `reread` is passed — the reader owns the region jump (no redundant `block`/double toast).
     await waitFor(() =>
       expect(h.navigate).toHaveBeenCalledWith(
         expect.objectContaining({
           to: "/source/$id",
           params: { id: "src-1" },
-          search: expect.objectContaining({ reread: "task-1", block: "b1" }),
+          search: expect.objectContaining({ reread: "task-1" }),
         }),
       ),
     );
+    const acceptNav = h.navigate.mock.calls.find(
+      (c: unknown[]) => (c[0] as { search?: Record<string, unknown> }).search?.reread === "task-1",
+    );
+    expect((acceptNav?.[0] as { search: Record<string, unknown> }).search.block).toBeUndefined();
   });
 
   it("dismisses a re-read proposal against its state-hash (T129)", async () => {
@@ -613,6 +618,40 @@ describe("MaintenanceScreen", () => {
         stateHash: "v1:ext-1|hash",
       }),
     );
+  });
+
+  it("routes the accept Undo through the soft-delete reversal, NOT the global undoLast (T129)", async () => {
+    render(<MaintenanceScreen />);
+    await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("metric-clusters-toggle"));
+    await waitFor(() => expect(screen.getByTestId("cluster-reread")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("cluster-reread"));
+    await waitFor(() =>
+      expect(screen.getByTestId("maintenance-snackbar-undo")).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByTestId("maintenance-snackbar-undo"));
+    await waitFor(() =>
+      expect(h.undoAcceptRereadProposal).toHaveBeenCalledWith({ taskElementId: "task-1" }),
+    );
+    expect(h.undoLast).not.toHaveBeenCalled();
+  });
+
+  it("shows a quiet note (not an error) when accept reports alreadyOpen / stale (T129)", async () => {
+    h.acceptRereadProposal.mockResolvedValueOnce({
+      created: false,
+      taskElementId: null,
+      alreadyOpen: true,
+      stale: false,
+    });
+    render(<MaintenanceScreen />);
+    await waitFor(() => expect(screen.getByTestId("maintenance-grid")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("metric-clusters-toggle"));
+    await waitFor(() => expect(screen.getByTestId("cluster-reread")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("cluster-reread"));
+    await waitFor(() =>
+      expect(screen.getByTestId("cluster-note").textContent).toContain("Already scheduled"),
+    );
+    expect(h.navigate).not.toHaveBeenCalled();
   });
 
   it("falls back to the read-only T128 cluster list when proposals are disabled", async () => {

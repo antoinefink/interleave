@@ -250,15 +250,12 @@ export function MaintenanceScreen() {
           setRereadUndoTaskId(res.taskElementId);
           setSnack("Re-read scheduled");
           setSnackUndoable(true);
-          const block = proposal.region.blockIds[0];
+          // Pass ONLY `reread` — the reader owns the region jump from the fetched item detail.
+          // Passing `block` too would fire a second, redundant jump + toast (matches the queue path).
           void navigate({
             to: "/source/$id",
             params: { id: proposal.region.sourceElementId },
-            search: {
-              reread: res.taskElementId,
-              ...(block ? { block, label: proposal.region.label } : {}),
-              n: Date.now(),
-            } as Record<string, unknown>,
+            search: { reread: res.taskElementId, n: Date.now() } as Record<string, unknown>,
           });
         } else if (res.alreadyOpen) {
           setRereadNote({ ancestorId: proposal.ancestorId, text: "Already scheduled" });

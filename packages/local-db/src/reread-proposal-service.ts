@@ -36,7 +36,6 @@ import {
 } from "@interleave/db";
 import { and, eq, gte, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import { ElementRepository } from "./element-repository";
-import { nowIso } from "./ids";
 import { type LapseCluster, LapseClusterQuery } from "./lapse-cluster-query";
 import { LIVE_CARD_STATUSES, liveCardLapseWhere, windowStart } from "./lapse-window";
 import { OperationLogRepository } from "./operation-log-repository";
@@ -172,10 +171,17 @@ function parseBlockIds(raw: string): string[] {
   }
 }
 
-/** Whether an error is the `tasks_open_link_type_uq` (one-open-per-region) unique violation. */
+/**
+ * Whether an error is specifically the `tasks_open_link_type_uq` (one-open-per-region) unique
+ * violation — scoped to the index / its columns so a DIFFERENT unique collision in the same
+ * transaction is NOT misreported as `alreadyOpen` (it re-throws as a genuine integrity error).
+ */
 function isOpenRereadUniqueViolation(err: unknown): boolean {
   return (
-    err instanceof Error && /UNIQUE constraint failed|tasks_open_link_type_uq/i.test(err.message)
+    err instanceof Error &&
+    /tasks_open_link_type_uq|UNIQUE constraint failed: tasks\.(?:linked_element_id|task_type)/i.test(
+      err.message,
+    )
   );
 }
 
@@ -195,6 +201,8 @@ export class RereadProposalService {
   /** The visible proposal set — read-only (no mutation, no op-log). */
   listProposals(input: ListRereadProposalsInput): RereadProposal[] {
     if (!input.enabled) return [];
+    // Scan the full candidate set (not the default 50) so suppression — not an arbitrary
+    // pre-cap truncation — decides what surfaces; the `cap` loop below does the throttling.
     const clusters = this.lapseClusters.list({
       ...(input.sourceId ? { sourceId: input.sourceId } : {}),
       asOf: input.asOf,
@@ -202,14 +210,18 @@ export class RereadProposalService {
       windowDays: input.thresholds.windowDays,
       minCards: input.thresholds.minCards,
       enabled: true,
+      limit: RECOMPUTE_LIMIT,
     });
     const proposals: RereadProposal[] = [];
     for (const cluster of clusters) {
       if (proposals.length >= input.cap) break;
-      const stateHash = rereadClusterStateHash(cluster, input.thresholds);
-      if (this.isDismissed(cluster.ancestorId, stateHash)) continue;
+      if (this.suppressedByDismissal(cluster, input.thresholds)) continue;
       if (this.hasOpenOrRecentReread(cluster.ancestorId, input.asOf)) continue;
-      proposals.push({ ...cluster, stateHash, dismissable: true });
+      proposals.push({
+        ...cluster,
+        stateHash: rereadClusterStateHash(cluster, input.thresholds),
+        dismissable: true,
+      });
     }
     return proposals;
   }
@@ -305,6 +317,9 @@ export class RereadProposalService {
     if (!cluster) {
       return { created: false, taskElementId: null, alreadyOpen: false, stale: true };
     }
+    // Free any index slot held by a soft-deleted re-read for this region, so a genuine
+    // open task is detected accurately and the INSERT below cannot hit a stranded slot.
+    this.repairStrandedReread(input.ancestorId);
     if (this.hasOpenReread(input.ancestorId)) {
       return { created: false, taskElementId: null, alreadyOpen: true, stale: false };
     }
@@ -339,6 +354,11 @@ export class RereadProposalService {
             relationType: "references",
           });
         }
+        // Accepting supersedes any prior dismissal for this region — clear it so a later
+        // undo + re-propose is not silently re-suppressed by the stale dismissal.
+        tx.delete(rereadProposalDismissals)
+          .where(eq(rereadProposalDismissals.ancestorId, input.ancestorId))
+          .run();
         return element.id;
       });
       return { created: true, taskElementId, alreadyOpen: false, stale: false };
@@ -434,13 +454,68 @@ export class RereadProposalService {
     return clusters.find((c) => c.ancestorId === ancestorId) ?? null;
   }
 
-  private isDismissed(ancestorId: ElementId, stateHash: string): boolean {
+  /**
+   * Whether a stored dismissal still suppresses this cluster. A dismissal is honored only while
+   * the cluster is NOT materially WORSE than the dismissed-at evidence — so a dismissed proposal
+   * stays hidden when the cluster is unchanged OR improves (a card recovers, lapses age out of
+   * the rolling window), and reappears only on a band step (more lapses) or a NEW member card.
+   * The dismissal is invalidated entirely (re-proposed) when the threshold signature or hash
+   * VERSION changed since dismissal — detected by recomputing the hash AT the dismissed-at
+   * counters and comparing to the stored hash.
+   */
+  private suppressedByDismissal(
+    cluster: LapseCluster,
+    thresholds: RereadProposalThresholds,
+  ): boolean {
     const row = this.db
-      .select({ stateHash: rereadProposalDismissals.stateHash })
+      .select({
+        stateHash: rereadProposalDismissals.stateHash,
+        totalWindowLapses: rereadProposalDismissals.totalWindowLapses,
+        affectedCardCount: rereadProposalDismissals.affectedCardCount,
+      })
       .from(rereadProposalDismissals)
-      .where(eq(rereadProposalDismissals.ancestorId, ancestorId))
+      .where(eq(rereadProposalDismissals.ancestorId, cluster.ancestorId))
       .get();
-    return row?.stateHash === stateHash;
+    if (!row) return false;
+    // Version / threshold-signature gate: the stored hash must equal the hash this cluster WOULD
+    // have at the dismissed-at counters. A mismatch means thresholds or the hash version changed.
+    const expectedAtDismissal = rereadClusterStateHash(
+      {
+        ancestorId: cluster.ancestorId,
+        totalWindowLapses: row.totalWindowLapses,
+        affectedCardCount: row.affectedCardCount,
+      },
+      thresholds,
+    );
+    if (expectedAtDismissal !== row.stateHash) return false;
+    const band = (total: number) =>
+      thresholds.minLapses > 0 ? Math.floor(total / thresholds.minLapses) : total;
+    const materiallyWorse =
+      band(cluster.totalWindowLapses) > band(row.totalWindowLapses) ||
+      cluster.affectedCardCount > row.affectedCardCount;
+    return !materiallyWorse;
+  }
+
+  /**
+   * Release a one-open-per-region index slot stranded by a soft-deleted re-read task. A generic
+   * soft-delete (e.g. trashing the task from the queue) sets `elements.deleted_at` but NOT the
+   * `tasks.status` mirror the partial unique index keys on — so the slot stays occupied and a
+   * later `accept` would hit the index. This terminalizes any such row, mirroring the weekly-
+   * review session repair. Idempotent; a no-op when nothing is stranded.
+   */
+  private repairStrandedReread(ancestorId: ElementId): void {
+    this.db
+      .update(tasksTable)
+      .set({ status: "deleted", dueAt: null })
+      .where(
+        and(
+          eq(tasksTable.taskType, "reread_region"),
+          eq(tasksTable.linkedElementId, ancestorId),
+          notInArray(tasksTable.status, CLOSED_TASK_STATUSES as unknown as string[]),
+          sql`exists (select 1 from ${elementsTable} where ${elementsTable.id} = ${tasksTable.elementId} and ${elementsTable.deletedAt} is not null)`,
+        ),
+      )
+      .run();
   }
 
   /** True when an OPEN (non-terminal, live) re-read task exists for the region. */
@@ -512,6 +587,3 @@ export class RereadProposalService {
     };
   }
 }
-
-/** Convenience: the current wall-clock ISO timestamp (re-exported for callers). */
-export { nowIso };

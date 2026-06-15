@@ -911,6 +911,12 @@ export interface QueueItemSummary {
   readonly linkedElementId: string | null;
   /** The protected element's TYPE, or `null` — paired with {@link linkedElementId}. */
   readonly linkedElementType: string | null;
+  /**
+   * The owning SOURCE id of the linked element (T129) — for a `reread_region` task the linked
+   * element is the ancestor EXTRACT, so this resolves its source so the open affordance can
+   * route to `/source/$id?reread=…`. `null` for non-task / unsourced rows.
+   */
+  readonly linkedSourceId: string | null;
   /** True for A-priority items (the `--protected` accent bar). */
   readonly protected: boolean;
   /** Overdue / today / soon, relative to `asOf`. */
