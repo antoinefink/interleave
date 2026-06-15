@@ -59,7 +59,7 @@ Lucide renamed several icons recently; current names are listed (legacy alias in
 |-----------|--------------|---|-----------|--------------|
 | `highlight` | `Highlighter` | · | `bookmark` | `Bookmark` |
 | `cloze` | `Brackets` | · | `edit` | `Pencil` |
-| `code` | `Code` | · | | |
+| `code` | `Code` | · | `ban` | `Ban` (left-out / didn't fit) |
 | `copy` | `Copy` | · | `pause` | `Pause` |
 | `split` | `Split` | · | `play` | `Play` |
 | `trim` | `Scissors` | · | `leech` | `Bug` |
