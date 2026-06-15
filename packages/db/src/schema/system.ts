@@ -115,6 +115,29 @@ export const retirementSuggestionDismissals = sqliteTable(
   (table) => [index("retirement_suggestion_dismissals_hash_idx").on(table.signalHash)],
 );
 
+/**
+ * Re-read proposal dismissals (T129). Remembers that the user dismissed the re-read
+ * proposal for a lapse cluster, keyed on the cluster's nearest live source-region
+ * ancestor (`ancestorId`). The proposal stays hidden while the stored `state_hash`
+ * still matches the recomputed cluster hash; it reappears only when the cluster
+ * MATERIALLY worsens (a lapse band step or a new member card) — the stored counters
+ * record the dismissed-at evidence so "materially worse" is a real delta, not an
+ * opaque compare. Mirrors {@link retirementSuggestionDismissals} (the T103 pattern).
+ */
+export const rereadProposalDismissals = sqliteTable(
+  "reread_proposal_dismissals",
+  {
+    ancestorId: text("ancestor_id")
+      .primaryKey()
+      .references(() => elements.id, { onDelete: "cascade" }),
+    stateHash: text("state_hash").notNull(),
+    totalWindowLapses: integer("total_window_lapses").notNull(),
+    affectedCardCount: integer("affected_card_count").notNull(),
+    dismissedAt: text("dismissed_at").notNull(),
+  },
+  (table) => [index("reread_proposal_dismissals_hash_idx").on(table.stateHash)],
+);
+
 export type AssetRow = typeof assets.$inferSelect;
 export type NewAssetRow = typeof assets.$inferInsert;
 export type OperationLogRow = typeof operationLog.$inferSelect;
@@ -124,3 +147,5 @@ export type NewSettingRow = typeof settings.$inferInsert;
 export type RetirementSuggestionDismissalRow = typeof retirementSuggestionDismissals.$inferSelect;
 export type NewRetirementSuggestionDismissalRow =
   typeof retirementSuggestionDismissals.$inferInsert;
+export type RereadProposalDismissalRow = typeof rereadProposalDismissals.$inferSelect;
+export type NewRereadProposalDismissalRow = typeof rereadProposalDismissals.$inferInsert;

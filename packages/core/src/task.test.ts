@@ -9,7 +9,7 @@ import {
 } from "./task";
 
 describe("TASK_TYPES tuple + guard", () => {
-  it("is the closed six-kind vocabulary", () => {
+  it("is the closed seven-kind vocabulary", () => {
     expect(TASK_TYPES).toEqual([
       "verify_claim",
       "find_better_source",
@@ -17,6 +17,7 @@ describe("TASK_TYPES tuple + guard", () => {
       "check_current_version",
       "custom",
       "weekly_review",
+      "reread_region",
     ]);
   });
 
@@ -31,8 +32,9 @@ describe("TASK_TYPES tuple + guard", () => {
   });
 
   it("identifies system-owned task kinds", () => {
-    expect(SYSTEM_TASK_TYPES).toEqual(["weekly_review"]);
+    expect(SYSTEM_TASK_TYPES).toEqual(["weekly_review", "reread_region"]);
     expect(isSystemTaskType("weekly_review")).toBe(true);
+    expect(isSystemTaskType("reread_region")).toBe(true);
     expect(isSystemTaskType("custom")).toBe(false);
     expect(isSystemTaskType(null)).toBe(false);
   });
@@ -46,6 +48,7 @@ describe("taskTypeLabel", () => {
     expect(taskTypeLabel("check_current_version")).toBe("Check current version");
     expect(taskTypeLabel("custom")).toBe("Custom task");
     expect(taskTypeLabel("weekly_review")).toBe("Weekly review");
+    expect(taskTypeLabel("reread_region")).toBe("Re-read section");
   });
 
   it("has a label for every tuple member (no gaps)", () => {

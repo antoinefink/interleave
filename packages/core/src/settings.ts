@@ -122,6 +122,15 @@ export interface AppSettings {
   readonly lapseClusterWindowDays: number;
   /** Min distinct live member cards for a cluster to surface. */
   readonly lapseClusterMinCards: number;
+  /**
+   * Re-read proposals (T129). When `true`, a detected lapse cluster (T128) is turned
+   * into a quiet, capped re-read proposal the user can accept (scheduling an attention
+   * re-read item) or dismiss. `false` short-circuits the proposal listing to an empty
+   * list and hides every proposal surface.
+   */
+  readonly rereadProposalsEnabled: boolean;
+  /** Max ACTIVE re-read proposals surfaced at once (a surfacing throttle, not an accept budget). */
+  readonly rereadProposalWeeklyCap: number;
   readonly weeklyReviewEnabled: boolean;
   readonly weeklyReviewCadenceDays: number;
   readonly adaptiveAttentionIntervals: boolean;
@@ -296,6 +305,8 @@ export const SETTINGS_KEYS = {
   lapseClusterMinLapses: "lapseCluster.minLapses",
   lapseClusterWindowDays: "lapseCluster.windowDays",
   lapseClusterMinCards: "lapseCluster.minCards",
+  rereadProposalsEnabled: "rereadProposals.enabled",
+  rereadProposalWeeklyCap: "rereadProposals.weeklyCap",
   weeklyReviewEnabled: "weeklyReview.enabled",
   weeklyReviewCadenceDays: "weeklyReview.cadenceDays",
   adaptiveAttentionIntervals: "scheduler.adaptiveAttentionIntervals",
@@ -387,6 +398,10 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   lapseClusterMinLapses: 5,
   lapseClusterWindowDays: 30,
   lapseClusterMinCards: 2,
+  // Re-read proposals (T129) — ON by default (advisory, capped, quiet help). The cap is a
+  // surfacing throttle: at most this many ACTIVE proposals are shown at once.
+  rereadProposalsEnabled: true,
+  rereadProposalWeeklyCap: 2,
   weeklyReviewEnabled: true,
   weeklyReviewCadenceDays: 7,
   adaptiveAttentionIntervals: true,
@@ -486,6 +501,10 @@ export const LAPSE_CLUSTER_WINDOW_DAYS_MIN = 7;
 export const LAPSE_CLUSTER_WINDOW_DAYS_MAX = 365;
 export const LAPSE_CLUSTER_MIN_CARDS_MIN = 2;
 export const LAPSE_CLUSTER_MIN_CARDS_MAX = 10;
+
+/** Inclusive bounds for the active re-read proposal surfacing cap (T129). */
+export const REREAD_PROPOSAL_WEEKLY_CAP_MIN = 1;
+export const REREAD_PROPOSAL_WEEKLY_CAP_MAX = 10;
 
 /** Inclusive bounds for extract aging's returns-without-progress threshold (T121). */
 export const EXTRACT_AGING_RETURN_THRESHOLD_MIN = 1;
@@ -663,6 +682,14 @@ export function coerceSettingValue<K extends keyof AppSettings>(
           ? clampInt(raw, LAPSE_CLUSTER_MIN_CARDS_MIN, LAPSE_CLUSTER_MIN_CARDS_MAX)
           : fallback
       ) as AppSettings[K];
+    case "rereadProposalsEnabled":
+      return (typeof raw === "boolean" ? raw : fallback) as AppSettings[K];
+    case "rereadProposalWeeklyCap":
+      return (
+        isFiniteNumber(raw) && raw > 0
+          ? clampInt(raw, REREAD_PROPOSAL_WEEKLY_CAP_MIN, REREAD_PROPOSAL_WEEKLY_CAP_MAX)
+          : fallback
+      ) as AppSettings[K];
     case "weeklyReviewEnabled":
       return (typeof raw === "boolean" ? raw : fallback) as AppSettings[K];
     case "weeklyReviewCadenceDays":
@@ -825,6 +852,14 @@ export function appSettingsFromStored(stored: Readonly<Record<string, unknown>>)
     lapseClusterMinCards: coerceSettingValue(
       "lapseClusterMinCards",
       stored[SETTINGS_KEYS.lapseClusterMinCards],
+    ),
+    rereadProposalsEnabled: coerceSettingValue(
+      "rereadProposalsEnabled",
+      stored[SETTINGS_KEYS.rereadProposalsEnabled],
+    ),
+    rereadProposalWeeklyCap: coerceSettingValue(
+      "rereadProposalWeeklyCap",
+      stored[SETTINGS_KEYS.rereadProposalWeeklyCap],
     ),
     weeklyReviewEnabled: coerceSettingValue(
       "weeklyReviewEnabled",

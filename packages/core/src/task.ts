@@ -27,6 +27,9 @@
  *  - `check_current_version` — confirm a version-specific claim still holds.
  *  - `custom`                — a free-form maintenance action (no fixed semantics).
  *  - `weekly_review`         — the scheduled weekly ledger/integrity session.
+ *  - `reread_region`         — a system-owned re-read of a source region whose
+ *                              descendant cards keep lapsing together (T129); created
+ *                              only by accepting a re-read proposal, never by hand.
  *
  * `verify_claim` is the default kind generated from T090 expiry (a fact past
  * `review_by`/`valid_until`).
@@ -38,6 +41,7 @@ export const TASK_TYPES = [
   "check_current_version",
   "custom",
   "weekly_review",
+  "reread_region",
 ] as const;
 
 /** A verification-task kind — one of {@link TASK_TYPES}. */
@@ -49,7 +53,10 @@ export function isTaskType(value: unknown): value is TaskType {
 }
 
 /** System-owned task kinds that generic task creation must not mint directly. */
-export const SYSTEM_TASK_TYPES = ["weekly_review"] as const satisfies readonly TaskType[];
+export const SYSTEM_TASK_TYPES = [
+  "weekly_review",
+  "reread_region",
+] as const satisfies readonly TaskType[];
 
 /** A system-owned task kind — one of {@link SYSTEM_TASK_TYPES}. */
 export type SystemTaskType = (typeof SYSTEM_TASK_TYPES)[number];
@@ -67,6 +74,7 @@ export const TASK_TYPE_LABEL: Readonly<Record<TaskType, string>> = {
   check_current_version: "Check current version",
   custom: "Custom task",
   weekly_review: "Weekly review",
+  reread_region: "Re-read section",
 };
 
 /**
