@@ -242,7 +242,12 @@ test("Start session opens the loop, which shows ONE element at a time", async ()
   await expect(page.getByTestId("process-session-summary")).toContainText(
     `Completed ${completedMinutes.replace(/^~/, "")}`,
   );
-  await expect(page.getByTestId("process-session-summary")).toContainText(cutCount);
+  // The Plan session styles its left-out header as an uppercase section label,
+  // so `innerText()` reads it uppercased; the /process summary renders the same
+  // count in sentence case. Compare the carried-through count case-insensitively.
+  await expect(page.getByTestId("process-session-summary")).toContainText(
+    new RegExp(cutCount.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"),
+  );
 
   await app.close();
 });
