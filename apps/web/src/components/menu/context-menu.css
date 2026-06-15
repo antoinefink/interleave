@@ -19,14 +19,14 @@
   z-index: 60;
   min-width: 200px;
   max-width: 320px;
-  padding: 6px;
+  padding: var(--s-2);
   border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--surface);
   box-shadow: var(--shadow-lg);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--s-1);
 }
 
 .ctxmenu__submenu {
@@ -37,9 +37,9 @@
 .ctxmenu__item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--s-4);
   width: 100%;
-  padding: 7px 8px;
+  padding: var(--s-2) var(--s-3);
   border-radius: var(--r-sm);
   border: 1px solid transparent;
   background: transparent;
@@ -103,7 +103,7 @@
 
 .ctxmenu__separator {
   height: 1px;
-  margin: 4px 6px;
+  margin: var(--s-1) var(--s-2);
   border: none;
   background: var(--border);
 }

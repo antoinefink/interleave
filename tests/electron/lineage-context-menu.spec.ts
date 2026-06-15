@@ -81,6 +81,19 @@ async function elementSummary(
   }, id);
 }
 
+/** The element's current `title` via the inspector bridge (for the rename scenario). */
+async function elementTitle(page: Page, id: string): Promise<string | null> {
+  return page.evaluate(async (elementId) => {
+    const api = window.appApi as unknown as {
+      inspector: {
+        get(req: { id: string }): Promise<{ data: { element: { title: string } } | null }>;
+      };
+    };
+    const res = await api.inspector.get({ id: elementId });
+    return res.data?.element.title ?? null;
+  }, id);
+}
+
 /** The flattened lineage nodes for `id`, optionally INCLUDING soft-deleted tombstones. */
 async function lineageNodes(
   page: Page,
@@ -273,6 +286,42 @@ test("right-click → Set priority → A reflects on the node and survives resta
   page = await app.firstWindow();
   await page.waitForLoadState("domcontentloaded");
   expect((await elementSummary(page, subExtractId))?.priority ?? 0).toBeGreaterThanOrEqual(0.75);
+
+  await app.close();
+});
+
+// ---------------------------------------------------------------------------
+// 3b. Rename via the inline editor commits a new title and survives restart (R8 — rename
+//     writes operation_log through the same SQLite transaction as priority/stage).
+// ---------------------------------------------------------------------------
+
+test("right-click → Rename commits a new title that survives restart", async () => {
+  const dir = makeDataDir();
+  let app = await launchApp(dir, { seedOnEmpty: true });
+  let page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+
+  const subExtractId = await resolveId(page, "extract", "Must control for priors and experience");
+  await selectByTitle(page, "On the Measure of Intelligence");
+  await openContextMenu(page, subExtractId);
+
+  // Rename… opens the inline editor at the node; type a new title and commit with Enter.
+  await clickMenuItem(page, "context-menu-item-rename");
+  const input = page.getByTestId("lineage-rename-input");
+  await expect(input).toBeVisible();
+  const NEW_TITLE = "Controlled priors (renamed)";
+  await input.fill(NEW_TITLE);
+  await input.press("Enter");
+
+  // The title changed, read back via the bridge.
+  await expect.poll(async () => elementTitle(page, subExtractId)).toBe(NEW_TITLE);
+
+  // RESTART: the rename persists (operation_log write survives the relaunch).
+  await app.close();
+  app = await launchApp(dir);
+  page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+  expect(await elementTitle(page, subExtractId)).toBe(NEW_TITLE);
 
   await app.close();
 });

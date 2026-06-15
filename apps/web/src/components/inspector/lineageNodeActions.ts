@@ -42,7 +42,7 @@
  * **Set priority** is always a submenu with four children A/B/C/D (A highest → D lowest),
  * each calling `setPriority(node, label)`.
  */
-import type { LineageNode } from "../../lib/appApi";
+import type { LineageNode, PriorityLabel } from "../../lib/appApi";
 import type {
   ContextMenuActionItem,
   ContextMenuItem,
@@ -50,8 +50,9 @@ import type {
   ContextMenuSubmenuItem,
 } from "../menu/types";
 
-/** Priority bucket labels, highest (A) → lowest (D). */
-export type PriorityLabel = "A" | "B" | "C" | "D";
+/** Priority bucket labels, highest (A) → lowest (D). Re-exported from the appApi contract
+ * so the catalog and `setElementPriority` can never drift apart. */
+export type { PriorityLabel };
 
 /**
  * The injected side-effecting handlers. Each receives the node the menu was opened on.

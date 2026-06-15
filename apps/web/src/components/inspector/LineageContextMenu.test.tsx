@@ -305,6 +305,92 @@ describe("LineageContextMenu", () => {
     expect(h.renameElement).not.toHaveBeenCalled();
   });
 
+  it("a successful rename ({ element: {...} }) refreshes via onAfterMutation", async () => {
+    h.renameElement.mockResolvedValue({ element: { id: "el-1", title: "New title" } });
+    const { onAfterMutation } = renderMenu(node({ id: "el-1", title: "Old title" }));
+    fireEvent.click(screen.getByTestId("context-menu-item-rename"));
+    const input = (await screen.findByTestId("lineage-rename-input")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "New title" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(h.renameElement).toHaveBeenCalledWith({ id: "el-1", title: "New title" }),
+    );
+    await waitFor(() => expect(onAfterMutation).toHaveBeenCalled());
+  });
+
+  it("a rename returning { element: null } surfaces an error toast and never refreshes (Theme E)", async () => {
+    // The default mock already resolves to { element: null } (deleted between right-click
+    // and commit) — commitRename throws → error toast, no onAfterMutation.
+    h.renameElement.mockResolvedValue({ element: null });
+    const { onAfterMutation } = renderMenu(node({ id: "el-1", title: "Old title" }));
+    fireEvent.click(screen.getByTestId("context-menu-item-rename"));
+    const input = (await screen.findByTestId("lineage-rename-input")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "New title" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(h.renameElement).toHaveBeenCalledWith({ id: "el-1", title: "New title" }),
+    );
+    const toast = await screen.findByTestId("lineage-context-toast");
+    expect(toast.textContent).toContain("no longer exists");
+    expect(onAfterMutation).not.toHaveBeenCalled();
+  });
+
+  it("Rename commits on blur (clicking away SAVES, not discards) with the trimmed title (Theme A)", async () => {
+    h.renameElement.mockResolvedValue({ element: { id: "el-1", title: "Renamed" } });
+    renderMenu(node({ id: "el-1", title: "Old title" }));
+    fireEvent.click(screen.getByTestId("context-menu-item-rename"));
+    const input = (await screen.findByTestId("lineage-rename-input")) as HTMLInputElement;
+    // Whitespace around the value proves the commit trims before dispatching.
+    fireEvent.change(input, { target: { value: "  Renamed  " } });
+    fireEvent.blur(input);
+
+    await waitFor(() =>
+      expect(h.renameElement).toHaveBeenCalledWith({ id: "el-1", title: "Renamed" }),
+    );
+  });
+
+  it("Enter commits exactly once even though unmounting fires a blur (no double-commit, Theme A)", async () => {
+    h.renameElement.mockResolvedValue({ element: { id: "el-1", title: "New title" } });
+    renderMenu(node({ id: "el-1", title: "Old title" }));
+    fireEvent.click(screen.getByTestId("context-menu-item-rename"));
+    const input = (await screen.findByTestId("lineage-rename-input")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "New title" } });
+    // Enter commits and clears rename → the input unmounts (which fires a blur). The
+    // doneRef latch must keep that unmount-blur from committing a second time.
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.blur(input);
+
+    await waitFor(() => expect(h.renameElement).toHaveBeenCalledTimes(1));
+    expect(h.renameElement).toHaveBeenCalledWith({ id: "el-1", title: "New title" });
+    // The input is gone after the commit.
+    await waitFor(() => expect(screen.queryByTestId("lineage-rename-input")).toBeNull());
+  });
+
+  it("Escape cancels the rename — no renameElement, input unmounts (Theme A)", async () => {
+    renderMenu(node({ id: "el-1", title: "Old title" }));
+    fireEvent.click(screen.getByTestId("context-menu-item-rename"));
+    const input = (await screen.findByTestId("lineage-rename-input")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "New title" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByTestId("lineage-rename-input")).toBeNull());
+    expect(h.renameElement).not.toHaveBeenCalled();
+  });
+
+  it("a runMutation failure surfaces an error toast, closes the menu, and never refreshes", async () => {
+    h.updateExtractStage.mockRejectedValue(new Error("stage advance blew up"));
+    const { onAfterMutation } = renderMenu(node({ type: "extract", id: "el-1" }));
+    fireEvent.click(screen.getByTestId("context-menu-item-advance-stage"));
+
+    const toast = await screen.findByTestId("lineage-context-toast");
+    expect(toast.textContent).toContain("stage advance blew up");
+    // The menu closes on the error path (target cleared by onClose) and no refresh fires.
+    await waitFor(() => expect(screen.queryByTestId("lineage-context-menu")).toBeNull());
+    expect(onAfterMutation).not.toHaveBeenCalled();
+  });
+
   it("a non-desktop environment does not dispatch a mutation", async () => {
     h.desktop = false;
     renderMenu(node());

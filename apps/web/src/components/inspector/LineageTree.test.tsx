@@ -193,4 +193,59 @@ describe("LineageTree", () => {
       expect(screen.getByTestId("lineage-tombstone-tag")).toBeInTheDocument();
     });
   });
+
+  // U5 — right-click seam: when the host passes `onNodeContextMenu`, a contextmenu on a
+  // node suppresses the native browser menu and reports the node + cursor position so the
+  // host can open the in-app LineageContextMenu. Omitting the prop keeps native behavior.
+  describe("right-click (onNodeContextMenu)", () => {
+    it("suppresses the native menu and reports the node + cursor position", () => {
+      const onNodeContextMenu = vi.fn();
+      render(<LineageTree nodes={NODES} onPick={() => {}} onNodeContextMenu={onNodeContextMenu} />);
+      const source = screen
+        .getAllByTestId("lineage-tree-node")
+        .find((r) => r.getAttribute("data-element-id") === "src-1");
+      expect(source).toBeDefined();
+
+      // fireEvent.contextMenu returns false when the handler called preventDefault().
+      const notPrevented = fireEvent.contextMenu(source as HTMLElement, {
+        clientX: 321,
+        clientY: 654,
+      });
+      expect(notPrevented).toBe(false);
+
+      // The callback fires once with (node, { x, y }) where x/y mirror clientX/clientY.
+      expect(onNodeContextMenu).toHaveBeenCalledTimes(1);
+      expect(onNodeContextMenu).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "src-1", type: "source" }),
+        { x: 321, y: 654 },
+      );
+    });
+
+    it("forwards the right-clicked node (not a sibling) for each row", () => {
+      const onNodeContextMenu = vi.fn();
+      render(<LineageTree nodes={NODES} onPick={() => {}} onNodeContextMenu={onNodeContextMenu} />);
+      const sub = screen
+        .getAllByTestId("lineage-tree-node")
+        .find((r) => r.getAttribute("data-element-id") === "sub-1");
+      fireEvent.contextMenu(sub as HTMLElement, { clientX: 5, clientY: 7 });
+      expect(onNodeContextMenu).toHaveBeenCalledTimes(1);
+      expect(onNodeContextMenu).toHaveBeenLastCalledWith(expect.objectContaining({ id: "sub-1" }), {
+        x: 5,
+        y: 7,
+      });
+    });
+
+    it("does nothing (native default) and never throws when onNodeContextMenu is omitted", () => {
+      render(<LineageTree nodes={NODES} onPick={() => {}} />);
+      const source = screen
+        .getAllByTestId("lineage-tree-node")
+        .find((r) => r.getAttribute("data-element-id") === "src-1");
+      // No handler is wired, so preventDefault is never called — the event is NOT consumed.
+      const notPrevented = fireEvent.contextMenu(source as HTMLElement, {
+        clientX: 10,
+        clientY: 20,
+      });
+      expect(notPrevented).toBe(true);
+    });
+  });
 });

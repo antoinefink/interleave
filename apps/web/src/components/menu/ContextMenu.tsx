@@ -30,7 +30,12 @@ import {
   useState,
 } from "react";
 import { Icon } from "../Icon";
-import type { ContextMenuActionItem, ContextMenuItem, ContextMenuPosition } from "./types";
+import type {
+  ContextMenuActionItem,
+  ContextMenuItem,
+  ContextMenuPosition,
+  ContextMenuSubmenuItem,
+} from "./types";
 import "./context-menu.css";
 
 /** Margin (px) kept between the menu and the viewport edge when clamping/flipping. */
@@ -93,13 +98,20 @@ export function ContextMenu({
   // Resolved coords; null until the first post-mount measure (rendered hidden until then).
   const [rect, setRect] = useState<ResolvedRect | null>(null);
   const [openSubmenuId, setOpenSubmenuId] = useState<string | null>(null);
+  // Latest-value ref so the (capture-phase) scroll handler can read the current submenu
+  // state without re-subscribing. Mutating a ref during render is a safe read-sync pattern.
+  const openSubmenuIdRef = useRef<string | null>(null);
+  openSubmenuIdRef.current = openSubmenuId;
 
-  // Capture the element to restore focus to when the menu opens; restore it on close.
+  // Capture the element to restore focus to when the menu opens; restore it on close —
+  // but only if it is still in the document (a mutation can refresh the tree and detach
+  // the opener, in which case focusing it would throw or strand focus on <body>).
   useEffect(() => {
     if (!open) return;
     restoreFocusRef.current = (document.activeElement as HTMLElement | null) ?? null;
     return () => {
-      restoreFocusRef.current?.focus?.();
+      const opener = restoreFocusRef.current;
+      if (opener?.isConnected) opener.focus?.();
     };
   }, [open]);
 
@@ -141,43 +153,60 @@ export function ContextMenu({
     first?.focus();
   }, [open, rect]);
 
-  // Outside-click and window scroll close the menu (no reposition loop for v1).
+  // Outside-click closes immediately. Window scroll closes too (no reposition loop for v1),
+  // but the scroll listener is attached one frame LATER so the open-time first-item focus()
+  // (which can trigger a scroll-into-view) cannot dismiss the menu before the user interacts,
+  // and it is ignored while a submenu is open so a stray scroll can't collapse a selection.
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) onClose();
     };
-    const onScroll = () => onClose();
+    const onScroll = () => {
+      if (!openSubmenuIdRef.current) onClose();
+    };
     document.addEventListener("mousedown", onDown);
-    window.addEventListener("scroll", onScroll, true);
+    const raf = requestAnimationFrame(() => {
+      window.addEventListener("scroll", onScroll, true);
+    });
     return () => {
+      cancelAnimationFrame(raf);
       document.removeEventListener("mousedown", onDown);
       window.removeEventListener("scroll", onScroll, true);
     };
   }, [open, onClose]);
 
-  const topLevelActions = useCallback(
-    () =>
-      Array.from(
-        rootRef.current?.querySelectorAll<HTMLButtonElement>(
-          // Direct action buttons AND submenu-parent buttons (wrapped one level deep),
-          // but NOT the action buttons rendered inside an open submenu.
-          ":scope > [data-menu-action]:not(:disabled), :scope > .ctxmenu__submenu > [data-menu-action]:not(:disabled)",
-        ) ?? [],
+  // Arrow-nav targets the OPEN submenu's children when one is open, so ArrowUp/Down cycle
+  // the priority A/B/C/D items instead of escaping back to the top level; otherwise it
+  // targets the top-level items (direct actions + submenu-parent buttons, one level deep).
+  const navItems = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return [] as HTMLButtonElement[];
+    const sub = openSubmenuId
+      ? root.querySelector<HTMLElement>(`[data-submenu-id="${openSubmenuId}"]`)
+      : null;
+    if (sub) {
+      return Array.from(
+        sub.querySelectorAll<HTMLButtonElement>("[data-menu-action]:not(:disabled)"),
+      );
+    }
+    return Array.from(
+      root.querySelectorAll<HTMLButtonElement>(
+        ":scope > [data-menu-action]:not(:disabled), :scope > .ctxmenu__submenu > [data-menu-action]:not(:disabled)",
       ),
-    [],
-  );
+    );
+  }, [openSubmenuId]);
 
   const moveFocus = useCallback(
     (delta: 1 | -1) => {
-      const els = topLevelActions();
+      const els = navItems();
       if (els.length === 0) return;
       // biome-ignore lint/complexity/useIndexOf: document.activeElement is Element | null; indexOf would require an unsafe cast.
       const idx = els.findIndex((el) => el === document.activeElement);
       const next = els[(idx + delta + els.length) % els.length];
       next?.focus();
     },
-    [topLevelActions],
+    [navItems],
   );
 
   const selectAction = useCallback(
@@ -325,7 +354,7 @@ function SubmenuItem({
   item,
   ctx,
 }: {
-  item: import("./types").ContextMenuSubmenuItem;
+  item: ContextMenuSubmenuItem;
   ctx: RenderCtx;
 }): ReactElement {
   const expanded = ctx.openSubmenuId === item.id;
@@ -385,6 +414,7 @@ function SubmenuItem({
           role="menu"
           aria-orientation="vertical"
           aria-label={item.label}
+          data-submenu-id={item.id}
           data-testid={`context-menu-sub-${item.id}`}
           style={{
             position: "absolute",

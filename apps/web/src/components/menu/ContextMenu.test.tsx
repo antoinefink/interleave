@@ -382,5 +382,122 @@ describe("ContextMenu", () => {
       fireEvent.keyDown(menu, { key: "Escape" });
       expect(onClose).toHaveBeenCalledTimes(1);
     });
+
+    // A submenu with 3+ children so ArrowDown/Up cycling within the OPEN submenu is
+    // distinguishable from escaping back to the top-level items.
+    function withSubmenuOf3(childSelect = vi.fn()): ContextMenuItem[] {
+      return [
+        { kind: "action", id: "open", label: "Open", onSelect: vi.fn() },
+        {
+          kind: "submenu",
+          id: "prio",
+          label: "Set priority",
+          items: [
+            { kind: "action", id: "pa", label: "A", onSelect: childSelect },
+            { kind: "action", id: "pb", label: "B", onSelect: childSelect },
+            { kind: "action", id: "pc", label: "C", onSelect: childSelect },
+          ],
+        },
+      ];
+    }
+
+    it("ArrowDown/ArrowUp cycle WITHIN the open submenu's children (not escaping to top level)", async () => {
+      stubMenuSize(180, 120);
+      render(
+        <ContextMenu
+          open
+          position={{ x: 100, y: 100 }}
+          items={withSubmenuOf3()}
+          onClose={vi.fn()}
+        />,
+      );
+      // Open the submenu via ArrowRight on the parent; focus lands on the first child.
+      const parent = await screen.findByTestId("context-menu-item-prio");
+      parent.focus();
+      fireEvent.keyDown(parent, { key: "ArrowRight" });
+      const sub = await screen.findByTestId("context-menu-sub-prio");
+      expect(sub.getAttribute("data-submenu-id")).toBe("prio");
+      await waitFor(() =>
+        expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-pa")),
+      );
+
+      const menu = screen.getByTestId("context-menu");
+      // ArrowDown steps through the submenu's children — NOT back to the top-level "Open".
+      fireEvent.keyDown(menu, { key: "ArrowDown" });
+      expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-pb"));
+      fireEvent.keyDown(menu, { key: "ArrowDown" });
+      expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-pc"));
+      // Wrap forward from the last submenu child back to the first (cycling within the sub).
+      fireEvent.keyDown(menu, { key: "ArrowDown" });
+      expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-pa"));
+      // The top-level item is never focused while the submenu owns navigation.
+      expect(document.activeElement).not.toBe(screen.getByTestId("context-menu-item-open"));
+    });
+
+    it("ArrowUp wraps backward within the open submenu's children", async () => {
+      stubMenuSize(180, 120);
+      render(
+        <ContextMenu
+          open
+          position={{ x: 100, y: 100 }}
+          items={withSubmenuOf3()}
+          onClose={vi.fn()}
+        />,
+      );
+      const parent = await screen.findByTestId("context-menu-item-prio");
+      parent.focus();
+      fireEvent.keyDown(parent, { key: "ArrowRight" });
+      await screen.findByTestId("context-menu-sub-prio");
+      await waitFor(() =>
+        expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-pa")),
+      );
+
+      const menu = screen.getByTestId("context-menu");
+      // ArrowUp from the first child wraps to the LAST submenu child, not the top level.
+      fireEvent.keyDown(menu, { key: "ArrowUp" });
+      expect(document.activeElement).toBe(screen.getByTestId("context-menu-item-pc"));
+    });
+  });
+
+  // Theme D — focus-restore guard: if the opener is detached from the DOM before the menu
+  // closes (a tree-refreshing mutation can remove it), restoring focus must be a no-op
+  // rather than throwing / stranding focus on the removed node.
+  it("does not throw when the opener has been removed from the DOM before close", async () => {
+    stubMenuSize(180, 120);
+    function Harness() {
+      const [open, setOpen] = useState(true);
+      const [showOpener, setShowOpener] = useState(true);
+      return (
+        <div>
+          {showOpener ? (
+            <button type="button" data-testid="opener" onClick={() => setOpen(true)}>
+              opener
+            </button>
+          ) : null}
+          <button type="button" data-testid="remove-opener" onClick={() => setShowOpener(false)}>
+            remove opener
+          </button>
+          <ContextMenu
+            open={open}
+            position={{ x: 100, y: 100 }}
+            items={basicItems()}
+            onClose={() => setOpen(false)}
+          />
+        </div>
+      );
+    }
+    render(<Harness />);
+    const opener = screen.getByTestId("opener");
+    opener.focus();
+    expect(document.activeElement).toBe(opener);
+
+    const menu = await screen.findByTestId("context-menu");
+    // Detach the opener while the menu is open, THEN close via Escape.
+    fireEvent.click(screen.getByTestId("remove-opener"));
+    expect(() => fireEvent.keyDown(menu, { key: "Escape" })).not.toThrow();
+
+    // The removed opener never receives focus (it is gone); focus is not stranded on it.
+    await waitFor(() => expect(screen.queryByTestId("opener")).toBeNull());
+    expect(document.activeElement).not.toBe(opener);
   });
 });
