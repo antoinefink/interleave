@@ -5,6 +5,8 @@
  *   - ⌘K / Ctrl+K  → toggle the command palette
  *   - ⌘Z / Ctrl+Z  → general command-level undo (T044 — reverse the last op)
  *   - ⌘B / Ctrl+B  → create a backup now (T050 — same command as the prompt/menu)
+ *   - ⌘← / Ctrl+←  → navigate BACK through page history
+ *   - ⌘→ / Ctrl+→  → navigate FORWARD through page history
  *   - ?            → toggle the cheat sheet
  *   - g then <key> → quick-navigate (g q → /queue, g r → /review, …)
  *   - /            → open search (T048 — routes to /search)
@@ -54,6 +56,10 @@ export type ShellShortcutHandlers = {
   onRaisePriority: () => void;
   /** Lower the selected element's priority (T048) — `-`. No-op if none selected. */
   onLowerPriority: () => void;
+  /** Navigate back through page history — ⌘←/Ctrl+←. Suppressed while typing. */
+  onNavigateBack: () => void;
+  /** Navigate forward through page history — ⌘→/Ctrl+→. Suppressed while typing. */
+  onNavigateForward: () => void;
 };
 
 /** Window (ms) after pressing `g` during which a letter triggers navigation. */
@@ -108,6 +114,34 @@ export function useShellShortcuts(handlersIn: ShellShortcutHandlers): void {
       ) {
         e.preventDefault();
         handlers.current.onCreateBackup();
+        return;
+      }
+
+      // ⌘← / Ctrl+← → back, ⌘→ / Ctrl+→ → forward through page history (mirrors
+      // the browser gesture). Outside text entry only — inside an input/textarea/
+      // the reader's contenteditable editor, ⌘←/→ must stay the native
+      // move-cursor-to-line-edge gesture — and no Shift/Alt (so ⌘⇧← selection is
+      // untouched). Routes through the SAME router history every in-app nav uses.
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key === "ArrowLeft" &&
+        !typing
+      ) {
+        e.preventDefault();
+        handlers.current.onNavigateBack();
+        return;
+      }
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        !e.shiftKey &&
+        !e.altKey &&
+        e.key === "ArrowRight" &&
+        !typing
+      ) {
+        e.preventDefault();
+        handlers.current.onNavigateForward();
         return;
       }
 

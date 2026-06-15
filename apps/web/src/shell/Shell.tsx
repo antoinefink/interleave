@@ -23,7 +23,14 @@
  * nav/command catalogues are static config.
  */
 import type { LocalVaultPath, VaultRoot } from "@interleave/core";
-import { Link, Outlet, useLinkProps, useNavigate, useRouterState } from "@tanstack/react-router";
+import {
+  Link,
+  Outlet,
+  useLinkProps,
+  useNavigate,
+  useRouter,
+  useRouterState,
+} from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { Inspector } from "../components/inspector/Inspector";
@@ -365,6 +372,7 @@ function StatusBar() {
  */
 function ShellInner() {
   const navigate = useNavigate();
+  const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { selectedId } = useSelection();
   const globalActions = useGlobalActions();
@@ -390,6 +398,25 @@ function ShellInner() {
     options?: { readonly params?: Readonly<Record<string, string>> },
   ) => {
     void navigate({ to, ...(options?.params ? { params: options.params } : {}) });
+  };
+
+  // ⌘← / ⌘→ walk the renderer's page-history stack via TanStack Router's history
+  // (the SAME history every in-app navigation uses). back()/forward() are safe
+  // no-ops at the ends of the stack, so no canGoBack()/canGoForward() guard needed.
+  // History nav is universal: it fires ABOVE the per-screen scope gate in
+  // useShellShortcuts (like ⌘Z/⌘B), so it works mid-reader/review/queue just as
+  // clicking a nav link would. It must NOT, however, walk the route out from under
+  // an open modal/overlay (cheat sheet, palette with focus off its input, help,
+  // welcome) — those keep focus on non-input elements, so the hook's `typing` guard
+  // wouldn't stop it. Gate on the overlay state here, where it lives.
+  const overlayOpen = commandOpen || cheatOpen || helpOpen || welcomeOpen;
+  const onNavigateBack = () => {
+    if (overlayOpen) return;
+    router.history.back();
+  };
+  const onNavigateForward = () => {
+    if (overlayOpen) return;
+    router.history.forward();
   };
 
   /**
@@ -643,6 +670,8 @@ function ShellInner() {
     onOpenParent: globalActions.openParent,
     onRaisePriority: globalActions.raisePriority,
     onLowerPriority: globalActions.lowerPriority,
+    onNavigateBack,
+    onNavigateForward,
   });
 
   return (

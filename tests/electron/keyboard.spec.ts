@@ -214,6 +214,32 @@ test("the ? cheat sheet opens by keyboard (and Esc closes it)", async () => {
   await app.close();
 });
 
+test("Cmd/Ctrl + Arrow navigates back and forward through page history", async () => {
+  const app = await launchApp(dataDir, { seedOnEmpty: true });
+  const page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+
+  // Build a small history stack via the app's OWN g-nav (real router pushes, the
+  // same path the sidebar uses): go to /queue, then /library.
+  await page.keyboard.press("g");
+  await page.keyboard.press("q");
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/queue");
+
+  await page.keyboard.press("g");
+  await page.keyboard.press("l");
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/library");
+
+  // ⌘← / Ctrl+← walks BACK one entry to /queue …
+  await page.keyboard.press(`${CMD}+ArrowLeft`);
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/queue");
+
+  // … and ⌘→ / Ctrl+→ walks FORWARD again to /library.
+  await page.keyboard.press(`${CMD}+ArrowRight`);
+  await expect.poll(() => new URL(page.url()).pathname).toBe("/library");
+
+  await app.close();
+});
+
 test("the queue process loop is keyboard-drivable (p postpones via queue.act)", async () => {
   const app = await launchApp(dataDir, { seedOnEmpty: true });
   const page = await app.firstWindow();

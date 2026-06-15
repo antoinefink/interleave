@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const h = vi.hoisted(() => ({
   pathname: "/queue",
   navigate: vi.fn(),
+  router: { history: { back: vi.fn(), forward: vi.fn() } },
   applyTheme: vi.fn(),
   updateAppSettings: vi.fn(),
   useShellShortcuts: vi.fn(),
@@ -46,6 +47,7 @@ vi.mock("@tanstack/react-router", () => ({
   Outlet: () => <div data-testid="route-outlet" />,
   useLinkProps: ({ to }: { to: string }) => ({ href: to }),
   useNavigate: () => h.navigate,
+  useRouter: () => h.router,
   useRouterState: ({ select }: { select: (state: { location: { pathname: string } }) => string }) =>
     select({ location: { pathname: h.pathname } }),
 }));
@@ -157,6 +159,8 @@ import { Shell } from "./Shell";
 beforeEach(() => {
   h.pathname = "/queue";
   h.navigate.mockReset();
+  h.router.history.back.mockReset();
+  h.router.history.forward.mockReset();
   h.applyTheme.mockClear();
   h.updateAppSettings.mockReset();
   h.updateAppSettings.mockResolvedValue({});
@@ -227,6 +231,50 @@ describe("Shell", () => {
     render(<Shell />);
 
     expect(screen.getByTestId("command-bar")).toBeInTheDocument();
+  });
+
+  it("wires ⌘←/⌘→ to the router's history back/forward", () => {
+    render(<Shell />);
+
+    const handlers = h.useShellShortcuts.mock.calls[0]?.[0] as
+      | { onNavigateBack: () => void; onNavigateForward: () => void }
+      | undefined;
+    expect(handlers).toBeTruthy();
+
+    act(() => {
+      handlers?.onNavigateBack();
+    });
+    expect(h.router.history.back).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      handlers?.onNavigateForward();
+    });
+    expect(h.router.history.forward).toHaveBeenCalledTimes(1);
+  });
+
+  it("⌘<-/⌘-> do nothing while a modal overlay (cheat sheet) is open", () => {
+    render(<Shell />);
+
+    // Open the cheat sheet through the same handler the ? shortcut uses, so the
+    // overlay-open guard in onNavigateBack/Forward is live on the next render.
+    const opener = h.useShellShortcuts.mock.calls.at(-1)?.[0] as
+      | { toggleCheatSheet: () => void }
+      | undefined;
+    act(() => {
+      opener?.toggleCheatSheet();
+    });
+
+    const handlers = h.useShellShortcuts.mock.calls.at(-1)?.[0] as
+      | { onNavigateBack: () => void; onNavigateForward: () => void }
+      | undefined;
+    act(() => {
+      handlers?.onNavigateBack();
+      handlers?.onNavigateForward();
+    });
+
+    // The route must not move out from under the open overlay.
+    expect(h.router.history.back).not.toHaveBeenCalled();
+    expect(h.router.history.forward).not.toHaveBeenCalled();
   });
 
   it("opens the command palette and routes palette actions to the cheat sheet", () => {

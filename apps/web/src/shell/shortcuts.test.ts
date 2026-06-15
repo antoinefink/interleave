@@ -192,4 +192,15 @@ describe("registry-vs-handlers drift guard", () => {
       }
     });
   }
+
+  // The per-scope loop above only checks each shortcut's FIRST keycap, so for the
+  // ⌘-prefixed arrow shortcuts (nav-back ⌘←, nav-forward ⌘→) it verifies "metaKey"
+  // but never the arrow DIRECTION. Assert the arrow bindings explicitly so renaming
+  // ArrowLeft/ArrowRight in the shell hook fails CI — keeping the registry's
+  // "every entry is actually wired" contract honest for these two entries (the
+  // runtime dispatch is separately covered in useShellShortcuts.test.tsx).
+  it("binds the nav-back / nav-forward arrow keys in the shell hook", () => {
+    expect(shellSrc).toContain('"ArrowLeft"');
+    expect(shellSrc).toContain('"ArrowRight"');
+  });
 });

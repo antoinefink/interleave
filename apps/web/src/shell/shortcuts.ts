@@ -97,6 +97,20 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
     scope: "global",
   },
   {
+    id: "nav-back",
+    label: "Back",
+    keys: ["⌘", "←"],
+    group: "Navigation",
+    scope: "global",
+  },
+  {
+    id: "nav-forward",
+    label: "Forward",
+    keys: ["⌘", "→"],
+    group: "Navigation",
+    scope: "global",
+  },
+  {
     id: "undo",
     label: "Undo last action",
     keys: ["⌘", "Z"],

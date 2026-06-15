@@ -35,6 +35,8 @@ function makeHandlers(): ShellShortcutHandlers {
     onOpenParent: vi.fn(),
     onRaisePriority: vi.fn(),
     onLowerPriority: vi.fn(),
+    onNavigateBack: vi.fn(),
+    onNavigateForward: vi.fn(),
   };
 }
 
@@ -43,6 +45,8 @@ function Host({ handlers }: { handlers: ShellShortcutHandlers }) {
   return (
     <div>
       <input data-testid="field" />
+      <textarea data-testid="area" />
+      <div data-testid="editable" contentEditable suppressContentEditableWarning />
     </div>
   );
 }
@@ -141,6 +145,77 @@ describe("useShellShortcuts — global element actions", () => {
     // While typing, ⌘B must not hijack the field (editor bold chord stays native).
     fireEvent.keyDown(getByTestId("field"), { key: "b", metaKey: true });
     expect(h.onCreateBackup).toHaveBeenCalledTimes(1); // unchanged
+  });
+});
+
+describe("useShellShortcuts — page history navigation (⌘←/⌘→)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("⌘← navigates back and ⌘→ navigates forward outside text entry", () => {
+    const h = makeHandlers();
+    render(<Host handlers={h} />);
+
+    fireEvent.keyDown(window, { key: "ArrowLeft", metaKey: true });
+    expect(h.onNavigateBack).toHaveBeenCalledTimes(1);
+    expect(h.onNavigateForward).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(window, { key: "ArrowRight", metaKey: true });
+    expect(h.onNavigateForward).toHaveBeenCalledTimes(1);
+    expect(h.onNavigateBack).toHaveBeenCalledTimes(1); // unchanged
+  });
+
+  it("Ctrl+← / Ctrl+→ drive the same handlers on non-mac", () => {
+    const h = makeHandlers();
+    render(<Host handlers={h} />);
+
+    fireEvent.keyDown(window, { key: "ArrowLeft", ctrlKey: true });
+    fireEvent.keyDown(window, { key: "ArrowRight", ctrlKey: true });
+    expect(h.onNavigateBack).toHaveBeenCalledTimes(1);
+    expect(h.onNavigateForward).toHaveBeenCalledTimes(1);
+  });
+
+  it("is suppressed while typing in an input, textarea, or contenteditable", () => {
+    const h = makeHandlers();
+    const { getByTestId } = render(<Host handlers={h} />);
+
+    // Both arrows, both ⌘ and Ctrl modifiers, across input / textarea — none fire.
+    fireEvent.keyDown(getByTestId("field"), { key: "ArrowLeft", metaKey: true });
+    fireEvent.keyDown(getByTestId("field"), { key: "ArrowRight", ctrlKey: true });
+    fireEvent.keyDown(getByTestId("area"), { key: "ArrowLeft", ctrlKey: true });
+    fireEvent.keyDown(getByTestId("area"), { key: "ArrowRight", metaKey: true });
+
+    // jsdom does not derive `isContentEditable` from the attribute, so make the
+    // hook's `target.isContentEditable` read deterministic for this assertion.
+    const editable = getByTestId("editable");
+    Object.defineProperty(editable, "isContentEditable", { configurable: true, value: true });
+    fireEvent.keyDown(editable, { key: "ArrowLeft", metaKey: true });
+    fireEvent.keyDown(editable, { key: "ArrowRight", metaKey: true });
+
+    expect(h.onNavigateBack).not.toHaveBeenCalled();
+    expect(h.onNavigateForward).not.toHaveBeenCalled();
+  });
+
+  it("does not fire with Shift or Alt held (selection / chords stay native)", () => {
+    const h = makeHandlers();
+    render(<Host handlers={h} />);
+
+    fireEvent.keyDown(window, { key: "ArrowLeft", metaKey: true, shiftKey: true });
+    fireEvent.keyDown(window, { key: "ArrowLeft", metaKey: true, altKey: true });
+    fireEvent.keyDown(window, { key: "ArrowRight", metaKey: true, shiftKey: true });
+    expect(h.onNavigateBack).not.toHaveBeenCalled();
+    expect(h.onNavigateForward).not.toHaveBeenCalled();
+  });
+
+  it("does not fire on a bare arrow press (no modifier)", () => {
+    const h = makeHandlers();
+    render(<Host handlers={h} />);
+
+    fireEvent.keyDown(window, { key: "ArrowLeft" });
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(h.onNavigateBack).not.toHaveBeenCalled();
+    expect(h.onNavigateForward).not.toHaveBeenCalled();
   });
 });
 
