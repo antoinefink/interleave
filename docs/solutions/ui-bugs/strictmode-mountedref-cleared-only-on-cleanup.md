@@ -1,6 +1,7 @@
 ---
 title: "Mount-guard ref dead under StrictMode when only cleared on cleanup (silent no-op UI actions)"
 date: 2026-06-15
+last_updated: 2026-06-15
 category: ui-bugs
 module: apps/web (React renderer)
 problem_type: ui_bug
@@ -121,6 +122,19 @@ guarded action fired; only the real app (which renders under `<StrictMode>` in
   });
   ```
 
+- **Cover every ENTRY POINT into a shared guarded component, not just one.** A component
+  carrying the post-await guard is often reached through more than one trigger, and each is a
+  separate code path that must survive the remount cycle. `LineageDeleteMenu` is reached two
+  ways: a **visible trigger** (the extract reader / queue / source surfaces call
+  `fireEvent.click` on the `lineage-delete-trigger` button) and a **hidden, signal-driven
+  trigger** — the inspector lineage **context-menu** "Delete" item does not click the button; it
+  bumps a `triggerSignal` prop that a `useEffect` in `LineageDeleteMenu` watches. A StrictMode
+  test through the visible trigger does **not** protect the signal-driven path. Add a StrictMode
+  regression test per distinct entry point (the inspector context-menu path is covered in
+  `apps/web/src/components/inspector/LineageContextMenu.test.tsx`, exercising leaf fast-path,
+  descendant popover, and the count-error fall-through — each fails on the broken idiom). Same
+  rule for the `submittingRef`/post-await guard's error branches: the `catch` block has its own
+  `if (!mountedRef.current) return`, so cover the failure path too, not only the happy path.
 - **Audit siblings when fixing one instance.** Grep `useRef(true)` across the renderer and
   check each for a cleanup-only effect — the idiom tends to be copied. (A follow-up to extract a
   shared `useIsMounted()` hook + a lint guard is tracked separately.)
