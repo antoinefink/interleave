@@ -362,4 +362,63 @@ describe("SessionAssemblyPreview", () => {
     await screen.findByText("Unavailable plan");
     expect(screen.queryByTestId("session-composition")).not.toBeInTheDocument();
   });
+
+  it("does not refetch preset previews when the parent re-renders with a value-equal request", async () => {
+    h.previewSessionPlan.mockImplementation((req: QueueSessionPlanRequest) =>
+      Promise.resolve(plan(req.targetMinutes, item("row", "Planned row"))),
+    );
+
+    const requestProp = { mode: "full" } as const;
+    const { rerender } = render(
+      <SessionAssemblyPreview
+        open
+        origin="home"
+        defaultTargetMinutes={25}
+        request={{ ...requestProp }}
+        onClose={() => undefined}
+      />,
+    );
+
+    await screen.findByText("Planned row");
+    // targetMinutes 15 is a pure preset value (not the default box), so it
+    // isolates the preset-preview effect from the main load.
+    const preset15Calls = () =>
+      h.previewSessionPlan.mock.calls.filter((c) => c[0]?.targetMinutes === 15).length;
+    await waitFor(() => expect(preset15Calls()).toBe(1));
+
+    // Re-render with a brand-new request object literal of identical content,
+    // exactly as the inline-prop mount sites do on every parent render. The
+    // preset previews must NOT refire — baseRequestKey is unchanged.
+    rerender(
+      <SessionAssemblyPreview
+        open
+        origin="home"
+        defaultTargetMinutes={25}
+        request={{ ...requestProp }}
+        onClose={() => undefined}
+      />,
+    );
+    expect(preset15Calls()).toBe(1);
+  });
+
+  it("surfaces an error when the session plan fails", async () => {
+    h.previewSessionPlan.mockImplementation((req: QueueSessionPlanRequest) =>
+      req.targetMinutes === 25
+        ? Promise.reject(new Error("plan boom"))
+        : Promise.resolve(plan(req.targetMinutes, item("p", "Preset"))),
+    );
+
+    render(
+      <SessionAssemblyPreview
+        open
+        origin="home"
+        defaultTargetMinutes={25}
+        request={{ mode: "full" }}
+        onClose={() => undefined}
+      />,
+    );
+
+    expect(await screen.findByTestId("session-preview-error")).toHaveTextContent("plan boom");
+    expect(screen.getByTestId("session-preview-start")).toBeDisabled();
+  });
 });

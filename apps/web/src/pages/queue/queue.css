@@ -794,6 +794,7 @@
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
   background: var(--surface);
+  --session-rail-w: 300px;
 }
 .q-session-preview__head {
   display: flex;
@@ -809,7 +810,7 @@
   color: var(--text);
 }
 .q-session-preview__sub {
-  margin: 4px 0 0;
+  margin: var(--s-1) 0 0;
   font-size: var(--t-sm);
   color: var(--text-2);
 }
@@ -844,7 +845,7 @@
 /* ── split frame ───────────────────────────────────────────── */
 .q-session-preview__split {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: var(--session-rail-w) 1fr;
   gap: var(--s-8);
   margin-top: var(--s-5);
 }
@@ -1008,7 +1009,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--s-2);
-  padding: 4px var(--s-3);
+  padding: var(--s-1) var(--s-3);
   border: 1px solid var(--border-faint);
   border-radius: var(--r-full);
   background: var(--surface-2);
@@ -1020,8 +1021,8 @@
   color: var(--text);
 }
 .q-session-preview__dot {
-  width: 8px;
-  height: 8px;
+  width: var(--s-3);
+  height: var(--s-3);
   flex: none;
   border-radius: var(--r-full);
   box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--text) 12%, transparent);
@@ -1103,7 +1104,7 @@
   flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--s-1);
   padding: 2px var(--s-2);
   border: 1px solid var(--border-faint);
   border-radius: var(--r-full);

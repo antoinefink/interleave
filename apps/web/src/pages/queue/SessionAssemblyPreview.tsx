@@ -68,12 +68,20 @@ export function SessionAssemblyPreview({
     [fullRequest],
   );
 
-  // Request shape shared by every preset preview (everything but the time box).
-  // Stable across the panel's own re-renders, so preset outcomes only refetch
-  // when the filters/clock actually change — not when the user edits the box.
-  const baseRequest = useMemo<Omit<QueueSessionPlanRequest, "targetMinutes">>(
-    () => ({ ...(request ?? {}), ...(asOf ? { asOf } : {}) }),
+  // Request shape shared by every preset preview (everything but the time box),
+  // derived from a stable JSON key so it keeps a constant identity across the
+  // panel's own re-renders AND across parent re-renders that hand us a fresh
+  // `request` object literal (both mount sites do). Keying on the parsed-from-
+  // string value — not the raw memo of an unstable prop — is what stops the
+  // preset previews from refetching (and blanking each card's consequence) on
+  // every unrelated parent render; they refetch only when filters/clock change.
+  const baseRequestKey = useMemo(
+    () => JSON.stringify({ ...(request ?? {}), ...(asOf ? { asOf } : {}) }),
     [asOf, request],
+  );
+  const baseRequest = useMemo<Omit<QueueSessionPlanRequest, "targetMinutes">>(
+    () => JSON.parse(baseRequestKey),
+    [baseRequestKey],
   );
 
   const load = useCallback(async () => {
@@ -126,6 +134,11 @@ export function SessionAssemblyPreview({
         })
         .catch(() => undefined);
     }
+    // Invalidate any still-in-flight previews when the deps change or the panel
+    // unmounts, so a late resolve can never write stale preset meta.
+    return () => {
+      presetSeqRef.current += 1;
+    };
   }, [baseRequest, open]);
 
   useEffect(() => {
@@ -192,10 +205,14 @@ export function SessionAssemblyPreview({
             <div className="q-session-preview__cards">
               {PRESETS.map((minutes) => {
                 const outcome = presetOutcomes.get(minutes);
+                const items = outcome
+                  ? `${outcome.plannedCount} item${outcome.plannedCount === 1 ? "" : "s"}`
+                  : null;
                 const pct =
                   outcome && outcome.targetMinutes > 0
                     ? Math.round((outcome.plannedMinutes / outcome.targetMinutes) * 100)
                     : null;
+                const meta = items ? (pct === null ? items : `${items} · ${pct}% full`) : " ";
                 return (
                   <button
                     key={minutes}
@@ -208,16 +225,12 @@ export function SessionAssemblyPreview({
                       {minutes}
                       <i>min</i>
                     </span>
-                    <span className="q-session-preview__card-meta">
-                      {outcome
-                        ? `${outcome.plannedCount} item${outcome.plannedCount === 1 ? "" : "s"} · ${pct}% full`
-                        : " "}
-                    </span>
+                    <span className="q-session-preview__card-meta">{meta}</span>
                   </button>
                 );
               })}
               <label
-                className={`q-session-preview__card q-session-preview__card--custom${isPresetActive ? "" : " q-session-preview__card--on"}`}
+                className={`q-session-preview__card${isPresetActive ? "" : " q-session-preview__card--on"}`}
               >
                 <span className="q-session-preview__card-min">
                   <input
@@ -238,7 +251,7 @@ export function SessionAssemblyPreview({
             </div>
           </fieldset>
 
-          {plan && composition ? (
+          {!invalid && plan && composition ? (
             <>
               <div className="q-session-preview__meter">
                 <div className="q-session-preview__meter-head">
