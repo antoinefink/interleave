@@ -15,7 +15,7 @@
  */
 
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { ConceptGraph } from "../components/ConceptGraph";
 import { Icon } from "../components/Icon";
 import {
@@ -139,6 +139,175 @@ function highlight(text: string, q: string): React.ReactNode {
   );
 }
 
+/**
+ * One result row, memoized so it re-renders only when its own data, selection state, or
+ * the (DEFERRED) highlight query changes — NOT when an unrelated `LibraryScreen` render
+ * fires (loading flip, another row's selection, a sibling state change). Combined with
+ * the deferred query, a keystroke-adjacent render leaves every row's props unchanged so
+ * the whole list skips reconciliation on the hot path.
+ */
+const ResultRow = memo(function ResultRowImpl({
+  result,
+  selected,
+  query,
+  onSelect,
+  onOpen,
+}: {
+  readonly result: LibraryRow;
+  readonly selected: boolean;
+  readonly query: string;
+  readonly onSelect: (id: string) => void;
+  readonly onOpen: (result: SearchResult) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`result${selected ? " result--on" : ""}`}
+      data-testid="library-result"
+      data-result-id={result.id}
+      data-result-type={result.type}
+      onClick={() => onSelect(result.id)}
+      onDoubleClick={() => onOpen(result)}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div className="result__title">
+          {highlight(result.title, query)}
+          {result.semantic ? (
+            <span
+              className="badge badge--soft"
+              data-testid="library-related-badge"
+              title="Surfaced by meaning, not just keywords"
+              style={{ marginLeft: 8 }}
+            >
+              related
+            </span>
+          ) : null}
+        </div>
+        <div className="result__meta">
+          {result.concept ? <ConceptTag name={result.concept} /> : null}
+          {result.sourceTitle ? <span>{result.sourceTitle}</span> : null}
+          {result.sourceLocationLabel ? <span>{result.sourceLocationLabel}</span> : null}
+          {result.snippet ? (
+            <span className="result__snippet">{highlight(result.snippet, query)}</span>
+          ) : null}
+        </div>
+      </div>
+      <Prio priority={result.priority} />
+    </button>
+  );
+});
+
+/**
+ * The left filterbar (type / concept / priority + disabled maintenance rows), memoized so
+ * it does NOT reconcile on a query-only `LibraryScreen` render — its inputs (concepts,
+ * active filters, backend counts) change far less often than the debounced query. This
+ * keeps the concept list (potentially hundreds of `ConceptTag` buttons) off the
+ * keystroke-adjacent render path; it re-renders only when counts arrive or a filter toggles.
+ */
+const FilterBar = memo(function FilterBarImpl({
+  concepts,
+  typeFilter,
+  conceptFilter,
+  priorityFilter,
+  searchCounts,
+  hasQuery,
+  onToggleType,
+  onToggleConcept,
+  onTogglePriority,
+}: {
+  readonly concepts: readonly ConceptNode[];
+  readonly typeFilter: SearchableType | null;
+  readonly conceptFilter: string | null;
+  readonly priorityFilter: PriorityLetter | null;
+  readonly searchCounts: SearchCounts;
+  readonly hasQuery: boolean;
+  readonly onToggleType: (type: SearchableType) => void;
+  readonly onToggleConcept: (id: string) => void;
+  readonly onTogglePriority: (priority: PriorityLetter) => void;
+}) {
+  // A pending (query-less) active facet styles differently — it applies once you type.
+  const optClass = (active: boolean) =>
+    `filter-opt${active ? ` filter-opt--on${!hasQuery ? " filter-opt--pending" : ""}` : ""}`;
+  return (
+    <div className="filterbar" data-testid="library-filterbar">
+      <div className="filter-group">
+        <div className="filter-group__title">Type</div>
+        {TYPE_GROUPS.map((g) => (
+          <button
+            key={g.type}
+            type="button"
+            className={optClass(typeFilter === g.type)}
+            data-testid={`library-filter-type-${g.type}`}
+            onClick={() => onToggleType(g.type)}
+          >
+            <TypeIcon type={g.type} />
+            <span>{g.title}</span>
+            <span className="filter-opt__count">{searchCounts.byType[g.type] ?? 0}</span>
+          </button>
+        ))}
+      </div>
+
+      {concepts.length > 0 ? (
+        <div className="filter-group">
+          <div className="filter-group__title">Concept</div>
+          {concepts.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              className={optClass(conceptFilter === c.id)}
+              data-testid={`library-filter-concept-${c.id}`}
+              onClick={() => onToggleConcept(c.id)}
+            >
+              <ConceptTag name={c.name} />
+              {/* Keyword counts come from `search.query`; empty-query counts come
+                  from `library.browse`, bounded to source/extract/card for this
+                  screen. The Map tab still uses the global concept volume. */}
+              <span className="filter-opt__count">{searchCounts.byConcept[c.id] ?? 0}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="filter-group">
+        <div className="filter-group__title">Priority</div>
+        {PRIORITIES.map((p) => (
+          <button
+            key={p}
+            type="button"
+            className={optClass(priorityFilter === p)}
+            data-testid={`library-filter-prio-${p}`}
+            onClick={() => onTogglePriority(p)}
+          >
+            <span className={`prio-dot prio-dot--${p.toLowerCase()}`} />
+            <span>Priority {p}</span>
+            <span className="filter-opt__count">{searchCounts.byPriority[p] ?? 0}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Maintenance "smart" filters are M9/M17 analytics — shown but disabled. */}
+      <div className="filter-group">
+        <div className="filter-group__title">Maintenance</div>
+        {[
+          ["hourglass", "Stale facts"],
+          ["leech", "Leeches"],
+          ["pause", "Stagnant extracts"],
+        ].map(([ic, label]) => (
+          <span
+            key={label}
+            className="filter-opt filter-opt--disabled"
+            title="Coming with analytics"
+          >
+            <Icon name={ic as never} size={14} />
+            <span>{label}</span>
+            <span className="filter-opt__count">—</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+});
+
 export function LibraryScreen() {
   const desktop = isDesktop();
   const navigate = useNavigate();
@@ -163,6 +332,12 @@ export function LibraryScreen() {
   const [priorityFilter, setPriorityFilter] = useState<PriorityLetter | null>(() => routePriority);
 
   const [results, setResults] = useState<readonly LibraryRow[]>([]);
+  // Mirror whether results are currently on screen so the search effect can SKIP the
+  // `setLoading(true)` flip on a WARM search-as-you-type (Fix 3) — keeping the existing
+  // rows visible instead of flashing "Searching…" and committing an extra render on
+  // every debounce-settle. Read via a ref so the effect need not depend on `results`
+  // (which would re-run the search on every result change).
+  const hasResultsRef = useRef(false);
   // DRILL-DOWN filterbar counts scoped to the active retrieval mode. Keyword and
   // semantic paths use search/semantic counts; empty-query paths use library browse
   // counts bounded to source/extract/card. ConceptNode.memberCount is Map volume.
@@ -183,8 +358,19 @@ export function LibraryScreen() {
   const [indexHealth, setIndexHealth] = useState<SemanticIndexHealth>("healthy");
   const [reindexing, setReindexing] = useState(false);
 
+  // The search EFFECT + its UI gating key on the IMMEDIATE query so navigation fires a
+  // search right away (no debounce wait) and route resets behave deterministically.
   const debouncedTerm = debouncedQuery.trim();
   const hasQuery = debouncedTerm.length > 0;
+  // The heavy results RENDER (per-row `highlight()`) reads the DEFERRED query so React
+  // 19 reconciles it at LOW priority and YIELDS to keystrokes. The residual typing
+  // stutter was that reconciliation landing between characters once the 150 ms debounce
+  // settled — which, for a normal-speed typist, is every character. Deferring the
+  // highlight + memoizing the rows (so an unchanged deferred query lets the row memo
+  // skip) keeps the keystroke-adjacent render cheap; the result list catches up a frame
+  // later. The results-arrival reconciliation is additionally wrapped in a transition
+  // (see the search effect) so it is interruptible too.
+  const deferredQuery = useDeferredValue(debouncedQuery);
   const hasActiveFacet = typeFilter !== null || conceptFilter !== null || priorityFilter !== null;
   const showSemanticBuildIndex =
     !hasQuery && semanticAvailable && semanticIndex.embedded < semanticIndex.total;
@@ -214,10 +400,19 @@ export function LibraryScreen() {
     return labels;
   }, [typeFilter, conceptFilter, priorityFilter, concepts]);
   const pendingFilterSummary = pendingFilterLabels.join(", ");
-  const filterOptionClass = useCallback(
-    (active: boolean) =>
-      `filter-opt${active ? ` filter-opt--on${!hasQuery ? " filter-opt--pending" : ""}` : ""}`,
-    [hasQuery],
+
+  // Stable facet toggles so the memoized `FilterBar` isn't invalidated each render.
+  const onToggleType = useCallback(
+    (type: SearchableType) => setTypeFilter((cur) => (cur === type ? null : type)),
+    [],
+  );
+  const onToggleConcept = useCallback(
+    (id: string) => setConceptFilter((cur) => (cur === id ? null : id)),
+    [],
+  );
+  const onTogglePriority = useCallback(
+    (priority: PriorityLetter) => setPriorityFilter((cur) => (cur === priority ? null : priority)),
+    [],
   );
 
   const openBrowseMode = useCallback(() => {
@@ -334,7 +529,9 @@ export function LibraryScreen() {
       };
     }
     let cancelled = false;
-    setLoading(true);
+    // Only flash the "Searching…" placeholder on a COLD search (nothing on screen yet).
+    // A warm search-as-you-type keeps its existing rows visible — no loading churn (Fix 3).
+    if (!hasResultsRef.current) setLoading(true);
 
     // Semantic path (T087): when on-device vector search is available AND no
     // concept/priority facet is active (the fused KNN path doesn't take those
@@ -414,6 +611,9 @@ export function LibraryScreen() {
   // priority filtering: doing it here would re-introduce the chip/list mismatch the
   // reported Library bug was about.
   const visible = results;
+  useEffect(() => {
+    hasResultsRef.current = results.length > 0;
+  }, [results]);
 
   const selected = useMemo(() => visible.find((r) => r.id === selId) ?? null, [visible, selId]);
 
@@ -431,49 +631,29 @@ export function LibraryScreen() {
     [navigate],
   );
 
+  // Stable row-select handler so the memoized `ResultRow` isn't invalidated by a new
+  // closure identity on every render.
+  const onSelectRow = useCallback(
+    (id: string) => {
+      setSelId(id);
+      select(id);
+    },
+    [select],
+  );
+
   /** One result row — shared by the inline (small) + virtualized (large) group paths. */
   const renderResult = useCallback(
     (r: LibraryRow) => (
-      <button
-        type="button"
+      <ResultRow
         key={r.id}
-        className={`result${selId === r.id ? " result--on" : ""}`}
-        data-testid="library-result"
-        data-result-id={r.id}
-        data-result-type={r.type}
-        onClick={() => {
-          setSelId(r.id);
-          select(r.id);
-        }}
-        onDoubleClick={() => open(r)}
-      >
-        <div style={{ minWidth: 0 }}>
-          <div className="result__title">
-            {highlight(r.title, debouncedQuery)}
-            {r.semantic ? (
-              <span
-                className="badge badge--soft"
-                data-testid="library-related-badge"
-                title="Surfaced by meaning, not just keywords"
-                style={{ marginLeft: 8 }}
-              >
-                related
-              </span>
-            ) : null}
-          </div>
-          <div className="result__meta">
-            {r.concept ? <ConceptTag name={r.concept} /> : null}
-            {r.sourceTitle ? <span>{r.sourceTitle}</span> : null}
-            {r.sourceLocationLabel ? <span>{r.sourceLocationLabel}</span> : null}
-            {r.snippet ? (
-              <span className="result__snippet">{highlight(r.snippet, debouncedQuery)}</span>
-            ) : null}
-          </div>
-        </div>
-        <Prio priority={r.priority} />
-      </button>
+        result={r}
+        selected={selId === r.id}
+        query={deferredQuery}
+        onSelect={onSelectRow}
+        onOpen={open}
+      />
     ),
-    [selId, select, open, debouncedQuery],
+    [selId, deferredQuery, onSelectRow, open],
   );
 
   // The Map tab's "members" volume — the GLOBAL member count across all element
@@ -544,82 +724,17 @@ export function LibraryScreen() {
       </div>
 
       <div className="lib-body">
-        <div className="filterbar" data-testid="library-filterbar">
-          <div className="filter-group">
-            <div className="filter-group__title">Type</div>
-            {TYPE_GROUPS.map((g) => (
-              <button
-                key={g.type}
-                type="button"
-                className={filterOptionClass(typeFilter === g.type)}
-                data-testid={`library-filter-type-${g.type}`}
-                onClick={() => setTypeFilter((cur) => (cur === g.type ? null : g.type))}
-              >
-                <TypeIcon type={g.type} />
-                <span>{g.title}</span>
-                <span className="filter-opt__count">{searchCounts.byType[g.type] ?? 0}</span>
-              </button>
-            ))}
-          </div>
-
-          {concepts.length > 0 ? (
-            <div className="filter-group">
-              <div className="filter-group__title">Concept</div>
-              {concepts.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  className={filterOptionClass(conceptFilter === c.id)}
-                  data-testid={`library-filter-concept-${c.id}`}
-                  onClick={() => setConceptFilter((cur) => (cur === c.id ? null : c.id))}
-                >
-                  <ConceptTag name={c.name} />
-                  {/* Keyword counts come from `search.query`; empty-query counts come
-                      from `library.browse`, bounded to source/extract/card for this
-                      screen. The Map tab still uses the global concept volume. */}
-                  <span className="filter-opt__count">{searchCounts.byConcept[c.id] ?? 0}</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          <div className="filter-group">
-            <div className="filter-group__title">Priority</div>
-            {PRIORITIES.map((p) => (
-              <button
-                key={p}
-                type="button"
-                className={filterOptionClass(priorityFilter === p)}
-                data-testid={`library-filter-prio-${p}`}
-                onClick={() => setPriorityFilter((cur) => (cur === p ? null : p))}
-              >
-                <span className={`prio-dot prio-dot--${p.toLowerCase()}`} />
-                <span>Priority {p}</span>
-                <span className="filter-opt__count">{searchCounts.byPriority[p] ?? 0}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Maintenance "smart" filters are M9/M17 analytics — shown but disabled. */}
-          <div className="filter-group">
-            <div className="filter-group__title">Maintenance</div>
-            {[
-              ["hourglass", "Stale facts"],
-              ["leech", "Leeches"],
-              ["pause", "Stagnant extracts"],
-            ].map(([ic, label]) => (
-              <span
-                key={label}
-                className="filter-opt filter-opt--disabled"
-                title="Coming with analytics"
-              >
-                <Icon name={ic as never} size={14} />
-                <span>{label}</span>
-                <span className="filter-opt__count">—</span>
-              </span>
-            ))}
-          </div>
-        </div>
+        <FilterBar
+          concepts={concepts}
+          typeFilter={typeFilter}
+          conceptFilter={conceptFilter}
+          priorityFilter={priorityFilter}
+          searchCounts={searchCounts}
+          hasQuery={hasQuery}
+          onToggleType={onToggleType}
+          onToggleConcept={onToggleConcept}
+          onTogglePriority={onTogglePriority}
+        />
 
         {tab === "results" ? (
           <>
@@ -663,14 +778,14 @@ export function LibraryScreen() {
                 {hasQuery ? (
                   <div className="lib-review-modes" data-testid="library-review-modes">
                     <ReviewModeButton
-                      selector={{ kind: "search", query: debouncedQuery.trim() }}
+                      selector={{ kind: "search", query: debouncedTerm }}
                       hideWhileLoading
                       label={(n) => `Review ${n} matching card${n === 1 ? "" : "s"}`}
                       testId="library-review-search"
                     />
                     {semanticAvailable ? (
                       <ReviewModeButton
-                        selector={{ kind: "semantic", query: debouncedQuery.trim() }}
+                        selector={{ kind: "semantic", query: debouncedTerm }}
                         hideWhileLoading
                         icon="sparkle"
                         label={(n) => `Review ${n} related card${n === 1 ? "" : "s"}`}

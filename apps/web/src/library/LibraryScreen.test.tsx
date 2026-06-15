@@ -1363,6 +1363,44 @@ describe("LibraryScreen", () => {
     }
   });
 
+  it("re-renders only the affected rows on selection — memoized rows, not the whole list (Fix 2)", async () => {
+    // Seed a multi-row result set so the memoization win is observable: selecting a row
+    // must re-render only the newly-selected row (+ the detail), NOT every row. Before
+    // the rows were memoized, a selId change re-rendered the entire list.
+    const rows = Array.from({ length: 6 }, (_, i) => ({
+      ...h.sourceHit,
+      id: `src-${i}`,
+      title: `Intelligence source ${i}`,
+    }));
+    h.searchQuery.mockResolvedValue({
+      results: rows,
+      counts: {
+        byType: { source: 6, extract: 0, card: 0 },
+        byConcept: {},
+        byPriority: { A: 6, B: 0, C: 0, D: 0 },
+      },
+    });
+
+    render(<LibraryScreen />);
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+    await waitFor(() => expect(screen.getAllByTestId("library-result").length).toBe(6));
+
+    const before = h.prioRenderCount.current;
+    expect(before).toBeGreaterThan(0); // guard against a vacuous pass
+    const firstRow = screen.getAllByTestId("library-result")[0];
+    if (!firstRow) throw new Error("expected at least one result row");
+    fireEvent.click(firstRow);
+    await waitFor(() => expect(screen.getByTestId("library-detail")).toBeInTheDocument());
+
+    // Only the selected row's `Prio` (+ the detail panel's) re-rendered — a small, bounded
+    // delta, NOT the 6+ a full-list reconciliation would cost.
+    const delta = h.prioRenderCount.current - before;
+    expect(delta).toBeLessThanOrEqual(3);
+    expect(delta).toBeLessThan(rows.length);
+  });
+
   it("shows the scheduler chip + due badge in the selection detail (kit parity)", async () => {
     render(<LibraryScreen />);
     fireEvent.click(screen.getByTestId("library-filter-type-card"));
