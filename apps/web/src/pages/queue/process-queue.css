@@ -522,19 +522,22 @@
   gap: var(--s-2);
   margin-top: var(--s-2);
 }
+/* Full work-area width so the empty side gutters live INSIDE the scroll region
+   (the .reader below owns the scroll) — wheeling over the gutters scrolls the
+   text. The reading measure is applied to the editor content, not here, so the
+   text column stays centered without trapping the scroll in a narrow box. */
 .pq-source__rail {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   width: 100%;
-  max-width: var(--reader-text-measure);
   min-height: 0;
-  margin: 0 auto;
   padding-top: var(--s-2);
 }
 .pq-source__pbar {
   width: 100%;
-  margin: 0 0 var(--s-5);
+  max-width: var(--reader-text-measure);
+  margin: 0 auto var(--s-5);
 }
 .pq-source__readpoint .kbd {
   margin-left: var(--s-1);
@@ -583,6 +586,8 @@
   line-height: 1.65;
 }
 .pq-source__editor .ProseMirror {
+  max-width: var(--reader-text-measure);
+  margin: 0 auto;
   outline: none;
   min-height: 190px;
   box-shadow: none;

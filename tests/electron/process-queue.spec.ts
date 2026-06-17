@@ -920,3 +920,61 @@ test("keeps the grade footer pinned and reachable while a large card body scroll
 
   await app.close();
 });
+
+test("wheeling over the empty side gutters scrolls the source body in /process", async () => {
+  const freshDir = makeDataDir();
+  const app = await launchApp(freshDir, { seedOnEmpty: true });
+  const page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+  const url = new URL(page.url());
+  baseUrl = `${url.protocol}//${url.host}`;
+
+  // Widen the window so the centered reading column leaves real side gutters
+  // beside the text — those gutters are the zones the fix must make scrollable.
+  await app.evaluate(({ BrowserWindow }) => {
+    BrowserWindow.getAllWindows()[0]?.setBounds({ x: 0, y: 0, width: 1600, height: 1000 });
+  });
+
+  const sourceId = await findSourceId(page);
+  await scheduleDueForProcess(page, sourceId);
+  await openProcess(page, AS_OF);
+  await moveProcessCursorTo(page, sourceId);
+  await expect(page.getByTestId("process-source-workbench")).toBeVisible();
+
+  // Guarantee the body overflows regardless of the seeded source's length (CSS-only
+  // spacer, so React can't reconcile it away and it can't leak into later tests).
+  await page.addStyleTag({
+    content:
+      '[data-testid="process-source-editor"] .reader .ProseMirror::after { content: ""; display: block; height: 1600px; }',
+  });
+
+  const reader = page.locator('[data-testid="process-source-editor"] .reader');
+  await expect(reader.locator(".ProseMirror")).toBeVisible();
+
+  // The full-width .reader owns the scroll and the text column is centered inside
+  // it, so there are real gutters that belong to the scroller (not a dead sibling).
+  const geom = await reader.evaluate((el) => {
+    const pm = el.querySelector(".ProseMirror") as HTMLElement;
+    const r = el.getBoundingClientRect();
+    const p = pm.getBoundingClientRect();
+    return {
+      overflowY: getComputedStyle(el).overflowY,
+      leftGutter: Math.round(p.left - r.left),
+      scrollable: el.scrollHeight > el.clientHeight + 8,
+    };
+  });
+  expect(geom.overflowY).toBe("auto");
+  expect(geom.leftGutter).toBeGreaterThan(40);
+  expect(geom.scrollable).toBe(true);
+
+  // Park the cursor in the LEFT gutter (beside the text, not over it) and wheel:
+  // the source body must scroll, which it did NOT before the fix.
+  const box = await reader.boundingBox();
+  if (!box) throw new Error("source reader has no bounding box");
+  const before = await reader.evaluate((el) => el.scrollTop);
+  await page.mouse.move(box.x + 20, box.y + box.height / 2);
+  await page.mouse.wheel(0, 600);
+  await expect.poll(() => reader.evaluate((el) => el.scrollTop)).toBeGreaterThan(before);
+
+  await app.close();
+});

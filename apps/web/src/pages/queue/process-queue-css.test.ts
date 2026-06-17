@@ -55,8 +55,10 @@ describe("process queue styles", () => {
     expect(header).toContain("padding: var(--s-3) var(--s-6) var(--s-2);");
     expect(header).toContain("border-bottom: 1px solid var(--border);");
     expect(rail).toContain("flex: 1 1 auto;");
-    expect(rail).toContain("max-width: var(--reader-text-measure);");
-    expect(rail).toContain("margin: 0 auto;");
+    // The rail spans the full work-area width so the side gutters fall inside the
+    // scroll region; the reading measure is applied to the editor content instead.
+    expect(rail).toContain("width: 100%;");
+    expect(rail).not.toContain("max-width:");
     expect(sourceActions).toContain("margin-inline: calc(var(--s-6) * -1);");
     expect(sourceActions).toContain("padding-inline: var(--s-6);");
   });
@@ -143,17 +145,24 @@ describe("process queue styles", () => {
   it("lets the source editor fill the rail without its own border", () => {
     const editor = cssBlock(".pq-source__editor");
     const reader = cssBlock(".pq-source__editor .reader");
+    const proseMirror = cssBlock(".pq-source__editor .ProseMirror");
 
     expect(editor).toContain("border: 0;");
     expect(editor).toContain("border-radius: 0;");
     expect(editor).toContain("background: transparent;");
     expect(editor).toContain("flex: 1 1 auto;");
     expect(editor).toContain("min-height: 0;");
+    // The full-width .reader owns the scroll, so wheeling over the side gutters
+    // (inside it, beside the centered text) scrolls the source.
     expect(reader).toContain("flex: 1 1 auto;");
     expect(reader).toContain("width: 100%;");
     expect(reader).toContain("max-width: none;");
     expect(reader).toContain("margin: 0;");
     expect(reader).toContain("max-height: none;");
     expect(reader).toContain("overflow-y: auto;");
+    // The reading measure lives on the content, keeping the text column centered
+    // inside the full-width scroller.
+    expect(proseMirror).toContain("max-width: var(--reader-text-measure);");
+    expect(proseMirror).toContain("margin: 0 auto;");
   });
 });
