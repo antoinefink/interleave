@@ -1,6 +1,7 @@
 ---
 title: "Source Reader Shared Text Measure"
 date: "2026-06-08"
+last_updated: "2026-06-17"
 category: "docs/solutions/ui-bugs/"
 module: "apps/web source reader layout"
 problem_type: "ui_bug"
@@ -80,7 +81,7 @@ Keeping the token in `design/tokens.css` also lets routes that do not import `re
 
 - Use `--reader-text-measure` for future source/document reading surfaces instead of inventing a new prose width.
 - Keep reader text measure separate from outer container framing and page layout.
-- Preserve source-reader scroll ownership: `.reader-page` remains the standalone article scroller, while process workbench scroll/height behavior stays source-specific.
+- Preserve source-reader scroll ownership: `.reader-page` remains the standalone article scroller, while process workbench scroll/height behavior stays source-specific. Keep the measure *on the content node* inside the scroll owner, never on an ancestor of it — see [Process Source Reader Scroll Owner Must Be Full-Width](./process-source-reader-scroll-owner-full-width-measure-on-content.md).
 - Add CSS contract assertions when introducing new reader contexts.
 - Visually verify source-like surfaces with browser or Electron geometry checks for max width, centering, and horizontal overflow.
 
