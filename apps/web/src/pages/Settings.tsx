@@ -789,7 +789,9 @@ function SearchIntelligencePanel() {
         label="Search model"
         hint={
           isFallback
-            ? "The on-device model isn't loaded — reinstall the app to repair it if this persists."
+            ? status.modelLoadError
+              ? `The on-device model couldn't load, so search is using a basic keyword fallback. Reason: ${status.modelLoadError}`
+              : "The on-device model isn't loaded, so search is using a basic keyword fallback."
             : "Runs entirely on-device — no content leaves your machine."
         }
       >

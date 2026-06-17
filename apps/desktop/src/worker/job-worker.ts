@@ -175,7 +175,14 @@ async function runEmbed(jobId: string, payload: EmbedJobPayload): Promise<void> 
   post({
     kind: "result",
     jobId,
-    data: { vector: result.vector, modelId: result.modelId, dim: result.dim },
+    data: {
+      vector: result.vector,
+      modelId: result.modelId,
+      dim: result.dim,
+      // Present only on a fallback result — explains WHY the real model wasn't used so
+      // MAIN can surface it on the status row + append it to the app-data log.
+      ...(result.modelLoadError ? { modelLoadError: result.modelLoadError } : {}),
+    },
   });
 }
 

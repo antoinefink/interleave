@@ -267,6 +267,7 @@ function fakeIpcContext(): IpcHandlerContext {
       downloadsDir: "/tmp/interleave/Downloads",
       backupsDir: "/tmp/interleave/backups",
       modelsDir: "/tmp/interleave/models",
+      logsDir: "/tmp/interleave/logs",
     },
     migrationsDir: "/tmp/interleave/migrations",
   };

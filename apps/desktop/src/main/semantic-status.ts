@@ -30,6 +30,12 @@ export interface SemanticStatusInputs {
   readonly running: number;
   readonly failed: number;
   readonly lastError: string | null;
+  /**
+   * Why the on-device model last fell back to the deterministic embedder (U3), or `null`.
+   * Forwarded to the result ONLY when the derived `modelState` is `fallback` (else nulled,
+   * so a stale reason never lingers on a now-`ready`/`loading` row).
+   */
+  readonly modelLoadError: string | null;
   /** Seconds-to-complete estimate from the embed-throughput tracker, or `null`. */
   readonly etaSeconds: number | null;
   /** Why automatic indexing is paused right now (`"battery"`), or `null` when free to run. */
@@ -76,6 +82,9 @@ export function assembleSemanticStatus(inputs: SemanticStatusInputs): SemanticSt
     coverageRatio,
     failedCount: inputs.failed,
     lastError: inputs.lastError,
+    // The model-load reason is meaningful only while we're actually in fallback; null it
+    // otherwise so a `ready`/`loading` row never carries a stale reason from an earlier probe.
+    modelLoadError: modelState === "fallback" ? inputs.modelLoadError : null,
     // ETA only means something while work is in flight.
     etaSeconds: building ? inputs.etaSeconds : null,
     // Forwarded verbatim — db-service decides the reason from the live power source.

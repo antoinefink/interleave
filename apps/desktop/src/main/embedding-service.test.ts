@@ -12,6 +12,9 @@
  * `waitForTerminal` resolves and WHEN the apply result arrives.
  */
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   DEFAULT_EMBEDDING_MODEL_ID,
   EMBEDDING_DIM,
@@ -604,6 +607,116 @@ describe("EmbeddingService.probeModelState (U1 honest probe)", () => {
   });
 });
 
+describe("EmbeddingService model-load-error surfacing (U3)", () => {
+  /** Drive a probe to a terminal result carrying an optional fallback reason. */
+  function settleProbeWithReason(
+    runner: ReturnType<typeof makeFakeRunner>,
+    service: EmbeddingService,
+    modelId: string,
+    modelLoadError?: string,
+  ): void {
+    const job = runner.enqueued.at(-1);
+    if (!job) throw new Error("expected a probe job to be enqueued");
+    service.applyResult(
+      { text: "probe", modelId, provider: "local", dim: EMBEDDING_DIM, persist: false },
+      {
+        vector: new Array(EMBEDDING_DIM).fill(0.4),
+        modelId,
+        dim: EMBEDDING_DIM,
+        ...(modelLoadError ? { modelLoadError } : {}),
+      },
+      job.id,
+    );
+    runner.resolveSucceeded(job.id);
+  }
+
+  it("caches the fallback reason from a probe (exposed via cachedModelLoadError)", async () => {
+    const runner = makeFakeRunner();
+    const { service } = makeServiceWithSettingsUpdate(runner);
+    expect(service.cachedModelLoadError).toBeNull();
+
+    const promise = service.probeModelState({ force: true });
+    settleProbeWithReason(runner, service, FALLBACK_EMBEDDING_MODEL_ID, "ENOTDIR: model_fp16.onnx");
+    await expect(promise).resolves.toBe("fallback");
+    expect(service.cachedModelLoadError).toBe("ENOTDIR: model_fp16.onnx");
+  });
+
+  it("clears the cached reason once a 'ready' probe is observed", async () => {
+    const runner = makeFakeRunner();
+    const { service } = makeServiceWithSettingsUpdate(runner);
+
+    // First a reasoned fallback caches the reason.
+    const fbPromise = service.probeModelState({ force: true });
+    settleProbeWithReason(runner, service, FALLBACK_EMBEDDING_MODEL_ID, "model open failed");
+    await expect(fbPromise).resolves.toBe("fallback");
+    expect(service.cachedModelLoadError).toBe("model open failed");
+
+    // A later real-model probe clears it (the load failure is resolved).
+    const readyPromise = service.probeModelState({ force: true });
+    settleProbeWithReason(runner, service, DEFAULT_EMBEDDING_MODEL_ID);
+    await expect(readyPromise).resolves.toBe("ready");
+    expect(service.cachedModelLoadError).toBeNull();
+  });
+
+  it("appends the reason to <logsDir>/embedding.log, de-duping consecutive identical reasons", async () => {
+    const logsDir = fs.mkdtempSync(path.join(os.tmpdir(), "interleave-embed-log-"));
+    try {
+      const runner = makeFakeRunner();
+      const service = new EmbeddingService({
+        db: {} as never,
+        repositories: {
+          embeddings: { available: true },
+          settings: { updateAppSettings: vi.fn() },
+        } as never,
+        getRunner: () => runner as never,
+        getSettings: () =>
+          ({
+            semanticSearchEnabled: true,
+            embeddingProvider: "local",
+            embeddingApiKey: "",
+            embeddingModelId: DEFAULT_EMBEDDING_MODEL_ID,
+            embeddingModelDownloaded: false,
+          }) as never,
+        logsDir,
+      });
+
+      const reason = "ENOTDIR: not a directory, open '.../app.asar/.../model_fp16.onnx'";
+      const p1 = service.probeModelState({ force: true });
+      settleProbeWithReason(runner, service, FALLBACK_EMBEDDING_MODEL_ID, reason);
+      await p1;
+
+      // A second identical-reason fallback must NOT append a duplicate line (de-dupe).
+      const p2 = service.probeModelState({ force: true });
+      settleProbeWithReason(runner, service, FALLBACK_EMBEDDING_MODEL_ID, reason);
+      await p2;
+
+      // The append is async fire-and-forget (never blocks the main thread), so poll for
+      // the flushed CONTENT (not mere file existence — the file opens before the write
+      // lands). De-dupe guarantees only ONE line despite two probes.
+      const logPath = path.join(logsDir, "embedding.log");
+      await vi.waitFor(() => {
+        const content = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf8") : "";
+        expect(content).toContain(reason);
+      });
+      const lines = fs.readFileSync(logPath, "utf8").trim().split("\n").filter(Boolean);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain(reason);
+    } finally {
+      fs.rmSync(logsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("never logs when no logsDir is wired (unit/contract context)", async () => {
+    const runner = makeFakeRunner();
+    const { service } = makeServiceWithSettingsUpdate(runner);
+    const p = service.probeModelState({ force: true });
+    settleProbeWithReason(runner, service, FALLBACK_EMBEDDING_MODEL_ID, "no logsDir here");
+    await expect(p).resolves.toBe("fallback");
+    // Caches the reason for the status surface even without a log destination.
+    expect(service.cachedModelLoadError).toBe("no logsDir here");
+  });
+});
+
 describe("EmbeddingService.applyResult (U1 R10 no-poison guard)", () => {
   function makeIndexService(upsert = vi.fn()) {
     const runner = makeFakeRunner();
@@ -655,6 +768,36 @@ describe("EmbeddingService.applyResult (U1 R10 no-poison guard)", () => {
       "j-2",
     );
     expect(upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("caches the reason from a fallback INDEX result, but never from a real-model one (U3)", () => {
+    const { service } = makeIndexService();
+    expect(service.cachedModelLoadError).toBeNull();
+
+    // A real-model index result must not set a reason.
+    service.applyResult(
+      indexPayload(DEFAULT_EMBEDDING_MODEL_ID),
+      {
+        vector: new Array(EMBEDDING_DIM).fill(0.1),
+        modelId: DEFAULT_EMBEDDING_MODEL_ID,
+        dim: EMBEDDING_DIM,
+      },
+      "j-real",
+    );
+    expect(service.cachedModelLoadError).toBeNull();
+
+    // A fallback index result carrying a reason caches it (the index path, not just the probe).
+    service.applyResult(
+      indexPayload(FALLBACK_EMBEDDING_MODEL_ID),
+      {
+        vector: new Array(EMBEDDING_DIM).fill(0.1),
+        modelId: FALLBACK_EMBEDDING_MODEL_ID,
+        dim: EMBEDDING_DIM,
+        modelLoadError: "ENOTDIR: model open failed",
+      },
+      "j-fb",
+    );
+    expect(service.cachedModelLoadError).toBe("ENOTDIR: model open failed");
   });
 });
 

@@ -560,6 +560,12 @@ export interface DbServiceOpenOptions {
   readonly assetsDir?: string | undefined;
   /** User-facing export destination — Downloads in the Electron app. */
   readonly exportDestinationDir?: string | undefined;
+  /**
+   * App-data diagnostics logs dir (`<dataDir>/logs`, U3). When set, the EmbeddingService
+   * appends model-load failures to `<logsDir>/embedding.log` so a silent fallback is
+   * diagnosable. Optional: omitted in contract-only / unit tests.
+   */
+  readonly logsDir?: string | undefined;
   /** DEV/E2E-only: permit loopback/private hosts in URL import (the SSRF guard escape). */
   readonly allowLoopbackImport?: boolean | undefined;
   /**
@@ -830,6 +836,8 @@ export class DbService {
   private assetsDir: string | null = null;
   /** User-facing export destination, injected at open(); Downloads in the Electron app. */
   private exportDestinationDir: string | null = null;
+  /** App-data diagnostics logs dir, injected at open() (U3); used by the EmbeddingService log. */
+  private logsDir: string | null = null;
   /**
    * The Electron-ABI `better-sqlite3` binding path, injected at open() (T070). The Anki
    * import/export services need it to open the EMBEDDED `collection.anki2` with the same
@@ -926,6 +934,7 @@ export class DbService {
     });
     this.assetsDir = options.assetsDir ?? null;
     this.exportDestinationDir = options.exportDestinationDir ?? null;
+    this.logsDir = options.logsDir ?? null;
     this.nativeBinding = options.nativeBinding;
     this.allowLoopbackImport = options.allowLoopbackImport ?? false;
     this.mediaFetchImpl = options.mediaFetchImpl;
@@ -1072,6 +1081,7 @@ export class DbService {
     this.runner = null;
     this.assetsDir = null;
     this.exportDestinationDir = null;
+    this.logsDir = null;
     this.nativeBinding = undefined;
     this.allowLoopbackImport = false;
     this.mediaFetchImpl = undefined;
@@ -3004,6 +3014,11 @@ export class DbService {
         return this.runner;
       },
       getSettings: () => this.repos.settings.getAppSettings(),
+      // Main owns the on-disk path; when present the service logs model-load failures
+      // to `<logsDir>/embedding.log` (U3). Omitted in contract-only tests → no logging.
+      // (Conditional spread, not `?? undefined`: exactOptionalPropertyTypes rejects an
+      // explicit `undefined` for the optional `logsDir?: string` dep.)
+      ...(this.logsDir ? { logsDir: this.logsDir } : {}),
     });
     return this.embedding;
   }
@@ -3202,6 +3217,7 @@ export class DbService {
       total: stats.total,
       modelId: stats.modelId ?? settings.embeddingModelId,
       cachedModelState: this.embeddingService.cachedModelState,
+      modelLoadError: this.embeddingService.cachedModelLoadError,
       queued: jobStats.queued,
       running: jobStats.running,
       failed: jobStats.failed,

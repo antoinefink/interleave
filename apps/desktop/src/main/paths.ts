@@ -13,6 +13,7 @@
  *       media/
  *     exports/                  (managed vault skeleton; user exports go to Downloads)
  *     backups/
+ *     logs/                     (main-owned diagnostics, e.g. embedding.log)
  *
  * On macOS `<appData>` is `~/Library/Application Support`. The directory is
  * overridable via `INTERLEAVE_DATA_DIR` so tests (and the Playwright restart
@@ -42,6 +43,12 @@ export interface AppPaths {
   readonly backupsDir: string;
   /** Local embedding-model directory (`models/`, T087) — the worker resolves the model here. */
   readonly modelsDir: string;
+  /**
+   * Diagnostics log directory (`logs/`). MAIN-owned: the worker stays FS-light, so
+   * main appends model-load-failure lines to `<logsDir>/embedding.log` here when the
+   * on-device embedder silently falls back — making a packaged regression diagnosable.
+   */
+  readonly logsDir: string;
 }
 
 /**
@@ -83,6 +90,7 @@ export function computeAppPaths(
     downloadsDir,
     backupsDir: path.join(dataDir, "backups"),
     modelsDir: path.join(dataDir, "models"),
+    logsDir: path.join(dataDir, "logs"),
   };
 }
 
@@ -99,6 +107,7 @@ export function ensureVaultSkeleton(paths: AppPaths): AppPaths {
     paths.exportsDir,
     paths.backupsDir,
     paths.modelsDir,
+    paths.logsDir,
   ];
   for (const dir of dirs) {
     fs.mkdirSync(dir, { recursive: true });

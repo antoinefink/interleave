@@ -39,6 +39,26 @@ describe("worker messages — embed (T087)", () => {
     expect(parsed.success).toBe(true);
     if (parsed.success && parsed.data.kind === "result") {
       expect((parsed.data.data as { dim: number }).dim).toBe(EMBEDDING_DIM);
+      // The optional fallback reason is absent on a real-model result.
+      expect((parsed.data.data as { modelLoadError?: string }).modelLoadError).toBeUndefined();
+    }
+  });
+
+  it("round-trips a FALLBACK embed result carrying the optional modelLoadError reason", () => {
+    const message = {
+      kind: "result" as const,
+      jobId: "job-1",
+      data: {
+        vector: [0.1, 0.2, 0.3],
+        modelId: "lexical-fallback-v1",
+        dim: EMBEDDING_DIM,
+        modelLoadError: "ENOTDIR: not a directory, open '.../app.asar/.../model_fp16.onnx'",
+      },
+    };
+    const parsed = WorkerMessageSchema.safeParse(message);
+    expect(parsed.success).toBe(true);
+    if (parsed.success && parsed.data.kind === "result") {
+      expect((parsed.data.data as { modelLoadError?: string }).modelLoadError).toContain("ENOTDIR");
     }
   });
 

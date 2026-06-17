@@ -62,6 +62,8 @@ describe("app paths", () => {
     expect(paths.exportsDir).toBe(path.join(dir, "exports"));
     expect(paths.downloadsDir).toBe(downloadsDir);
     expect(paths.backupsDir).toBe(path.join(dir, "backups"));
+    expect(paths.modelsDir).toBe(path.join(dir, "models"));
+    expect(paths.logsDir).toBe(path.join(dir, "logs"));
   });
 
   it("creates the vault skeleton (idempotently)", () => {
@@ -75,6 +77,8 @@ describe("app paths", () => {
     expect(fs.existsSync(paths.exportsDir)).toBe(true);
     expect(fs.existsSync(paths.downloadsDir)).toBe(false);
     expect(fs.existsSync(paths.backupsDir)).toBe(true);
+    expect(fs.existsSync(paths.modelsDir)).toBe(true);
+    expect(fs.existsSync(paths.logsDir)).toBe(true);
   });
 
   it("honors INTERLEAVE_DATA_DIR over the Electron app-data path", () => {

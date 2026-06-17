@@ -20,6 +20,7 @@ const base: SemanticStatusInputs = {
   running: 0,
   failed: 0,
   lastError: null,
+  modelLoadError: null,
   etaSeconds: null,
   autoIndexPaused: null,
 };
@@ -107,6 +108,38 @@ describe("assembleSemanticStatus", () => {
     });
     expect(s.failedCount).toBe(2);
     expect(s.lastError).toBe("OVERSIZED: element text too large");
+  });
+
+  it("forwards modelLoadError ONLY when the model state is fallback", () => {
+    const fellBack = assembleSemanticStatus({
+      ...base,
+      cachedModelState: "fallback",
+      modelLoadError: "ENOTDIR: not a directory, open '.../app.asar/.../model_fp16.onnx'",
+    });
+    expect(fellBack.modelState).toBe("fallback");
+    expect(fellBack.modelLoadError).toContain("ENOTDIR");
+  });
+
+  it("nulls modelLoadError when the model is ready (no stale reason on a healthy row)", () => {
+    const ready = assembleSemanticStatus({
+      ...base,
+      cachedModelState: "ready",
+      modelLoadError: "stale reason from an earlier probe",
+    });
+    expect(ready.modelState).toBe("ready");
+    expect(ready.modelLoadError).toBeNull();
+  });
+
+  it("nulls modelLoadError while loading (reason only ever rides a fallback row)", () => {
+    const loading = assembleSemanticStatus({
+      ...base,
+      vecAvailable: true,
+      cachedModelState: null,
+      modelDownloaded: false,
+      modelLoadError: "stale reason from a prior probe",
+    });
+    expect(loading.modelState).toBe("loading");
+    expect(loading.modelLoadError).toBeNull();
   });
 
   it("forwards the autoIndexPaused reason verbatim", () => {

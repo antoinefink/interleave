@@ -22,6 +22,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { asarUnpackedVariant } from "../shared/asar";
 
 /** Per-platform `vec0` loadable-binary file names. */
 function vecBinaryNames(): string[] {
@@ -33,13 +34,6 @@ function vecBinaryNames(): string[] {
     default:
       return ["vec0.so"];
   }
-}
-
-/** If `p` points inside an `app.asar`, return the `app.asar.unpacked` sibling path. */
-function asarUnpackedVariant(p: string): string | null {
-  const marker = `${path.sep}app.asar${path.sep}`;
-  if (!p.includes(marker)) return null;
-  return p.replace(marker, `${path.sep}app.asar.unpacked${path.sep}`);
 }
 
 /**

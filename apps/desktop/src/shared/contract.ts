@@ -5822,6 +5822,15 @@ export interface SemanticStatusResult {
   readonly failedCount: number;
   /** Most recent failed-embed error (raw `"code: message"`); the UI renders plain language. */
   readonly lastError: string | null;
+  /**
+   * Why the on-device model fell back to the deterministic lexical embedder (U3) — a
+   * non-null reason ONLY when {@link modelState} is `fallback`, `null` otherwise (the
+   * assembler always sets it, never leaves it absent). Distinct from {@link lastError}
+   * ("couldn't INDEX"): this explains why the real model isn't in use, so the "Search
+   * model" row can show the actual reason (e.g. an `ENOTDIR` model open) instead of a
+   * silent reduced-mode.
+   */
+  readonly modelLoadError: string | null;
   /** Seconds-to-complete estimate while building, or `null` until enough samples exist. */
   readonly etaSeconds: number | null;
   /**

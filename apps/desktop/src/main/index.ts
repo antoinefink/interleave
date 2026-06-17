@@ -229,6 +229,9 @@ function bootstrap(): void {
     // User-facing export artifacts (Markdown/Anki/CSV) land in Downloads; the
     // app-data exportsDir remains part of the managed vault skeleton.
     exportDestinationDir: paths.downloadsDir,
+    // App-data diagnostics logs dir (U3): main appends on-device embedding model-load
+    // failures to `<logsDir>/embedding.log` so a silent fallback is diagnosable offline.
+    logsDir: paths.logsDir,
     // The packaged `sqlite-vec` `vec0` binary (T087), asar-unpacked like the
     // better-sqlite3 addon. Undefined in dev → the npm package resolves the host
     // binary; a load failure / non-functional vec0 degrades cleanly to FTS-only.

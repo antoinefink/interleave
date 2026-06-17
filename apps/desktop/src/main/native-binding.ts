@@ -24,13 +24,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
-/** If `p` points inside an `app.asar`, return the `app.asar.unpacked` sibling path. */
-function asarUnpackedVariant(p: string): string | null {
-  const marker = `${path.sep}app.asar${path.sep}`;
-  if (!p.includes(marker)) return null;
-  return p.replace(marker, `${path.sep}app.asar.unpacked${path.sep}`);
-}
+import { asarUnpackedVariant } from "../shared/asar";
 
 /**
  * Absolute path to the Electron-ABI `better_sqlite3.node`, or `undefined` if it

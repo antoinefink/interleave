@@ -3961,6 +3961,13 @@ export interface SemanticStatusResult {
   readonly coverageRatio: number;
   readonly failedCount: number;
   readonly lastError: string | null;
+  /**
+   * Why the on-device model fell back to the deterministic lexical embedder (U3) — a
+   * non-null reason ONLY when `modelState` is `fallback`, `null` otherwise. Distinct from
+   * `lastError` ("couldn't INDEX"): this explains why the real model isn't in use, so the
+   * "Search model" row can show the actual reason instead of a silent reduced-mode.
+   */
+  readonly modelLoadError: string | null;
   readonly etaSeconds: number | null;
   /** Why automatic indexing is paused now (`"battery"`), or `null` when free to run (U3). */
   readonly autoIndexPaused: "battery" | null;
@@ -6514,6 +6521,7 @@ export const appApi = {
         coverageRatio: 0,
         failedCount: 0,
         lastError: null,
+        modelLoadError: null,
         etaSeconds: null,
         autoIndexPaused: null,
       });

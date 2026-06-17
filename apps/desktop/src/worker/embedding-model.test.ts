@@ -13,14 +13,26 @@
  * with {@link REAL_MODEL_ID}, exercised against the live model in the Electron E2E).
  */
 
+import path from "node:path";
 import { DEFAULT_EMBEDDING_MODEL_ID, EMBEDDING_DIM, embedTextLocal } from "@interleave/core";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const existsSync = vi.fn<(p: string) => boolean>();
+vi.mock("node:fs", () => ({ existsSync: (p: string) => existsSync(p) }));
+
 import {
   computeEmbedding,
   type EmbedJobPayload,
   FALLBACK_MODEL_ID,
   REAL_MODEL_ID,
+  resolveUnpackedDir,
 } from "./embedding-model";
+
+const sep = path.sep;
+
+afterEach(() => {
+  existsSync.mockReset();
+});
 
 function localPayload(overrides: Partial<EmbedJobPayload> = {}): EmbedJobPayload {
   return {
@@ -57,5 +69,39 @@ describe("embedding-model model ids (T087 — distinct, never KNN-mixed)", () =>
       localPayload({ modelId: "openai:text-embedding-3-small" }),
     );
     expect(result.modelId).toBe(FALLBACK_MODEL_ID);
+  });
+});
+
+describe("resolveUnpackedDir (packaged app.asar.unpacked rewrite)", () => {
+  it("returns the app.asar.unpacked sibling when packaged and only that path exists", () => {
+    // Packaged worker bundle dirname: …/app.asar/dist
+    const inAsar = path.join(sep, "App", "Contents", "Resources", "app.asar", "dist");
+    const unpacked = inAsar.replace(`${sep}app.asar${sep}`, `${sep}app.asar.unpacked${sep}`);
+
+    // Only the unpacked variant exists on disk (the in-asar path is not a real dir).
+    existsSync.mockImplementation((p: string) => p === unpacked);
+
+    const result = resolveUnpackedDir(inAsar);
+    expect(result).toBe(unpacked);
+    expect(result).toContain(`${sep}app.asar.unpacked${sep}`);
+  });
+
+  it("returns the literal path unchanged in dev (no asar marker)", () => {
+    const devDir = path.join(sep, "repo", "apps", "desktop", "dist");
+
+    // No fs lookup happens because there is no asar marker, but guard anyway.
+    existsSync.mockReturnValue(false);
+
+    const result = resolveUnpackedDir(devDir);
+    expect(result).toBe(devDir);
+    expect(result).not.toContain("app.asar");
+  });
+
+  it("returns p unchanged when neither the unpacked nor in-asar path exists (no throw)", () => {
+    const inAsar = path.join(sep, "App", "Contents", "Resources", "app.asar", "dist");
+
+    existsSync.mockReturnValue(false);
+
+    expect(resolveUnpackedDir(inAsar)).toBe(inAsar);
   });
 });

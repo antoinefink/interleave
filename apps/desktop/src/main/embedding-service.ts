@@ -34,6 +34,8 @@
  */
 
 import { createHash } from "node:crypto";
+import { appendFile } from "node:fs/promises";
+import path from "node:path";
 import type { ElementId } from "@interleave/core";
 import {
   type AppSettings,
@@ -106,11 +108,19 @@ export interface EmbedResultData {
   readonly vector: number[];
   readonly modelId: string;
   readonly dim: number;
+  /**
+   * Why the worker fell back to the deterministic embedder (U3) — present ONLY on a
+   * {@link FALLBACK_EMBEDDING_MODEL_ID} result. Main caches it for the status surface +
+   * appends it to the app-data log; never present on a real-model result.
+   */
+  readonly modelLoadError?: string;
 }
 
 export interface QueryEmbeddingResult {
   readonly vector: number[];
   readonly modelId: string;
+  /** The worker's fallback reason (U3), carried through so the probe can cache + log it. */
+  readonly modelLoadError?: string;
 }
 
 /** Constructor dependencies (built lazily against the open DB). */
@@ -119,6 +129,12 @@ export interface EmbeddingServiceDeps {
   readonly repositories: Repositories;
   readonly getRunner: () => JobRunner;
   readonly getSettings: () => AppSettings;
+  /**
+   * Absolute app-data logs directory (`<dataDir>/logs`), injected by main (the only
+   * code that knows on-disk paths). When set, model-load failures are appended to
+   * `<logsDir>/embedding.log`. Optional: when absent (unit tests), logging is skipped.
+   */
+  readonly logsDir?: string;
 }
 
 export class EmbeddingService {
@@ -126,12 +142,22 @@ export class EmbeddingService {
   private readonly repositories: Repositories;
   private readonly getRunner: () => JobRunner;
   private readonly getSettings: () => AppSettings;
+  /** App-data logs dir for the model-load-failure log, or `null` when not wired (tests). */
+  private readonly logsDir: string | null;
   /** Vectors recovered from the transient query embed jobs, keyed by jobId. */
   private readonly pendingQueryVectors = new Map<string, QueryEmbeddingResult>();
   /** Query jobIds whose waiter timed out — their late result is DROPPED, not stashed. */
   private readonly abandonedQueries = new Set<string>();
   /** Cached terminal model state from the last probe (`ready`/`fallback`); undefined until probed. */
   private modelStateCache: SemanticModelState | undefined;
+  /**
+   * The reason the model last fell back (U3), cached next to {@link modelStateCache} for the
+   * status surface. Set when a `fallback` result carries a reason; cleared on a `ready`
+   * result. `null` until a reasoned fallback is observed.
+   */
+  private modelLoadErrorCache: string | null = null;
+  /** The last reason appended to the log, to de-dupe consecutive identical writes (avoid spam). */
+  private lastLoggedModelLoadError: string | null = null;
   /**
    * In-memory query-text→vector cache (U2). Bounded + insertion-ordered (oldest evicted
    * past {@link QUERY_CACHE_MAX}). It only ever holds vectors from the single CURRENT
@@ -151,11 +177,17 @@ export class EmbeddingService {
     return this.modelStateCache ?? null;
   }
 
+  /** The last observed model-load-failure reason, or `null` (cheap read for the status surface). */
+  get cachedModelLoadError(): string | null {
+    return this.modelLoadErrorCache;
+  }
+
   constructor(deps: EmbeddingServiceDeps) {
     this.db = deps.db;
     this.repositories = deps.repositories;
     this.getRunner = deps.getRunner;
     this.getSettings = deps.getSettings;
+    this.logsDir = deps.logsDir ?? null;
   }
 
   /** Whether the `vec0` store is usable (the embedding repo knows). */
@@ -286,11 +318,17 @@ export class EmbeddingService {
     jobId: string,
   ): { elementId?: string; modelId: string } {
     if (payload.persist === false) {
-      // Transient query path: recover or drop, never persist.
+      // Transient query path: recover or drop, never persist. The probe rides this path,
+      // so carry the worker's fallback reason through `stashQueryVector` (it is part of
+      // `QueryEmbeddingResult`) so `probeModelState` can cache + log it.
       if (this.abandonedQueries.has(jobId)) {
         this.abandonedQueries.delete(jobId);
       } else {
-        this.stashQueryVector(jobId, result);
+        this.stashQueryVector(jobId, {
+          vector: result.vector,
+          modelId: result.modelId,
+          ...(result.modelLoadError ? { modelLoadError: result.modelLoadError } : {}),
+        });
       }
       return { modelId: result.modelId };
     }
@@ -306,6 +344,9 @@ export class EmbeddingService {
     // once the real model is back. This makes index poisoning structurally impossible,
     // independent of the launch-time gate.
     if (result.modelId === FALLBACK_EMBEDDING_MODEL_ID) {
+      // A real index job came back from the fallback embedder. Surface the reason (U3):
+      // cache + log it so a silent reduced-mode is diagnosable, then skip the upsert.
+      this.recordModelLoadError(result.modelLoadError);
       return { elementId: payload.elementId, modelId: result.modelId };
     }
     if (result.vector.length !== result.dim || result.dim !== EMBEDDING_DIM) {
@@ -495,12 +536,40 @@ export class EmbeddingService {
       state = "fallback";
     }
 
+    if (state === "ready") {
+      // The real model answered — clear any stale fallback reason so the status row
+      // doesn't keep showing a now-resolved load failure.
+      this.modelLoadErrorCache = null;
+      this.lastLoggedModelLoadError = null;
+    } else if (state === "fallback") {
+      // Cache + log the reason the probe came back from the deterministic embedder (U3).
+      this.recordModelLoadError(result?.modelLoadError);
+    }
+
     if (state !== "loading") {
       // Only cache + reconcile on a terminal answer; a `loading` probe is retried later.
       this.modelStateCache = state;
       this.reconcileModelDownloaded(state === "ready");
     }
     return state;
+  }
+
+  /**
+   * Cache + durably log a model-load-failure reason (U3). MAIN owns the write (the
+   * worker stays FS-light), appending a single timestamped line to
+   * `<logsDir>/embedding.log`. Skips when there is no reason; de-dupes consecutive
+   * identical reasons so a draining batch of fallbacks doesn't spam the log. The write
+   * is async fire-and-forget so it never blocks the main-process event loop, and its
+   * rejection is swallowed so a logging failure (disk full, permission) never breaks
+   * embedding.
+   */
+  private recordModelLoadError(reason: string | undefined): void {
+    if (!reason) return;
+    this.modelLoadErrorCache = reason;
+    if (!this.logsDir || reason === this.lastLoggedModelLoadError) return;
+    this.lastLoggedModelLoadError = reason;
+    const line = `${new Date().toISOString()} [embedding] model load failed — using fallback: ${reason}\n`;
+    void appendFile(path.join(this.logsDir, "embedding.log"), line, "utf8").catch(() => {});
   }
 
   /** Reconcile the persisted `embeddingModelDownloaded` flag to the probed truth. */

@@ -55,7 +55,15 @@ export const WorkerProgressMessageSchema = z.object({
 });
 export type WorkerProgressMessage = z.infer<typeof WorkerProgressMessageSchema>;
 
-/** Worker → main: the job produced a serializable result; main applies it. */
+/**
+ * Worker → main: the job produced a serializable result; main applies it.
+ *
+ * `data` is an open `JsonValue` (every job type carries its own shape, re-validated at
+ * main's per-type apply boundary). The `embed` result rides this as
+ * `{ vector, modelId, dim }` plus an OPTIONAL `modelLoadError` string when the worker
+ * fell back — both validate and round-trip through `JsonValueSchema` with no schema
+ * change here.
+ */
 export const WorkerResultMessageSchema = z.object({
   kind: z.literal("result"),
   jobId: z.string().min(1),
