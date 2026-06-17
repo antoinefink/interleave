@@ -280,7 +280,10 @@ test("4. extract: selecting a paragraph and pressing E creates a scheduled extra
   expect(selected.trim().length).toBeGreaterThanOrEqual(3);
   await expect(page.getByTestId("selection-toolbar")).toBeVisible();
   await page.keyboard.press("e");
-  await expect(page.getByTestId("reader-flash")).toContainText("Extracted");
+  // The seed's "forgetting" block is a single clean sentence, so under T122 shape-aware
+  // staging the extract is born `atomic_statement` ("Atomic extract ready"). The test's
+  // subject is the extract + its lineage, asserted below; the birth stage is incidental.
+  await expect(page.getByTestId("reader-flash")).toContainText("Atomic extract ready");
 
   // Exactly one extract now exists; resolve its id through the bridge.
   const extracts = await page.evaluate(async () => {
@@ -297,7 +300,7 @@ test("4. extract: selecting a paragraph and pressing E creates a scheduled extra
   // The extract is an ATTENTION item with the right lineage + a source location.
   const data = await inspect(page, extractId);
   expect(data?.element.type).toBe("extract");
-  expect(data?.element.stage).toBe("raw_extract");
+  expect(data?.element.stage).toBe("atomic_statement");
   expect(data?.scheduler.kind).toBe("attention");
   expect(data?.review).toBeNull(); // never an FSRS card
   expect(data?.source?.id).toBe(sourceId);
@@ -641,10 +644,14 @@ test("10+11. restart + verify: every artifact survives an app restart", async ()
   const url = new URL(page.url());
   baseUrl = `${url.protocol}//${url.host}`;
 
-  // --- the source (active, still present) ------------------------------------
+  // --- the source (rescheduled by the extract, still present) -----------------
+  // "Read now" made the source `active`; extracting from it (step 4) is a processed
+  // visit, so the adaptive scheduler reschedules it into the reading queue
+  // (`scheduled`) for a future pass. The point of this assertion is that the source
+  // SURVIVES the restart — its post-extract status is `scheduled`, not `active`.
   const source = await inspect(page, sourceId);
   expect(source?.element.type).toBe("source");
-  expect(source?.element.status).toBe("active");
+  expect(source?.element.status).toBe("scheduled");
 
   // --- the read-point ---------------------------------------------------------
   const readPoint = await page.evaluate(async (id) => {

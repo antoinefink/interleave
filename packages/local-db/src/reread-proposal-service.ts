@@ -238,7 +238,7 @@ export class RereadProposalService {
       .innerJoin(elementsTable, eq(elementsTable.id, tasksTable.elementId))
       .where(eq(tasksTable.elementId, input.taskElementId))
       .get();
-    if (!task || task.taskType !== "reread_region" || task.deletedAt) return null;
+    if (task?.taskType !== "reread_region" || task.deletedAt) return null;
     const ancestorId = (task.linkedElementId as ElementId | null) ?? null;
     if (!ancestorId) return null;
 
@@ -379,7 +379,7 @@ export class RereadProposalService {
       .innerJoin(elementsTable, eq(elementsTable.id, tasksTable.elementId))
       .where(eq(tasksTable.elementId, taskElementId))
       .get();
-    if (!row || row.taskType !== "reread_region" || row.deletedAt) {
+    if (row?.taskType !== "reread_region" || row.deletedAt) {
       return { removed: false };
     }
     // Soft-delete the element AND terminalize the tasks row, so the one-open-per-region

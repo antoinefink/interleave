@@ -259,6 +259,15 @@ export class ExtractionService {
       locationSource === input.sourceElementId
         ? this.scheduler.captureAdaptiveVisitBaseline(input.sourceElementId, "extract")
         : null;
+    // An UNTRIAGED inbox source must not be triaged out of the inbox by a processed
+    // visit: extracting a passage is engagement, not the explicit triage the user owns
+    // (Read now / Queue soon / Save for later). The adaptive processed-visit reschedule
+    // hardcodes status "scheduled", so we skip it while the source is still `inbox` —
+    // it stays untriaged (status "inbox", dueAt null) until the user triages it.
+    const sourceStatusBeforeExtract =
+      locationSource === input.sourceElementId
+        ? (this.elements.findById(input.sourceElementId)?.status ?? null)
+        : null;
 
     return this.db.transaction((tx) => {
       // 1) extract element + source_locations anchor (create_element + create_extract).
@@ -341,7 +350,10 @@ export class ExtractionService {
           sourceLocationId: location.id,
           blockIds: input.blockIds,
         });
-        if (this.scheduler.adaptiveAttentionIntervalsEnabled()) {
+        if (
+          this.scheduler.adaptiveAttentionIntervalsEnabled() &&
+          sourceStatusBeforeExtract !== "inbox"
+        ) {
           this.scheduler.rescheduleProcessedVisitWithin(
             tx,
             input.sourceElementId,

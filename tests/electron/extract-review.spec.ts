@@ -66,13 +66,17 @@ async function createIntroExtract(page: Page, srcId: string): Promise<string> {
         }): Promise<{ extract: { id: string } }>;
       };
     };
+    // Select TWO seed paragraphs so the extract is born `raw_extract` (multiple
+    // paragraphs/blocks/sentences → not an atomic one-liner). This test's whole arc is
+    // the raw → clean → atomic walk, which a single clean sentence (born atomic under
+    // T122 shape-aware staging) could not exercise.
     const { extract } = await api.extractions.create({
       sourceElementId,
       selectedText:
-        "To make deliberate progress towards more intelligent and more human-like artificial systems, we need to be following an appropriate feedback signal.",
-      blockIds: ["blk_intro_p1"],
+        "To make deliberate progress towards more intelligent and more human-like artificial systems, we need to be following an appropriate feedback signal. We need to be able to define and evaluate intelligence in a way that enables comparisons between two systems, as well as comparisons with humans.",
+      blockIds: ["blk_intro_p1", "blk_intro_p2"],
       startOffset: 0,
-      endOffset: 150,
+      endOffset: 145,
     });
     return extract.id;
   }, srcId);

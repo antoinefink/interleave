@@ -69,6 +69,19 @@ function seedAtomicSource(handle: DbHandle, priority: Priority = 0.625): Element
   return element.id;
 }
 
+/** An UNTRIAGED inbox source (status "inbox", born with no attention due date). */
+function seedInboxSource(handle: DbHandle, priority: Priority = 0.625): ElementId {
+  const sources = new SourceRepository(handle.db);
+  const { element } = sources.createWithDocument({
+    title: "Freshly captured, untriaged",
+    priority,
+    status: "inbox",
+    stage: "raw_source",
+    body: "Intro paragraph one.\n\nThe definition paragraph two.\n\nA third paragraph.",
+  });
+  return element.id;
+}
+
 /** The stable block ids of a source body, in document order. */
 function blockIdsOf(handle: DbHandle, sourceId: ElementId): BlockId[] {
   return new DocumentRepository(handle.db)
@@ -317,6 +330,61 @@ describe("ExtractionService.createExtraction", () => {
         newMultiplier: 0.85,
       },
     });
+  });
+
+  it("does NOT triage an inbox source out of the inbox on a processed-visit extract", () => {
+    const repos = createRepositories(handle.db);
+    repos.settings.updateAppSettings({ adaptiveAttentionIntervals: true });
+    const sourceId = seedInboxSource(handle, 0.375);
+    const blocks = blockIdsOf(handle, sourceId);
+    const service = new ExtractionService(handle.db);
+
+    const { element: extract } = service.createExtraction({
+      sourceElementId: sourceId,
+      selectedText: "The definition paragraph two.",
+      blockIds: [blocks[1] as BlockId],
+      startOffset: 0,
+      endOffset: 29,
+      priority: 0.375,
+    });
+
+    // The guard is NARROW: the extract itself is still created and attention-scheduled —
+    // only the SOURCE's processed-visit reschedule is skipped. (Asserting the extract was
+    // born proves the guard isn't accidentally short-circuiting the whole extraction.)
+    expect(extract.type).toBe("extract");
+    expect(extract.status).toBe("scheduled");
+    expect(extract.dueAt).toBeTruthy();
+
+    // Extracting is engagement, not the explicit triage the user owns: the source stays
+    // untriaged (still `inbox`, still no attention due date) and the adaptive processed-
+    // visit reschedule that would flip it to `scheduled` is skipped.
+    const after = new ElementRepository(handle.db).findById(sourceId);
+    expect(after?.status).toBe("inbox");
+    expect(after?.dueAt).toBeNull();
+    expect(reschedulePayloads(sourceId).filter((p) => p.action === "extract")).toHaveLength(0);
+  });
+
+  it("still reschedules an already-active source as a processed visit (guard is inbox-only)", () => {
+    const repos = createRepositories(handle.db);
+    repos.settings.updateAppSettings({ adaptiveAttentionIntervals: true });
+    const sourceId = seedSource(handle, 0.375); // status "active"
+    const blocks = blockIdsOf(handle, sourceId);
+    const service = new ExtractionService(handle.db);
+
+    service.createExtraction({
+      sourceElementId: sourceId,
+      selectedText: "The definition paragraph two.",
+      blockIds: [blocks[1] as BlockId],
+      startOffset: 0,
+      endOffset: 29,
+      priority: 0.375,
+    });
+
+    // A non-inbox source is unaffected by the guard — the processed-visit reschedule runs:
+    // the source is flipped to `scheduled` and the op-log records the extract visit.
+    const after = new ElementRepository(handle.db).findById(sourceId);
+    expect(after?.status).toBe("scheduled");
+    expect(reschedulePayloads(sourceId).at(-1)).toMatchObject({ action: "extract" });
   });
 
   it("preserves paragraph structure when the selection spans multiple source blocks", () => {

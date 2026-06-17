@@ -32,7 +32,7 @@
  */
 
 import path from "node:path";
-import { type ElectronApplication, expect, type Page, test } from "@playwright/test";
+import { type ElectronApplication, expect, test } from "@playwright/test";
 import Database from "better-sqlite3";
 import { ensureBuilt, launchApp, makeDataDir } from "./launch";
 

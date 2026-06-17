@@ -182,6 +182,12 @@ Attention scheduling is distinct from active-recall scheduling: it decides when 
 
 Attention scheduling includes both heuristic returns and explicit user commands. Heuristic returns may use prior processing evidence, while explicit commands such as Queue soon or a manual return date express user intent directly and should not be reinterpreted as heuristic recency evidence.
 
+### Processed visit
+
+An engagement event — extracting from or rewriting a source or extract — that the attention scheduler counts as processing and uses to reschedule the element and recompute its Adaptive attention interval.
+
+A processed visit reschedules an element already in the reading flow (active or scheduled); it must not change the triage status of an untriaged Inbox source. Extraction is engagement, not triage — triage is the user's explicit Read now / Queue soon / Save for later decision.
+
 ### Adaptive attention interval
 
 A learned adjustment to an attention-scheduled element's return cadence based on the productive yield of recent processing.

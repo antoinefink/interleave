@@ -302,7 +302,14 @@ test("descendant card lapses explain queue/home/inspector until manual override"
   await expect(row).toBeVisible();
   await expect(row.getByTestId("schedule-reason-line")).toHaveText(DESCENDANT_LAPSE_REASON_TEXT);
 
-  await openHome(page, baseUrl, scheduled.dueAt);
+  // The Home preview is a top-5 glance (HomeScreen PREVIEW_LIMIT). At the source's exact
+  // due moment it ranks just outside the top 5 — its own descendant-lapse cards (and other
+  // seeded due items) are already overdue and outrank an only-just-due source. Glance at
+  // home a few weeks later, when the source itself is overdue: its urgency rises and (with
+  // its higher priority over the all-D competitors) it tops the very preview the full queue
+  // already shows. The descendant-lapse reason travels with the source regardless of asOf.
+  const homeGlanceAsOf = new Date(Date.parse(scheduled.dueAt) + 21 * 86_400_000).toISOString();
+  await openHome(page, baseUrl, homeGlanceAsOf);
   const homeRow = page.locator(
     `[data-testid="home-preview-row"][data-element-id="${seeded.source.id}"]`,
   );

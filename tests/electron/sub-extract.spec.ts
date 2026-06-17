@@ -165,7 +165,10 @@ test("splitting an extract creates a sub-extract whose lineage survives restart"
   expect(selected.trim().length).toBeGreaterThanOrEqual(3);
   await expect(page.getByTestId("selection-toolbar")).toBeVisible();
   await page.getByTestId("sel-tool-extract").click();
-  await expect(page.getByText("Sub-extract created")).toBeVisible();
+  // The parent extract's body is a single clean sentence, so sub-extracting it yields an
+  // atomic sub-extract under T122 shape-aware staging ("Atomic sub-extract ready"). This
+  // test's subject is the sub-extract's lineage (asserted below), not its birth stage.
+  await expect(page.getByText("Atomic sub-extract ready")).toBeVisible();
 
   // Exactly one NEW extract element exists.
   await expect.poll(() => extractCount(page)).toBe(extractsBefore + 1);

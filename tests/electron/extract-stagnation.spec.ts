@@ -91,13 +91,17 @@ async function makeStagnantExtract(page: Page, srcId: string): Promise<string> {
       };
       extracts: { postpone(req: { id: string }): Promise<unknown> };
     };
+    // Select TWO seed paragraphs so the extract is born `raw_extract` (multiple
+    // paragraphs/blocks/sentences). The stagnation predicate only flags extracts that
+    // never advanced past raw — a clean one-liner born `atomic_statement` (T122
+    // shape-aware staging) would look "fully progressed" and never be detected.
     const { extract } = await api.extractions.create({
       sourceElementId,
       selectedText:
-        "To make deliberate progress towards more intelligent and more human-like artificial systems, we need to be following an appropriate feedback signal.",
-      blockIds: ["blk_intro_p1"],
+        "To make deliberate progress towards more intelligent and more human-like artificial systems, we need to be following an appropriate feedback signal. We need to be able to define and evaluate intelligence in a way that enables comparisons between two systems, as well as comparisons with humans.",
+      blockIds: ["blk_intro_p1", "blk_intro_p2"],
       startOffset: 0,
-      endOffset: 150,
+      endOffset: 145,
     });
     // Postpone it 3× (the default STAGNATION_POSTPONE_THRESHOLD): never advanced, no
     // children → at a far-future asOf it is stagnant. Real op-log postpone markers.
