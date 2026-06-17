@@ -344,7 +344,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: 'The footer bar shows three persistent hints: <kbd>⌘</kbd><kbd>K</kbd> Command, <kbd>G</kbd> then a key to navigate, and <kbd>?</kbd> Shortcuts. During a review or Process session, the right side shows that session\'s action keys (for example <kbd>d</kbd> done, <kbd>p</kbd> postpone, <kbd>x</kbd> dismiss) so they are always in reach.',
+      text: "The footer bar shows three persistent hints: <kbd>⌘</kbd><kbd>K</kbd> Command, <kbd>G</kbd> then a key to navigate, and <kbd>?</kbd> Shortcuts. During a review or Process session, the right side shows that session's action keys (for example <kbd>d</kbd> done, <kbd>p</kbd> postpone, <kbd>x</kbd> dismiss) so they are always in reach.",
     },
     {
       type: "h2",
