@@ -12,6 +12,7 @@
  * stop) in exactly one place.
  */
 
+import type { LookupSourceResponse } from "@interleave/capture-contract";
 import type { SettingsRepository } from "@interleave/local-db";
 import {
   getAllowedOrigin,
@@ -43,6 +44,8 @@ export interface CaptureControllerDeps {
   getImportService(): CaptureServerImportService;
   /** Focus/open a captured source in the desktop app. */
   openSource(input: CaptureOpenSourceInput): Promise<CaptureOpenSourceResult>;
+  /** Answer the read-only pre-save "already saved" question for a raw URL. */
+  lookupSourceByUrl(url: string): LookupSourceResponse;
   readonly appVersion: string;
 }
 
@@ -65,6 +68,7 @@ export class CaptureController {
       settings: this.deps.settings,
       importService: this.deps.getImportService(),
       openSource: this.deps.openSource,
+      lookupSourceByUrl: this.deps.lookupSourceByUrl,
       appVersion: this.deps.appVersion,
     });
   }

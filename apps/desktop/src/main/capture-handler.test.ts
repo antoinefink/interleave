@@ -14,7 +14,10 @@ import {
   type CaptureImportResult,
   type CaptureImportService,
   type CaptureRequestContext,
+  type FindSourcesByCanonicalUrl,
   handleCapture,
+  type LookupCanonicalMatch,
+  lookupSourceByUrl,
 } from "./capture-handler";
 
 const TOKEN = "test-token-abc123";
@@ -223,5 +226,69 @@ describe("handleCapture — dispatch", () => {
     const svc = fakeImportService();
     await handleCapture(ctx(), deps({ importService: svc }));
     expect(svc.pageCalls).toHaveLength(1);
+  });
+});
+
+describe("lookupSourceByUrl — pre-save 'already saved' mapper", () => {
+  /** A fake canonical-URL query recording the canonical keys it was asked for. */
+  function fakeQuery(matchesByCanonical: Record<string, LookupCanonicalMatch[]>): {
+    find: FindSourcesByCanonicalUrl;
+    calls: (string | null)[];
+  } {
+    const calls: (string | null)[] = [];
+    return {
+      calls,
+      find: (canonical) => {
+        calls.push(canonical);
+        return canonical ? (matchesByCanonical[canonical] ?? []) : [];
+      },
+    };
+  }
+
+  it("found: maps the FIRST match's id/title/status (newest-first, mirrors mapResult)", () => {
+    const q = fakeQuery({
+      "https://example.com/a": [
+        { elementId: "el_newest", title: "Newest", status: "inbox" },
+        { elementId: "el_older", title: "Older", status: "active" },
+      ],
+    });
+    const result = lookupSourceByUrl("https://example.com/a", q.find);
+    expect(result).toEqual({
+      ok: true,
+      found: true,
+      source: { id: "el_newest", title: "Newest", status: "inbox" },
+    });
+  });
+
+  it("not found: an empty match list → found:false, no source", () => {
+    const q = fakeQuery({});
+    expect(lookupSourceByUrl("https://example.com/never", q.find)).toEqual({
+      ok: true,
+      found: false,
+    });
+  });
+
+  it("canonicalizes before querying — a tracking-param-only difference still matches", () => {
+    // The stored key is the bare canonical; a candidate with ?utm_source=x folds to it.
+    const q = fakeQuery({
+      "https://example.com/a": [{ elementId: "el_1", title: "A", status: "inbox" }],
+    });
+    const result = lookupSourceByUrl("https://example.com/a?utm_source=newsletter", q.find);
+    expect(result).toEqual({
+      ok: true,
+      found: true,
+      source: { id: "el_1", title: "A", status: "inbox" },
+    });
+    // The query was asked for the canonical (tracking-stripped) key, never the raw URL.
+    expect(q.calls).toEqual(["https://example.com/a"]);
+  });
+
+  it("non-http(s) / unparseable URL → found:false, NEVER queries, never throws", () => {
+    const q = fakeQuery({});
+    for (const url of ["ftp://example.com/x", "chrome://settings", "not a url", ""]) {
+      expect(lookupSourceByUrl(url, q.find)).toEqual({ ok: true, found: false });
+    }
+    // canonicalizeUrl returned null for every one of these → the query is never run.
+    expect(q.calls).toEqual([]);
   });
 });

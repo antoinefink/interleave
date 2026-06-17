@@ -39,6 +39,7 @@ beforeEach(() => {
 function makeController(settings = new MemorySettings()) {
   const importService = { importFromHtml: vi.fn(), importSelection: vi.fn() };
   const openSource = vi.fn(async () => ({ status: "opened" as const, activated: true }));
+  const lookupSourceByUrl = vi.fn(() => ({ ok: true as const, found: false }));
   const stop = vi.fn(async () => {});
   startCaptureServer.mockResolvedValue({ port: 47615, stop });
 
@@ -46,10 +47,11 @@ function makeController(settings = new MemorySettings()) {
     settings: settings.asRepository(),
     getImportService: () => importService as never,
     openSource,
+    lookupSourceByUrl,
     appVersion: "0.2.0",
   });
 
-  return { controller, settings, importService, openSource, stop };
+  return { controller, settings, importService, openSource, lookupSourceByUrl, stop };
 }
 
 describe("CaptureController", () => {
@@ -63,7 +65,7 @@ describe("CaptureController", () => {
   });
 
   it("starts at most once when capture is enabled", async () => {
-    const { controller, settings, importService, openSource } = makeController();
+    const { controller, settings, importService, openSource, lookupSourceByUrl } = makeController();
     settings.values.set(CAPTURE_ENABLED_KEY, true);
 
     await controller.startIfEnabled();
@@ -74,6 +76,7 @@ describe("CaptureController", () => {
       settings: settings.asRepository(),
       importService,
       openSource,
+      lookupSourceByUrl,
       appVersion: "0.2.0",
     });
     expect(controller.getPairing()).toMatchObject({ enabled: true, running: true, port: 47615 });

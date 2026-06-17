@@ -33,12 +33,15 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type {
   CaptureRequest,
+  LookupSourceErrorCode,
+  LookupSourceResponse,
   OpenSourceErrorCode,
   OpenSourceRequest,
   PairingPingResponse,
 } from "@interleave/capture-contract";
 import {
   CaptureRequestSchema,
+  LookupSourceRequestSchema,
   OpenSourceRequestSchema,
   timingSafeTokenEqual,
 } from "@interleave/capture-contract";
@@ -101,6 +104,12 @@ export interface StartCaptureServerOptions {
   readonly importService: CaptureServerImportService;
   /** Open a captured source in the desktop app. Injected so the server stays testable. */
   readonly openSource: (input: CaptureOpenSourceInput) => Promise<CaptureOpenSourceResult>;
+  /**
+   * Answer the pre-save "already saved" question for a raw URL. READ-ONLY: it
+   * canonicalizes the URL and reuses the T061 canonical-URL dedup query; it never
+   * mutates state. Injected so the server stays testable.
+   */
+  readonly lookupSourceByUrl: (url: string) => LookupSourceResponse;
   /** The app version, surfaced in the unauthenticated `/ping` body. */
   readonly appVersion: string;
 }
@@ -168,6 +177,14 @@ function sendOpenSourceError(
   sendJson(res, status, { ok: false, error });
 }
 
+function sendLookupSourceError(
+  res: ServerResponse,
+  status: number,
+  error: LookupSourceErrorCode,
+): void {
+  sendJson(res, status, { ok: false, error });
+}
+
 /** Apply the exact-Origin CORS headers (echo only the paired origin, never `*`). */
 function applyCors(
   res: ServerResponse,
@@ -191,7 +208,7 @@ function applyCors(
 export async function startCaptureServer(
   opts: StartCaptureServerOptions,
 ): Promise<CaptureServerHandle> {
-  const { settings, importService, openSource, appVersion } = opts;
+  const { settings, importService, openSource, lookupSourceByUrl, appVersion } = opts;
   let running = false;
 
   const server = createServer((req, res) => {
@@ -201,6 +218,7 @@ export async function startCaptureServer(
         if (!res.headersSent) {
           const path = (req.url ?? "/").split("?")[0];
           if (path === "/open-source") sendOpenSourceError(res, 500, "open_failed");
+          else if (path === "/lookup-source") sendLookupSourceError(res, 500, "lookup_failed");
           else sendJson(res, 500, { ok: false, error: "import_failed" });
         }
       } catch {
@@ -277,6 +295,23 @@ export async function startCaptureServer(
         return;
       }
       await handleOpenSourceRoute(req, res, requestOrigin, allowedOrigin);
+      return;
+    }
+
+    // POST /lookup-source — the read-only pre-save "already saved" question for the
+    // paired extension popup. Same threat model as /open-source; reproduces ONLY the
+    // canonical-URL dedup signal and mutates nothing (positive-only contract).
+    if (path === "/lookup-source") {
+      if (method === "OPTIONS") {
+        applyCors(res, allowedOrigin, requestOrigin);
+        res.writeHead(204).end();
+        return;
+      }
+      if (method !== "POST") {
+        res.writeHead(405).end();
+        return;
+      }
+      await handleLookupSourceRoute(req, res, requestOrigin, allowedOrigin);
       return;
     }
 
@@ -395,6 +430,56 @@ export async function startCaptureServer(
     }
 
     sendJson(res, 200, { ok: true, id: parsed.id, activated: result.activated });
+  }
+
+  /**
+   * The `/lookup-source` route: identical auth/origin/body guards as `/open-source`
+   * (via `authorizeRequest`), then a READ-ONLY canonical-URL lookup. The injected
+   * `lookupSourceByUrl` canonicalizes and reuses the T061 dedup query — it never
+   * mutates state. The request schema is permissive (KTD3): a non-http(s) URL in the
+   * body resolves to `found: false` inside the lookup, NOT a 400.
+   */
+  async function handleLookupSourceRoute(
+    req: IncomingMessage,
+    res: ServerResponse,
+    requestOrigin: string | null,
+    allowedOrigin: string | null,
+  ): Promise<void> {
+    applyCors(res, allowedOrigin, requestOrigin);
+    // Reuse the SAME auth guard as /open-source: the `unpaired` / `bad_origin` /
+    // `bad_token` error codes are byte-identical across both contracts, so the wire
+    // body is the same `{ ok: false, error }` shape this route documents.
+    if (!authorizeRequest(req, res, requestOrigin, allowedOrigin)) return;
+
+    const { body, tooLarge } = await readBody(req);
+    if (tooLarge) {
+      sendLookupSourceError(res, 413, "too_large");
+      return;
+    }
+
+    const mime = (headerValue(req, "content-type") ?? "").split(";")[0]?.trim().toLowerCase();
+    if (mime !== "application/json") {
+      sendLookupSourceError(res, 400, "invalid");
+      return;
+    }
+
+    let parsed: { url: string };
+    try {
+      parsed = LookupSourceRequestSchema.parse(JSON.parse(body) as unknown);
+    } catch {
+      sendLookupSourceError(res, 400, "invalid");
+      return;
+    }
+
+    let result: LookupSourceResponse;
+    try {
+      result = lookupSourceByUrl(parsed.url);
+    } catch {
+      sendLookupSourceError(res, 500, "lookup_failed");
+      return;
+    }
+
+    sendJson(res, 200, result);
   }
 
   function authorizeRequest(

@@ -27,6 +27,7 @@ import {
 } from "@interleave/local-db";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { sha256File } from "./backup-manifest";
+import { lookupSourceByUrl } from "./capture-handler";
 import { UrlImportError, UrlImportService } from "./url-import-service";
 
 const ARTICLE_HTML = `<!DOCTYPE html>
@@ -373,6 +374,107 @@ describe("UrlImportService dedup (T061)", () => {
     const again = await svc.importFromUrl({ url: "https://example.com/spacing" });
     expect(again.status).toBe("imported");
     expect(inboxSourceCount()).toBe(1);
+  });
+});
+
+describe("lookupSourceByUrl — pre-save dedup parity (U2, against the real dedup query)", () => {
+  /** The desktop lookup wired to the SAME repo query the save-time pipeline uses. */
+  function lookup(url: string) {
+    return lookupSourceByUrl(url, (canonical) =>
+      repos.sourceDedup.findSourcesByCanonicalUrl(canonical),
+    );
+  }
+
+  /** Count live source elements currently in the inbox. */
+  function inboxSourceCount(): number {
+    return new ElementRepository(handle.db).listByStatus("inbox").filter((e) => e.type === "source")
+      .length;
+  }
+
+  it("found: a saved canonical URL resolves to the matching id/title/status", async () => {
+    const svc = makeService(htmlFetch(ARTICLE_HTML));
+    const saved = expectImported(await svc.importFromUrl({ url: "https://example.com/spacing" }));
+
+    const result = lookup("https://example.com/spacing");
+    expect(result.found).toBe(true);
+    expect(result.source?.id).toBe(saved.id);
+    expect(result.source?.title).toBe("Spacing Effect");
+    expect(result.source?.status).toBe("inbox");
+  });
+
+  it("parity: resolves the SAME first match a subsequent save-time dedup would echo", async () => {
+    const svc = makeService(htmlFetch(ARTICLE_HTML));
+    expectImported(await svc.importFromUrl({ url: "https://example.com/spacing" }));
+
+    // The pre-save lookup answer must equal the save-time `duplicate` outcome for
+    // the URL signal: same first-match id.
+    const preSave = lookup("https://example.com/spacing");
+    const saveTime = await svc.importFromUrl({ url: "https://example.com/spacing" });
+    expect(saveTime.status).toBe("duplicate");
+    if (saveTime.status !== "duplicate") throw new Error("expected duplicate");
+    expect(preSave.found).toBe(true);
+    expect(preSave.source?.id).toBe(saveTime.matches[0]?.elementId);
+  });
+
+  it("tracking-param-only difference still resolves (canonicalize strips it on both sides)", async () => {
+    const svc = makeService(htmlFetch(ARTICLE_HTML));
+    const saved = expectImported(await svc.importFromUrl({ url: "https://example.com/spacing" }));
+
+    const result = lookup("https://example.com/spacing?utm_source=newsletter&utm_campaign=x");
+    expect(result.found).toBe(true);
+    expect(result.source?.id).toBe(saved.id);
+  });
+
+  it("never-saved / non-http(s) / unparseable URL → found:false, no throw", async () => {
+    const svc = makeService(htmlFetch(ARTICLE_HTML));
+    expectImported(await svc.importFromUrl({ url: "https://example.com/spacing" }));
+
+    expect(lookup("https://example.com/never-saved")).toEqual({ ok: true, found: false });
+    expect(lookup("ftp://example.com/x")).toEqual({ ok: true, found: false });
+    expect(lookup("chrome://settings")).toEqual({ ok: true, found: false });
+    expect(lookup("not a url at all")).toEqual({ ok: true, found: false });
+  });
+
+  it("soft-deleted source → found:false (reuses the live-only dedup query)", async () => {
+    const svc = makeService(htmlFetch(ARTICLE_HTML));
+    const saved = expectImported(await svc.importFromUrl({ url: "https://example.com/spacing" }));
+
+    new ElementRepository(handle.db).softDelete(saved.id as never);
+    expect(lookup("https://example.com/spacing")).toEqual({ ok: true, found: false });
+  });
+
+  it("multiple live matches → returns the NEWEST id (same first match as save-time)", async () => {
+    const svc = makeService(htmlFetch(ARTICLE_HTML));
+    const first = expectImported(await svc.importFromUrl({ url: "https://example.com/spacing" }));
+    const second = expectImported(
+      await svc.importFromUrl({ url: "https://example.com/spacing", forceNewVersion: true }),
+    );
+
+    const result = lookup("https://example.com/spacing");
+    expect(result.found).toBe(true);
+    // The lookup echoes matches[0] — the SAME first match save-time dedup would echo.
+    const saveTime = await svc.importFromUrl({ url: "https://example.com/spacing" });
+    if (saveTime.status !== "duplicate") throw new Error("expected duplicate");
+    expect(result.source?.id).toBe(saveTime.matches[0]?.elementId);
+    expect([first.id, second.id]).toContain(result.source?.id);
+  });
+
+  it("is READ-ONLY: it writes no rows and appends no operation_log entry", async () => {
+    const svc = makeService(htmlFetch(ARTICLE_HTML));
+    const saved = expectImported(await svc.importFromUrl({ url: "https://example.com/spacing" }));
+
+    const opCountBefore = new OperationLogRepository(handle.db).count();
+    const sourceCountBefore = inboxSourceCount();
+
+    // Run the lookup several times (found + not-found + non-http(s)).
+    lookup("https://example.com/spacing");
+    lookup("https://example.com/never");
+    lookup("ftp://example.com/x");
+
+    expect(new OperationLogRepository(handle.db).count()).toBe(opCountBefore);
+    expect(inboxSourceCount()).toBe(sourceCountBefore);
+    // Sanity: the saved source is still resolvable (the lookup did not delete it).
+    expect(lookup("https://example.com/spacing").source?.id).toBe(saved.id);
   });
 });
 

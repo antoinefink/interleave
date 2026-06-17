@@ -181,6 +181,72 @@ export const OpenSourceErrorResponseSchema = z.object({
 });
 export type OpenSourceErrorResponse = z.infer<typeof OpenSourceErrorResponseSchema>;
 
+// ---------------------------------------------------------------------------
+// Lookup source command (the pre-save "already saved" hint).
+//
+// A read-only loopback question the popup asks on open — "is this page already a
+// saved source?" — BEFORE the user clicks Save. The desktop canonicalizes the URL
+// and reproduces ONLY the canonical-URL dedup signal that `/capture` (T061) uses,
+// so the up-front answer is correct-by-construction for that signal.
+//
+// POSITIVE-ONLY CONTRACT: a `found: false` answer is NOT a guarantee that a
+// subsequent save will not dedup. The two other dedup signals — the cleaned-HTML
+// content-hash backstop, and post-redirect canonical drift — cannot be resolved
+// at popup-open time (there is no fetched/cleaned HTML yet, and no redirect has
+// happened). Those are intentional, accepted false-negatives surfaced only at
+// save time, where `/capture` remains authoritative. This route reproduces the
+// canonical-URL match and nothing else.
+// ---------------------------------------------------------------------------
+
+/**
+ * Ask the desktop whether a page is already a saved source, by URL. The request
+ * is deliberately PERMISSIVE — any non-empty string within the length cap, NOT
+ * the strict `CaptureUrlSchema`. The desktop canonicalizes the URL and answers
+ * `found: false` for a non-http(s) / unparseable value rather than rejecting it,
+ * so the route stays robust even if the client fails to short-circuit.
+ */
+export const LookupSourceRequestSchema = z.object({
+  url: z.string().trim().min(1).max(URL_MAX),
+});
+export type LookupSourceRequest = z.infer<typeof LookupSourceRequestSchema>;
+
+/**
+ * The lookup answer: `found` plus, when found, the newest matching source's
+ * `id`/`title`/`status`. `source` is present IFF `found` is true (the route
+ * guarantees this; the schema keeps it optional so a `found: false` body need not
+ * carry one). `status` is a plain bounded string — the contract must NOT import
+ * core's status enum — used by the popup only for display copy.
+ */
+export const LookupSourceResponseSchema = z.object({
+  ok: z.literal(true),
+  found: z.boolean(),
+  source: z
+    .object({
+      id: z.string(),
+      title: z.string(),
+      status: z.string(),
+    })
+    .optional(),
+});
+export type LookupSourceResponse = z.infer<typeof LookupSourceResponseSchema>;
+
+export const LookupSourceErrorCodeSchema = z.enum([
+  "unpaired",
+  "bad_token",
+  "bad_origin",
+  "too_large",
+  "invalid",
+  "lookup_failed",
+]);
+export type LookupSourceErrorCode = z.infer<typeof LookupSourceErrorCodeSchema>;
+
+/** Failed lookup-source command; never leaks DB/window internals. */
+export const LookupSourceErrorResponseSchema = z.object({
+  ok: z.literal(false),
+  error: LookupSourceErrorCodeSchema,
+});
+export type LookupSourceErrorResponse = z.infer<typeof LookupSourceErrorResponseSchema>;
+
 /** The unauthenticated `GET /ping` body — reveals only the app name + version. */
 export const PairingPingResponseSchema = z.object({
   ok: z.literal(true),

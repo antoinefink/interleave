@@ -33,6 +33,7 @@ vi.mock("node:http", () => ({
   createServer: httpMock.createServer,
 }));
 
+import type { LookupSourceResponse } from "@interleave/capture-contract";
 import {
   type CaptureOpenSourceInput,
   type CaptureOpenSourceResult,
@@ -179,14 +180,19 @@ async function start(
   openSource: (input: CaptureOpenSourceInput) => Promise<CaptureOpenSourceResult> = vi.fn(
     async () => ({ status: "opened" as const, activated: true }),
   ),
+  lookupSourceByUrl: (url: string) => LookupSourceResponse = vi.fn(() => ({
+    ok: true as const,
+    found: false,
+  })),
 ) {
   const handle = await startCaptureServer({
     settings: settings.asRepository(),
     importService,
     openSource,
+    lookupSourceByUrl,
     appVersion: "0.2.0",
   });
-  return { handle, importService, openSource };
+  return { handle, importService, openSource, lookupSourceByUrl };
 }
 
 describe("startCaptureServer", () => {
@@ -543,5 +549,271 @@ describe("startCaptureServer", () => {
 
     expect(response.statusCode).toBe(500);
     expect(response.json()).toEqual({ ok: false, error: "open_failed" });
+  });
+
+  it("answers a lookup-source request for a saved URL through the authenticated route", async () => {
+    const settings = new MemorySettings();
+    settings.values.set(CAPTURE_TOKEN_KEY, "secret-token");
+    settings.values.set(CAPTURE_ALLOWED_ORIGIN_KEY, EXTENSION_ORIGIN);
+    const lookup = vi.fn(
+      (_url: string): LookupSourceResponse => ({
+        ok: true,
+        found: true,
+        source: { id: "source-1", title: "Existing", status: "inbox" },
+      }),
+    );
+    await start(settings, fakeImportService(), undefined, lookup);
+
+    const response = await route({
+      method: "POST",
+      path: "/lookup-source",
+      headers: {
+        Authorization: "Bearer secret-token",
+        "Content-Type": "application/json",
+        Origin: EXTENSION_ORIGIN,
+      },
+      body: JSON.stringify({ url: "https://example.com/a" }),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe(EXTENSION_ORIGIN);
+    expect(response.json()).toEqual({
+      ok: true,
+      found: true,
+      source: { id: "source-1", title: "Existing", status: "inbox" },
+    });
+    expect(lookup).toHaveBeenCalledWith("https://example.com/a");
+  });
+
+  it("answers found:false for a never-saved URL", async () => {
+    const settings = new MemorySettings();
+    settings.values.set(CAPTURE_TOKEN_KEY, "secret-token");
+    settings.values.set(CAPTURE_ALLOWED_ORIGIN_KEY, EXTENSION_ORIGIN);
+    const lookup = vi.fn((): LookupSourceResponse => ({ ok: true, found: false }));
+    await start(settings, fakeImportService(), undefined, lookup);
+
+    const response = await route({
+      method: "POST",
+      path: "/lookup-source",
+      headers: {
+        Authorization: "Bearer secret-token",
+        "Content-Type": "application/json",
+        Origin: EXTENSION_ORIGIN,
+      },
+      body: JSON.stringify({ url: "https://example.com/never" }),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true, found: false });
+  });
+
+  it("answers found:false (NOT 400) for a non-http(s) URL in the body", async () => {
+    const settings = new MemorySettings();
+    settings.values.set(CAPTURE_TOKEN_KEY, "secret-token");
+    settings.values.set(CAPTURE_ALLOWED_ORIGIN_KEY, EXTENSION_ORIGIN);
+    // The real lookup canonicalizes a non-http(s) URL to null → found:false. Mirror
+    // that here so the test asserts the route does NOT 400 a permissive-but-odd URL.
+    const lookup = vi.fn((): LookupSourceResponse => ({ ok: true, found: false }));
+    await start(settings, fakeImportService(), undefined, lookup);
+
+    const response = await route({
+      method: "POST",
+      path: "/lookup-source",
+      headers: {
+        Authorization: "Bearer secret-token",
+        "Content-Type": "application/json",
+        Origin: EXTENSION_ORIGIN,
+      },
+      body: JSON.stringify({ url: "chrome://settings" }),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true, found: false });
+    expect(lookup).toHaveBeenCalledWith("chrome://settings");
+  });
+
+  it("serves lookup-source preflight for the paired extension origin", async () => {
+    const settings = new MemorySettings();
+    settings.values.set(CAPTURE_TOKEN_KEY, "secret-token");
+    settings.values.set(CAPTURE_ALLOWED_ORIGIN_KEY, EXTENSION_ORIGIN);
+    await start(settings);
+
+    const response = await route({
+      method: "OPTIONS",
+      path: "/lookup-source",
+      headers: { Origin: EXTENSION_ORIGIN },
+    });
+
+    expect(response.statusCode).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe(EXTENSION_ORIGIN);
+    expect(response.headers.get("access-control-allow-methods")).toBe("POST, OPTIONS");
+    expect(response.headers.get("access-control-allow-headers")).toBe(
+      "Authorization, Content-Type",
+    );
+  });
+
+  it("rejects a GET on the lookup-source route (405)", async () => {
+    const settings = new MemorySettings();
+    settings.values.set(CAPTURE_TOKEN_KEY, "secret-token");
+    settings.values.set(CAPTURE_ALLOWED_ORIGIN_KEY, EXTENSION_ORIGIN);
+    const { lookupSourceByUrl } = await start(settings);
+
+    const response = await route({
+      method: "GET",
+      path: "/lookup-source",
+      headers: { Origin: EXTENSION_ORIGIN },
+    });
+
+    expect(response.statusCode).toBe(405);
+    expect(lookupSourceByUrl).not.toHaveBeenCalled();
+  });
+
+  it("enforces the same threat model as open-source on the lookup-source route", async () => {
+    const cases = [
+      {
+        name: "unpaired",
+        setup: (_settings: MemorySettings) => undefined,
+        headers: {
+          Authorization: "Bearer secret-token",
+          "Content-Type": "application/json",
+          Origin: EXTENSION_ORIGIN,
+        },
+        body: JSON.stringify({ url: "https://example.com/a" }),
+        status: 403,
+        error: "unpaired",
+      },
+      {
+        name: "bad origin",
+        setup: (settings: MemorySettings) => {
+          settings.values.set(CAPTURE_TOKEN_KEY, "secret-token");
+          settings.values.set(CAPTURE_ALLOWED_ORIGIN_KEY, EXTENSION_ORIGIN);
+        },
+        headers: {
+          Authorization: "Bearer secret-token",
+          "Content-Type": "application/json",
+          Origin: "chrome-extension://wrong",
+        },
+        body: JSON.stringify({ url: "https://example.com/a" }),
+        status: 403,
+        error: "bad_origin",
+      },
+      {
+        name: "bad token",
+        setup: (settings: MemorySettings) => {
+          settings.values.set(CAPTURE_TOKEN_KEY, "secret-token");
+          settings.values.set(CAPTURE_ALLOWED_ORIGIN_KEY, EXTENSION_ORIGIN);
+        },
+        headers: {
+          Authorization: "Bearer wrong",
+          "Content-Type": "application/json",
+          Origin: EXTENSION_ORIGIN,
+        },
+        body: JSON.stringify({ url: "https://example.com/a" }),
+        status: 401,
+        error: "bad_token",
+      },
+      {
+        name: "wrong content type",
+        setup: (settings: MemorySettings) => {
+          settings.values.set(CAPTURE_TOKEN_KEY, "secret-token");
+          settings.values.set(CAPTURE_ALLOWED_ORIGIN_KEY, EXTENSION_ORIGIN);
+        },
+        headers: {
+          Authorization: "Bearer secret-token",
+          "Content-Type": "text/plain",
+          Origin: EXTENSION_ORIGIN,
+        },
+        body: JSON.stringify({ url: "https://example.com/a" }),
+        status: 400,
+        error: "invalid",
+      },
+      {
+        name: "invalid JSON",
+        setup: (settings: MemorySettings) => {
+          settings.values.set(CAPTURE_TOKEN_KEY, "secret-token");
+          settings.values.set(CAPTURE_ALLOWED_ORIGIN_KEY, EXTENSION_ORIGIN);
+        },
+        headers: {
+          Authorization: "Bearer secret-token",
+          "Content-Type": "application/json",
+          Origin: EXTENSION_ORIGIN,
+        },
+        body: "{",
+        status: 400,
+        error: "invalid",
+      },
+      {
+        name: "invalid schema (empty url)",
+        setup: (settings: MemorySettings) => {
+          settings.values.set(CAPTURE_TOKEN_KEY, "secret-token");
+          settings.values.set(CAPTURE_ALLOWED_ORIGIN_KEY, EXTENSION_ORIGIN);
+        },
+        headers: {
+          Authorization: "Bearer secret-token",
+          "Content-Type": "application/json",
+          Origin: EXTENSION_ORIGIN,
+        },
+        body: JSON.stringify({ url: "" }),
+        status: 400,
+        error: "invalid",
+      },
+      {
+        name: "too large",
+        setup: (settings: MemorySettings) => {
+          settings.values.set(CAPTURE_TOKEN_KEY, "secret-token");
+          settings.values.set(CAPTURE_ALLOWED_ORIGIN_KEY, EXTENSION_ORIGIN);
+        },
+        headers: {
+          Authorization: "Bearer secret-token",
+          "Content-Type": "application/json",
+          Origin: EXTENSION_ORIGIN,
+        },
+        body: JSON.stringify({ url: `https://x.com/${"a".repeat(6 * 1024 * 1024)}` }),
+        status: 413,
+        error: "too_large",
+      },
+    ] as const;
+
+    for (const c of cases) {
+      const settings = new MemorySettings();
+      c.setup(settings);
+      const lookup = vi.fn((): LookupSourceResponse => ({ ok: true, found: false }));
+      await start(settings, fakeImportService(), undefined, lookup);
+
+      const response = await route({
+        method: "POST",
+        path: "/lookup-source",
+        headers: c.headers,
+        body: c.body,
+      });
+
+      expect(response.statusCode, c.name).toBe(c.status);
+      expect(response.json(), c.name).toEqual({ ok: false, error: c.error });
+      expect(lookup, c.name).not.toHaveBeenCalled();
+    }
+  });
+
+  it("maps an unexpected lookup failure to the lookup_failed error contract", async () => {
+    const settings = new MemorySettings();
+    settings.values.set(CAPTURE_TOKEN_KEY, "secret-token");
+    settings.values.set(CAPTURE_ALLOWED_ORIGIN_KEY, EXTENSION_ORIGIN);
+    const lookup = vi.fn((): LookupSourceResponse => {
+      throw new Error("dedup query blew up");
+    });
+    await start(settings, fakeImportService(), undefined, lookup);
+
+    const response = await route({
+      method: "POST",
+      path: "/lookup-source",
+      headers: {
+        Authorization: "Bearer secret-token",
+        "Content-Type": "application/json",
+        Origin: EXTENSION_ORIGIN,
+      },
+      body: JSON.stringify({ url: "https://example.com/a" }),
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({ ok: false, error: "lookup_failed" });
   });
 });

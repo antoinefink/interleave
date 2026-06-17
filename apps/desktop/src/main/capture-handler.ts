@@ -23,10 +23,11 @@ import {
   type CaptureRequest,
   CaptureRequestSchema,
   type CaptureResponse,
+  type LookupSourceResponse,
   timingSafeTokenEqual,
   validateOrigin,
 } from "@interleave/capture-contract";
-import type { CapturedVia, PriorityLabel } from "@interleave/core";
+import { type CapturedVia, canonicalizeUrl, type PriorityLabel } from "@interleave/core";
 
 /**
  * The discriminated import result both `importFromHtml` (page) and
@@ -208,6 +209,61 @@ function mapResult(
   return {
     status: 200,
     body: { ok: true, id: first.elementId, kind, title: first.title, deduped: true },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Pre-save lookup ("already saved" hint) — read-only.
+// ---------------------------------------------------------------------------
+
+/**
+ * A single canonical-URL dedup match — the structural subset of
+ * `SourceDuplicateMatch` (`@interleave/local-db`) the lookup mapper reads (so the
+ * unit test can pass a plain object without importing local-db).
+ */
+export interface LookupCanonicalMatch {
+  readonly elementId: string;
+  readonly title: string;
+  readonly status: string;
+}
+
+/**
+ * The injected query the lookup uses — the SAME `SourceDedupQuery` method T061
+ * save-time dedup calls. Newest-first; an empty array means "not saved under this
+ * canonical URL".
+ */
+export type FindSourcesByCanonicalUrl = (
+  canonicalUrl: string | null,
+) => readonly LookupCanonicalMatch[];
+
+/**
+ * Map a raw URL → the pre-save "already saved" answer, reusing the EXACT canonical-URL
+ * dedup signal `/capture` (T061) uses. This is READ-ONLY: it canonicalizes and runs the
+ * dedup query; it writes no vault file, mutates no row, and appends no `operation_log`
+ * entry. It NEVER throws — a non-http(s)/unparseable URL canonicalizes to `null` and
+ * returns `found: false`.
+ *
+ * Like {@link mapResult}, it echoes `matches[0]` (newest-first by `accessed_at`, id
+ * tiebreak), so the pre-save answer agrees with the save-time `deduped` outcome for the
+ * URL signal. The content-hash backstop and post-redirect canonical drift are
+ * intentional, accepted false-negatives surfaced only at save time (positive-only
+ * contract — see `LookupSourceRequestSchema`).
+ */
+export function lookupSourceByUrl(
+  url: string,
+  findSourcesByCanonicalUrl: FindSourcesByCanonicalUrl,
+): LookupSourceResponse {
+  const canonical = canonicalizeUrl(url);
+  if (canonical == null) return { ok: true, found: false };
+
+  const matches = findSourcesByCanonicalUrl(canonical);
+  const first = matches[0];
+  if (!first) return { ok: true, found: false };
+
+  return {
+    ok: true,
+    found: true,
+    source: { id: first.elementId, title: first.title, status: first.status },
   };
 }
 

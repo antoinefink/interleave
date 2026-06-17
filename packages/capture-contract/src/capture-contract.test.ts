@@ -11,6 +11,9 @@ import {
   CaptureRequestSchema,
   CaptureResponseSchema,
   DEFAULT_CAPTURE_PRIORITY,
+  LookupSourceErrorResponseSchema,
+  LookupSourceRequestSchema,
+  LookupSourceResponseSchema,
   OpenSourceErrorResponseSchema,
   OpenSourceRequestSchema,
   OpenSourceResponseSchema,
@@ -158,6 +161,80 @@ describe("OpenSourceRequestSchema / OpenSourceResponseSchema", () => {
 
     expect(() => OpenSourceErrorResponseSchema.parse({ ok: false, error: "sql_error" })).toThrow();
     expect(() => OpenSourceErrorResponseSchema.parse({ ok: false, error: "deleted" })).toThrow();
+  });
+});
+
+describe("LookupSourceRequestSchema (permissive — canonicalization gates, not the schema)", () => {
+  it("accepts a valid http(s) url", () => {
+    expect(LookupSourceRequestSchema.parse({ url: "https://example.com/post" })).toEqual({
+      url: "https://example.com/post",
+    });
+  });
+
+  it("rejects an empty url", () => {
+    expect(() => LookupSourceRequestSchema.parse({ url: "" })).toThrow();
+    expect(() => LookupSourceRequestSchema.parse({ url: "   " })).toThrow();
+  });
+
+  it("rejects a url longer than 2048 chars", () => {
+    expect(() =>
+      LookupSourceRequestSchema.parse({ url: `https://x.com/${"a".repeat(2048)}` }),
+    ).toThrow();
+  });
+
+  it("ACCEPTS a non-http(s) url (the desktop canonicalizes → found:false, not a 400)", () => {
+    // KTD3: the request schema is permissive on purpose; only canonicalization
+    // decides. A non-http(s) value must parse so the route can answer found:false.
+    expect(LookupSourceRequestSchema.parse({ url: "ftp://example.com/x" })).toEqual({
+      url: "ftp://example.com/x",
+    });
+    expect(LookupSourceRequestSchema.parse({ url: "chrome://settings" })).toEqual({
+      url: "chrome://settings",
+    });
+    expect(LookupSourceRequestSchema.parse({ url: "not a url at all" })).toEqual({
+      url: "not a url at all",
+    });
+  });
+});
+
+describe("LookupSourceResponseSchema / LookupSourceErrorResponseSchema", () => {
+  it("round-trips a found body with a source", () => {
+    const body = LookupSourceResponseSchema.parse({
+      ok: true,
+      found: true,
+      source: { id: "src_123", title: "Existing", status: "inbox" },
+    });
+    expect(body.found).toBe(true);
+    expect(body.source).toEqual({ id: "src_123", title: "Existing", status: "inbox" });
+  });
+
+  it("round-trips a not-found body without a source", () => {
+    const body = LookupSourceResponseSchema.parse({ ok: true, found: false });
+    expect(body.found).toBe(false);
+    expect(body.source).toBeUndefined();
+  });
+
+  it("accepts only documented lookup-source error bodies", () => {
+    for (const error of [
+      "unpaired",
+      "bad_token",
+      "bad_origin",
+      "too_large",
+      "invalid",
+      "lookup_failed",
+    ]) {
+      expect(LookupSourceErrorResponseSchema.parse({ ok: false, error })).toEqual({
+        ok: false,
+        error,
+      });
+    }
+
+    expect(() =>
+      LookupSourceErrorResponseSchema.parse({ ok: false, error: "not_found" }),
+    ).toThrow();
+    expect(() =>
+      LookupSourceErrorResponseSchema.parse({ ok: false, error: "sql_error" }),
+    ).toThrow();
   });
 });
 

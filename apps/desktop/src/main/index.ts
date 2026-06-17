@@ -15,6 +15,7 @@
 
 import { existsSync } from "node:fs";
 import path from "node:path";
+import type { LookupSourceResponse } from "@interleave/capture-contract";
 import type { ElementId } from "@interleave/core";
 import type { NativeImage } from "electron";
 import { app, BrowserWindow, nativeImage, powerMonitor } from "electron";
@@ -25,6 +26,7 @@ import {
 } from "./article-image-protocol";
 import { AutomaticBackupService } from "./automatic-backup-service";
 import { CaptureController } from "./capture-controller";
+import { lookupSourceByUrl as lookupSourceByCanonicalUrl } from "./capture-handler";
 import { setCaptureEnabled } from "./capture-pairing";
 import type { CaptureOpenSourceInput, CaptureOpenSourceResult } from "./capture-server";
 import { DbService } from "./db-service";
@@ -201,6 +203,18 @@ async function openCapturedSource(input: CaptureOpenSourceInput): Promise<Captur
   return { status: "opened", activated };
 }
 
+/**
+ * Answer the read-only pre-save "already saved" question for a raw URL (the popup
+ * lookup). Reuses the EXACT T061 canonical-URL dedup query the save-time pipeline
+ * uses, so the pre-save answer agrees with the save-time `deduped` outcome for the
+ * URL signal. READ-ONLY — no vault write, no DB mutation, no `operation_log` entry.
+ */
+function lookupSourceByUrl(url: string): LookupSourceResponse {
+  return lookupSourceByCanonicalUrl(url, (canonical) =>
+    dbService.repos.sourceDedup.findSourcesByCanonicalUrl(canonical),
+  );
+}
+
 const isQuietE2e = isQuietE2eLaunch({
   isPackaged: app.isPackaged,
   platform: process.platform,
@@ -335,6 +349,8 @@ function bootstrap(): void {
     // a live-started capture server and the renderer converge on one instance.
     getImportService: () => dbService.urlImportService,
     openSource: openCapturedSource,
+    // The read-only pre-save "already saved" lookup (reuses the T061 dedup query).
+    lookupSourceByUrl,
     appVersion: app.getVersion(),
   });
 
