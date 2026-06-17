@@ -439,6 +439,32 @@
 .shell-statusbar__spacer {
   flex: 1;
 }
+/* Per-session action keys published by the active screen (e.g. the Process
+   session) into the right of the status bar — see statusHint.tsx. */
+.shell-statusbar__keys {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--t-2xs);
+  color: var(--text-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.shell-statusbar__keys kbd {
+  margin: 0 var(--s-1);
+  padding: 1px 5px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--t-2xs);
+}
+.shell-statusbar__keys kbd:first-child {
+  margin-left: 0;
+}
 
 /* ---- Right inspector (placeholder container — filled by T010) ---- */
 .shell-inspector {

@@ -832,21 +832,6 @@
   background: var(--danger-soft);
 }
 
-.pq-keys {
-  font-size: var(--t-2xs);
-  color: var(--text-3);
-  margin: 0;
-  text-align: center;
-}
-.pq-keys kbd {
-  font-family: var(--font-mono);
-  font-size: var(--t-2xs);
-  padding: 1px 5px;
-  border-radius: var(--r-xs);
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--text-2);
-}
 .pq-card--extract .pq-card__meta {
   flex: none;
 }
@@ -854,9 +839,6 @@
   flex: none;
 }
 .pq-card--extract .pq-actions {
-  flex: none;
-}
-.pq-card--extract .pq-keys {
   flex: none;
 }
 

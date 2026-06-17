@@ -56,6 +56,7 @@ import {
 import { SelectionProvider, useSelection } from "./selection";
 import "./shell.css";
 import type { PaletteActionId } from "./shortcuts";
+import { StatusHintProvider, useStatusHint } from "./statusHint";
 import { useGlobalActions } from "./useGlobalActions";
 import { type NavBadgeCounts, useNavBadges } from "./useNavBadges";
 import { useShellIdentity } from "./useShellIdentity";
@@ -322,6 +323,10 @@ function Topbar({ onOpenCommand }: { onOpenCommand: () => void }) {
 }
 
 function StatusBar() {
+  // The active screen (e.g. the Process session) publishes its per-item action
+  // keys here, so they live in this one footer row instead of a second row inside
+  // the scrolling card. Empty on screens that publish nothing.
+  const { hint } = useStatusHint();
   return (
     <footer className="shell-statusbar" data-testid="status-bar">
       <span className="shell-statusbar__hint">
@@ -337,6 +342,11 @@ function StatusBar() {
         Shortcuts
       </span>
       <span className="shell-statusbar__spacer" />
+      {hint ? (
+        <span className="shell-statusbar__keys" data-testid="status-session-hint">
+          {hint}
+        </span>
+      ) : null}
     </footer>
   );
 }
@@ -732,7 +742,9 @@ function ShellInner() {
 export function Shell() {
   return (
     <SelectionProvider>
-      <ShellInner />
+      <StatusHintProvider>
+        <ShellInner />
+      </StatusHintProvider>
     </SelectionProvider>
   );
 }

@@ -42,7 +42,7 @@ import {
   toPlainText,
 } from "@interleave/editor";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon, type IconName } from "../../components/Icon";
 import { requestInspectorRefresh } from "../../components/inspector/Inspector";
 import {
@@ -109,6 +109,7 @@ import { useTextSelection } from "../../reader/useTextSelection";
 import { useActiveScope } from "../../shell/activeScope";
 import { Kbd } from "../../shell/Kbd";
 import { useSelection } from "../../shell/selection";
+import { useStatusHint } from "../../shell/statusHint";
 import { resumeLabel } from "./doneIntentBreakdown";
 import { jitterOrder } from "./jitter";
 import { openQueueItem } from "./openQueueItem";
@@ -2357,6 +2358,42 @@ function ProcessCard({
   // recall readout (falls back to the trimmed queue signals while the card view loads).
   const cardSig: SchedulerSignals = cardView ? cardChipSignals(cardView) : chipSignals(item);
 
+  // Publish this item's action keys into the shell status bar (statusHint.tsx)
+  // instead of a second footer row inside the scrolling card — reclaiming a line
+  // of reading space. Cleared on unmount so the hint never outlives the session.
+  const { setHint } = useStatusHint();
+  const sessionHint = useMemo<ReactNode>(
+    () =>
+      isCard ? (
+        <>
+          <kbd>␣</kbd> reveal · <kbd>1</kbd>–<kbd>4</kbd> grade · <kbd>d</kbd> done · <kbd>x</kbd>{" "}
+          dismiss · <kbd>o</kbd> open · <kbd>n</kbd> next
+          {canUndo ? (
+            <>
+              {" "}
+              · <kbd>⌘Z</kbd> undo
+            </>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <kbd>d</kbd> done · <kbd>p</kbd> postpone · <kbd>x</kbd> dismiss · <kbd>+</kbd>/
+          <kbd>-</kbd> priority · <kbd>o</kbd> open · <kbd>n</kbd> next
+          {canUndo ? (
+            <>
+              {" "}
+              · <kbd>⌘Z</kbd> undo
+            </>
+          ) : null}
+        </>
+      ),
+    [isCard, canUndo],
+  );
+  useEffect(() => {
+    setHint(sessionHint);
+    return () => setHint(null);
+  }, [sessionHint, setHint]);
+
   return (
     <div
       className={`pq-card fade-up${isWorkbench ? " pq-card--workbench" : ""}${isSource ? " pq-card--source" : ""}${isExtract ? " pq-card--extract" : ""}${isCard ? " pq-card--review" : ""}${extractBuilder ? " pq-card--builder" : ""}`}
@@ -2709,32 +2746,6 @@ function ProcessCard({
           </button>
         )}
       </div>
-
-      <p className="pq-keys">
-        {isCard ? (
-          <>
-            <kbd>␣</kbd> reveal · <kbd>1</kbd>–<kbd>4</kbd> grade · <kbd>d</kbd> done · <kbd>x</kbd>{" "}
-            dismiss · <kbd>o</kbd> open · <kbd>n</kbd> next
-            {canUndo ? (
-              <>
-                {" "}
-                · <kbd>⌘Z</kbd> undo
-              </>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <kbd>d</kbd> done · <kbd>p</kbd> postpone · <kbd>x</kbd> dismiss · <kbd>+</kbd>/
-            <kbd>-</kbd> priority · <kbd>o</kbd> open · <kbd>n</kbd> next
-            {canUndo ? (
-              <>
-                {" "}
-                · <kbd>⌘Z</kbd> undo
-              </>
-            ) : null}
-          </>
-        )}
-      </p>
     </div>
   );
 }

@@ -202,6 +202,7 @@ const h = vi.hoisted(() => {
     search: {} as { asOf?: string; mode?: string; assembled?: string | number | boolean },
     navigateSpy: vi.fn(),
     selectSpy: vi.fn(),
+    setHintSpy: vi.fn(),
     listQueue: vi.fn().mockResolvedValue(result),
     getDailyWorkSummary: vi.fn().mockResolvedValue(dailyWork),
     actOnQueueItem: vi.fn().mockResolvedValue({ item: null, removed: true, undo: null }),
@@ -510,6 +511,10 @@ vi.mock("../../shell/selection", () => ({
   useSelection: () => ({ selectedId: null, select: h.selectSpy }),
 }));
 
+vi.mock("../../shell/statusHint", () => ({
+  useStatusHint: () => ({ hint: null, setHint: h.setHintSpy }),
+}));
+
 // The seeded daily jitter (T029) is a presentation collaborator that reorders the
 // queue by the calendar day — its shuffle is covered by `jitter.test.ts`. Stub it to
 // the identity here so this test exercises ONLY the loop's cursor wiring against the
@@ -557,6 +562,7 @@ beforeEach(() => {
     extractedBlockIds: [],
   });
   h.getInspectorData.mockResolvedValue({ data: null });
+  h.setHintSpy.mockClear();
   h.search = {};
   h.staleEditorJson = false;
   h.selectionLocation.current = null;
@@ -1331,6 +1337,23 @@ describe("ProcessQueue", () => {
     expect(screen.queryByTestId("process-card-answer")).toBeNull();
   });
 
+  it("publishes the item's action keys to the status bar instead of an in-card row", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    expect(currentItemId()).toBe("card-1");
+
+    // The standalone keys row inside the scrolling card is gone — the space it took
+    // is reclaimed for the body, and the keys live in the shell status bar instead.
+    expect(document.querySelector(".pq-keys")).toBeNull();
+    expect(h.setHintSpy).toHaveBeenCalled();
+
+    // The published node carries the CARD variant for the first (card) item.
+    const node = h.setHintSpy.mock.calls.at(-1)?.[0];
+    const { container } = render(<div>{node}</div>);
+    expect(container.textContent).toContain("reveal");
+    expect(container.textContent).toContain("grade");
+  });
+
   it("frames the card as a three-zone .pq-rc surface and drops the duplicated FSRS box + redundant open link", async () => {
     render(<ProcessQueue />);
     await screen.findByTestId("process-item");
@@ -1960,7 +1983,6 @@ describe("ProcessQueue", () => {
     expect(cssRule(css, ".pq-extract__meta")).toContain("flex: 0 0 auto");
     expect(cssRule(css, ".pq-extract__tools")).toContain("flex: 0 0 auto");
     expect(cssRule(css, ".pq-card--extract .pq-actions")).toContain("flex: none");
-    expect(cssRule(css, ".pq-card--extract .pq-keys")).toContain("flex: none");
   });
 
   it("does not repeat the source quote when it duplicates the inline extract body", async () => {
