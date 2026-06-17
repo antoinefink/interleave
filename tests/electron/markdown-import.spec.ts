@@ -124,6 +124,44 @@ test("importing a .md lands an inbox source; the reader shows its body", async (
   await app.close();
 });
 
+test("clicking an in-content link in the reader opens it externally", async () => {
+  const app = await launch();
+  const page = await app.firstWindow();
+  await page.waitForLoadState("domcontentloaded");
+  await captureBaseUrl(page);
+
+  // Reuse the source imported by the first serial test; open it in the reader,
+  // which renders SourceEditor with openLinksOnClick.
+  const id = await firstInboxId(page);
+  await page.goto(`${baseUrl}/source/${id}`);
+  await page.waitForLoadState("domcontentloaded");
+  await expect(page.locator(".reader .ProseMirror")).toBeVisible();
+
+  // Record what the main process is asked to open externally. The renderer's
+  // window.open is denied + routed to shell.openExternal by setWindowOpenHandler,
+  // so stubbing it in main captures the full click -> IPC -> open chain.
+  await app.evaluate(({ shell }) => {
+    const rec: string[] = [];
+    (globalThis as unknown as { __opened: string[] }).__opened = rec;
+    shell.openExternal = ((url: string) => {
+      rec.push(url);
+      return Promise.resolve();
+    }) as typeof shell.openExternal;
+  });
+
+  const link = page.locator('.reader .ProseMirror a[href="https://example.com/ebbinghaus"]');
+  await expect(link).toBeVisible();
+  await link.click();
+
+  await expect
+    .poll(() => app.evaluate(() => (globalThis as unknown as { __opened: string[] }).__opened))
+    .toContain("https://example.com/ebbinghaus");
+  // The in-app route did not change — the click navigated externally, not in-app.
+  expect(new URL(page.url()).pathname).toBe(`/source/${id}`);
+
+  await app.close();
+});
+
 test("extracting from the imported source + exporting it to Markdown both work", async () => {
   const app = await launch();
   const page = await app.firstWindow();

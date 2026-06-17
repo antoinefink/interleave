@@ -174,10 +174,15 @@
 .reader a {
   color: var(--accent-text);
   text-decoration: none;
-  cursor: pointer;
 }
 .reader a:hover {
   text-decoration: underline;
+}
+/* Only reading surfaces that actually open links on click (the source reader +
+   process source workbench, via SourceEditor's openLinksOnClick) show the
+   clickable affordance — editable editors keep the text caret over anchors. */
+.reader--linkable a {
+  cursor: pointer;
 }
 .reader img {
   display: block;

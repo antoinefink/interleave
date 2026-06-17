@@ -452,15 +452,25 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* Match the left-hand status-bar hint keycaps (.shell-kbd, 15px variant) so both
+   sides of the bar render one consistent keycap style. */
 .shell-statusbar__keys kbd {
-  margin: 0 var(--s-1);
-  padding: 1px 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  margin: 0 1px;
+  padding: 0 4px;
   border-radius: var(--r-xs);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
   background: var(--surface-2);
   color: var(--text-2);
   font-family: var(--font-mono);
   font-size: var(--t-2xs);
+  font-weight: 500;
+  line-height: 1;
 }
 .shell-statusbar__keys kbd:first-child {
   margin-left: 0;

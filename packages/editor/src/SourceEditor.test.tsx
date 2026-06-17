@@ -193,22 +193,47 @@ describe("SourceEditor", () => {
     expect(readerExtensions.at(-1)).toEqual({ name: "readerDecorations" });
   });
 
-  it("opens in-content links externally on click in reader mode", () => {
+  // A ProseMirror view with a (by default collapsed) selection, and a plain
+  // left-click event — the shape SourceEditor's handleClick inspects.
+  const view = (selectionEmpty = true) => ({ state: { selection: { empty: selectionEmpty } } });
+  const anchorEl = (href: string) => {
+    const a = document.createElement("a");
+    a.setAttribute("href", href);
+    return a;
+  };
+  type ClickOverrides = Partial<{
+    button: number;
+    metaKey: boolean;
+    ctrlKey: boolean;
+    shiftKey: boolean;
+    altKey: boolean;
+  }>;
+  const clickEvent = (target: Element, over: ClickOverrides = {}) => ({
+    target,
+    button: 0,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    preventDefault: vi.fn(),
+    stopPropagation: vi.fn(),
+    ...over,
+  });
+
+  it("opens external links on a plain left-click on a source-reading surface", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
 
-    // Reader surface: a left-click on an http(s) anchor opens it in a new tab
-    // (the desktop window-open handler routes it to the system browser).
-    renderSourceEditor(<SourceEditor readerDecorations />);
+    renderSourceEditor(<SourceEditor readerDecorations openLinksOnClick />);
     const handleClick = h.lastUseEditorOptions?.editorProps?.handleClick;
     expect(handleClick).toBeTypeOf("function");
 
-    const anchor = document.createElement("a");
-    anchor.setAttribute("href", "https://example.com/take-a-leap");
-    const preventDefault = vi.fn();
-    const handled = handleClick?.({}, 0, { target: anchor, preventDefault });
+    const event = clickEvent(anchorEl("https://example.com/take-a-leap"));
+    const handled = handleClick?.(view(), 0, event);
 
     expect(handled).toBe(true);
-    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(event.preventDefault).toHaveBeenCalledTimes(1);
+    // Consume the click so the host's mark listeners don't also fire on it.
+    expect(event.stopPropagation).toHaveBeenCalledTimes(1);
     expect(open).toHaveBeenCalledWith(
       "https://example.com/take-a-leap",
       "_blank",
@@ -218,34 +243,50 @@ describe("SourceEditor", () => {
     open.mockClear();
   });
 
-  it("does not navigate from a plain (non-reader) editing surface", () => {
+  it("keeps caret-on-link on editable surfaces (reader decorations alone never open links)", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
 
+    // The editable extract-distillation editors enable readerDecorations but NOT
+    // openLinksOnClick — clicking a linked word must place the caret, not navigate.
+    renderSourceEditor(<SourceEditor readerDecorations />);
+    let handleClick = h.lastUseEditorOptions?.editorProps?.handleClick;
+    expect(handleClick?.(view(), 0, clickEvent(anchorEl("https://example.com")))).toBe(false);
+
+    // A plain editor likewise never navigates.
     renderSourceEditor(<SourceEditor />);
-    const handleClick = h.lastUseEditorOptions?.editorProps?.handleClick;
+    handleClick = h.lastUseEditorOptions?.editorProps?.handleClick;
+    expect(handleClick?.(view(), 0, clickEvent(anchorEl("https://example.com")))).toBe(false);
 
-    // Clicking a link while editing must NOT navigate — only place the caret.
-    const anchor = document.createElement("a");
-    anchor.setAttribute("href", "https://example.com");
-    expect(handleClick?.({}, 0, { target: anchor, preventDefault: vi.fn() })).toBe(false);
     expect(open).not.toHaveBeenCalled();
-
     open.mockClear();
   });
 
-  it("ignores reader clicks that are not on an external http(s) link", () => {
+  it("lets modified / non-primary clicks and selection drags fall through on a reading surface", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
-    renderSourceEditor(<SourceEditor readerDecorations />);
+    renderSourceEditor(<SourceEditor readerDecorations openLinksOnClick />);
+    const handleClick = h.lastUseEditorOptions?.editorProps?.handleClick;
+    const anchor = anchorEl("https://example.com");
+
+    expect(handleClick?.(view(), 0, clickEvent(anchor, { metaKey: true }))).toBe(false);
+    expect(handleClick?.(view(), 0, clickEvent(anchor, { ctrlKey: true }))).toBe(false);
+    expect(handleClick?.(view(), 0, clickEvent(anchor, { shiftKey: true }))).toBe(false);
+    expect(handleClick?.(view(), 0, clickEvent(anchor, { button: 1 }))).toBe(false);
+    // A click that ends a text-selection drag (non-empty selection) must not navigate.
+    expect(handleClick?.(view(false), 0, clickEvent(anchor))).toBe(false);
+
+    expect(open).not.toHaveBeenCalled();
+    open.mockClear();
+  });
+
+  it("ignores non-http(s) link targets on a reading surface", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    renderSourceEditor(<SourceEditor readerDecorations openLinksOnClick />);
     const handleClick = h.lastUseEditorOptions?.editorProps?.handleClick;
 
     // A click on plain text (no anchor ancestor) is left to the editor.
-    const span = document.createElement("span");
-    expect(handleClick?.({}, 0, { target: span, preventDefault: vi.fn() })).toBe(false);
-
+    expect(handleClick?.(view(), 0, clickEvent(document.createElement("span")))).toBe(false);
     // A non-http scheme (e.g. javascript:) is never opened.
-    const unsafe = document.createElement("a");
-    unsafe.setAttribute("href", "javascript:alert(1)");
-    expect(handleClick?.({}, 0, { target: unsafe, preventDefault: vi.fn() })).toBe(false);
+    expect(handleClick?.(view(), 0, clickEvent(anchorEl("javascript:alert(1)")))).toBe(false);
 
     expect(open).not.toHaveBeenCalled();
   });

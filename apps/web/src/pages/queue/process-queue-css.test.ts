@@ -68,6 +68,10 @@ describe("process queue styles", () => {
 
     expect(pbar).toContain("width: 100%;");
     expect(pbar).not.toContain("max-width: 320px;");
+    // Now the rail is full-width, the pbar carries the reading measure + centering
+    // itself so it stays aligned with the text column.
+    expect(pbar).toContain("max-width: var(--reader-text-measure);");
+    expect(pbar).toContain("margin: 0 auto var(--s-5);");
   });
 
   it("uses tokenized source header spacing and a solid reader-style read-point button", () => {

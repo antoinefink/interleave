@@ -1354,6 +1354,39 @@ describe("ProcessQueue", () => {
     expect(container.textContent).toContain("grade");
   });
 
+  it("publishes the attention-item (non-card) action keys for a source item", async () => {
+    render(<ProcessQueue />);
+    await moveToSource();
+    expect(currentItemId()).toBe("source-1");
+
+    const node = h.setHintSpy.mock.calls.at(-1)?.[0];
+    const { container } = render(<div>{node}</div>);
+    // Non-card variant: postpone / dismiss / priority — not the card reveal/grade keys.
+    expect(container.textContent).toContain("postpone");
+    expect(container.textContent).toContain("dismiss");
+    expect(container.textContent).toContain("priority");
+    expect(container.textContent).not.toContain("reveal");
+    // No undo key until an undoable action has happened.
+    expect(container.textContent).not.toContain("undo");
+  });
+
+  it("adds the undo key to the published hint after an undoable action", async () => {
+    h.actOnQueueItem.mockResolvedValueOnce({
+      item: null,
+      removed: true,
+      undo: { kind: "status", previousStatus: "scheduled" },
+    });
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    fireEvent.click(screen.getByTestId("process-action-markDone"));
+    // The cursor advances to the source item, now with a pending undo.
+    await waitFor(() => expect(currentItemId()).toBe("source-1"));
+
+    const node = h.setHintSpy.mock.calls.at(-1)?.[0];
+    const { container } = render(<div>{node}</div>);
+    expect(container.textContent).toContain("undo");
+  });
+
   it("frames the card as a three-zone .pq-rc surface and drops the duplicated FSRS box + redundant open link", async () => {
     render(<ProcessQueue />);
     await screen.findByTestId("process-item");

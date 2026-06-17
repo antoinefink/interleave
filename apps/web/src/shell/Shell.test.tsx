@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   pathname: "/queue",
+  // When true, the mocked route Outlet renders a screen that publishes a status
+  // hint, so a test can verify the shell StatusBar consumes + renders it.
+  publishStatusHint: false,
   navigate: vi.fn(),
   router: { history: { back: vi.fn(), forward: vi.fn() } },
   applyTheme: vi.fn(),
@@ -44,7 +47,8 @@ vi.mock("@tanstack/react-router", () => ({
       {children}
     </a>
   ),
-  Outlet: () => <div data-testid="route-outlet" />,
+  Outlet: () =>
+    h.publishStatusHint ? <StatusHintPublisher /> : <div data-testid="route-outlet" />,
   useLinkProps: ({ to }: { to: string }) => ({ href: to }),
   useNavigate: () => h.navigate,
   useRouter: () => h.router,
@@ -153,11 +157,28 @@ vi.mock("./useShellShortcuts", () => ({
   useShellShortcuts: (handlers: unknown) => h.useShellShortcuts(handlers),
 }));
 
+import { useEffect } from "react";
 import { OPEN_HELP_EVENT } from "./nav";
 import { Shell } from "./Shell";
+import { useStatusHint } from "./statusHint";
+
+/** A route screen (rendered via the mocked Outlet) that publishes a status hint. */
+function StatusHintPublisher() {
+  const { setHint } = useStatusHint();
+  useEffect(() => {
+    setHint(
+      <>
+        <kbd>d</kbd> done
+      </>,
+    );
+    return () => setHint(null);
+  }, [setHint]);
+  return <div data-testid="route-outlet" />;
+}
 
 beforeEach(() => {
   h.pathname = "/queue";
+  h.publishStatusHint = false;
   h.navigate.mockReset();
   h.router.history.back.mockReset();
   h.router.history.forward.mockReset();
@@ -209,6 +230,39 @@ describe("Shell", () => {
 
     expect(screen.getByTestId("route-outlet")).toBeInTheDocument();
     expect(screen.queryByTestId("command-bar")).not.toBeInTheDocument();
+  });
+
+  it("keeps shell shortcuts live when the Process topbar is hidden", () => {
+    h.pathname = "/process";
+
+    render(<Shell />);
+
+    const handlers = h.useShellShortcuts.mock.calls[0]?.[0] as
+      | { onSearch: () => void; toggleCommandPalette: () => void }
+      | undefined;
+    expect(handlers).toBeTruthy();
+    expect(screen.getByTestId("command-palette")).toHaveAttribute("data-open", "false");
+    act(() => {
+      handlers?.toggleCommandPalette();
+    });
+    expect(screen.getByTestId("command-palette")).toHaveAttribute("data-open", "true");
+  });
+
+  it("renders a screen-published session hint on the right of the status bar", () => {
+    h.pathname = "/process";
+    h.publishStatusHint = true;
+
+    render(<Shell />);
+
+    const sessionHint = screen.getByTestId("status-session-hint");
+    expect(screen.getByTestId("status-bar")).toContainElement(sessionHint);
+    expect(sessionHint).toHaveTextContent("d done");
+  });
+
+  it("shows no session hint when the active screen publishes none", () => {
+    render(<Shell />);
+
+    expect(screen.queryByTestId("status-session-hint")).not.toBeInTheDocument();
   });
 
   it("keeps shell shortcuts live when the Queue topbar is hidden", () => {

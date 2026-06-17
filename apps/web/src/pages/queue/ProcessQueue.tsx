@@ -2025,6 +2025,7 @@ function ProcessSourceWorkbench({
               initialDoc={doc.initialDoc}
               editable
               readerDecorations
+              openLinksOnClick
               debounceMs={180}
               onChange={doc.save}
               onEditorReady={onEditorReady}

@@ -79,6 +79,15 @@ export interface SourceEditorProps {
    * to `false` (the plain editor); the source reader sets it `true`.
    */
   readonly readerDecorations?: boolean;
+  /**
+   * Open in-content links (external `http(s)` anchors) on a plain left-click,
+   * instead of placing the editing caret. Set ONLY on source-*reading* surfaces
+   * (the standalone reader + the process source workbench). It is deliberately
+   * separate from {@link readerDecorations}: the editable extract-distillation
+   * editors also enable reader decorations but must keep caret-on-click so a
+   * linked word can be selected/edited. Defaults to `false`.
+   */
+  readonly openLinksOnClick?: boolean;
 }
 
 /**
@@ -93,6 +102,7 @@ export function SourceEditor({
   className,
   onEditorReady,
   readerDecorations = false,
+  openLinksOnClick = false,
 }: SourceEditorProps): React.ReactElement {
   // Keep the latest onChange without re-creating the editor when it changes.
   const onChangeRef = useRef(onChange);
@@ -125,21 +135,37 @@ export function SourceEditor({
     content: ((initialDoc as Content | null | undefined) ?? emptyDoc()) as Content,
     editable,
     editorProps: {
-      // In reader mode, a left-click on an in-content link opens it externally. The
-      // surface stays editable, but the schema keeps `openOnClick: false` so plain
-      // editing never navigates — this is the controlled reader-only opt-in (other
-      // editor surfaces fall through to the default click handling). Opening via
-      // `window.open(_blank)` lets the desktop window-open handler route http(s) to
-      // the system browser; other schemes are ignored.
-      handleClick: (_view, _pos, event) => {
-        if (!readerDecorations) return false;
+      // On source-reading surfaces, a plain left-click on an in-content link opens
+      // it externally instead of placing the editing caret. The schema keeps
+      // `openOnClick: false`, so this is the only path that navigates and it is
+      // gated on the explicit `openLinksOnClick` opt-in — NOT `readerDecorations`,
+      // which is also set on the editable extract-distillation editors where a
+      // linked word must stay selectable. Opening via `window.open(_blank)` lets
+      // the desktop window-open handler route http(s) to the system browser.
+      handleClick: (view, _pos, event) => {
+        if (!openLinksOnClick) return false;
+        // Let modified / non-primary clicks and selection drags fall through to the
+        // editor's native handling (new-tab via the OS, range selection, etc.).
+        if (
+          event.button !== 0 ||
+          event.metaKey ||
+          event.ctrlKey ||
+          event.shiftKey ||
+          event.altKey ||
+          !view.state.selection.empty
+        ) {
+          return false;
+        }
         const anchor = (event.target as HTMLElement | null)?.closest?.(
           "a[href]",
         ) as HTMLAnchorElement | null;
         if (!anchor) return false;
         const href = anchor.getAttribute("href") ?? "";
         if (!/^https?:\/\//i.test(href)) return false;
+        // Consume the click so the host's document-level mark listeners (highlight /
+        // processed-span restore in the reader) don't also fire on the same click.
         event.preventDefault();
+        event.stopPropagation();
         window.open(href, "_blank", "noopener,noreferrer");
         return true;
       },
@@ -202,6 +228,11 @@ export function SourceEditor({
     };
   }, []);
 
-  const surfaceClass = className ? `reader ${className}` : "reader";
+  // `reader--linkable` scopes the clickable-link affordance (cursor: pointer) to
+  // the reading surfaces that actually open links, so editable editors that also
+  // render `.reader` don't show a misleading pointer over non-navigating anchors.
+  const surfaceClass = ["reader", openLinksOnClick ? "reader--linkable" : null, className]
+    .filter(Boolean)
+    .join(" ");
   return <EditorContent editor={editor} className={surfaceClass} />;
 }

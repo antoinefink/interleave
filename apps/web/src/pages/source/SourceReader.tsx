@@ -1238,6 +1238,7 @@ export function SourceReader() {
                   initialDoc={doc.initialDoc}
                   editable
                   readerDecorations
+                  openLinksOnClick
                   onChange={doc.save}
                   onEditorReady={onEditorReady}
                 />
