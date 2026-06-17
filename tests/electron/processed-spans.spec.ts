@@ -147,7 +147,18 @@ test("marking processed dims a paragraph, persists, survives restart, and is rev
     (await blockProcessingState(page, sourceId, BLOCK_ID)).state,
   );
 
-  // Click the paragraph's "mark processed (dim)" button.
+  // The action icons are revealed per-paragraph: hovering the intro paragraph activates
+  // only its own group, and exactly one group is hovered at a time.
+  await page.locator(`.reader .ProseMirror p[data-block-id="${BLOCK_ID}"]`).hover();
+  const introGroup = page
+    .locator(".readpara__actions")
+    .filter({ has: page.getByTestId(`processed-toggle-${BLOCK_ID}`) });
+  await expect(introGroup).toHaveAttribute("data-hovered", "true");
+  await expect(page.locator('.readpara__actions[data-hovered="true"]')).toHaveCount(1);
+
+  // Click the paragraph's "mark processed (dim)" button (hover first — the button is
+  // pointer-events:none until its paragraph's group is hovered).
+  await page.locator(`.reader .ProseMirror p[data-block-id="${BLOCK_ID}"]`).hover();
   await page.getByTestId(`processed-toggle-${BLOCK_ID}`).click();
   await expect(page.getByText("Marked processed")).toBeVisible();
   await expect
@@ -182,7 +193,10 @@ test("marking processed dims a paragraph, persists, survives restart, and is rev
   expect(await blockText(page, sourceId, BLOCK_ID)).toBe(textBefore);
 
   // (d) RESTORE: clicking the restore button removes the dimming; after a reload the
-  // block is explicitly unread — fully reversible.
+  // block is explicitly unread — fully reversible. Hover first so the group activates
+  // (the restore button stays clickable via the persistent-restore exception, but
+  // hovering brightens it and keeps the round-trip identical to a real user).
+  await page.locator(`.reader .ProseMirror p[data-block-id="${BLOCK_ID}"]`).hover();
   await page.getByTestId(`processed-toggle-${BLOCK_ID}`).click();
   await expect(page.getByText("Restored")).toBeVisible();
   await expect

@@ -579,8 +579,9 @@ mark.extracted {
   display: grid;
   place-items: center;
   cursor: pointer;
-  /* Buttons are individually clickable even though the overlay is pass-through. */
-  pointer-events: auto;
+  /* Hidden icons are inert: an invisible margin button must not intercept clicks.
+     Visibility is granted per-paragraph via `[data-hovered="true"]` below. */
+  pointer-events: none;
   opacity: 0;
   transition:
     opacity var(--fast) var(--ease),
@@ -588,10 +589,14 @@ mark.extracted {
     color var(--fast) var(--ease),
     border-color var(--fast) var(--ease);
 }
-/* Reveal on hover over the rail, and keep a processed paragraph's restore button
-   visible so the user can always undo (matches the kit's persistent restore icon). */
-.reader-rail:hover .readpara__mark {
+/* Reveal only the paragraph the cursor is vertically on: the React overlay marks that
+   one group `data-hovered="true"` (it cannot be a CSS `:hover` because the icons live
+   in a sibling overlay subtree, not the editor's paragraph). A processed paragraph's
+   restore button stays faintly visible regardless of hover so the user can always undo
+   (matches the kit's persistent restore icon). */
+.readpara__actions[data-hovered="true"] .readpara__mark {
   opacity: 1;
+  pointer-events: auto;
 }
 .readpara__mark:hover {
   color: var(--accent-text);
@@ -606,6 +611,8 @@ mark.extracted {
   background: var(--surface-2);
   color: var(--text-3);
   border-color: var(--border);
+  /* Persistent restore stays clickable even when its group is not hovered. */
+  pointer-events: auto;
 }
 .readpara__mark[data-processed="true"]:hover {
   opacity: 1;
@@ -617,9 +624,6 @@ mark.extracted {
   width: 22px;
   height: 22px;
   background: color-mix(in oklch, var(--surface) 92%, var(--canvas));
-}
-.readpara__actions:hover .readpara__mark {
-  opacity: 1;
 }
 .reader-railhead {
   display: flex;

@@ -62,6 +62,20 @@ describe("source reader CSS", () => {
     expect(button).not.toMatch(/\bbox-shadow\s*:/);
   });
 
+  it("scopes the icon reveal to the hovered paragraph instead of the whole rail", () => {
+    // The global rail-hover reveal is replaced by a per-group `data-hovered` reveal.
+    expect(readerCss).not.toContain(".reader-rail:hover .readpara__mark");
+
+    const reveal = cssBlock('.readpara__actions[data-hovered="true"] .readpara__mark');
+    expect(reveal).toContain("opacity: 1;");
+    expect(reveal).toContain("pointer-events: auto;");
+
+    // Hidden icons are inert by default so an invisible margin button cannot intercept clicks.
+    const button = cssBlock(".readpara__mark");
+    expect(button).toContain("opacity: 0;");
+    expect(button).toContain("pointer-events: none;");
+  });
+
   it("keeps persistent processed toggles neutral instead of accent blue", () => {
     const processedButton = cssBlock('.readpara__mark[data-processed="true"]');
     const processedHover = cssBlock('.readpara__mark[data-processed="true"]:hover');
@@ -70,6 +84,8 @@ describe("source reader CSS", () => {
     expect(processedButton).toContain("background: var(--surface-2);");
     expect(processedButton).toContain("color: var(--text-3);");
     expect(processedButton).toContain("border-color: var(--border);");
+    // Persistent restore stays clickable even when its group is not hovered.
+    expect(processedButton).toContain("pointer-events: auto;");
     expect(processedButton).not.toContain("var(--accent-soft)");
     expect(processedButton).not.toContain("var(--accent-text)");
     expect(processedHover).toContain("background: var(--surface);");

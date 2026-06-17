@@ -1,5 +1,5 @@
 import { BLOCK_ID_DOM_ATTR, type Editor } from "@interleave/editor";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProcessedSpanButtons } from "./ProcessedSpanButtons";
 import type { UseProcessedSpansResult } from "./useProcessedSpans";
@@ -235,5 +235,92 @@ describe("ProcessedSpanButtons", () => {
 
     expect(getByTestId("processed-overlay")).toBeInTheDocument();
     expect(queryByTestId("processed-toggle-blk-a")).not.toBeInTheDocument();
+  });
+});
+
+describe("ProcessedSpanButtons hover scoping", () => {
+  function group(getByTestId: (id: string) => HTMLElement, blockId: string): HTMLElement {
+    const el = getByTestId(`processed-toggle-${blockId}`).closest(".readpara__actions");
+    if (!el) throw new Error(`Missing actions group for ${blockId}`);
+    return el as HTMLElement;
+  }
+
+  // jsdom has no `PointerEvent`, and `fireEvent.pointerMove` drops `clientY`. The
+  // component listens for the bare `"pointermove"`/`"pointerleave"` event types, so a
+  // `MouseEvent` of that type (which carries `clientY`) still triggers the handler.
+  // The dispatch is wrapped in `act` so the resulting state update flushes before the
+  // assertion (the same wrapping `fireEvent` would do for a supported event).
+  function pointerMove(rail: HTMLElement, clientY: number, clientX = 0): void {
+    act(() => {
+      rail.dispatchEvent(new MouseEvent("pointermove", { clientX, clientY, bubbles: true }));
+    });
+  }
+  function pointerLeave(rail: HTMLElement): void {
+    act(() => {
+      rail.dispatchEvent(new MouseEvent("pointerleave", { bubbles: true }));
+    });
+  }
+
+  // Rail top is 100; paragraph A (blk-a) rect top 140 → rail-relative band [40, 60];
+  // paragraph B (blk-b) rect top 190 → rail-relative band [90, 110]. Bands are padded
+  // by HOVER_BAND_TOLERANCE_PX (24): A ≈ [16, 84], B ≈ [66, 134].
+
+  it("shows only the hovered paragraph's actions", async () => {
+    const { rail, editor } = buildEditorDom();
+    const { getByTestId } = render(
+      <ProcessedSpanButtons editor={editor} editorReady processed={processed()} revision={0} />,
+    );
+    await waitFor(() => expect(getByTestId("processed-toggle-blk-a")).toBeInTheDocument());
+
+    // clientY 145 → 145 - 100 = 45, inside A's padded band.
+    pointerMove(rail, 145);
+
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "true");
+    expect(group(getByTestId, "blk-b")).toHaveAttribute("data-hovered", "false");
+  });
+
+  it("swaps the active group when moving to another paragraph", async () => {
+    const { rail, editor } = buildEditorDom();
+    const { getByTestId } = render(
+      <ProcessedSpanButtons editor={editor} editorReady processed={processed()} revision={0} />,
+    );
+    await waitFor(() => expect(getByTestId("processed-toggle-blk-a")).toBeInTheDocument());
+
+    pointerMove(rail, 145);
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "true");
+
+    // clientY 200 → 200 - 100 = 100, inside B's padded band [66, 134].
+    pointerMove(rail, 200);
+    expect(group(getByTestId, "blk-b")).toHaveAttribute("data-hovered", "true");
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "false");
+  });
+
+  it("clears actions on pointer leave", async () => {
+    const { rail, editor } = buildEditorDom();
+    const { getByTestId } = render(
+      <ProcessedSpanButtons editor={editor} editorReady processed={processed()} revision={0} />,
+    );
+    await waitFor(() => expect(getByTestId("processed-toggle-blk-a")).toBeInTheDocument());
+
+    pointerMove(rail, 145);
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "true");
+
+    pointerLeave(rail);
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "false");
+    expect(group(getByTestId, "blk-b")).toHaveAttribute("data-hovered", "false");
+  });
+
+  it("keeps the paragraph active for the icon column (Y-only band, R3)", async () => {
+    const { rail, editor } = buildEditorDom();
+    const { getByTestId } = render(
+      <ProcessedSpanButtons editor={editor} editorReady processed={processed()} revision={0} />,
+    );
+    await waitFor(() => expect(getByTestId("processed-toggle-blk-a")).toBeInTheDocument());
+
+    // The icon column sits ~88px out in the right margin; a far-right X with A's Y
+    // still resolves to A because the band ignores X — proving the reach-for-control
+    // path does not vanish the icons.
+    pointerMove(rail, 145, 800);
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "true");
   });
 });

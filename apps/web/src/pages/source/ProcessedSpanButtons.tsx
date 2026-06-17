@@ -23,17 +23,26 @@
 
 import type { Editor } from "@interleave/editor";
 import { BLOCK_ID_DOM_ATTR } from "@interleave/editor";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../../components/Icon";
 import type { UseProcessedSpansResult } from "./useProcessedSpans";
 
 export type ProcessingFilter = "all" | "hide_processed" | "unresolved" | "extracted";
 
-/** A measured anchor for one body paragraph: its stable id + top offset in the rail. */
+/**
+ * Padding (px) added to each paragraph's vertical band so adjacent bands meet and
+ * crossing the inter-paragraph margin maps to the nearer paragraph rather than
+ * flickering to null mid-gap.
+ */
+const HOVER_BAND_TOLERANCE_PX = 24;
+
+/** A measured anchor for one body paragraph: its stable id + top/bottom offsets in the rail. */
 interface BlockAnchor {
   readonly blockId: string;
   /** Top offset of the block relative to the positioning rail (`.reader-rail`). */
   readonly top: number;
+  /** Bottom offset of the block relative to the positioning rail (`.reader-rail`). */
+  readonly bottom: number;
 }
 
 export interface ProcessedSpanButtonsProps {
@@ -76,10 +85,26 @@ function measureAnchors(rail: HTMLElement): BlockAnchor[] {
     if (!isParagraph(block)) continue;
     const blockId = block.getAttribute(BLOCK_ID_DOM_ATTR);
     if (!blockId) continue;
-    const top = block.getBoundingClientRect().top - railTop;
-    anchors.push({ blockId, top });
+    const rect = block.getBoundingClientRect();
+    anchors.push({ blockId, top: rect.top - railTop, bottom: rect.bottom - railTop });
   }
   return anchors;
+}
+
+/** The paragraph whose vertical band contains y (rail-relative), or null. Bands are
+ *  padded by HOVER_BAND_TOLERANCE_PX so adjacent paragraphs meet and the gap between
+ *  them maps to the nearer paragraph rather than flickering to null. */
+function blockIdForY(y: number, anchors: readonly BlockAnchor[]): string | null {
+  let best: { blockId: string; distance: number } | null = null;
+  for (const a of anchors) {
+    if (y >= a.top - HOVER_BAND_TOLERANCE_PX && y <= a.bottom + HOVER_BAND_TOLERANCE_PX) {
+      // distance to the band center, so overlapping padded bands resolve to the closer one
+      const center = (a.top + a.bottom) / 2;
+      const distance = Math.abs(y - center);
+      if (!best || distance < best.distance) best = { blockId: a.blockId, distance };
+    }
+  }
+  return best ? best.blockId : null;
 }
 
 function stateTitle(state: string | null): string {
@@ -134,24 +159,42 @@ export function ProcessedSpanButtons({
   onToggleFailed,
 }: ProcessedSpanButtonsProps) {
   const [anchors, setAnchors] = useState<readonly BlockAnchor[]>([]);
+  const [hoveredBlockId, setHoveredBlockId] = useState<string | null>(null);
+
+  // Latest anchors for the pointer listener, so it resolves the band without the
+  // effect re-subscribing on every measure (keeps the effect deps stable).
+  const anchorsRef = useRef<readonly BlockAnchor[]>([]);
+  // Mirror of `hoveredBlockId` so the high-frequency pointer handler can change-guard
+  // without going through React state on intra-paragraph movement (KTD2).
+  const activeRef = useRef<string | null>(null);
+
+  const setActive = useCallback((id: string | null) => {
+    if (activeRef.current === id) return;
+    activeRef.current = id;
+    setHoveredBlockId(id);
+  }, []);
 
   const remeasure = useCallback(() => {
     const dom = editor?.view.dom as HTMLElement | undefined;
     if (!dom) {
+      anchorsRef.current = [];
       setAnchors([]);
+      setActive(null);
       return;
     }
     const rail = dom.closest(".reader-rail") as HTMLElement | null;
     if (!rail) {
+      anchorsRef.current = [];
       setAnchors([]);
+      setActive(null);
       return;
     }
-    setAnchors(
-      measureAnchors(rail).filter((anchor) =>
-        isVisibleUnderFilter(processed.stateFor(anchor.blockId), processingFilter, hideIgnored),
-      ),
+    const next = measureAnchors(rail).filter((anchor) =>
+      isVisibleUnderFilter(processed.stateFor(anchor.blockId), processingFilter, hideIgnored),
     );
-  }, [editor, hideIgnored, processed, processingFilter]);
+    anchorsRef.current = next;
+    setAnchors(next);
+  }, [editor, hideIgnored, processed, processingFilter, setActive]);
 
   // Re-measure when the editor (re)mounts, the doc/decoration set changes, the
   // viewport resizes, OR the editor dispatches a transaction (e.g. the T016 block-id
@@ -161,7 +204,9 @@ export function ProcessedSpanButtons({
   // re-anchor.
   useEffect(() => {
     if (!editorReady || !editor) {
+      anchorsRef.current = [];
       setAnchors([]);
+      setActive(null);
       return;
     }
     remeasure();
@@ -174,12 +219,31 @@ export function ProcessedSpanButtons({
       ro.observe(dom);
     }
     window.addEventListener("resize", remeasure);
+
+    // Track the hovered paragraph by the cursor's vertical position (KTD1): map
+    // clientY (rail-relative) to the paragraph whose band contains it. Because the
+    // icon group shares its paragraph's Y band, reaching horizontally into the margin
+    // keeps the same paragraph active without any close-grace timer (R3).
+    const rail = dom.closest(".reader-rail") as HTMLElement | null;
+    const onPointerMove = (e: PointerEvent) => {
+      const railTop = rail?.getBoundingClientRect().top ?? 0;
+      setActive(blockIdForY(e.clientY - railTop, anchorsRef.current));
+    };
+    const onPointerLeave = () => setActive(null);
+    if (rail) {
+      rail.addEventListener("pointermove", onPointerMove);
+      rail.addEventListener("pointerleave", onPointerLeave);
+    }
     return () => {
       editor.off("transaction", onTx);
       ro?.disconnect();
       window.removeEventListener("resize", remeasure);
+      if (rail) {
+        rail.removeEventListener("pointermove", onPointerMove);
+        rail.removeEventListener("pointerleave", onPointerLeave);
+      }
     };
-  }, [editor, editorReady, remeasure]);
+  }, [editor, editorReady, remeasure, setActive]);
 
   // The `revision` token (decoration/processed/doc change) forces a re-measure even
   // when the ResizeObserver doesn't fire (e.g. a dim that doesn't change height).
@@ -198,7 +262,12 @@ export function ProcessedSpanButtons({
           const state = processed.stateFor(a.blockId);
           const isExtracted = state === "extracted";
           return (
-            <div key={a.blockId} className="readpara__actions" style={{ top: a.top }}>
+            <div
+              key={a.blockId}
+              className="readpara__actions"
+              style={{ top: a.top }}
+              data-hovered={a.blockId === hoveredBlockId ? "true" : "false"}
+            >
               <button
                 type="button"
                 className="readpara__mark"
