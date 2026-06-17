@@ -226,9 +226,11 @@ export function DoneIntentMenu({
 
   // Focus the default (Return later) on open; close on outside-click / Escape, restoring
   // focus to the trigger on Escape (keyboard-first hygiene; non-modal so no focus trap).
+  // `preventScroll` is intentional: the popover sits below a clipped flex column, so a plain
+  // focus() would scroll the reading content up to reveal the button instead of hovering.
   useEffect(() => {
     if (!open) return;
-    laterRef.current?.focus();
+    laterRef.current?.focus({ preventScroll: true });
     const onDown = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
     };

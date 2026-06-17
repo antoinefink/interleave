@@ -128,6 +128,30 @@ describe("LineageDeleteMenu", () => {
     );
   });
 
+  // Regression: the popover hovers below an action bar near the bottom of a clipped flex
+  // column; a plain focus() on open scrolls the underlying content up to reveal the button.
+  // Focus on open must pass `{ preventScroll: true }`. Same root cause as DoneIntentMenu.
+  it("focuses the safe default without scrolling the underlying content", async () => {
+    const actions = stubActions();
+    h.countDescendants.mockResolvedValue(count({ cards: 1, total: 1 }));
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+    render(<LineageDeleteMenu target={EXTRACT} actions={actions} />);
+
+    fireEvent.click(screen.getByTestId("lineage-delete-trigger"));
+    const keep = await screen.findByTestId("lineage-delete-keep");
+    await waitFor(() => expect(document.activeElement).toBe(keep));
+
+    // Bind the assertion to the Keep descendants button specifically (see DoneIntentMenu test):
+    // SOME focus() call whose `this` is that button passed `{ preventScroll: true }`.
+    const defaultFocusedWithoutScroll = focusSpy.mock.instances.some(
+      (el, i) =>
+        el === keep &&
+        (focusSpy.mock.calls[i]?.[0] as FocusOptions | undefined)?.preventScroll === true,
+    );
+    expect(defaultFocusedWithoutScroll).toBe(true);
+    focusSpy.mockRestore();
+  });
+
   it("offers Mark processed for an extract and routes it (Covers R6)", async () => {
     const actions = stubActions();
     h.countDescendants.mockResolvedValue(count({ cards: 1, total: 1 }));

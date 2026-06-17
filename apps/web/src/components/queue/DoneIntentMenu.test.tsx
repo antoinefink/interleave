@@ -349,6 +349,32 @@ describe("DoneIntentMenu", () => {
     expect(onResolved).not.toHaveBeenCalled();
   });
 
+  // Regression: the popover hovers below an action bar at the bottom of a fixed-height
+  // `overflow: hidden` flex column. A plain focus() on open scrolls the nearest scroll
+  // container to reveal the default button — visibly shoving the reading content UP instead
+  // of letting the popover float. Focus on open must pass `{ preventScroll: true }`. jsdom
+  // has no layout/scroll, so we assert the contract on the focus call rather than the offset.
+  it("focuses the default choice without scrolling the underlying content", async () => {
+    const focusSpy = vi.spyOn(HTMLElement.prototype, "focus");
+    const getSummary = vi.fn().mockResolvedValue(UNRESOLVED);
+    render(<DoneIntentMenu getSummary={getSummary} onResolved={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("done-intent-trigger"));
+    const later = await screen.findByTestId("done-intent-later");
+    await waitFor(() => expect(document.activeElement).toBe(later));
+
+    // Bind the assertion to the default button specifically: SOME focus() call whose `this`
+    // is the Return later button passed `{ preventScroll: true }`. A bare calls.some() check
+    // would also pass if an unrelated element kept preventScroll while this call regressed.
+    const defaultFocusedWithoutScroll = focusSpy.mock.instances.some(
+      (el, i) =>
+        el === later &&
+        (focusSpy.mock.calls[i]?.[0] as FocusOptions | undefined)?.preventScroll === true,
+    );
+    expect(defaultFocusedWithoutScroll).toBe(true);
+    focusSpy.mockRestore();
+  });
+
   // Regression: same `mountedRef` defect as LineageDeleteMenu. Under React StrictMode
   // (active in apps/web/src/main.tsx) a `useRef(true)` cleared only on cleanup stays
   // `false` after the dev mount→unmount→remount cycle, so `handleTrigger` bailed at

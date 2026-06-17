@@ -162,7 +162,10 @@ export function LineageDeleteMenu({
   // Tab/arrows cycle the actions in document order.
   useEffect(() => {
     if (!open) return;
-    keepRef.current?.focus();
+    // preventScroll: the popover hovers below an action bar near the bottom of a clipped flex
+    // column; a plain focus() would scroll the reading content up to reveal the button. Same
+    // root cause fixed in DoneIntentMenu.
+    keepRef.current?.focus({ preventScroll: true });
     const onDown = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
     };
