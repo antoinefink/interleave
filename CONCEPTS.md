@@ -64,6 +64,24 @@ A browser-extension initiated import flow that turns the current page or selecte
 
 Browser capture surfaces may collect selected text, page context, and priority intent, but they remain untrusted request surfaces. The desktop app owns pairing validation, source creation, activation, and reader navigation.
 
+### Loopback capture contract
+
+The validated wire schema and token-authenticated localhost routes through which the [[Browser capture]] extension talks to the desktop app. Each capability is its own narrow route — capture, open-source, pre-save lookup — sharing one auth and threat model: paired-origin checks, a constant-time bearer token, a body-size cap, and schema validation.
+
+A new extension capability is added as a new narrow route that clones the existing threat model, never by widening an existing route or adding a generic command channel, so a new feature adds no new attack surface. The extension stays untrusted; the desktop app owns every durable decision.
+
+### Pre-save lookup
+
+A read-only question the [[Browser capture]] extension asks the desktop *before* saving — "is this page already a source?" — answered by reusing the exact same dedup query a save would run, so the up-front answer agrees with what saving would actually do.
+
+A pre-save lookup is positive-only: a "found" answer is trustworthy, but a "not found" answer is a hint rather than a guarantee, because some save-time match signals (a content-hash backstop, post-redirect canonical drift) cannot be computed before the page is fetched. It mutates nothing and is keyed by [[Canonical URL]].
+
+### Canonical URL
+
+The normalized form of a page URL used as the dedup key, so that a [[Pre-save lookup]] and a save key off the same value. Normalization strips tracking parameters and the fragment and lowercases the host; resolving a page's declared canonical link to an absolute URL is part of producing it.
+
+Two sources count as the same page when their canonical URLs match. Soft-deleted sources are excluded from that match, so trashing a source never blocks re-importing it.
+
 ### Read now
 
 The inbox action that accepts a source into active reading, gives it an attention return date, and immediately opens the local reader for that source.
