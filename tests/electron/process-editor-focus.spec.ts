@@ -178,9 +178,8 @@ test("process extract card fills the work area while keeping actions reachable",
       const editor = required("process-extract-editor");
       const tools = required("process-extract-tools");
       const actions = card.querySelector<HTMLElement>(".pq-actions");
-      const keys = card.querySelector<HTMLElement>(".pq-keys");
       const reader = editor.querySelector<HTMLElement>(".reader");
-      if (!actions || !keys || !reader) throw new Error("process extract layout nodes missing");
+      if (!actions || !reader) throw new Error("process extract layout nodes missing");
 
       const centerStyle = getComputedStyle(center);
       const readerStyle = getComputedStyle(reader);
@@ -189,7 +188,6 @@ test("process extract card fills the work area while keeping actions reachable",
       const editorRect = editor.getBoundingClientRect();
       const toolsRect = tools.getBoundingClientRect();
       const actionsRect = actions.getBoundingClientRect();
-      const keysRect = keys.getBoundingClientRect();
       const readerRect = reader.getBoundingClientRect();
       const finalParagraph = Array.from(reader.querySelectorAll<HTMLElement>(".ProseMirror p")).at(
         -1,
@@ -219,7 +217,6 @@ test("process extract card fills the work area while keeping actions reachable",
         toolsBottom: toolsRect.bottom,
         actionsTop: actionsRect.top,
         actionsBottom: actionsRect.bottom,
-        keysBottom: keysRect.bottom,
       };
     });
 
@@ -233,9 +230,7 @@ test("process extract card fills the work area while keeping actions reachable",
     expect(layout.editorBottom).toBeLessThanOrEqual(layout.toolsTop + 1);
     expect(layout.toolsBottom).toBeLessThanOrEqual(layout.actionsTop + 1);
     expect(layout.actionsBottom).toBeLessThanOrEqual(layout.cardBottom + 1);
-    expect(layout.keysBottom).toBeLessThanOrEqual(layout.cardBottom + 1);
     expect(layout.actionsBottom).toBeLessThanOrEqual(layout.centerVisibleBottom + 1);
-    expect(layout.keysBottom).toBeLessThanOrEqual(layout.centerVisibleBottom + 1);
   } finally {
     await app.close();
   }

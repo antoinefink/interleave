@@ -205,13 +205,12 @@ test("the sidebar user chip reflects the display-name setting + survives restart
   await expect(firstPage.getByTestId("user-chip-name")).toHaveText("Local vault");
   await expect(firstPage.getByTestId("shell-streak")).toHaveCount(0);
 
-  // Opening the user menu shows the honest, non-interactive vault status (the old
-  // misleading "Local vault · synced" button is gone — sync is a later feature).
+  // Opening the user menu shows the appearance/Settings/help actions. The old
+  // "Local vault · offline-first" status row was removed as redundant chrome, so
+  // the menu no longer carries it.
   await firstPage.getByTestId("user-chip").click();
-  const vaultStatus = firstPage.getByTestId("shell-vault-status");
-  await expect(vaultStatus).toHaveText(/Local vault · offline-first/);
-  // It is a non-interactive status row, not a button/menuitem — nothing to click.
-  await expect(vaultStatus).toHaveJSProperty("tagName", "DIV");
+  await expect(firstPage.getByTestId("usermenu-help")).toBeVisible();
+  await expect(firstPage.getByTestId("shell-vault-status")).toHaveCount(0);
   await firstPage.keyboard.press("Escape");
 
   // Set a name through the real /settings UI — it persists through the bridge.
