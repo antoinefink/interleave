@@ -345,31 +345,6 @@
   border: none;
   margin: 5px 0 2px;
 }
-/* Non-interactive status line in the user menu (e.g. "Local vault · offline-first").
-   Mirrors the item layout but stays calm — no hover, no pointer, muted text. */
-.shell-usermenu__status {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  height: 30px;
-  padding: 0 9px;
-  border-radius: var(--r-sm);
-  font-family: var(--font-ui);
-  font-size: var(--t-sm);
-  color: var(--text-3);
-  width: 100%;
-  text-align: left;
-  cursor: default;
-}
-.shell-usermenu__status svg {
-  width: 14px;
-  height: 14px;
-  color: var(--text-3);
-  flex: none;
-}
-.shell-usermenu__status .shell-grow {
-  flex: 1;
-}
 
 /* ---- Main column ---- */
 .shell-main {

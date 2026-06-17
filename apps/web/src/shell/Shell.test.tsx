@@ -188,9 +188,9 @@ describe("Shell", () => {
     expect(screen.getByTestId("nav-queue")).toHaveAttribute("aria-current", "page");
     expect(screen.getByTestId("nav-queue-badge")).toHaveTextContent("3");
     expect(screen.getByTestId("shell-streak")).toHaveTextContent("5-day streak");
-    expect(screen.getByTestId("status-bar").querySelector("[data-vault-root='assets']")).not.toBe(
-      null,
-    );
+    // The "Local vault · offline-first" chrome was removed from the status bar.
+    expect(screen.getByTestId("status-bar").querySelector("[data-vault-root]")).toBeNull();
+    expect(screen.getByTestId("status-bar")).not.toHaveTextContent("offline-first");
     expect(screen.queryByTestId("backup-prompt")).not.toBeInTheDocument();
     expect(screen.queryByTestId("backup-reminder")).not.toBeInTheDocument();
   });
@@ -335,7 +335,7 @@ describe("Shell", () => {
     expect(screen.getByTestId("shell-theme-option-dark")).toHaveAttribute("aria-checked", "false");
   });
 
-  it("keeps theme actions compact above help actions and vault status in the user menu", () => {
+  it("keeps theme actions compact above help actions in the user menu", () => {
     render(<Shell />);
 
     fireEvent.click(screen.getByTestId("user-chip"));
@@ -343,11 +343,12 @@ describe("Shell", () => {
     const themeSwitch = screen.getByTestId("shell-theme-segmented");
     expect(themeSwitch.nextElementSibling).toHaveTextContent("Settings");
     expect(screen.queryByTestId("shell-usermenu-theme-sep")).not.toBeInTheDocument();
-    const vaultSep = screen.getByTestId("shell-usermenu-vault-sep");
-    expect(vaultSep.previousElementSibling).toHaveTextContent("Help & docs");
-    expect(vaultSep.nextElementSibling).toHaveTextContent("Local vault · offline-first");
-    expect(screen.getByTestId("shell-vault-status").nextElementSibling).toBeNull();
-    expect(document.querySelectorAll(".shell-usermenu__sep")).toHaveLength(1);
+    // The "Local vault · offline-first" status line + its separator were removed —
+    // "Help & docs" is now the last menu item and no separators remain.
+    expect(screen.getByTestId("usermenu-help").nextElementSibling).toBeNull();
+    expect(screen.queryByTestId("shell-usermenu-vault-sep")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("shell-vault-status")).not.toBeInTheDocument();
+    expect(document.querySelectorAll(".shell-usermenu__sep")).toHaveLength(0);
   });
 
   it("routes the command palette backup action through the manual backup command", async () => {

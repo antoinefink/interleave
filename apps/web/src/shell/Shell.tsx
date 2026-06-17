@@ -22,7 +22,6 @@
  * No domain logic lives here: navigation goes through TanStack Router and the
  * nav/command catalogues are static config.
  */
-import type { LocalVaultPath, VaultRoot } from "@interleave/core";
 import {
   Link,
   Outlet,
@@ -296,14 +295,6 @@ function Sidebar({
                 <Icon name="info" size={14} />
                 <span className="shell-grow">Help &amp; docs</span>
               </button>
-              <hr className="shell-usermenu__sep" data-testid="shell-usermenu-vault-sep" />
-              {/* Non-interactive status (not a menu action): the MVP is local-only,
-                  so this is honest "offline-first" copy, not a misleading "synced"
-                  button. Cloud sync is a later server-phase feature. */}
-              <div className="shell-usermenu__status" data-testid="shell-vault-status">
-                <Icon name="shield" size={14} />
-                <span className="shell-grow">Local vault · offline-first</span>
-              </div>
             </div>
           )}
         </div>
@@ -330,17 +321,6 @@ function Topbar({ onOpenCommand }: { onOpenCommand: () => void }) {
   );
 }
 
-/**
- * The local asset vault the desktop app persists into. Typed with the real
- * `@interleave/core` vocabulary so the renderer references the vault root by its
- * canonical name — and demonstrably never resolves a raw filesystem path itself
- * (path resolution belongs to the Electron main process; T007). Live DB/vault
- * status (open/migrated) is read through `appApi.db.getStatus()` in the
- * Settings System section on /settings; this constant only labels the status bar.
- */
-const VAULT_ROOT: VaultRoot = "assets";
-const VAULT_DB_PATH: LocalVaultPath = { root: VAULT_ROOT, relativePath: "app.sqlite" };
-
 function StatusBar() {
   return (
     <footer className="shell-statusbar" data-testid="status-bar">
@@ -357,9 +337,6 @@ function StatusBar() {
         Shortcuts
       </span>
       <span className="shell-statusbar__spacer" />
-      <span className="shell-statusbar__hint" data-vault-root={VAULT_DB_PATH.root}>
-        Local vault · offline-first
-      </span>
     </footer>
   );
 }

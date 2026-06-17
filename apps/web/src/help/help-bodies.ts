@@ -344,7 +344,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: 'The footer bar shows three persistent hints: <kbd>⌘</kbd><kbd>K</kbd> Command, <kbd>G</kbd> then a key to navigate, and <kbd>?</kbd> Shortcuts. On the right it displays <em>"Local vault · offline-first"</em> — a reminder that all data lives on this machine with no cloud copy.',
+      text: 'The footer bar shows three persistent hints: <kbd>⌘</kbd><kbd>K</kbd> Command, <kbd>G</kbd> then a key to navigate, and <kbd>?</kbd> Shortcuts. During a review or Process session, the right side shows that session\'s action keys (for example <kbd>d</kbd> done, <kbd>p</kbd> postpone, <kbd>x</kbd> dismiss) so they are always in reach.',
     },
     {
       type: "h2",
@@ -352,7 +352,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: 'At the bottom of the sidebar is the user chip showing your display name (set in Settings) and the subtitle <em>"Local vault · offline-first."</em> This is not a login — there is no account. Clicking the chip opens a small menu with: System/Light/Dark appearance choices, Settings, Keyboard shortcuts, and the vault-status line. The display name is local to the vault and has no network meaning.',
+      text: "At the bottom of the sidebar is the user chip showing your display name (set in Settings) above your vault label. This is not a login — there is no account. Clicking the chip opens a small menu with: System/Light/Dark appearance choices, Settings, Keyboard shortcuts, and Help & docs. The display name is local to the vault and has no network meaning.",
     },
     {
       type: "h2",
@@ -3655,7 +3655,7 @@ export const HELP_BODIES: Record<string, HelpBlock[]> = {
     },
     {
       type: "p",
-      text: "Clicking your initials in the bottom-left sidebar opens a small menu. The bottom of that menu shows <code>Local vault · offline-first</code>. This is a status label, not a button — it confirms your data is local and there is no server connection. The chip itself is not a login; it is your vault's display name. There is no sign-in, no profile sync, and no server that mirrors your collection.",
+      text: "Clicking your initials in the bottom-left sidebar opens a small menu with appearance, Settings, Keyboard shortcuts, and Help & docs. The chip itself is not a login; it is your vault's display name. Your data is local with no server connection — there is no sign-in, no profile sync, and no server that mirrors your collection.",
     },
     {
       type: "p",
