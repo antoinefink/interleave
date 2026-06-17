@@ -397,9 +397,10 @@ describe("lookupSourceByUrl — pre-save dedup parity (U2, against the real dedu
 
     const result = lookup("https://example.com/spacing");
     expect(result.found).toBe(true);
-    expect(result.source?.id).toBe(saved.id);
-    expect(result.source?.title).toBe("Spacing Effect");
-    expect(result.source?.status).toBe("inbox");
+    if (!result.found) throw new Error("expected found");
+    expect(result.source.id).toBe(saved.id);
+    expect(result.source.title).toBe("Spacing Effect");
+    expect(result.source.status).toBe("inbox");
   });
 
   it("parity: resolves the SAME first match a subsequent save-time dedup would echo", async () => {
@@ -413,7 +414,13 @@ describe("lookupSourceByUrl — pre-save dedup parity (U2, against the real dedu
     expect(saveTime.status).toBe("duplicate");
     if (saveTime.status !== "duplicate") throw new Error("expected duplicate");
     expect(preSave.found).toBe(true);
-    expect(preSave.source?.id).toBe(saveTime.matches[0]?.elementId);
+    if (!preSave.found) throw new Error("expected found");
+    // Guard against a vacuous equality (both undefined): the matched id must be a
+    // real, non-empty string before we assert the two sides agree on it.
+    const saveTimeId = saveTime.matches[0]?.elementId;
+    expect(typeof saveTimeId).toBe("string");
+    expect(saveTimeId).toBeTruthy();
+    expect(preSave.source.id).toBe(saveTimeId);
   });
 
   it("tracking-param-only difference still resolves (canonicalize strips it on both sides)", async () => {
@@ -422,7 +429,8 @@ describe("lookupSourceByUrl — pre-save dedup parity (U2, against the real dedu
 
     const result = lookup("https://example.com/spacing?utm_source=newsletter&utm_campaign=x");
     expect(result.found).toBe(true);
-    expect(result.source?.id).toBe(saved.id);
+    if (!result.found) throw new Error("expected found");
+    expect(result.source.id).toBe(saved.id);
   });
 
   it("never-saved / non-http(s) / unparseable URL → found:false, no throw", async () => {
@@ -452,11 +460,12 @@ describe("lookupSourceByUrl — pre-save dedup parity (U2, against the real dedu
 
     const result = lookup("https://example.com/spacing");
     expect(result.found).toBe(true);
+    if (!result.found) throw new Error("expected found");
     // The lookup echoes matches[0] — the SAME first match save-time dedup would echo.
     const saveTime = await svc.importFromUrl({ url: "https://example.com/spacing" });
     if (saveTime.status !== "duplicate") throw new Error("expected duplicate");
-    expect(result.source?.id).toBe(saveTime.matches[0]?.elementId);
-    expect([first.id, second.id]).toContain(result.source?.id);
+    expect(result.source.id).toBe(saveTime.matches[0]?.elementId);
+    expect([first.id, second.id]).toContain(result.source.id);
   });
 
   it("is READ-ONLY: it writes no rows and appends no operation_log entry", async () => {
@@ -474,7 +483,10 @@ describe("lookupSourceByUrl — pre-save dedup parity (U2, against the real dedu
     expect(new OperationLogRepository(handle.db).count()).toBe(opCountBefore);
     expect(inboxSourceCount()).toBe(sourceCountBefore);
     // Sanity: the saved source is still resolvable (the lookup did not delete it).
-    expect(lookup("https://example.com/spacing").source?.id).toBe(saved.id);
+    const sanity = lookup("https://example.com/spacing");
+    expect(sanity.found).toBe(true);
+    if (!sanity.found) throw new Error("expected found");
+    expect(sanity.source.id).toBe(saved.id);
   });
 });
 

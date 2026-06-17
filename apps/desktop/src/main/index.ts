@@ -26,7 +26,7 @@ import {
 } from "./article-image-protocol";
 import { AutomaticBackupService } from "./automatic-backup-service";
 import { CaptureController } from "./capture-controller";
-import { lookupSourceByUrl as lookupSourceByCanonicalUrl } from "./capture-handler";
+import { lookupSourceByUrl as runLookupSourceByUrl } from "./capture-handler";
 import { setCaptureEnabled } from "./capture-pairing";
 import type { CaptureOpenSourceInput, CaptureOpenSourceResult } from "./capture-server";
 import { DbService } from "./db-service";
@@ -210,7 +210,7 @@ async function openCapturedSource(input: CaptureOpenSourceInput): Promise<Captur
  * URL signal. READ-ONLY — no vault write, no DB mutation, no `operation_log` entry.
  */
 function lookupSourceByUrl(url: string): LookupSourceResponse {
-  return lookupSourceByCanonicalUrl(url, (canonical) =>
+  return runLookupSourceByUrl(url, (canonical) =>
     dbService.repos.sourceDedup.findSourcesByCanonicalUrl(canonical),
   );
 }

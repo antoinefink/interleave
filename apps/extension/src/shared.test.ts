@@ -178,6 +178,22 @@ describe("lookupSource", () => {
     );
   });
 
+  it("returns errored when found:true arrives without a source (the union rejects it)", async () => {
+    installChromeStorage({
+      [STORAGE_KEYS.token]: "paired-token",
+      [STORAGE_KEYS.port]: 47615,
+    });
+    // A `{ ok:true, found:true }` with no source must NOT be silently read as "not
+    // found": the discriminated-union schema rejects it → errored (no banner).
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, found: true }), { status: 200 }),
+    );
+
+    await expect(lookupSource("https://example.com/one")).resolves.toEqual({
+      kind: "errored",
+    });
+  });
+
   it("returns a null source when the desktop reports not found", async () => {
     installChromeStorage({
       [STORAGE_KEYS.token]: "paired-token",

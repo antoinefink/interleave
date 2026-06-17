@@ -288,42 +288,51 @@ export async function lookupSource(url: string): Promise<LookupOutcome> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
 
-  let res: Response;
+  // Clear the timer in a `finally` that runs AFTER the body is read (R8): the
+  // ~2.5s budget bounds the WHOLE round-trip (headers + body), not just
+  // time-to-headers — a desktop that streams headers fast but stalls the body
+  // is still aborted.
   try {
-    res = await fetch(`${loopbackBase(port)}/lookup-source`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(request),
-      signal: controller.signal,
-    });
-  } catch (err) {
-    // An abort (the timeout fired) means the desktop is too slow → no banner.
-    // Any other thrown fetch (connection refused) means the app is not running.
-    if (err instanceof DOMException && err.name === "AbortError") return { kind: "errored" };
-    return { kind: "not-running" };
+    let res: Response;
+    try {
+      res = await fetch(`${loopbackBase(port)}/lookup-source`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      // An abort (the timeout fired) means the desktop is too slow → no banner.
+      // Any other thrown fetch (connection refused) means the app is not running.
+      if (err instanceof DOMException && err.name === "AbortError") return { kind: "errored" };
+      return { kind: "not-running" };
+    }
+
+    if (res.status === 401) return { kind: "bad-token" };
+    if (res.status === 403) return { kind: "not-paired" };
+
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch {
+      return { kind: "errored" };
+    }
+
+    // The response is a discriminated union on `found`: a successful parse with
+    // `found: true` GUARANTEES `source` is present (a `{ found: true }` body with no
+    // source no longer parses → `errored`). `found: false` → no banner.
+    const parsed = LookupSourceResponseSchema.safeParse(body);
+    if (!parsed.success) return { kind: "errored" };
+    if (parsed.data.found) {
+      return { kind: "ok", source: parsed.data.source };
+    }
+    return { kind: "ok", source: null };
   } finally {
     clearTimeout(timer);
   }
-
-  if (res.status === 401) return { kind: "bad-token" };
-  if (res.status === 403) return { kind: "not-paired" };
-
-  let body: unknown;
-  try {
-    body = await res.json();
-  } catch {
-    return { kind: "errored" };
-  }
-
-  const parsed = LookupSourceResponseSchema.safeParse(body);
-  if (!parsed.success) return { kind: "errored" };
-  if (parsed.data.found && parsed.data.source) {
-    return { kind: "ok", source: parsed.data.source };
-  }
-  return { kind: "ok", source: null };
 }
 
 /** One recent capture row (kept in chrome.storage for the side panel — T063). */

@@ -60,6 +60,14 @@ import {
   setCapturePort,
 } from "./capture-pairing";
 
+/**
+ * The auth error codes BOTH the OpenSource and LookupSource error contracts share
+ * (`OpenSourceErrorCode & LookupSourceErrorCode`). `authorizeRequest` only emits
+ * these, so its injected `sendError` callback is compatible with either route's
+ * typed helper.
+ */
+type SharedAuthErrorCode = OpenSourceErrorCode & LookupSourceErrorCode;
+
 /** The canonical loopback port; a small fallback scan handles a stray holder. */
 const CANONICAL_PORT = 47615;
 const PORT_FALLBACK_COUNT = 8;
@@ -394,7 +402,7 @@ export async function startCaptureServer(
     allowedOrigin: string | null,
   ): Promise<void> {
     applyCors(res, allowedOrigin, requestOrigin);
-    if (!authorizeRequest(req, res, requestOrigin, allowedOrigin)) return;
+    if (!authorizeRequest(req, res, requestOrigin, allowedOrigin, sendOpenSourceError)) return;
 
     const { body, tooLarge } = await readBody(req);
     if (tooLarge) {
@@ -446,10 +454,11 @@ export async function startCaptureServer(
     allowedOrigin: string | null,
   ): Promise<void> {
     applyCors(res, allowedOrigin, requestOrigin);
-    // Reuse the SAME auth guard as /open-source: the `unpaired` / `bad_origin` /
-    // `bad_token` error codes are byte-identical across both contracts, so the wire
-    // body is the same `{ ok: false, error }` shape this route documents.
-    if (!authorizeRequest(req, res, requestOrigin, allowedOrigin)) return;
+    // Reuse the SAME auth guard as /open-source, but emit the LookupSource-typed error
+    // body: the `unpaired` / `bad_origin` / `bad_token` codes are byte-identical across
+    // both contracts, yet passing this route's own `sendLookupSourceError` keeps the
+    // type boundary correct (no OpenSource-typed helper leaking onto this route).
+    if (!authorizeRequest(req, res, requestOrigin, allowedOrigin, sendLookupSourceError)) return;
 
     const { body, tooLarge } = await readBody(req);
     if (tooLarge) {
@@ -482,24 +491,32 @@ export async function startCaptureServer(
     sendJson(res, 200, result);
   }
 
+  /**
+   * The shared auth guard for `/open-source` and `/lookup-source`. The two routes
+   * have distinct error-code contracts, so the caller injects its OWN typed
+   * `sendError` (`sendOpenSourceError` / `sendLookupSourceError`); the guard only
+   * ever emits the `unpaired` / `bad_origin` / `bad_token` codes that BOTH contracts
+   * share, so the type boundary stays correct (no cross-contract helper leakage).
+   */
   function authorizeRequest(
     req: IncomingMessage,
     res: ServerResponse,
     requestOrigin: string | null,
     allowedOrigin: string | null,
+    sendError: (res: ServerResponse, status: number, code: SharedAuthErrorCode) => void,
   ): boolean {
     const token = settings.get<string>("capture.token");
     if (!token || !allowedOrigin) {
-      sendOpenSourceError(res, 403, "unpaired");
+      sendError(res, 403, "unpaired");
       return false;
     }
     if (!requestOrigin || requestOrigin !== allowedOrigin) {
-      sendOpenSourceError(res, 403, "bad_origin");
+      sendError(res, 403, "bad_origin");
       return false;
     }
     const bearer = parseBearer(headerValue(req, "authorization"));
     if (!bearer || !timingSafeTokenEqual(bearer, token)) {
-      sendOpenSourceError(res, 401, "bad_token");
+      sendError(res, 401, "bad_token");
       return false;
     }
     return true;

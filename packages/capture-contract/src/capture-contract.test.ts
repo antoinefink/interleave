@@ -205,13 +205,21 @@ describe("LookupSourceResponseSchema / LookupSourceErrorResponseSchema", () => {
       source: { id: "src_123", title: "Existing", status: "inbox" },
     });
     expect(body.found).toBe(true);
-    expect(body.source).toEqual({ id: "src_123", title: "Existing", status: "inbox" });
+    // `found: true` narrows the union arm that guarantees `source`.
+    if (body.found) {
+      expect(body.source).toEqual({ id: "src_123", title: "Existing", status: "inbox" });
+    }
   });
 
   it("round-trips a not-found body without a source", () => {
     const body = LookupSourceResponseSchema.parse({ ok: true, found: false });
     expect(body.found).toBe(false);
-    expect(body.source).toBeUndefined();
+  });
+
+  it("REJECTS a found:true body with no source (the discriminated union enforces found ⇒ source)", () => {
+    // A `{ found: true }` with no source must NOT parse — otherwise the client would
+    // silently treat it as "not found". The union makes the guarantee structural.
+    expect(() => LookupSourceResponseSchema.parse({ ok: true, found: true })).toThrow();
   });
 
   it("accepts only documented lookup-source error bodies", () => {

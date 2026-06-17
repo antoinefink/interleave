@@ -170,7 +170,12 @@ async function scrapePage(tab: chrome.tabs.Tab): Promise<PageScrape | null> {
     const [result] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
-        const canonical = document.querySelector('link[rel="canonical"]')?.getAttribute("href");
+        // Read the canonical as an HTMLLinkElement so its `.href` property is the
+        // ABSOLUTE url the DOM resolved (a relative `href="/x"` becomes the full
+        // url) — save-time and lookup-time must agree on the same absolute url, and
+        // a relative canonical would otherwise be rejected by the strict CaptureUrlSchema.
+        const link = document.querySelector('link[rel="canonical"]');
+        const canonical = link instanceof HTMLLinkElement ? link.href : "";
         return {
           url: canonical || location.href,
           title: document.title || location.href,

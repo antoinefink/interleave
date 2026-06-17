@@ -39,7 +39,7 @@ beforeEach(() => {
 function makeController(settings = new MemorySettings()) {
   const importService = { importFromHtml: vi.fn(), importSelection: vi.fn() };
   const openSource = vi.fn(async () => ({ status: "opened" as const, activated: true }));
-  const lookupSourceByUrl = vi.fn(() => ({ ok: true as const, found: false }));
+  const lookupSourceByUrl = vi.fn(() => ({ ok: true as const, found: false as const }));
   const stop = vi.fn(async () => {});
   startCaptureServer.mockResolvedValue({ port: 47615, stop });
 

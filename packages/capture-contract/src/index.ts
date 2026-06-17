@@ -211,23 +211,29 @@ export const LookupSourceRequestSchema = z.object({
 export type LookupSourceRequest = z.infer<typeof LookupSourceRequestSchema>;
 
 /**
- * The lookup answer: `found` plus, when found, the newest matching source's
- * `id`/`title`/`status`. `source` is present IFF `found` is true (the route
- * guarantees this; the schema keeps it optional so a `found: false` body need not
- * carry one). `status` is a plain bounded string — the contract must NOT import
- * core's status enum — used by the popup only for display copy.
+ * The lookup answer, a discriminated union on `found`: a `found: true` body MUST
+ * carry the newest matching source's `id`/`title`/`status`, and a `found: false`
+ * body MUST NOT. Modeling it as a union (rather than an optional `source`) makes the
+ * "found ⇒ source" guarantee structural, so a malformed `{ found: true }` body fails
+ * to parse rather than silently reading as "not found". `status` is a plain bounded
+ * string — the contract must NOT import core's status enum — used by the popup only
+ * for display copy.
  */
-export const LookupSourceResponseSchema = z.object({
-  ok: z.literal(true),
-  found: z.boolean(),
-  source: z
-    .object({
+export const LookupSourceResponseSchema = z.discriminatedUnion("found", [
+  z.object({
+    ok: z.literal(true),
+    found: z.literal(true),
+    source: z.object({
       id: z.string(),
       title: z.string(),
       status: z.string(),
-    })
-    .optional(),
-});
+    }),
+  }),
+  z.object({
+    ok: z.literal(true),
+    found: z.literal(false),
+  }),
+]);
 export type LookupSourceResponse = z.infer<typeof LookupSourceResponseSchema>;
 
 export const LookupSourceErrorCodeSchema = z.enum([

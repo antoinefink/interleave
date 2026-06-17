@@ -182,7 +182,7 @@ async function start(
   ),
   lookupSourceByUrl: (url: string) => LookupSourceResponse = vi.fn(() => ({
     ok: true as const,
-    found: false,
+    found: false as const,
   })),
 ) {
   const handle = await startCaptureServer({

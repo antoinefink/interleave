@@ -264,6 +264,38 @@ describe("extension popup", () => {
     );
   });
 
+  it("runs the lookup after a successful retry from an offline start", async () => {
+    installDom();
+    installChromeMock("");
+    // Start offline (first ping fails), then come online on retry. The lookup must
+    // fire after the retry succeeds (R1) — not only on the initial connect.
+    h.pingApp.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    h.lookupSource.mockResolvedValue({
+      kind: "ok",
+      source: { id: "existing-7", title: "Existing source", status: "inbox" },
+    });
+    await import("./popup");
+
+    await vi.waitFor(() =>
+      expect(document.getElementById("connection-pill")?.textContent).toContain("App offline"),
+    );
+    // No lookup yet while offline.
+    expect(h.lookupSource).not.toHaveBeenCalled();
+
+    (document.getElementById("retry-connection") as HTMLButtonElement).click();
+
+    await vi.waitFor(() =>
+      expect(document.getElementById("connection-pill")?.textContent).toContain("Connected"),
+    );
+    // The retry triggered the lookup, and the already-saved banner now renders.
+    await vi.waitFor(() =>
+      expect(h.lookupSource).toHaveBeenCalledWith("https://example.com/articles/one"),
+    );
+    await vi.waitFor(() =>
+      expect(document.querySelector(".banner--info")?.textContent).toContain("Already saved"),
+    );
+  });
+
   it("renders app-offline state when the app disappears during save", async () => {
     sendMessage.mockImplementation((_message, cb) => {
       cb({ kind: "not-running" });
@@ -387,6 +419,72 @@ describe("extension popup", () => {
     await vi.waitFor(() =>
       expect(h.openCapturedSource).toHaveBeenCalledWith("existing-7", { activate: false }),
     );
+  });
+
+  it("looks up the ABSOLUTE canonical url the probe resolved (relative href stays out)", async () => {
+    installDom();
+    // The injected probe resolves the canonical `link.href` to an absolute url even
+    // when the page's `<link rel=canonical href="/article/123">` is relative. Mirror
+    // that resolved value here; the popup must hand the absolute url to the lookup
+    // (a raw relative `/article/123` would fail the `^https?://` guard, no lookup).
+    queryTabs.mockResolvedValue([
+      { id: 5, title: "Current article", url: "https://example.com/articles/one" },
+    ]);
+    executeScript.mockResolvedValue([
+      { result: { selection: "", url: "https://example.com/article/123" } },
+    ]);
+    h.lookupSource.mockResolvedValue({ kind: "ok", source: null });
+    await import("./popup");
+
+    await vi.waitFor(() =>
+      expect(h.lookupSource).toHaveBeenCalledWith("https://example.com/article/123"),
+    );
+  });
+
+  it("opens the matched source from the selection-present page note (activate:false)", async () => {
+    // A selection IS present, so the page-saved NOTE (not the whole-page banner) shows
+    // its own "Open page in Interleave" button (#open-source-page). Clicking it must
+    // open without activating (KTD4 — browsing, not capturing).
+    h.lookupSource.mockResolvedValue({
+      kind: "ok",
+      source: { id: "existing-7", title: "Existing source", status: "inbox" },
+    });
+    await import("./popup");
+
+    const openNote = await vi.waitFor(() => {
+      const button = document.getElementById("open-source-page") as HTMLButtonElement | null;
+      expect(button).toBeTruthy();
+      return button as HTMLButtonElement;
+    });
+    openNote.click();
+
+    await vi.waitFor(() =>
+      expect(h.openCapturedSource).toHaveBeenCalledWith("existing-7", { activate: false }),
+    );
+  });
+
+  it("clears the already-saved banner when the user picks Save another", async () => {
+    installDom();
+    installChromeMock("");
+    h.lookupSource.mockResolvedValue({
+      kind: "ok",
+      source: { id: "existing-7", title: "Existing source", status: "inbox" },
+    });
+    await import("./popup");
+
+    // The whole-page already-saved banner renders first (no selection).
+    await vi.waitFor(() => expect(document.querySelector(".banner--info")).not.toBeNull());
+
+    // Save anyway, then choose "Save another" from the saved view.
+    (document.getElementById("save-page") as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(document.getElementById("save-another")).not.toBeNull());
+    (document.getElementById("save-another") as HTMLButtonElement).click();
+
+    // Back on a CLEAN idle view: the demoted banner + "Save anyway" layout are gone.
+    await vi.waitFor(() => expect(document.getElementById("save-page")).not.toBeNull());
+    expect(document.querySelector(".banner--info")).toBeNull();
+    expect(document.getElementById("save-page")?.textContent).toContain("Save page");
+    expect(document.getElementById("save-page")?.textContent).not.toContain("Save anyway");
   });
 
   it("keeps Save selection primary and shows only a page note when a selection is present", async () => {

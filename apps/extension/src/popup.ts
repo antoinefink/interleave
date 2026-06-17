@@ -72,7 +72,6 @@ async function init(): Promise<void> {
   }
   render();
   await refreshConnection();
-  await runLookup();
 }
 
 /**
@@ -89,13 +88,18 @@ async function runLookup(): Promise<void> {
   if (!/^https?:\/\//i.test(url)) return;
 
   lookupState = "pending";
-  const outcome = await lookupSource(url);
-  lookupState = "done";
-  // Bail if the user moved off the idle view or the popup body went away (R8).
-  if (phase !== "idle" || !bodyEl.isConnected) return;
-  if (outcome.kind === "ok" && outcome.source) {
-    alreadySaved = outcome.source;
-    render();
+  try {
+    const outcome = await lookupSource(url);
+    // Bail if the user moved off the idle view or the popup body went away (R8).
+    if (phase !== "idle" || !bodyEl.isConnected) return;
+    if (outcome.kind === "ok" && outcome.source) {
+      alreadySaved = outcome.source;
+      render();
+    }
+  } finally {
+    // Always settle to "done" — an unexpected throw must not leave the state stuck
+    // on "pending" (which would permanently suppress a later lookup via the guard).
+    lookupState = "done";
   }
 }
 
@@ -135,7 +139,12 @@ async function readPageProbe(tabId: number | undefined): Promise<PageProbe> {
     const [result] = await chrome.scripting.executeScript({
       target: { tabId },
       func: () => {
-        const canonical = document.querySelector('link[rel="canonical"]')?.getAttribute("href");
+        // Read the canonical as an HTMLLinkElement so its `.href` property is the
+        // ABSOLUTE url the DOM resolved (a relative `href="/x"` becomes the full
+        // url); a raw `getAttribute("href")` would leak a relative href that corrupts
+        // page.url/domain and fails the `^https?://` lookup guard. Mirrors `scrapePage`.
+        const link = document.querySelector('link[rel="canonical"]');
+        const canonical = link instanceof HTMLLinkElement ? link.href : "";
         return {
           selection: window.getSelection()?.toString().trim() ?? "",
           url: canonical || location.href,
@@ -163,6 +172,10 @@ async function refreshConnection(): Promise<void> {
   }
   connection = (await pingApp(pairedConfig.port)) ? "ok" : "offline";
   render();
+  // Centralize the pre-save lookup here so it fires on BOTH the initial connect
+  // AND a successful "Retry connection" after an offline start (R1). The
+  // `lookupState !== "idle"` guard in `runLookup` prevents a double-run.
+  if (connection === "ok") await runLookup();
 }
 
 function render(): void {
@@ -255,7 +268,7 @@ function renderIdle(): void {
               }>${saving ? spinner() : icon("bookmark")}${saving ? "Saving..." : "Save page"}</button>`
       }
     </div>
-    <div id="save-result" class="${pageAlreadySaved ? "open-result" : "sr-only"}" aria-live="polite"></div>
+    <div id="save-result" class="${saved !== null ? "open-result" : "sr-only"}" aria-live="polite"></div>
   `;
 
   wirePriority();
@@ -332,6 +345,10 @@ function renderSaved(): void {
     phase = "idle";
     savedState = null;
     lastError = null;
+    // Clear the pre-save "already saved" hint too, so "Save another" returns a clean
+    // idle view rather than re-rendering the demoted "Save anyway" layout. We do NOT
+    // re-run the lookup (lookupState stays "done").
+    alreadySaved = null;
     render();
   });
 }
