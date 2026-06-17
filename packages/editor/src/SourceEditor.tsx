@@ -124,6 +124,26 @@ export function SourceEditor({
     // single empty paragraph so the editor always has valid content.
     content: ((initialDoc as Content | null | undefined) ?? emptyDoc()) as Content,
     editable,
+    editorProps: {
+      // In reader mode, a left-click on an in-content link opens it externally. The
+      // surface stays editable, but the schema keeps `openOnClick: false` so plain
+      // editing never navigates — this is the controlled reader-only opt-in (other
+      // editor surfaces fall through to the default click handling). Opening via
+      // `window.open(_blank)` lets the desktop window-open handler route http(s) to
+      // the system browser; other schemes are ignored.
+      handleClick: (_view, _pos, event) => {
+        if (!readerDecorations) return false;
+        const anchor = (event.target as HTMLElement | null)?.closest?.(
+          "a[href]",
+        ) as HTMLAnchorElement | null;
+        if (!anchor) return false;
+        const href = anchor.getAttribute("href") ?? "";
+        if (!/^https?:\/\//i.test(href)) return false;
+        event.preventDefault();
+        window.open(href, "_blank", "noopener,noreferrer");
+        return true;
+      },
+    },
     // The renderer owns persistence; the editor never reaches the DB.
     onUpdate: ({ editor: instance, transaction }) => {
       const emit = onChangeRef.current;

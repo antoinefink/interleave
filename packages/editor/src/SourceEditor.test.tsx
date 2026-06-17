@@ -15,6 +15,9 @@ const h = vi.hoisted(() => ({
     editable: boolean;
     extensions: unknown[];
     onUpdate: (args: { editor: unknown; transaction: { docChanged: boolean } }) => void;
+    editorProps?: {
+      handleClick?: (view: unknown, pos: number, event: unknown) => boolean;
+    };
   },
 }));
 
@@ -188,5 +191,62 @@ describe("SourceEditor", () => {
 
     expect(readerExtensions.length).toBe(plainExtensions.length + 1);
     expect(readerExtensions.at(-1)).toEqual({ name: "readerDecorations" });
+  });
+
+  it("opens in-content links externally on click in reader mode", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+
+    // Reader surface: a left-click on an http(s) anchor opens it in a new tab
+    // (the desktop window-open handler routes it to the system browser).
+    renderSourceEditor(<SourceEditor readerDecorations />);
+    const handleClick = h.lastUseEditorOptions?.editorProps?.handleClick;
+    expect(handleClick).toBeTypeOf("function");
+
+    const anchor = document.createElement("a");
+    anchor.setAttribute("href", "https://example.com/take-a-leap");
+    const preventDefault = vi.fn();
+    const handled = handleClick?.({}, 0, { target: anchor, preventDefault });
+
+    expect(handled).toBe(true);
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(open).toHaveBeenCalledWith(
+      "https://example.com/take-a-leap",
+      "_blank",
+      "noopener,noreferrer",
+    );
+
+    open.mockClear();
+  });
+
+  it("does not navigate from a plain (non-reader) editing surface", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+
+    renderSourceEditor(<SourceEditor />);
+    const handleClick = h.lastUseEditorOptions?.editorProps?.handleClick;
+
+    // Clicking a link while editing must NOT navigate — only place the caret.
+    const anchor = document.createElement("a");
+    anchor.setAttribute("href", "https://example.com");
+    expect(handleClick?.({}, 0, { target: anchor, preventDefault: vi.fn() })).toBe(false);
+    expect(open).not.toHaveBeenCalled();
+
+    open.mockClear();
+  });
+
+  it("ignores reader clicks that are not on an external http(s) link", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    renderSourceEditor(<SourceEditor readerDecorations />);
+    const handleClick = h.lastUseEditorOptions?.editorProps?.handleClick;
+
+    // A click on plain text (no anchor ancestor) is left to the editor.
+    const span = document.createElement("span");
+    expect(handleClick?.({}, 0, { target: span, preventDefault: vi.fn() })).toBe(false);
+
+    // A non-http scheme (e.g. javascript:) is never opened.
+    const unsafe = document.createElement("a");
+    unsafe.setAttribute("href", "javascript:alert(1)");
+    expect(handleClick?.({}, 0, { target: unsafe, preventDefault: vi.fn() })).toBe(false);
+
+    expect(open).not.toHaveBeenCalled();
   });
 });
