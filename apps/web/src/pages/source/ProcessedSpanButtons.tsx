@@ -167,6 +167,9 @@ export function ProcessedSpanButtons({
   // Mirror of `hoveredBlockId` so the high-frequency pointer handler can change-guard
   // without going through React state on intra-paragraph movement (KTD2).
   const activeRef = useRef<string | null>(null);
+  // The most recent pointer Y (viewport coords) so a scroll of the reader body can
+  // re-resolve which paragraph is under the still-stationary cursor without a pointermove.
+  const lastPointerYRef = useRef<number | null>(null);
 
   const setActive = useCallback((id: string | null) => {
     if (activeRef.current === id) return;
@@ -194,6 +197,11 @@ export function ProcessedSpanButtons({
     );
     anchorsRef.current = next;
     setAnchors(next);
+    // If the paragraph we were hovering is no longer measured (e.g. a filter hid it),
+    // drop the dangling hover so activeRef/hoveredBlockId never point at an unrendered block.
+    if (activeRef.current !== null && !next.some((a) => a.blockId === activeRef.current)) {
+      setActive(null);
+    }
   }, [editor, hideIgnored, processed, processingFilter, setActive]);
 
   // Re-measure when the editor (re)mounts, the doc/decoration set changes, the
@@ -225,15 +233,31 @@ export function ProcessedSpanButtons({
     // icon group shares its paragraph's Y band, reaching horizontally into the margin
     // keeps the same paragraph active without any close-grace timer (R3).
     const rail = dom.closest(".reader-rail") as HTMLElement | null;
+    // The inner reader body owns vertical scroll; re-resolve the band on scroll so the
+    // reveal follows the paragraph under a stationary cursor (wheel/trackpad reading).
+    const scroller = dom.closest(".reader-page") as HTMLElement | null;
     const onPointerMove = (e: PointerEvent) => {
-      const railTop = rail?.getBoundingClientRect().top ?? 0;
-      setActive(blockIdForY(e.clientY - railTop, anchorsRef.current));
+      if (!rail) return;
+      lastPointerYRef.current = e.clientY;
+      setActive(blockIdForY(e.clientY - rail.getBoundingClientRect().top, anchorsRef.current));
     };
-    const onPointerLeave = () => setActive(null);
+    const onPointerLeave = () => {
+      lastPointerYRef.current = null;
+      setActive(null);
+    };
+    const onScroll = () => {
+      const y = lastPointerYRef.current;
+      if (y === null || !rail) return;
+      setActive(blockIdForY(y - rail.getBoundingClientRect().top, anchorsRef.current));
+    };
     if (rail) {
       rail.addEventListener("pointermove", onPointerMove);
       rail.addEventListener("pointerleave", onPointerLeave);
+      // pointercancel (touch/pen, OS gesture capture) fires instead of pointerleave;
+      // clear hover so a group never sticks revealed when the pointer stream is cut.
+      rail.addEventListener("pointercancel", onPointerLeave);
     }
+    scroller?.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       editor.off("transaction", onTx);
       ro?.disconnect();
@@ -241,7 +265,9 @@ export function ProcessedSpanButtons({
       if (rail) {
         rail.removeEventListener("pointermove", onPointerMove);
         rail.removeEventListener("pointerleave", onPointerLeave);
+        rail.removeEventListener("pointercancel", onPointerLeave);
       }
+      scroller?.removeEventListener("scroll", onScroll);
     };
   }, [editor, editorReady, remeasure, setActive]);
 

@@ -18,7 +18,7 @@ function setRect(el: HTMLElement, top: number): void {
   }));
 }
 
-function buildEditorDom(): { rail: HTMLElement; editor: Editor } {
+function buildEditorDom(): { page: HTMLElement; rail: HTMLElement; editor: Editor } {
   const rail = document.createElement("div");
   rail.className = "reader-rail";
   setRect(rail, 100);
@@ -36,14 +36,17 @@ function buildEditorDom(): { rail: HTMLElement; editor: Editor } {
 
   editorDom.append(paragraphA, heading, paragraphB);
   rail.append(editorDom);
-  document.body.append(rail);
+  const page = document.createElement("div");
+  page.className = "reader-page";
+  page.append(rail);
+  document.body.append(page);
 
   const editor = {
     view: { dom: editorDom },
     on: vi.fn(),
     off: vi.fn(),
   } as unknown as Editor;
-  return { rail, editor };
+  return { page, rail, editor };
 }
 
 function processed(
@@ -322,5 +325,130 @@ describe("ProcessedSpanButtons hover scoping", () => {
     // path does not vanish the icons.
     pointerMove(rail, 145, 800);
     expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "true");
+  });
+
+  it("clears the hover when the cursor moves below the last paragraph", async () => {
+    const { rail, editor } = buildEditorDom();
+    const { getByTestId } = render(
+      <ProcessedSpanButtons editor={editor} editorReady processed={processed()} revision={0} />,
+    );
+    await waitFor(() => expect(getByTestId("processed-toggle-blk-a")).toBeInTheDocument());
+
+    // clientY 145 → rail-relative 45, inside A's padded band.
+    pointerMove(rail, 145);
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "true");
+
+    // clientY 600 → rail-relative 500, below B's padded bottom (134) → no band.
+    pointerMove(rail, 600);
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "false");
+    expect(group(getByTestId, "blk-b")).toHaveAttribute("data-hovered", "false");
+    expect(document.querySelectorAll('.readpara__actions[data-hovered="true"]')).toHaveLength(0);
+  });
+
+  it("clears the hover when the cursor moves above the first paragraph", async () => {
+    const { rail, editor } = buildEditorDom();
+    const { getByTestId } = render(
+      <ProcessedSpanButtons editor={editor} editorReady processed={processed()} revision={0} />,
+    );
+    await waitFor(() => expect(getByTestId("processed-toggle-blk-a")).toBeInTheDocument());
+
+    pointerMove(rail, 145);
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "true");
+
+    // clientY 100 → rail-relative 0; A's padded top is 16, so 0 < 16 → above A's band.
+    pointerMove(rail, 100);
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "false");
+    expect(group(getByTestId, "blk-b")).toHaveAttribute("data-hovered", "false");
+    expect(document.querySelectorAll('.readpara__actions[data-hovered="true"]')).toHaveLength(0);
+  });
+
+  it("resolves to the nearest paragraph in the overlapping band zone", async () => {
+    const { rail, editor } = buildEditorDom();
+    const { getByTestId } = render(
+      <ProcessedSpanButtons editor={editor} editorReady processed={processed()} revision={0} />,
+    );
+    await waitFor(() => expect(getByTestId("processed-toggle-blk-a")).toBeInTheDocument());
+
+    // clientY 178 → rail-relative 78; inside BOTH A[16,84] and B[66,134].
+    // distance to A center (50) = 28, to B center (100) = 22 → B is closer.
+    pointerMove(rail, 178);
+    expect(group(getByTestId, "blk-b")).toHaveAttribute("data-hovered", "true");
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "false");
+  });
+
+  it("keeps the same paragraph active while the cursor moves within its band", async () => {
+    const { rail, editor } = buildEditorDom();
+    const { getByTestId } = render(
+      <ProcessedSpanButtons editor={editor} editorReady processed={processed()} revision={0} />,
+    );
+    await waitFor(() => expect(getByTestId("processed-toggle-blk-a")).toBeInTheDocument());
+
+    pointerMove(rail, 145);
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "true");
+    expect(group(getByTestId, "blk-b")).toHaveAttribute("data-hovered", "false");
+
+    // clientY 150 → rail-relative 50, still inside A's band → no swap.
+    pointerMove(rail, 150);
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "true");
+    expect(group(getByTestId, "blk-b")).toHaveAttribute("data-hovered", "false");
+  });
+
+  it("clears the hover when the active paragraph is filtered out", async () => {
+    const { rail, editor } = buildEditorDom();
+    const model = processed(["blk-a"], {
+      "blk-a": "processed_without_output",
+      "blk-b": "needs_later",
+    });
+    const { getByTestId, queryByTestId, rerender } = render(
+      <ProcessedSpanButtons
+        editor={editor}
+        editorReady
+        processed={model}
+        processingFilter="all"
+        revision={0}
+      />,
+    );
+    await waitFor(() => expect(getByTestId("processed-toggle-blk-a")).toBeInTheDocument());
+
+    pointerMove(rail, 145);
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "true");
+
+    // Switching to "unresolved" hides the terminal blk-a (processed_without_output) but
+    // keeps non-terminal blk-b. Bumping `revision` forces the re-measure that drops the
+    // dangling hover via fix #1.
+    rerender(
+      <ProcessedSpanButtons
+        editor={editor}
+        editorReady
+        processed={model}
+        processingFilter="unresolved"
+        revision={1}
+      />,
+    );
+
+    await waitFor(() => expect(queryByTestId("processed-toggle-blk-a")).not.toBeInTheDocument());
+    expect(document.querySelectorAll('.readpara__actions[data-hovered="true"]')).toHaveLength(0);
+  });
+
+  it("re-resolves the hovered paragraph when the reader body scrolls", async () => {
+    const { page, rail, editor } = buildEditorDom();
+    const { getByTestId } = render(
+      <ProcessedSpanButtons editor={editor} editorReady processed={processed()} revision={0} />,
+    );
+    await waitFor(() => expect(getByTestId("processed-toggle-blk-a")).toBeInTheDocument());
+
+    // clientY 145 → rail-relative 45 (railTop 100), inside A's band.
+    pointerMove(rail, 145);
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "true");
+
+    // Simulate a scroll-up: the rail's top moves from 100 to 50. With lastPointerY=145
+    // still held, rail-relative becomes 95 → inside B's band [66,134].
+    setRect(rail, 50);
+    act(() => {
+      page.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+
+    expect(group(getByTestId, "blk-b")).toHaveAttribute("data-hovered", "true");
+    expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "false");
   });
 });
