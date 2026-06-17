@@ -124,6 +124,19 @@ async function post(
   return { status: res.status, json };
 }
 
+/**
+ * GET a path on the loopback server (used to prove a POST-only route rejects the
+ * wrong method with 405), mirroring {@link post}'s header control.
+ */
+async function get(
+  port: number,
+  path: string,
+  headers: Record<string, string>,
+): Promise<{ status: number }> {
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: "GET", headers });
+  return { status: res.status };
+}
+
 test("the capture server binds, reports a stable port, and gates the threat model", async () => {
   const app = await launch();
   const page = await app.firstWindow();
@@ -374,4 +387,392 @@ test("the captured source survives an app restart; token + port stay stable", as
   expect(stillThere?.status).toBe("active");
 
   await app2.close();
+});
+
+/**
+ * U6 — `/lookup-source` end-to-end parity coverage.
+ *
+ * The pre-save "already saved" hint (`POST /lookup-source`) is a READ-ONLY
+ * loopback question the popup asks on open. It reuses the EXACT canonical-URL
+ * dedup query that save-time page-dedup (T061) uses, so this suite proves, over
+ * the real Electron loopback server, that the pre-save answer AGREES with the
+ * save-time `deduped` outcome for the same URL (same source id) — pre-save ==
+ * save-time, end to end — and that the route enforces the identical threat model
+ * as `/open-source`.
+ *
+ * It owns its OWN data dir (separate from the capture suite above) so the inbox
+ * state under test is deterministic and not entangled with that suite's source.
+ */
+test.describe("lookup-source pre-save / save-time parity", () => {
+  test.describe.configure({ mode: "serial" });
+
+  let lookupDataDir: string;
+
+  test.beforeAll(() => {
+    lookupDataDir = makeDataDir();
+  });
+
+  /** Launch this suite's app against its own data dir, capture server pre-enabled. */
+  async function launchLookup(): Promise<ElectronApplication> {
+    return launchApp(lookupDataDir, { captureEnabled: true });
+  }
+
+  /** Bring up the app, wait for the bound port, and ensure the EXT origin is paired. */
+  async function bootPaired(): Promise<{
+    app: ElectronApplication;
+    page: Page;
+    port: number;
+    token: string;
+  }> {
+    const app = await launchLookup();
+    const page = await app.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+
+    let pairing = await getPairing(page);
+    for (let i = 0; i < 20 && !(pairing.running && pairing.port); i++) {
+      await page.waitForTimeout(100);
+      pairing = await getPairing(page);
+    }
+    const port = pairing.port as number;
+    const token = pairing.token;
+
+    // Pair the extension origin (idempotent — survives restart, re-pair defensively).
+    await post(
+      port,
+      "/pair",
+      { extensionOrigin: EXT_ORIGIN },
+      { Authorization: `Bearer ${token}`, Origin: EXT_ORIGIN },
+    );
+
+    return { app, page, port, token };
+  }
+
+  test("a captured page is found pre-save with the SAME id /capture echoes; re-capture dedups to it", async () => {
+    const { app, port, token } = await bootPaired();
+
+    const url = "https://example.com/lookup-parity/spacing-effect";
+
+    // Capture the whole page → lands a fresh inbox source (deduped: false).
+    const capture = await post(
+      port,
+      "/capture",
+      {
+        kind: "page",
+        url,
+        title: "The Spacing Effect (page)",
+        html: "<html><head><title>The Spacing Effect</title></head><body><p>Distributed practice beats cramming.</p></body></html>",
+        priority: "B",
+        reason: "lookup parity fixture",
+      },
+      { Authorization: `Bearer ${token}`, Origin: EXT_ORIGIN },
+    );
+    expect(capture.status).toBe(200);
+    expect(capture.json.ok).toBe(true);
+    expect(capture.json.kind).toBe("page");
+    expect(capture.json.deduped).toBe(false);
+    const capturedId = capture.json.id as string;
+    expect(typeof capturedId).toBe("string");
+
+    // PRE-SAVE: /lookup-source for the same URL → found:true with the SAME id.
+    const lookup = await post(
+      port,
+      "/lookup-source",
+      { url },
+      { Authorization: `Bearer ${token}`, Origin: EXT_ORIGIN },
+    );
+    expect(lookup.status).toBe(200);
+    expect(lookup.json.ok).toBe(true);
+    expect(lookup.json.found).toBe(true);
+    const source = lookup.json.source as { id: string; title: string; status: string };
+    expect(source.id).toBe(capturedId);
+    expect(source.title).toBe("The Spacing Effect (page)");
+    expect(source.status).toBe("inbox");
+
+    // SAVE-TIME: re-capture the same URL → deduped:true echoing the SAME id.
+    const recapture = await post(
+      port,
+      "/capture",
+      {
+        kind: "page",
+        url,
+        title: "The Spacing Effect (page)",
+        html: "<html><head><title>The Spacing Effect</title></head><body><p>Distributed practice beats cramming.</p></body></html>",
+      },
+      { Authorization: `Bearer ${token}`, Origin: EXT_ORIGIN },
+    );
+    expect(recapture.status).toBe(200);
+    expect(recapture.json.ok).toBe(true);
+    expect(recapture.json.deduped).toBe(true);
+    expect(recapture.json.id).toBe(capturedId);
+
+    // The pre-save id == the save-time deduped id == the originally captured id.
+    expect(source.id).toBe(recapture.json.id);
+
+    await app.close();
+  });
+
+  test("a never-saved URL is found:false pre-save and dedups:false at save time (negative parity)", async () => {
+    const { app, port, token } = await bootPaired();
+
+    const url = "https://example.com/lookup-parity/never-saved-page";
+
+    // PRE-SAVE: nothing under this URL → found:false, no `source`.
+    const lookup = await post(
+      port,
+      "/lookup-source",
+      { url },
+      { Authorization: `Bearer ${token}`, Origin: EXT_ORIGIN },
+    );
+    expect(lookup.status).toBe(200);
+    expect(lookup.json.ok).toBe(true);
+    expect(lookup.json.found).toBe(false);
+    expect(lookup.json.source).toBeUndefined();
+
+    // SAVE-TIME: the first capture of that URL is NOT a dedup.
+    const capture = await post(
+      port,
+      "/capture",
+      {
+        kind: "page",
+        url,
+        title: "A Brand New Page",
+        html: "<html><head><title>A Brand New Page</title></head><body><p>Fresh content.</p></body></html>",
+      },
+      { Authorization: `Bearer ${token}`, Origin: EXT_ORIGIN },
+    );
+    expect(capture.status).toBe(200);
+    expect(capture.json.ok).toBe(true);
+    expect(capture.json.deduped).toBe(false);
+
+    await app.close();
+  });
+
+  test("the /lookup-source threat model matches /open-source", async () => {
+    // A FRESH data dir so we can probe the UNPAIRED state (no stored origin yet).
+    const freshDir = makeDataDir();
+    const app = await launchApp(freshDir, { captureEnabled: true });
+    const page = await app.firstWindow();
+    await page.waitForLoadState("domcontentloaded");
+
+    let pairing = await getPairing(page);
+    for (let i = 0; i < 20 && !(pairing.running && pairing.port); i++) {
+      await page.waitForTimeout(100);
+      pairing = await getPairing(page);
+    }
+    const port = pairing.port as number;
+    const token = pairing.token;
+
+    const body = { url: "https://example.com/lookup-parity/threat" };
+
+    // Unpaired (no allowed origin yet) → 403 unpaired.
+    const unpaired = await post(port, "/lookup-source", body, {
+      Authorization: `Bearer ${token}`,
+      Origin: EXT_ORIGIN,
+    });
+    expect(unpaired.status).toBe(403);
+    expect(unpaired.json.error).toBe("unpaired");
+
+    // Pair the extension origin so the remaining cases reach the authed branch.
+    const pair = await post(
+      port,
+      "/pair",
+      { extensionOrigin: EXT_ORIGIN },
+      { Authorization: `Bearer ${token}`, Origin: EXT_ORIGIN },
+    );
+    expect(pair.status).toBe(200);
+
+    // Bad origin → 403 bad_origin.
+    const badOrigin = await post(port, "/lookup-source", body, {
+      Authorization: `Bearer ${token}`,
+      Origin: "chrome-extension://someoneelse",
+    });
+    expect(badOrigin.status).toBe(403);
+    expect(badOrigin.json.error).toBe("bad_origin");
+
+    // Bad token → 401 bad_token.
+    const badToken = await post(port, "/lookup-source", body, {
+      Authorization: "Bearer wrong-token",
+      Origin: EXT_ORIGIN,
+    });
+    expect(badToken.status).toBe(401);
+    expect(badToken.json.error).toBe("bad_token");
+
+    // Oversized body (> the 6 MiB hard cap) → 413 too_large is covered by the
+    // in-process unit test (capture-server.test.ts). It is deliberately NOT
+    // asserted here: `readBody` calls `req.destroy()` past the cap, which races
+    // the 413 write over a real socket (the client sees ECONNRESET, not a clean
+    // 413) — the same reason the /capture e2e threat-model test omits it.
+
+    // Non-JSON / invalid body → 400 invalid. (Raw POST so we control the body bytes.)
+    const invalidRes = await fetch(`http://127.0.0.1:${port}/lookup-source`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+        Origin: EXT_ORIGIN,
+      },
+      body: "not json at all",
+    });
+    expect(invalidRes.status).toBe(400);
+    expect(((await invalidRes.json()) as { error: string }).error).toBe("invalid");
+
+    // A well-formed JSON body that violates the schema (missing `url`) → 400 invalid.
+    const missingUrl = await post(
+      port,
+      "/lookup-source",
+      { notUrl: "https://example.com/x" },
+      { Authorization: `Bearer ${token}`, Origin: EXT_ORIGIN },
+    );
+    expect(missingUrl.status).toBe(400);
+    expect(missingUrl.json.error).toBe("invalid");
+
+    // Wrong method (GET on a POST-only route) → 405.
+    const wrongMethod = await get(port, "/lookup-source", {
+      Authorization: `Bearer ${token}`,
+      Origin: EXT_ORIGIN,
+    });
+    expect(wrongMethod.status).toBe(405);
+
+    await app.close();
+  });
+
+  test("a non-http(s) URL in the body resolves to found:false (not a 400) — guards KTD3", async () => {
+    const { app, port, token } = await bootPaired();
+
+    // The request schema is permissive; canonicalization (not the schema) gates the
+    // URL, so a non-http(s) value resolves to found:false rather than rejecting.
+    const lookup = await post(
+      port,
+      "/lookup-source",
+      { url: "chrome://extensions" },
+      { Authorization: `Bearer ${token}`, Origin: EXT_ORIGIN },
+    );
+    expect(lookup.status).toBe(200);
+    expect(lookup.json.ok).toBe(true);
+    expect(lookup.json.found).toBe(false);
+    expect(lookup.json.source).toBeUndefined();
+
+    await app.close();
+  });
+
+  test("a captured page is still found:true after an app restart", async () => {
+    const restartDir = makeDataDir();
+    const url = "https://example.com/lookup-parity/survives-restart";
+
+    // First launch: pair + capture the page.
+    const app1 = await launchApp(restartDir, { captureEnabled: true });
+    const page1 = await app1.firstWindow();
+    await page1.waitForLoadState("domcontentloaded");
+    let p1 = await getPairing(page1);
+    for (let i = 0; i < 20 && !(p1.running && p1.port); i++) {
+      await page1.waitForTimeout(100);
+      p1 = await getPairing(page1);
+    }
+    const port1 = p1.port as number;
+    const token1 = p1.token;
+    await post(
+      port1,
+      "/pair",
+      { extensionOrigin: EXT_ORIGIN },
+      { Authorization: `Bearer ${token1}`, Origin: EXT_ORIGIN },
+    );
+    const capture = await post(
+      port1,
+      "/capture",
+      {
+        kind: "page",
+        url,
+        title: "Survives Restart",
+        html: "<html><head><title>Survives Restart</title></head><body><p>Persisted.</p></body></html>",
+      },
+      { Authorization: `Bearer ${token1}`, Origin: EXT_ORIGIN },
+    );
+    expect(capture.status).toBe(200);
+    const capturedId = capture.json.id as string;
+    await app1.close();
+
+    // Relaunch against the SAME data dir (token + paired origin persist).
+    const app2 = await launchApp(restartDir, { captureEnabled: true });
+    const page2 = await app2.firstWindow();
+    await page2.waitForLoadState("domcontentloaded");
+    let p2 = await getPairing(page2);
+    for (let i = 0; i < 20 && !(p2.running && p2.port); i++) {
+      await page2.waitForTimeout(100);
+      p2 = await getPairing(page2);
+    }
+    const port2 = p2.port as number;
+    const token2 = p2.token;
+    expect(p2.extensionOriginHint).toBe(EXT_ORIGIN);
+
+    // The lookup still reports the same persisted source after restart.
+    const lookup = await post(
+      port2,
+      "/lookup-source",
+      { url },
+      { Authorization: `Bearer ${token2}`, Origin: EXT_ORIGIN },
+    );
+    expect(lookup.status).toBe(200);
+    expect(lookup.json.found).toBe(true);
+    expect((lookup.json.source as { id: string }).id).toBe(capturedId);
+
+    await app2.close();
+  });
+
+  test("a soft-deleted source is no longer found (matches the deleted_at IS NULL dedup filter)", async () => {
+    const { app, page, port, token } = await bootPaired();
+
+    const url = "https://example.com/lookup-parity/soft-delete";
+
+    // Capture a page, confirm it is found pre-save.
+    const capture = await post(
+      port,
+      "/capture",
+      {
+        kind: "page",
+        url,
+        title: "To Be Trashed",
+        html: "<html><head><title>To Be Trashed</title></head><body><p>Doomed.</p></body></html>",
+      },
+      { Authorization: `Bearer ${token}`, Origin: EXT_ORIGIN },
+    );
+    expect(capture.status).toBe(200);
+    const capturedId = capture.json.id as string;
+
+    const before = await post(
+      port,
+      "/lookup-source",
+      { url },
+      { Authorization: `Bearer ${token}`, Origin: EXT_ORIGIN },
+    );
+    expect(before.json.found).toBe(true);
+    expect((before.json.source as { id: string }).id).toBe(capturedId);
+
+    // Soft-delete the source through the typed bridge (the SAME mutation the UI
+    // uses for a lineage-aware delete — moves it to the trash, deleted_at set).
+    await page.evaluate(async (id) => {
+      const api = window.appApi as unknown as {
+        elements: {
+          softDeleteSubtree(req: {
+            id: string;
+            includeSubtree?: boolean;
+          }): Promise<{ affected: readonly string[] }>;
+        };
+      };
+      await api.elements.softDeleteSubtree({ id, includeSubtree: true });
+    }, capturedId);
+
+    // The dedup query filters `deleted_at IS NULL`, so the trashed source no
+    // longer reports saved (consistent with save-time re-import behavior).
+    const after = await post(
+      port,
+      "/lookup-source",
+      { url },
+      { Authorization: `Bearer ${token}`, Origin: EXT_ORIGIN },
+    );
+    expect(after.status).toBe(200);
+    expect(after.json.found).toBe(false);
+    expect(after.json.source).toBeUndefined();
+
+    await app.close();
+  });
 });
