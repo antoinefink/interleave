@@ -1,6 +1,6 @@
 import type { BlockId, ElementId, IsoTimestamp, Priority } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
-import { operationLog } from "@interleave/db";
+import { elements, operationLog } from "@interleave/db";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -21,6 +21,12 @@ let handle: DbHandle;
 const NOW = "2026-06-12T09:00:00.000Z" as IsoTimestamp;
 const FAR_FUTURE = "2026-08-15T09:00:00.000Z" as IsoTimestamp;
 const OVERDUE = "2026-06-01T09:00:00.000Z" as IsoTimestamp;
+// The deterministic "created long ago" anchor for seeded extracts. `daysSinceProgress`
+// is measured from the last stage advance or, absent one, `createdAt` — which the
+// repository stamps with the REAL wall clock at insert. Pinning it here keeps the age
+// band stable as real time approaches the fixed `FAR_FUTURE` clock; without it the band
+// silently drifts (graveyard → stale) once "now" is within 2×ageDays of FAR_FUTURE.
+const CREATED = "2026-04-01T09:00:00.000Z" as IsoTimestamp;
 
 beforeEach(() => {
   handle = createInMemoryDb();
@@ -76,6 +82,13 @@ function seedExtract(
     stage: opts.stage ?? "raw_extract",
   });
   r.elements.reschedule(extract.element.id, OVERDUE);
+  // Pin the createdAt progress anchor to a fixed past instant (see CREATED) so the
+  // computed age band is deterministic rather than wall-clock dependent.
+  handle.db
+    .update(elements)
+    .set({ createdAt: CREATED })
+    .where(eq(elements.id, extract.element.id))
+    .run();
   return extract.element.id;
 }
 

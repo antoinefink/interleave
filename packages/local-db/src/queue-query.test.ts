@@ -20,7 +20,7 @@
 
 import type { BlockId, ElementId, IsoTimestamp } from "@interleave/core";
 import { PRIORITY_LABEL_VALUE } from "@interleave/core";
-import { type DbHandle, elements } from "@interleave/db";
+import { type DbHandle, elements, operationLog } from "@interleave/db";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BlockProcessingService } from "./block-processing-service";
@@ -781,6 +781,17 @@ describe("QueueQuery", () => {
         });
       }
     });
+    // The stage advance to `clean_extract` above logs an `update_element` op whose
+    // `createdAt` is the real wall clock. `daysSinceProgress` anchors on
+    // `lastStageAdvanceAt ?? createdAt`, so that op's timestamp OVERRIDES the pinned
+    // `elements.createdAt` and the band drifts (graveyard → stale) once real time is
+    // within 2×ageDays of the fixed asOf. Pin every op for this extract to the same
+    // fixed instant as `createdAt` so the progress anchor stays deterministic.
+    handle.db
+      .update(operationLog)
+      .set({ createdAt: iso("2026-06-01T09:00:00.000Z") })
+      .where(eq(operationLog.elementId, id))
+      .run();
     repos.settings.updateAppSettings({
       extractAgingPolicy: "suggest",
       extractAgingReturnThreshold: 5,
