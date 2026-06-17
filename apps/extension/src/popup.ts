@@ -7,7 +7,7 @@
  */
 
 import type { CaptureOutcome, OpenSourceOutcome, PairedConfig } from "./shared";
-import { openCapturedSource, pingApp, readPairedConfig } from "./shared";
+import { lookupSource, openCapturedSource, pingApp, readPairedConfig } from "./shared";
 
 type Priority = "A" | "B" | "C" | "D";
 type ConnectionState = "checking" | "ok" | "offline" | "not-paired";
@@ -50,6 +50,9 @@ let connection: ConnectionState = "checking";
 let savedState: SavedState | null = null;
 let lastError: string | null = null;
 let pairedConfig: PairedConfig | null = null;
+/** The pre-save "already saved" hint: the matched source, or null for no banner. */
+let alreadySaved: { id: string; title: string; status: string } | null = null;
+let lookupState: "idle" | "pending" | "done" = "idle";
 
 async function init(): Promise<void> {
   optionsButton.addEventListener("click", () => {
@@ -58,9 +61,42 @@ async function init(): Promise<void> {
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   page = pageFromTab(tab);
-  selection = await readSelection(tab?.id);
+  // One-shot in-page read: the current selection AND the scrape-equivalent url
+  // (`link[rel="canonical"]` href, else `location.href` — mirrors `scrapePage`
+  // in background.ts, KTD5). On a restricted page the injection fails and we keep
+  // the tab url.
+  const probe = await readPageProbe(tab?.id);
+  selection = probe.selection;
+  if (probe.url) {
+    page = { ...page, url: probe.url, domain: domainFromUrl(probe.url) };
+  }
   render();
   await refreshConnection();
+  await runLookup();
+}
+
+/**
+ * After the connection probe reports "ok" and we have an http(s) url, ask the
+ * desktop whether this page is already saved (R1). Stale-render guarded (R8):
+ * if the popup was dismissed or the user started saving before this resolves, it
+ * makes no DOM mutation. Every non-`ok`/non-source outcome leaves the idle view
+ * untouched (R5). Never throws.
+ */
+async function runLookup(): Promise<void> {
+  if (lookupState !== "idle") return;
+  if (connection !== "ok") return;
+  const url = page.url;
+  if (!/^https?:\/\//i.test(url)) return;
+
+  lookupState = "pending";
+  const outcome = await lookupSource(url);
+  lookupState = "done";
+  // Bail if the user moved off the idle view or the popup body went away (R8).
+  if (phase !== "idle" || !bodyEl.isConnected) return;
+  if (outcome.kind === "ok" && outcome.source) {
+    alreadySaved = outcome.source;
+    render();
+  }
 }
 
 function pageFromTab(tab: chrome.tabs.Tab | undefined): PageContext {
@@ -80,16 +116,39 @@ function domainFromUrl(url: string): string {
   }
 }
 
-async function readSelection(tabId: number | undefined): Promise<string> {
-  if (!tabId || !chrome.scripting?.executeScript) return "";
+interface PageProbe {
+  readonly selection: string;
+  /** The scrape-equivalent url, or "" when injection failed (restricted page). */
+  readonly url: string;
+}
+
+/**
+ * One-shot in-page read: the current selection plus the scrape-equivalent url
+ * (`link[rel="canonical"]` href, else `location.href`). Folding both into a
+ * single `executeScript` keeps popup-open to one injection (KTD5). Returns empty
+ * fields on a restricted page (injection throws) so the caller falls back to the
+ * tab url.
+ */
+async function readPageProbe(tabId: number | undefined): Promise<PageProbe> {
+  if (!tabId || !chrome.scripting?.executeScript) return { selection: "", url: "" };
   try {
     const [result] = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => window.getSelection()?.toString().trim() ?? "",
+      func: () => {
+        const canonical = document.querySelector('link[rel="canonical"]')?.getAttribute("href");
+        return {
+          selection: window.getSelection()?.toString().trim() ?? "",
+          url: canonical || location.href,
+        };
+      },
     });
-    return typeof result?.result === "string" ? result.result.trim() : "";
+    const value = result?.result as { selection?: unknown; url?: unknown } | undefined;
+    return {
+      selection: typeof value?.selection === "string" ? value.selection.trim() : "",
+      url: typeof value?.url === "string" ? value.url : "",
+    };
   } catch {
-    return "";
+    return { selection: "", url: "" };
   }
 }
 
@@ -146,10 +205,17 @@ function renderConnectionPill(): void {
 function renderIdle(): void {
   const hasSelection = selection.length > 0;
   const saving = phase === "saving";
+  const saved = alreadySaved;
   const [hintTitle, hintBody] = PRIORITY_HINT[priority];
+
+  // The page is already saved AND the user is saving the whole page (no
+  // selection): lead with the "already saved" banner and demote Save to a
+  // secondary "Save anyway" affordance (save-time stays authoritative).
+  const pageAlreadySaved = saved !== null && !hasSelection;
 
   bodyEl.innerHTML = `
     ${pageRow()}
+    ${pageAlreadySaved ? alreadySavedBanner(saved) : ""}
     <section class="capture-section">
       <div class="section-label">
         <span>Selection</span>
@@ -163,6 +229,11 @@ function renderIdle(): void {
           : `<div class="selection-empty">${icon("text")} Select text on the page to save just a passage</div>`
       }
     </section>
+    ${
+      saved !== null && hasSelection
+        ? `<div class="page-saved-note">${icon("bookmark")}<span>This page is already saved</span><button id="open-source-page" class="link-btn" type="button">Open page in Interleave</button></div>`
+        : ""
+    }
     <section class="capture-section">
       <div class="section-label"><span>Priority</span></div>
       ${priorityGroup(saving)}
@@ -176,12 +247,15 @@ function renderIdle(): void {
               saving ? "disabled" : ""
             }>${saving ? spinner() : icon("extract")}${saving ? "Saving..." : "Save selection"}</button>
              <button id="save-page" class="btn btn--block" type="button" ${saving ? "disabled" : ""}>${icon("bookmark")}Save whole page instead</button>`
-          : `<button id="save-page" class="btn btn--primary btn--lg btn--block" type="button" ${
-              saving ? "disabled" : ""
-            }>${saving ? spinner() : icon("bookmark")}${saving ? "Saving..." : "Save page"}</button>`
+          : pageAlreadySaved
+            ? `<button id="open-source" class="btn btn--primary btn--lg btn--block" type="button">${icon("external")}Open in Interleave</button>
+               <button id="save-page" class="btn btn--block" type="button" ${saving ? "disabled" : ""}>${saving ? spinner() : icon("bookmark")}${saving ? "Saving..." : "Save anyway"}</button>`
+            : `<button id="save-page" class="btn btn--primary btn--lg btn--block" type="button" ${
+                saving ? "disabled" : ""
+              }>${saving ? spinner() : icon("bookmark")}${saving ? "Saving..." : "Save page"}</button>`
       }
     </div>
-    <div id="save-result" class="sr-only" aria-live="polite"></div>
+    <div id="save-result" class="${pageAlreadySaved ? "open-result" : "sr-only"}" aria-live="polite"></div>
   `;
 
   wirePriority();
@@ -191,6 +265,38 @@ function renderIdle(): void {
   bodyEl.querySelector<HTMLButtonElement>("#save-selection")?.addEventListener("click", () => {
     send("save-selection");
   });
+  if (saved) {
+    bodyEl.querySelector<HTMLButtonElement>("#open-source")?.addEventListener("click", (event) => {
+      void openSourceFromButton(saved.id, event.currentTarget as HTMLButtonElement, {
+        activate: false,
+      });
+    });
+    bodyEl
+      .querySelector<HTMLButtonElement>("#open-source-page")
+      ?.addEventListener("click", (event) => {
+        void openSourceFromButton(saved.id, event.currentTarget as HTMLButtonElement, {
+          activate: false,
+        });
+      });
+  }
+}
+
+/** The pre-save "Already saved" indicator (whole-page case), reusing the
+ * `bookmark`-led, `done-source`/`badge-prio` vocabulary of {@link renderSaved}. */
+function alreadySavedBanner(saved: { id: string; title: string; status: string }): string {
+  const statusHint = saved.status === "inbox" ? " - in your inbox" : "";
+  return `
+    <div class="banner banner--info" role="status">
+      ${icon("bookmark")}
+      <span>
+        <b>Already saved${escapeHtml(statusHint)}</b>
+        <span class="banner-source">
+          <span class="source-icon">${icon("source")}</span>
+          <span class="done-source-title">${escapeHtml(saved.title)}</span>
+        </span>
+      </span>
+    </div>
+  `;
 }
 
 function renderSaved(): void {
@@ -363,11 +469,18 @@ function renderCaptureOutcome(
   }
 }
 
-async function openSourceFromButton(sourceId: string, button: HTMLButtonElement): Promise<void> {
+async function openSourceFromButton(
+  sourceId: string,
+  button: HTMLButtonElement,
+  options: { readonly activate?: boolean } = {},
+): Promise<void> {
   button.disabled = true;
   button.innerHTML = `${spinner()}Opening...`;
   const result = document.getElementById("save-result") as HTMLDivElement | null;
-  const outcome = await openCapturedSource(sourceId, { activate: true });
+  // The pre-save banner opens with activate:false (KTD4 — browsing, not
+  // capturing, so no silent inbox-accept); the post-save screen keeps the
+  // explicit activate:true.
+  const outcome = await openCapturedSource(sourceId, { activate: options.activate ?? true });
   renderOpenOutcome(outcome, button, result);
 }
 

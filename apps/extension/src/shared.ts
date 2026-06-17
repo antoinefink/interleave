@@ -12,6 +12,8 @@
 import {
   type CaptureRequest,
   type CaptureResponse,
+  type LookupSourceRequest,
+  LookupSourceResponseSchema,
   type OpenSourceErrorCode,
   OpenSourceErrorResponseSchema,
   type OpenSourceRequestInput,
@@ -55,6 +57,26 @@ export type OpenSourceOutcome =
 export interface OpenCapturedSourceOptions {
   readonly activate?: boolean;
 }
+
+/**
+ * A normalized outcome for the pre-save "is this page already saved?" lookup.
+ *
+ * `ok` carries the newest matching source (or `null` when nothing matched). Every
+ * other variant means "no banner" to the popup (R5): `not-applicable` (a
+ * non-http(s) / missing url — short-circuited without a fetch), the same auth /
+ * connectivity failure modes as {@link OpenSourceOutcome}, and `errored` (a
+ * timeout, an unparseable body, or a schema mismatch).
+ */
+export type LookupOutcome =
+  | { readonly kind: "ok"; readonly source: { id: string; title: string; status: string } | null }
+  | { readonly kind: "not-applicable" }
+  | { readonly kind: "not-paired" }
+  | { readonly kind: "not-running" }
+  | { readonly kind: "bad-token" }
+  | { readonly kind: "errored" };
+
+/** How long the pre-save lookup waits before aborting a slow desktop (R8). */
+const LOOKUP_TIMEOUT_MS = 2500;
 
 /** This extension's own origin (`chrome-extension://<id>`), the pairing identity. */
 export function extensionOrigin(): string {
@@ -240,6 +262,68 @@ function openSourceErrorMessage(error: OpenSourceErrorCode | undefined, status: 
     default:
       return error ? String(error) : `Open failed (${status})`;
   }
+}
+
+/**
+ * Ask the paired desktop whether a page is already a saved source, by URL — the
+ * read-only pre-save "already saved" hint the popup shows on open. Cloned from
+ * {@link openCapturedSource} (same header set, status mapping, and `safeParse`
+ * discipline) with two differences: it short-circuits non-http(s) urls without a
+ * fetch (KTD3, client side), and it bounds a slow desktop with an
+ * `AbortController` (R8) — an abort/timeout resolves to `errored` (no banner).
+ *
+ * POSITIVE-ONLY: a `{ kind: "ok", source: null }` answer is a hint, not a
+ * guarantee that a subsequent save will not dedup; save-time stays authoritative.
+ */
+export async function lookupSource(url: string): Promise<LookupOutcome> {
+  const cleanUrl = (url ?? "").trim();
+  // Short-circuit non-http(s) / empty urls — no useful round-trip (KTD3).
+  if (!cleanUrl || !/^https?:\/\//i.test(cleanUrl)) return { kind: "not-applicable" };
+
+  const { token, port } = await readPairedConfig();
+  if (!token) return { kind: "not-paired" };
+
+  const request: LookupSourceRequest = { url: cleanUrl };
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(`${loopbackBase(port)}/lookup-source`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    // An abort (the timeout fired) means the desktop is too slow → no banner.
+    // Any other thrown fetch (connection refused) means the app is not running.
+    if (err instanceof DOMException && err.name === "AbortError") return { kind: "errored" };
+    return { kind: "not-running" };
+  } finally {
+    clearTimeout(timer);
+  }
+
+  if (res.status === 401) return { kind: "bad-token" };
+  if (res.status === 403) return { kind: "not-paired" };
+
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    return { kind: "errored" };
+  }
+
+  const parsed = LookupSourceResponseSchema.safeParse(body);
+  if (!parsed.success) return { kind: "errored" };
+  if (parsed.data.found && parsed.data.source) {
+    return { kind: "ok", source: parsed.data.source };
+  }
+  return { kind: "ok", source: null };
 }
 
 /** One recent capture row (kept in chrome.storage for the side panel — T063). */

@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_CAPTURE_PORT, loopbackBase, openCapturedSource, STORAGE_KEYS } from "./shared";
+import {
+  DEFAULT_CAPTURE_PORT,
+  lookupSource,
+  loopbackBase,
+  openCapturedSource,
+  STORAGE_KEYS,
+} from "./shared";
 
 const fetchMock = vi.fn();
 
@@ -133,6 +139,157 @@ describe("openCapturedSource", () => {
     await expect(openCapturedSource("src-1")).resolves.toEqual({
       kind: "error",
       message: "Unexpected response (500)",
+    });
+  });
+});
+
+describe("lookupSource", () => {
+  it("returns the matched source when the desktop reports found", async () => {
+    installChromeStorage({
+      [STORAGE_KEYS.token]: "paired-token",
+      [STORAGE_KEYS.port]: 47616,
+    });
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: true,
+          found: true,
+          source: { id: "src-9", title: "Saved article", status: "inbox" },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(lookupSource("https://example.com/articles/one")).resolves.toEqual({
+      kind: "ok",
+      source: { id: "src-9", title: "Saved article", status: "inbox" },
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:47616/lookup-source",
+      expect.objectContaining({
+        method: "POST",
+        headers: {
+          Authorization: "Bearer paired-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ url: "https://example.com/articles/one" }),
+      }),
+    );
+  });
+
+  it("returns a null source when the desktop reports not found", async () => {
+    installChromeStorage({
+      [STORAGE_KEYS.token]: "paired-token",
+      [STORAGE_KEYS.port]: 47615,
+    });
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, found: false }), { status: 200 }),
+    );
+
+    await expect(lookupSource("https://example.com/never-saved")).resolves.toEqual({
+      kind: "ok",
+      source: null,
+    });
+  });
+
+  it("short-circuits non-http(s) and empty urls without fetching", async () => {
+    installChromeStorage({
+      [STORAGE_KEYS.token]: "paired-token",
+      [STORAGE_KEYS.port]: 47615,
+    });
+
+    await expect(lookupSource("chrome://extensions")).resolves.toEqual({
+      kind: "not-applicable",
+    });
+    await expect(lookupSource("file:///Users/me/doc.pdf")).resolves.toEqual({
+      kind: "not-applicable",
+    });
+    await expect(lookupSource("")).resolves.toEqual({ kind: "not-applicable" });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not fetch when the extension is not paired", async () => {
+    installChromeStorage({ [STORAGE_KEYS.token]: null, [STORAGE_KEYS.port]: 47615 });
+
+    await expect(lookupSource("https://example.com/one")).resolves.toEqual({
+      kind: "not-paired",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("maps loopback auth failures", async () => {
+    installChromeStorage({
+      [STORAGE_KEYS.token]: "paired-token",
+      [STORAGE_KEYS.port]: 47615,
+    });
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: false }), { status: 401 }));
+    await expect(lookupSource("https://example.com/one")).resolves.toEqual({
+      kind: "bad-token",
+    });
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ ok: false }), { status: 403 }));
+    await expect(lookupSource("https://example.com/one")).resolves.toEqual({
+      kind: "not-paired",
+    });
+  });
+
+  it("maps a refused connection to not-running", async () => {
+    installChromeStorage({
+      [STORAGE_KEYS.token]: "paired-token",
+      [STORAGE_KEYS.port]: 47615,
+    });
+    fetchMock.mockRejectedValueOnce(new TypeError("connection refused"));
+
+    await expect(lookupSource("https://example.com/one")).resolves.toEqual({
+      kind: "not-running",
+    });
+  });
+
+  it("aborts a never-resolving fetch at the timeout and returns errored", async () => {
+    installChromeStorage({
+      [STORAGE_KEYS.token]: "paired-token",
+      [STORAGE_KEYS.port]: 47615,
+    });
+    // Honor the AbortController: reject with an AbortError when the signal fires.
+    fetchMock.mockImplementation(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          const signal = init.signal as AbortSignal | undefined;
+          signal?.addEventListener("abort", () => {
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      const pending = lookupSource("https://example.com/slow");
+      await vi.advanceTimersByTimeAsync(2500);
+      await expect(pending).resolves.toEqual({ kind: "errored" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("returns errored for non-JSON and schema-mismatched bodies", async () => {
+    installChromeStorage({
+      [STORAGE_KEYS.token]: "paired-token",
+      [STORAGE_KEYS.port]: 47615,
+    });
+
+    fetchMock.mockResolvedValueOnce(new Response("not json", { status: 200 }));
+    await expect(lookupSource("https://example.com/one")).resolves.toEqual({
+      kind: "errored",
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true, found: "yes" }), { status: 200 }),
+    );
+    await expect(lookupSource("https://example.com/one")).resolves.toEqual({
+      kind: "errored",
     });
   });
 });

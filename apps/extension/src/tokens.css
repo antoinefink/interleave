@@ -691,6 +691,13 @@ button:disabled {
   background: var(--danger-soft);
 }
 
+/* Informational variant for the pre-save "already saved" hint — reuses the
+ * source-element accent vocabulary, not warn/danger. */
+.banner--info {
+  border-color: color-mix(in oklch, var(--el-source) 38%, transparent);
+  background: color-mix(in oklch, var(--el-source) 9%, var(--surface));
+}
+
 .banner .icon {
   width: 16px;
   height: 16px;
@@ -700,6 +707,58 @@ button:disabled {
 
 .banner--danger .icon {
   color: var(--danger);
+}
+
+.banner--info .icon {
+  color: var(--el-source);
+}
+
+.banner--info b {
+  color: var(--text);
+}
+
+/* The matched-source row inside the info banner — reuses the source-element
+ * icon/title vocabulary without the centered `.done-source` layout. */
+.banner-source {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  margin-top: 4px;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+/* The smaller "this page is already saved" note shown when a selection is the
+ * primary action (the selection action stays unqualified). */
+.page-saved-note {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.page-saved-note .icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--el-source);
+}
+
+.link-btn {
+  height: auto;
+  margin-left: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
 }
 
 .banner span {

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { OpenSourceOutcome } from "./shared";
+import type { LookupOutcome, OpenSourceOutcome } from "./shared";
 
 const sendMessage = vi.fn();
 const openOptionsPage = vi.fn();
@@ -11,11 +11,13 @@ type OpenCapturedSource = (
   sourceId: string,
   options?: { readonly activate?: boolean },
 ) => Promise<OpenSourceOutcome>;
+type LookupSource = (url: string) => Promise<LookupOutcome>;
 
 const h = vi.hoisted(() => ({
   openCapturedSource: vi.fn<OpenCapturedSource>(),
   readPairedConfig: vi.fn(),
   pingApp: vi.fn(),
+  lookupSource: vi.fn<LookupSource>(),
 }));
 
 vi.mock("./shared", async () => {
@@ -25,6 +27,7 @@ vi.mock("./shared", async () => {
     openCapturedSource: h.openCapturedSource,
     readPairedConfig: h.readPairedConfig,
     pingApp: h.pingApp,
+    lookupSource: h.lookupSource,
   };
 });
 
@@ -32,7 +35,9 @@ function installChromeMock(selection = "Important selected passage") {
   queryTabs.mockResolvedValue([
     { id: 5, title: "Current article", url: "https://example.com/articles/one" },
   ]);
-  executeScript.mockResolvedValue([{ result: selection }]);
+  executeScript.mockResolvedValue([
+    { result: { selection, url: "https://example.com/articles/one" } },
+  ]);
   vi.stubGlobal("chrome", {
     tabs: {
       query: queryTabs,
@@ -66,6 +71,7 @@ beforeEach(() => {
   h.openCapturedSource.mockResolvedValue({ kind: "ok", sourceId: "src-1" });
   h.readPairedConfig.mockResolvedValue({ token: "token", port: 47615 });
   h.pingApp.mockResolvedValue(true);
+  h.lookupSource.mockResolvedValue({ kind: "ok", source: null });
   sendMessage.mockImplementation((_message, cb) => {
     cb({
       kind: "ok",
@@ -341,5 +347,155 @@ describe("extension popup", () => {
     (document.getElementById("open-options") as HTMLButtonElement).click();
 
     expect(openOptionsPage).toHaveBeenCalledOnce();
+  });
+
+  it("shows an already-saved banner with Open in Interleave on a found page", async () => {
+    installDom();
+    installChromeMock("");
+    h.lookupSource.mockResolvedValue({
+      kind: "ok",
+      source: { id: "existing-7", title: "Existing source", status: "inbox" },
+    });
+    await import("./popup");
+
+    await vi.waitFor(() =>
+      expect(document.querySelector(".banner--info")?.textContent).toContain("Already saved"),
+    );
+    expect(document.querySelector(".banner--info")?.textContent).toContain("Existing source");
+    expect(document.getElementById("open-source")).not.toBeNull();
+    // The page-save button is demoted to a secondary "Save anyway" affordance.
+    expect(document.getElementById("save-page")?.textContent).toContain("Save anyway");
+    expect(h.lookupSource).toHaveBeenCalledWith("https://example.com/articles/one");
+  });
+
+  it("opens the matched source without activating it (activate:false)", async () => {
+    installDom();
+    installChromeMock("");
+    h.lookupSource.mockResolvedValue({
+      kind: "ok",
+      source: { id: "existing-7", title: "Existing source", status: "inbox" },
+    });
+    await import("./popup");
+
+    const open = await vi.waitFor(() => {
+      const button = document.getElementById("open-source") as HTMLButtonElement | null;
+      expect(button).toBeTruthy();
+      return button as HTMLButtonElement;
+    });
+    open.click();
+
+    await vi.waitFor(() =>
+      expect(h.openCapturedSource).toHaveBeenCalledWith("existing-7", { activate: false }),
+    );
+  });
+
+  it("keeps Save selection primary and shows only a page note when a selection is present", async () => {
+    h.lookupSource.mockResolvedValue({
+      kind: "ok",
+      source: { id: "existing-7", title: "Existing source", status: "inbox" },
+    });
+    await import("./popup");
+
+    await vi.waitFor(() => expect(document.querySelector(".page-saved-note")).not.toBeNull());
+    expect(document.querySelector(".page-saved-note")?.textContent).toContain(
+      "This page is already saved",
+    );
+    // No whole-page "already saved" banner when a selection is the primary action.
+    expect(document.querySelector(".banner--info")).toBeNull();
+    const saveSelection = document.getElementById("save-selection") as HTMLButtonElement;
+    expect(saveSelection).not.toBeNull();
+    expect(saveSelection.classList.contains("btn--primary")).toBe(true);
+    expect(saveSelection.disabled).toBe(false);
+    expect(saveSelection.textContent).toContain("Save selection");
+    expect(saveSelection.textContent).not.toContain("anyway");
+  });
+
+  it("shows no banner when the lookup finds nothing", async () => {
+    installDom();
+    installChromeMock("");
+    h.lookupSource.mockResolvedValue({ kind: "ok", source: null });
+    await import("./popup");
+
+    await vi.waitFor(() => expect(document.getElementById("save-page")).not.toBeNull());
+    expect(document.querySelector(".banner--info")).toBeNull();
+    expect(document.querySelector(".page-saved-note")).toBeNull();
+    expect(document.getElementById("save-page")?.textContent).toContain("Save page");
+  });
+
+  it("shows no banner when the lookup errors or is not applicable", async () => {
+    installDom();
+    installChromeMock("");
+    h.lookupSource.mockResolvedValue({ kind: "errored" });
+    await import("./popup");
+
+    await vi.waitFor(() => expect(document.getElementById("save-page")).not.toBeNull());
+    expect(document.querySelector(".banner--info")).toBeNull();
+  });
+
+  it("never calls lookupSource when the extension is not paired", async () => {
+    h.readPairedConfig.mockResolvedValue({ token: null, port: 47615 });
+    await import("./popup");
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain("Extension not paired"));
+    expect(h.lookupSource).not.toHaveBeenCalled();
+  });
+
+  it("never calls lookupSource when the app is offline", async () => {
+    h.pingApp.mockResolvedValue(false);
+    await import("./popup");
+
+    await vi.waitFor(() =>
+      expect(document.getElementById("connection-pill")?.textContent).toContain("App offline"),
+    );
+    expect(h.lookupSource).not.toHaveBeenCalled();
+  });
+
+  it("does not call lookupSource or banner on a restricted page with no http(s) url", async () => {
+    installDom();
+    queryTabs.mockResolvedValue([{ id: 5, title: "Extensions", url: "chrome://extensions" }]);
+    // Injection fails on a restricted page → no probe url → fall back to tab url.
+    executeScript.mockRejectedValue(new Error("Cannot access a chrome:// URL"));
+    await import("./popup");
+
+    await vi.waitFor(() => expect(document.getElementById("save-page")).not.toBeNull());
+    expect(h.lookupSource).not.toHaveBeenCalled();
+    expect(document.querySelector(".banner--info")).toBeNull();
+  });
+
+  it("ignores a stale lookup result after the user starts saving", async () => {
+    installDom();
+    installChromeMock("");
+    sendMessage.mockImplementation((_message, cb) => {
+      cb({
+        kind: "ok",
+        response: { ok: true, id: "src-1", kind: "page", title: "Saved article", deduped: false },
+      });
+    });
+    let resolveLookup: ((outcome: LookupOutcome) => void) | undefined;
+    h.lookupSource.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveLookup = resolve;
+        }),
+    );
+    await import("./popup");
+
+    await vi.waitFor(() => expect(document.getElementById("save-page")).not.toBeNull());
+    // Move off the idle view before the lookup resolves.
+    (document.getElementById("save-page") as HTMLButtonElement).click();
+    await vi.waitFor(() =>
+      expect(document.querySelector(".done-title")?.textContent).toBe("Saved to inbox"),
+    );
+
+    resolveLookup?.({
+      kind: "ok",
+      source: { id: "existing-7", title: "Existing source", status: "inbox" },
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The saved view stays put; the stale lookup made no DOM mutation.
+    expect(document.querySelector(".banner--info")).toBeNull();
+    expect(document.querySelector(".done-title")?.textContent).toBe("Saved to inbox");
   });
 });
