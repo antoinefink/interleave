@@ -202,6 +202,15 @@ describe("Shell", () => {
     expect(screen.queryByTestId("command-bar")).not.toBeInTheDocument();
   });
 
+  it("hides the command/search topbar on the Process session route", () => {
+    h.pathname = "/process";
+
+    render(<Shell />);
+
+    expect(screen.getByTestId("route-outlet")).toBeInTheDocument();
+    expect(screen.queryByTestId("command-bar")).not.toBeInTheDocument();
+  });
+
   it("keeps shell shortcuts live when the Queue topbar is hidden", () => {
     render(<Shell />);
 

@@ -376,7 +376,12 @@ function ShellInner() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const { selectedId } = useSelection();
   const globalActions = useGlobalActions();
-  const hideTopbar = pathname === "/queue";
+  // The command/search bar is shell chrome, not the owner of command behaviour
+  // (the ⌘K palette + g-nav shortcuts stay mounted unconditionally below). Omit
+  // the whole <Topbar> on the focused work sessions — the Queue and the Process
+  // session — so the --topbar-h row is reclaimed for reading. Exact route match
+  // so adjacent routes keep their topbar.
+  const hideTopbar = pathname === "/queue" || pathname === "/process";
 
   const [commandOpen, setCommandOpen] = useState(false);
   const [cheatOpen, setCheatOpen] = useState(false);
