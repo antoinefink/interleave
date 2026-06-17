@@ -1,4 +1,5 @@
 import { Icon } from "../components/Icon";
+import { Tooltip } from "../components/Tooltip";
 import "./AtomicExtractPrompt.css";
 
 export interface AtomicExtractPromptState {
@@ -22,14 +23,16 @@ export function AtomicExtractPrompt({
         <Icon name="card" size={14} />
       </span>
       <span className="atomic-extract-prompt__text">{prompt.title}</span>
-      <button
-        type="button"
-        className="atomic-extract-prompt__button atomic-extract-prompt__button--primary"
-        data-testid="atomic-extract-convert-now"
-        onClick={onConvert}
-      >
-        <Icon name="card" size={14} /> Convert now
-      </button>
+      <Tooltip label="Turn this statement into a review card">
+        <button
+          type="button"
+          className="atomic-extract-prompt__button atomic-extract-prompt__button--primary"
+          data-testid="atomic-extract-convert-now"
+          onClick={onConvert}
+        >
+          <Icon name="card" size={14} /> Convert now
+        </button>
+      </Tooltip>
       <button
         type="button"
         className="atomic-extract-prompt__button atomic-extract-prompt__button--icon"

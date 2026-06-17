@@ -1,5 +1,8 @@
 .atomic-extract-prompt {
-  --atomic-extract-prompt-inset: calc(var(--s-8) * 3);
+  /* Symmetric inset pins the bar to the bottom-right corner. --s-9 (32px) keeps
+     equal right/bottom margins while clearing the 26px status bar that the middle
+     column carries below the bar's left edge. */
+  --atomic-extract-prompt-inset: var(--s-9);
   --atomic-extract-prompt-inline-max: 65ch;
   --atomic-extract-prompt-icon-size: calc(var(--s-7) + var(--s-1));
   --atomic-extract-prompt-control-size: calc(var(--s-8) + var(--s-1));
