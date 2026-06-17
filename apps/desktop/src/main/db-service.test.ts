@@ -3672,7 +3672,7 @@ describe("DbService — review session (T037)", () => {
     svc.close();
   });
 
-  it("library.browse tags the weekly-review task with its taskType (routes to /weekly, not the queue)", () => {
+  it("library.browse excludes the weekly-review system task (it lives on /weekly, not the Library)", () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
     expect(svc.seedIfEmpty()).toBe(true);
@@ -3680,14 +3680,21 @@ describe("DbService — review session (T037)", () => {
     // Enabling weekly review creates the recurring system task.
     svc.updateAppSettings({ weeklyReviewEnabled: true });
 
-    const weekly = svc
-      .libraryBrowse({ types: ["task"] })
-      .items.find((item) => item.taskType === "weekly_review");
-    expect(weekly).toBeDefined();
-    expect(weekly?.title).toBe("Weekly review");
-    // No linked element — routing to /weekly relies solely on taskType. Without it the
-    // row falls through to the /process loop, which surfaces the next due card.
-    expect(weekly?.linkedElementId).toBeNull();
+    // It really exists as a live element — the inspector lists every type unfiltered,
+    // so it witnesses the weekly-review task directly (guards against a vacuous pass
+    // where the row is absent only because creation silently failed).
+    const inspectorWeekly = svc
+      .listInspectableElements()
+      .elements.find((el) => el.type === "task" && el.title === "Weekly review");
+    expect(inspectorWeekly).toBeDefined();
+
+    // ...but the Library deliberately filters system-owned tasks out: weekly reviews are
+    // machinery routed via /weekly, not browsable knowledge (mirrors the Queue's
+    // weekly-review exclusion). Neither a weekly_review-typed nor a "Weekly review"
+    // titled row may surface in browse, even when narrowed to tasks.
+    const taskRows = svc.libraryBrowse({ types: ["task"] }).items;
+    expect(taskRows.some((item) => item.taskType === "weekly_review")).toBe(false);
+    expect(taskRows.some((item) => item.title === "Weekly review")).toBe(false);
 
     svc.close();
   });

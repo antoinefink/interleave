@@ -26,9 +26,10 @@ import {
   type ElementStatus,
   type ElementType,
   priorityToLabel,
+  SYSTEM_TASK_TYPES,
 } from "@interleave/core";
-import { elements, type InterleaveDatabase } from "@interleave/db";
-import { and, inArray, isNull } from "drizzle-orm";
+import { elements, type InterleaveDatabase, tasks as tasksTable } from "@interleave/db";
+import { and, inArray, isNull, notInArray } from "drizzle-orm";
 import type { Repositories } from "./index";
 import { rowToElement } from "./mappers";
 
@@ -133,7 +134,9 @@ export class LibraryQuery {
    * (each dimension respects every OTHER active filter but not its own value — see
    * {@link LibraryBrowseCounts}). With NO filters it returns everything
    * (newest/priority-ranked) — the browse-first default that distinguishes Library
-   * from keyword search.
+   * from keyword search. System-owned tasks ({@link SYSTEM_TASK_TYPES}: the recurring
+   * weekly-review sessions and re-read sections) are excluded from BOTH the rows and the
+   * facet counts — they are machinery, not browsable knowledge (the Queue skips them too).
    *
    * Performance: a single in-memory pass over the universe to match, plus one read
    * of the live `concept_membership` edges (the shared
@@ -141,14 +144,31 @@ export class LibraryQuery {
    * concept matching/counting never becomes an N+1 over concepts.
    */
   browse(filters: LibraryBrowseFilters = {}): LibraryBrowseData {
+    // System-owned task elements (weekly_review, reread_region) are MACHINERY, not
+    // browsable knowledge: they carry no source/concepts/similarity and accrue one
+    // spent "done" row per cadence period forever. The Queue already skips them
+    // (`excludeWeeklyReview`); the Library does the same so the knowledge browser
+    // stays free of recurring-session exhaust. `task_type` is indexed, so this is a
+    // cheap lookup; the ids are excluded at read time (rows + audit log are untouched).
+    const systemTaskIds = this.db
+      .select({ id: tasksTable.elementId })
+      .from(tasksTable)
+      .where(inArray(tasksTable.taskType, [...SYSTEM_TASK_TYPES]))
+      .all()
+      .map((row) => row.id);
+
     // The live browsable universe — every non-deleted element of a browsable type
-    // (concepts/media_fragments excluded). One indexed read; the row count is the
-    // user's whole collection, well within an in-memory pass.
+    // (concepts/media_fragments excluded; system tasks excluded). One indexed read;
+    // the row count is the user's whole collection, well within an in-memory pass.
     const universe = this.db
       .select()
       .from(elements)
       .where(
-        and(inArray(elements.type, LIBRARY_TYPES as ElementType[]), isNull(elements.deletedAt)),
+        and(
+          inArray(elements.type, LIBRARY_TYPES as ElementType[]),
+          isNull(elements.deletedAt),
+          systemTaskIds.length > 0 ? notInArray(elements.id, systemTaskIds) : undefined,
+        ),
       )
       .all()
       .map(rowToElement);

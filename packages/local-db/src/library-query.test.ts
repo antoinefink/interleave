@@ -159,6 +159,32 @@ describe("LibraryQuery.browse", () => {
     expect(types.has("task")).toBe(true);
   });
 
+  it("excludes system-owned tasks (weekly review) from rows AND facet counts", () => {
+    const u = buildUniverse();
+    // Open a weekly-review session then complete it: this leaves one DONE
+    // weekly_review (spent history) plus a freshly SCHEDULED one (next session).
+    // Both are system machinery — they must never surface in the knowledge browser,
+    // unlike the plain user `task` from buildUniverse, which still appears.
+    const session = repos.weeklyReviewService.ensureSession();
+    expect(session).not.toBeNull();
+    if (!session) throw new Error("expected a weekly-review session");
+    repos.weeklyReviewService.completeSession(session.id);
+
+    const { items, counts } = library.browse();
+    const ids = items.map((e) => e.id);
+
+    // The plain user task still shows; neither weekly-review element does.
+    expect(ids).toContain(u.task);
+    expect(items.some((e) => e.title === "Weekly review")).toBe(false);
+    // Exactly the six knowledge/user rows — no recurring-session exhaust leaked in.
+    expect(items.length).toBe(6);
+    expect(counts.all).toBe(6);
+    // The Tasks facet counts only the one user task, not the two system sessions.
+    expect(counts.byType.task).toBe(1);
+    // And the spent "done" session does not inflate the status facet.
+    expect(counts.byStatus.done ?? 0).toBe(0);
+  });
+
   it("narrows by type", () => {
     const u = buildUniverse();
     const { items } = library.browse({ types: ["topic"] });
