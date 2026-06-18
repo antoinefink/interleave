@@ -37,6 +37,7 @@ import type {
   TaskType,
 } from "@interleave/core";
 import { priorityToLabel } from "@interleave/core";
+import type { CardRow } from "@interleave/db";
 import {
   type SessionMode,
   type SourceRetirementSuggestion,
@@ -44,7 +45,7 @@ import {
 } from "@interleave/scheduler";
 import { type ExtractAgingProjection, projectExtractAging } from "./extract-aging-projection";
 import type { Repositories } from "./index";
-import type { CurrentScheduleReason } from "./operation-log-repository";
+import type { CurrentScheduleProjection, CurrentScheduleReason } from "./operation-log-repository";
 import { isQueueActionableStatus } from "./queue-repository";
 import {
   createEmptyQueueTimeCostSummary,
@@ -382,6 +383,34 @@ interface FallowContext {
 interface BatchContext {
   readonly siblingGroups: Map<ElementId, SiblingGroupId>;
   readonly conceptNames: Map<ElementId, string>;
+  /**
+   * The ADDITIONAL batched maps that let the batched decorators compute the
+   * eligibility/lifecycle projection PER ELEMENT (via {@link queueEligibilityFor}) instead
+   * of the due-only `eligible:true` shortcut — present ONLY on the `summaryForMany` (U1)
+   * inventory path, absent on the due-only `list()`/`fullDueCandidates` paths. When present,
+   * `toCardSummary`/`toAttentionSummary` resolve `queueEligible`/`notInQueueReason`/`dueLabel`/
+   * `cardType`/`postponed`/`scheduleReason`/`retirementSuggestion`/`fallow*` from these maps,
+   * producing output IDENTICAL to the single-row `summaryFor`. See the CRITICAL note in U1.
+   */
+  readonly inventory?: InventoryBatchContext;
+}
+
+/**
+ * The per-element lifecycle maps the inventory (`summaryForMany`) path threads through
+ * {@link BatchContext} so the batched decorators reproduce the single-row `summaryFor`
+ * fields without the due-only shortcut. Every map is built ONCE from a batched read.
+ */
+interface InventoryBatchContext {
+  /** FSRS state per card (batched `findReviewStatesForMany`); absent ⇒ no review state. */
+  readonly reviewStates: ReadonlyMap<ElementId, ReviewState>;
+  /** `cards` side-table row per card (batched `findCardsForMany`) — retired flag + kind. */
+  readonly cards: ReadonlyMap<ElementId, CardRow>;
+  /** Schedule projection (effective postpone count + reason) per element. */
+  readonly scheduleProjections: ReadonlyMap<ElementId, CurrentScheduleProjection>;
+  /** The fallow context governing each element (resolved via batched parent chain). */
+  readonly fallowContexts: ReadonlyMap<ElementId, FallowContext>;
+  /** Visible source-retirement suggestion per source id; absent ⇒ none. */
+  readonly retirementSuggestions: ReadonlyMap<ElementId, SourceRetirementSuggestion>;
 }
 
 /**
@@ -540,6 +569,140 @@ export class QueueQuery {
     const asOfIso = asOf ?? (new Date(asOfMs).toISOString() as IsoTimestamp);
     const aging = this.extractAgingProjectionMap(asOfIso, [element.id]);
     return { ...row, extractAging: aging.get(element.id) ?? null };
+  }
+
+  /**
+   * BATCHED twin of {@link summaryFor} (U1, the keystone): produce the IDENTICAL
+   * {@link QueueItemSummary} per id that `summaryFor` produces single-row, over an
+   * ARBITRARY id set (the library/concept inventory passes non-due, parked, suspended,
+   * retired, and fallow elements — NOT just due ones). Returns `Map<ElementId,
+   * QueueItemSummary>` with an entry for every LIVE requested id; an unknown or
+   * soft-deleted id is ABSENT (mirroring `summaryFor` returning `null`). Empty `ids` →
+   * empty map.
+   *
+   * **It does NOT reuse the due-only `list()` `BatchContext` eligibility shortcut.** That
+   * shortcut hardcodes `queueEligible:true` / `cardRetired:false` / `fallow:null` /
+   * `retirementSuggestion:null` because `list()` only ever sees due, queue-eligible
+   * elements. The inventory served here includes retired cards, parked sources, future-due
+   * elements, and fallow items, so eligibility is computed PER ELEMENT via
+   * {@link queueEligibilityFor} (the single-row path's exact logic), fed by BATCHED maps
+   * threaded through {@link BatchContext.inventory}: `findReviewStatesForMany`,
+   * `findCardsForMany` (retired flag + kind), `firstConceptNameMapForMembers`,
+   * `liveSiblingGroupMap`, `currentScheduleProjectionsForMany` (postpone count + reason),
+   * a batched fallow-context map, and `visibleForSourceMany`. The `toCardSummary`/
+   * `toAttentionSummary` decorators read every eligibility field from these maps, so the
+   * two code paths share ONE producer and cannot drift (R4).
+   */
+  summaryForMany(ids: readonly ElementId[], asOf?: IsoTimestamp): Map<ElementId, QueueItemSummary> {
+    const result = new Map<ElementId, QueueItemSummary>();
+    if (ids.length === 0) return result;
+    const asOfIso = asOf ?? (new Date().toISOString() as IsoTimestamp);
+    const asOfMs = Date.parse(asOfIso);
+
+    // Resolve only LIVE elements (soft-deleted/unknown ids drop out, matching `summaryFor`).
+    const elementsList = this.repos.elements.findManyLive(ids);
+    if (elementsList.length === 0) return result;
+    const liveIds = elementsList.map((el) => el.id);
+    const cardIds = elementsList.filter((el) => el.type === "card").map((el) => el.id);
+    const sourceIds = elementsList.filter((el) => el.type === "source").map((el) => el.id);
+
+    // Non-card elements need the schedule projection (postpone count + reason), keyed by
+    // their attention `due_at` — exactly what the single-row `toAttentionSummary` reads via
+    // `currentScheduleProjection(element.id, element.dueAt)`.
+    const attentionDueAt = new Map<ElementId, string | null>();
+    for (const el of elementsList) if (el.type !== "card") attentionDueAt.set(el.id, el.dueAt);
+
+    const inventory: InventoryBatchContext = {
+      reviewStates: this.repos.review.findReviewStatesForMany(cardIds),
+      cards: this.repos.review.findCardsForMany(cardIds),
+      scheduleProjections:
+        this.repos.operationLog.currentScheduleProjectionsForMany(attentionDueAt),
+      fallowContexts: this.buildFallowContextMap(elementsList, asOfMs),
+      retirementSuggestions: this.repos.retirementSuggestions.visibleForSourceMany(sourceIds),
+    };
+    const batch: BatchContext = {
+      siblingGroups: this.repos.elements.liveSiblingGroupMap(),
+      conceptNames: this.repos.concepts.firstConceptNameMapForMembers(liveIds),
+      inventory,
+    };
+
+    // Extract aging is resolved exactly like the single-row path (one batched read scoped
+    // to the requested extract ids), then merged onto each extract row.
+    const aging = this.extractAgingProjectionMap(
+      asOfIso,
+      elementsList.filter((el) => el.type === "extract").map((el) => el.id),
+    );
+
+    for (const element of elementsList) {
+      const row =
+        element.type === "card"
+          ? this.toCardSummary(element, asOfMs, batch)
+          : this.toAttentionSummary(element, asOfMs, batch);
+      result.set(
+        element.id,
+        element.type === "extract" ? { ...row, extractAging: aging.get(element.id) ?? null } : row,
+      );
+    }
+    return result;
+  }
+
+  /**
+   * Batched fallow-context resolution for many elements — the byte-equal twin of the
+   * single-row {@link fallowContextFor} parent-chain walk, but resolving the parent chain
+   * via batched `findManyLive` reads instead of a per-element `findById` walk. The result
+   * holds an entry ONLY for elements whose own chain reaches a topic with a valid
+   * `fallowUntil` (mirroring `fallowContextFor` returning `null`).
+   */
+  private buildFallowContextMap(
+    elementsList: readonly Element[],
+    asOfMs: number,
+  ): Map<ElementId, FallowContext> {
+    const known = new Map<ElementId, Element>();
+    for (const el of elementsList) known.set(el.id, el);
+
+    // Resolve every parent referenced in the chains in batched waves: collect the
+    // not-yet-known parent ids of the current frontier, read them all in one `findManyLive`,
+    // and repeat until no new ancestor remains. A topic chain is shallow, so this is a few
+    // reads regardless of element count (vs. one `findById` per ancestor per element).
+    let frontier: readonly Element[] = elementsList;
+    while (true) {
+      const missing = new Set<ElementId>();
+      for (const el of frontier) {
+        if (el.parentId && !known.has(el.parentId)) missing.add(el.parentId);
+      }
+      if (missing.size === 0) break;
+      // Ancestors are resolved with `findById` semantics (soft-deleted INCLUDED) so the
+      // chain matches the single-row `fallowContextFor` walk exactly.
+      const fetched = this.repos.elements.findManyById([...missing]);
+      if (fetched.length === 0) break;
+      for (const el of fetched) known.set(el.id, el);
+      frontier = fetched;
+    }
+
+    const result = new Map<ElementId, FallowContext>();
+    for (const element of elementsList) {
+      const seen = new Set<string>();
+      let current: Element | null = element;
+      while (current && !seen.has(current.id)) {
+        seen.add(current.id);
+        if (current.type === "topic" && current.fallowUntil) {
+          const untilMs = Date.parse(current.fallowUntil);
+          if (Number.isFinite(untilMs)) {
+            // Match `fallowContextFor`: a topic with a VALID fallowUntil terminates the
+            // walk; an invalid one is skipped and the walk continues up the chain.
+            result.set(element.id, {
+              topicId: current.id,
+              until: current.fallowUntil,
+              reason: current.fallowReason,
+              state: untilMs > asOfMs ? "active" : "returned",
+            });
+            break;
+          }
+        }
+        current = current.parentId ? (known.get(current.parentId) ?? null) : null;
+      }
+    }
+    return result;
   }
 
   /**
@@ -739,29 +902,48 @@ export class QueueQuery {
     /** The card's FSRS state, when the caller already has it (the batched due join). */
     batchedState?: ReviewState,
   ): QueueItemSummary {
-    const state = batch ? (batchedState ?? null) : this.repos.review.findReviewState(element.id);
+    // The inventory (`summaryForMany`) path: compute eligibility/lifecycle from the batched
+    // maps so the row is byte-identical to the single-row `summaryFor` (NOT the due-only
+    // shortcut). The due-only `list()` path keeps the deferred-display shortcut.
+    const inventory = batch?.inventory ?? null;
+    const state = batch
+      ? inventory
+        ? (inventory.reviewStates.get(element.id) ?? null)
+        : (batchedState ?? null)
+      : this.repos.review.findReviewState(element.id);
     const retrievability = state
       ? approximateRetrievability(state.stability, state.lastReviewedAt, asOfMs)
       : null;
     const dueAt = state?.dueAt ?? element.dueAt;
     const due = dueStateFor(dueAt, asOfMs);
-    const cardRetired = batch
-      ? false
-      : (this.repos.review.findCardById(element.id)?.card.isRetired ?? false);
-    const queueEligibility = batch
-      ? { eligible: true, reason: null }
-      : queueEligibilityFor(element, dueAt, asOfMs, cardRetired);
-    const fallow = batch ? null : this.fallowContextFor(element, asOfMs);
+    const cardRetired = inventory
+      ? (inventory.cards.get(element.id)?.isRetired ?? false)
+      : batch
+        ? false
+        : (this.repos.review.findCardById(element.id)?.card.isRetired ?? false);
+    const queueEligibility =
+      batch && !inventory
+        ? { eligible: true, reason: null }
+        : queueEligibilityFor(element, dueAt, asOfMs, cardRetired);
+    const fallow = inventory
+      ? (inventory.fallowContexts.get(element.id) ?? null)
+      : batch
+        ? null
+        : this.fallowContextFor(element, asOfMs);
     const sourceId = element.type === "source" ? element.id : element.sourceId;
     const siblingGroupId =
       (batch ? batch.siblingGroups.get(element.id) : this.siblingGroupOf(element.id)) ?? null;
     const concept = batch
       ? (batch.conceptNames.get(element.id) ?? null)
       : this.conceptFor(element.id);
-    // Display-only fields: deferred (filled by decorateDisplay) when batched; resolved
-    // inline for the single-row summaryFor path.
-    const ctx = batch ? null : this.sourceContext(element);
-    const card = batch ? null : this.repos.review.findCardById(element.id);
+    // Display-only fields: deferred (filled by decorateDisplay) ONLY on the due-only batched
+    // path; resolved inline for the single-row `summaryFor` path AND the inventory path.
+    const ctx = batch && !inventory ? null : this.sourceContext(element);
+    const card = inventory
+      ? (inventory.cards.get(element.id) ?? null)
+      : batch
+        ? null
+        : this.repos.review.findCardById(element.id)?.card;
     return {
       id: element.id,
       type: element.type,
@@ -788,7 +970,7 @@ export class QueueQuery {
       concept,
       siblingGroupId,
       sourceId: sourceId ?? null,
-      cardType: card?.card.kind ?? null,
+      cardType: card?.kind ?? null,
       taskType: null,
       // A card is the FSRS leaf — it protects nothing else, never a verification task.
       linkedElementId: null,
@@ -828,13 +1010,19 @@ export class QueueQuery {
     asOfMs: number,
     batch?: BatchContext,
   ): QueueItemSummary {
+    const inventory = batch?.inventory ?? null;
     const due = dueStateFor(element.dueAt, asOfMs);
-    const queueEligibility = batch
-      ? { eligible: true, reason: null }
-      : queueEligibilityFor(element, element.dueAt, asOfMs);
-    const fallow = batch ? null : this.fallowContextFor(element, asOfMs);
+    const queueEligibility =
+      batch && !inventory
+        ? { eligible: true, reason: null }
+        : queueEligibilityFor(element, element.dueAt, asOfMs);
+    const fallow = inventory
+      ? (inventory.fallowContexts.get(element.id) ?? null)
+      : batch
+        ? null
+        : this.fallowContextFor(element, asOfMs);
     const sourceId = element.type === "source" ? element.id : element.sourceId;
-    const ctx = batch ? null : this.sourceContext(element);
+    const ctx = batch && !inventory ? null : this.sourceContext(element);
     const concept = batch
       ? (batch.conceptNames.get(element.id) ?? null)
       : this.conceptFor(element.id);
@@ -855,9 +1043,11 @@ export class QueueQuery {
           ? linked.id
           : (this.repos.elements.findById(linked.id)?.sourceId ?? null);
     }
-    const scheduleProjection = batch
-      ? null
-      : this.repos.operationLog.currentScheduleProjection(element.id, element.dueAt);
+    const scheduleProjection = inventory
+      ? (inventory.scheduleProjections.get(element.id) ?? null)
+      : batch
+        ? null
+        : this.repos.operationLog.currentScheduleProjection(element.id, element.dueAt);
     const postponed = scheduleProjection?.effectivePostponeCount ?? 0;
     return {
       id: element.id,
@@ -877,8 +1067,11 @@ export class QueueQuery {
         stage: element.stage,
         postponed,
         scheduleReason: scheduleProjection?.reason ?? null,
-        retirementSuggestion:
-          !batch && element.type === "source"
+        retirementSuggestion: inventory
+          ? element.type === "source"
+            ? (inventory.retirementSuggestions.get(element.id) ?? null)
+            : null
+          : !batch && element.type === "source"
             ? this.repos.retirementSuggestions.visibleForSource(element.id)
             : null,
         needsReverify: element.needsReverify,

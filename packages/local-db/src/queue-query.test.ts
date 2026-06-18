@@ -24,6 +24,7 @@ import { type DbHandle, elements, operationLog } from "@interleave/db";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BlockProcessingService } from "./block-processing-service";
+import { CardRetirementService } from "./card-retirement-service";
 import { DocumentRepository } from "./document-repository";
 import { createRepositories, type Repositories } from "./index";
 import { QueueQuery } from "./queue-query";
@@ -806,5 +807,340 @@ describe("QueueQuery", () => {
       thresholdReached: true,
     });
     expect(row?.extractAging?.daysSinceProgress).toBeGreaterThanOrEqual(30);
+  });
+});
+
+/**
+ * U1 keystone: `summaryForMany(ids, asOf)` is a BATCHED path that MUST produce output
+ * byte-identical to the single-row `summaryFor(id, asOf)` for an ARBITRARY id set — not
+ * just due elements. The load-bearing guarantee is the drift test below: it seeds a mixed
+ * inventory (due card, retired card, parked source, future-due element, fallow-paused
+ * element, source with a visible retirement suggestion) and asserts deepEquals per id and
+ * asOf. The trap this guards is the due-only `BatchContext` eligibility shortcut
+ * (`eligible:true`/`retirementSuggestion:null`/`cardRetired:false`/`fallow:null`), which
+ * would silently emit the WRONG queue-eligibility projection for the non-due inventory.
+ */
+describe("QueueQuery.summaryForMany (U1 — batched queue summary)", () => {
+  /**
+   * Seed the full mixed inventory the drift test ranges over. Returns the id set plus the
+   * topic id (so callers can include it too — a topic is itself an attention element).
+   */
+  function buildMixedInventory(): {
+    dueCardId: ElementId;
+    retiredCardId: ElementId;
+    parkedSourceId: ElementId;
+    futureDueExtractId: ElementId;
+    fallowExtractId: ElementId;
+    fallowTopicId: ElementId;
+    suggestionSourceId: ElementId;
+    plainSourceId: ElementId;
+    postponedExtractId: ElementId;
+    weeklyTaskId: ElementId;
+  } {
+    // A plain active source + extract + a DUE card (FSRS, due in the past).
+    const source = repos.sources.create({
+      title: "Mixed inventory source",
+      priority: PRIORITY_LABEL_VALUE.A,
+      status: "active",
+      author: "An Author",
+    });
+    const plainSourceId = source.element.id;
+    repos.elements.reschedule(plainSourceId, iso("2026-05-29T08:00:00.000Z"));
+    const extract = repos.sources.createExtract({
+      sourceElementId: plainSourceId,
+      title: "An extract",
+      priority: PRIORITY_LABEL_VALUE.B,
+      selectedText: "Some selected text",
+      blockIds: ["blk_mi_1" as BlockId],
+      label: "Mixed · ¶1",
+    });
+    const dueCard = repos.review.createCard({
+      kind: "qa",
+      title: "Due card",
+      priority: PRIORITY_LABEL_VALUE.A,
+      prompt: "Q?",
+      answer: "A.",
+      parentId: extract.element.id,
+      sourceId: plainSourceId,
+      sourceLocationId: extract.location.id,
+      stage: "active_card",
+    });
+    repos.review.recordReview(dueCard.element.id, {
+      rating: "good",
+      reviewedAt: iso("2026-05-26T08:00:00.000Z"),
+      responseMs: 3000,
+      prevState: "new",
+      nextState: "review",
+      nextStability: 9.4,
+      nextDifficulty: 5,
+      nextDueAt: iso("2026-05-29T08:00:00.000Z"),
+      elapsedDays: 3,
+      scheduledDays: 3,
+      reps: 2,
+      lapses: 0,
+      nextLearningSteps: 0,
+    });
+
+    // A RETIRED card (due in the past, but retired ⇒ NOT queue-eligible).
+    const retiredCard = repos.review.createCard({
+      kind: "qa",
+      title: "Retired card",
+      priority: PRIORITY_LABEL_VALUE.B,
+      prompt: "Q2?",
+      answer: "A2.",
+      parentId: extract.element.id,
+      sourceId: plainSourceId,
+      sourceLocationId: extract.location.id,
+      stage: "active_card",
+    });
+    repos.review.recordReview(retiredCard.element.id, {
+      rating: "good",
+      reviewedAt: iso("2026-05-26T08:00:00.000Z"),
+      responseMs: 2000,
+      prevState: "new",
+      nextState: "review",
+      nextStability: 5,
+      nextDifficulty: 5,
+      nextDueAt: iso("2026-05-29T08:00:00.000Z"),
+      elapsedDays: 3,
+      scheduledDays: 3,
+      reps: 2,
+      lapses: 0,
+      nextLearningSteps: 0,
+    });
+    new CardRetirementService(handle.db).retire(retiredCard.element.id, {
+      reason: "low value",
+    });
+
+    // A PARKED source (still has a past due_at, but parked ⇒ NOT queue-eligible).
+    const parkedSource = repos.sources.create({
+      title: "Parked source",
+      priority: PRIORITY_LABEL_VALUE.A,
+      status: "parked",
+    });
+    const parkedSourceId = parkedSource.element.id;
+    repos.elements.reschedule(parkedSourceId, iso("2026-05-29T08:00:00.000Z"));
+
+    // A FUTURE-DUE extract (active, but due_at in the future ⇒ NOT yet in queue).
+    const futureExtract = repos.sources.createExtract({
+      sourceElementId: plainSourceId,
+      title: "Future-due extract",
+      priority: PRIORITY_LABEL_VALUE.C,
+      selectedText: "Later thought",
+      blockIds: ["blk_mi_future" as BlockId],
+      label: "Future",
+    });
+    const futureDueExtractId = futureExtract.element.id;
+    repos.elements.update(futureDueExtractId, { status: "active", stage: "clean_extract" });
+    repos.elements.reschedule(futureDueExtractId, iso("2026-06-30T08:00:00.000Z"));
+
+    // A FALLOW-paused element: a topic put to rest + an extract child under it.
+    const topic = repos.elements.create({
+      type: "topic",
+      status: "active",
+      stage: "rough_topic",
+      priority: PRIORITY_LABEL_VALUE.B,
+      title: "Rested topic",
+    });
+    const fallowTopicId = topic.id;
+    const fallowExtract = repos.elements.create({
+      type: "extract",
+      status: "scheduled",
+      stage: "raw_extract",
+      priority: PRIORITY_LABEL_VALUE.B,
+      title: "Rested extract",
+      parentId: topic.id,
+      dueAt: iso("2026-05-29T06:00:00.000Z"),
+    });
+    const fallowExtractId = fallowExtract.id;
+    repos.fallow.fallowTopic({
+      topicId: topic.id,
+      fallowUntil: iso("2026-06-15T00:00:00.000Z"),
+      fallowReason: "Let it cool",
+      now: NOW,
+    });
+
+    // A SOURCE with a VISIBLE retirement suggestion (mostly-ignored blocks → abandon).
+    const lowYield = repos.sources.createWithDocument({
+      title: "Low-yield source",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "active",
+      stage: "raw_source",
+      body: "First.\n\nSecond.\n\nThird.\n\nFourth.",
+    });
+    const suggestionSourceId = lowYield.element.id;
+    repos.elements.reschedule(suggestionSourceId, iso("2026-05-29T08:00:00.000Z"));
+    const blocks = new DocumentRepository(handle.db)
+      .listBlocks(suggestionSourceId)
+      .map((b) => b.stableBlockId);
+    const blockProcessing = new BlockProcessingService(handle.db);
+    for (const block of blocks.slice(0, 3)) {
+      blockProcessing.markBlockIgnored({
+        sourceElementId: suggestionSourceId,
+        stableBlockId: block as BlockId,
+      });
+    }
+    blockProcessing.markBlockProcessed({
+      sourceElementId: suggestionSourceId,
+      stableBlockId: blocks[3] as BlockId,
+    });
+
+    // An extract POSTPONED several times (effective postpone count + schedule reason).
+    const postponedExtract = repos.sources.createExtract({
+      sourceElementId: plainSourceId,
+      title: "Postponed extract",
+      priority: PRIORITY_LABEL_VALUE.B,
+      selectedText: "Keep deferring",
+      blockIds: ["blk_mi_postpone" as BlockId],
+      label: "Postpone",
+    });
+    const postponedExtractId = postponedExtract.element.id;
+    repos.elements.update(postponedExtractId, { status: "active", stage: "clean_extract" });
+    handle.db.transaction((tx) => {
+      for (let i = 0; i < 3; i += 1) {
+        repos.operationLog.append(tx, {
+          opType: "reschedule_element",
+          elementId: postponedExtractId,
+          payload: { postpone: true, postponeCount: i + 1 },
+        });
+      }
+    });
+    repos.elements.reschedule(postponedExtractId, iso("2026-05-29T08:00:00.000Z"));
+
+    // A system-owned weekly-review TASK (attention, no protected link).
+    const weekly = repos.elements.create({
+      type: "task",
+      status: "scheduled",
+      stage: "rough_topic",
+      priority: PRIORITY_LABEL_VALUE.A,
+      title: "Weekly review",
+      dueAt: iso("2026-05-29T08:00:00.000Z"),
+    });
+    handle.sqlite
+      .prepare(
+        `INSERT INTO tasks (element_id, task_type, due_at, status, linked_element_id, note)
+         VALUES (?, 'weekly_review', ?, 'scheduled', NULL, NULL)`,
+      )
+      .run(weekly.id, weekly.dueAt);
+
+    return {
+      dueCardId: dueCard.element.id,
+      retiredCardId: retiredCard.element.id,
+      parkedSourceId,
+      futureDueExtractId,
+      fallowExtractId,
+      fallowTopicId,
+      suggestionSourceId,
+      plainSourceId,
+      postponedExtractId,
+      weeklyTaskId: weekly.id,
+    };
+  }
+
+  it("returns an empty map for empty ids", () => {
+    expect(queue.summaryForMany([], NOW).size).toBe(0);
+  });
+
+  it("omits unknown and soft-deleted ids (matches summaryFor returning null)", () => {
+    const { dueCardId } = buildMixedInventory();
+    const unknown = "el_does_not_exist" as ElementId;
+    const deleted = repos.sources.create({
+      title: "Deleted source",
+      priority: PRIORITY_LABEL_VALUE.C,
+      status: "active",
+    }).element.id;
+    repos.elements.softDelete(deleted);
+
+    const map = queue.summaryForMany([dueCardId, unknown, deleted], NOW);
+    expect(map.has(dueCardId)).toBe(true);
+    expect(map.has(unknown)).toBe(false);
+    expect(map.has(deleted)).toBe(false);
+    // summaryFor agrees: unknown/deleted → null.
+    expect(queue.summaryFor(unknown, NOW)).toBeNull();
+    expect(queue.summaryFor(deleted, NOW)).toBeNull();
+  });
+
+  it("deepEquals summaryFor field-by-field for EVERY mixed-inventory id across asOfs", () => {
+    const inventory = buildMixedInventory();
+    const ids = Object.values(inventory) as ElementId[];
+    // Several read clocks: before the future due, before the fallow return, ON the fallow
+    // return day (fallow flips active → returned, future extract stays future), and well
+    // after everything is due. Each must agree single-row vs batched.
+    const asOfs: IsoTimestamp[] = [
+      NOW,
+      iso("2026-06-15T00:00:00.000Z"),
+      iso("2026-07-01T09:00:00.000Z"),
+    ];
+    for (const asOf of asOfs) {
+      const map = queue.summaryForMany(ids, asOf);
+      for (const id of ids) {
+        const single = queue.summaryFor(id, asOf);
+        expect(single, `summaryFor(${id}) at ${asOf}`).not.toBeNull();
+        expect(map.get(id), `summaryForMany.get(${id}) at ${asOf}`).toEqual(single);
+      }
+    }
+  });
+
+  it("computes per-element eligibility (retired card + parked source are NOT eligible)", () => {
+    const { retiredCardId, parkedSourceId, dueCardId } = buildMixedInventory();
+    const map = queue.summaryForMany([retiredCardId, parkedSourceId, dueCardId], NOW);
+
+    expect(map.get(retiredCardId)).toMatchObject({
+      queueEligible: false,
+      notInQueueReason: "Not in queue: card is retired",
+    });
+    expect(map.get(parkedSourceId)).toMatchObject({
+      queueEligible: false,
+      notInQueueReason: "Not in queue: status is Parked",
+    });
+    // The due card stays eligible — proving the shortcut wasn't applied wholesale.
+    expect(map.get(dueCardId)).toMatchObject({ queueEligible: true, notInQueueReason: null });
+  });
+
+  it("future-due element reports the returns label, not in-queue (no eligible shortcut)", () => {
+    const { futureDueExtractId } = buildMixedInventory();
+    const row = queue.summaryForMany([futureDueExtractId], NOW).get(futureDueExtractId);
+    expect(row).toMatchObject({ queueEligible: false });
+    expect(row?.notInQueueReason).toContain("Not in queue: returns");
+    expect(row).toEqual(queue.summaryFor(futureDueExtractId, NOW));
+  });
+
+  it("fallow-paused element carries the fallow projection batched (active then returned)", () => {
+    const { fallowExtractId, fallowTopicId } = buildMixedInventory();
+    const active = queue.summaryForMany([fallowExtractId], NOW).get(fallowExtractId);
+    expect(active).toMatchObject({
+      queueEligible: false,
+      notInQueueReason: "fallow",
+      fallowState: "active",
+      fallowTopicId,
+    });
+    expect(active).toEqual(queue.summaryFor(fallowExtractId, NOW));
+
+    const returnedAsOf = iso("2026-06-15T00:00:00.000Z");
+    const returned = queue.summaryForMany([fallowExtractId], returnedAsOf).get(fallowExtractId);
+    expect(returned).toMatchObject({ fallowState: "returned" });
+    expect(returned).toEqual(queue.summaryFor(fallowExtractId, returnedAsOf));
+  });
+
+  it("resolves a visible source retirement suggestion batched (the hardcoded-null trap)", () => {
+    const { suggestionSourceId } = buildMixedInventory();
+    const row = queue.summaryForMany([suggestionSourceId], NOW).get(suggestionSourceId);
+    expect(row?.schedulerSignals.retirementSuggestion).toMatchObject({
+      kind: "abandon",
+      signalHash: expect.stringContaining(`v1|${suggestionSourceId}|abandon|`),
+    });
+    // And it equals the single-row resolution exactly.
+    expect(row?.schedulerSignals.retirementSuggestion).toEqual(
+      queue.summaryFor(suggestionSourceId, NOW)?.schedulerSignals.retirementSuggestion,
+    );
+  });
+
+  it("reports the same effective postpone count batched as single-row", () => {
+    const { postponedExtractId } = buildMixedInventory();
+    const row = queue.summaryForMany([postponedExtractId], NOW).get(postponedExtractId);
+    const single = queue.summaryFor(postponedExtractId, NOW);
+    expect(row?.schedulerSignals.postponed).toBe(3);
+    expect(row?.schedulerSignals.postponed).toBe(single?.schedulerSignals.postponed);
+    expect(row?.schedulerSignals.scheduleReason).toEqual(single?.schedulerSignals.scheduleReason);
   });
 });
