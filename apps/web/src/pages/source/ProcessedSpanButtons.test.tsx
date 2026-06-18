@@ -452,3 +452,90 @@ describe("ProcessedSpanButtons hover scoping", () => {
     expect(group(getByTestId, "blk-a")).toHaveAttribute("data-hovered", "false");
   });
 });
+
+describe("U14: docChanged remeasure guard", () => {
+  /**
+   * Helpers to extract the `onTx` callback registered via `editor.on("transaction", cb)`.
+   */
+  function getTxCallback(editor: Editor): (args: { transaction: { docChanged: boolean } }) => void {
+    const onMock = vi.mocked(editor.on);
+    for (const call of onMock.mock.calls) {
+      if (call[0] === "transaction")
+        return call[1] as (args: { transaction: { docChanged: boolean } }) => void;
+    }
+    throw new Error("transaction callback not registered");
+  }
+
+  it("does not remeasure on a decoration-only transaction (docChanged===false)", async () => {
+    const { editor } = buildEditorDom();
+    const model = processed();
+    const { getByTestId } = render(
+      <ProcessedSpanButtons editor={editor} editorReady processed={model} revision={0} />,
+    );
+    await waitFor(() => expect(getByTestId("processed-toggle-blk-a")).toBeInTheDocument());
+
+    // Capture the initial anchor count (anchors are set after mount).
+    const initialCount = document.querySelectorAll(".readpara__actions").length;
+    expect(initialCount).toBeGreaterThan(0);
+
+    // Simulate a decoration-only transaction (cursor move, read-point push, etc.).
+    const onTx = getTxCallback(editor);
+    act(() => {
+      onTx({ transaction: { docChanged: false } });
+    });
+
+    // rAF should not have been scheduled, so the anchor count must not change.
+    // (In jsdom requestAnimationFrame is synchronous enough that if it ran, it would
+    // have fired already — but nothing should change because docChanged===false bails early.)
+    expect(document.querySelectorAll(".readpara__actions")).toHaveLength(initialCount);
+  });
+
+  it("remeasures after a doc-changing transaction (docChanged===true)", async () => {
+    const { editor, rail } = buildEditorDom();
+    const model = processed();
+    const { getByTestId } = render(
+      <ProcessedSpanButtons editor={editor} editorReady processed={model} revision={0} />,
+    );
+    await waitFor(() => expect(getByTestId("processed-toggle-blk-a")).toBeInTheDocument());
+
+    // Move the rail top so a new remeasure would produce different positions.
+    setRect(rail, 50);
+
+    const onTx = getTxCallback(editor);
+    await act(async () => {
+      onTx({ transaction: { docChanged: true } });
+      // Flush the rAF.
+      await new Promise((r) => setTimeout(r, 0));
+    });
+
+    // After remeasure with rail top 50, blk-a's rail-relative top is 140-50=90.
+    await waitFor(() => {
+      const actions = getByTestId("processed-toggle-blk-a").closest(
+        ".readpara__actions",
+      ) as HTMLElement | null;
+      expect(actions).toHaveStyle({ top: "90px" });
+    });
+  });
+
+  it("resize trigger still fires remeasure regardless of docChanged guard", async () => {
+    const { editor, rail } = buildEditorDom();
+    const model = processed();
+    const { getByTestId } = render(
+      <ProcessedSpanButtons editor={editor} editorReady processed={model} revision={0} />,
+    );
+    await waitFor(() => expect(getByTestId("processed-toggle-blk-a")).toBeInTheDocument());
+
+    setRect(rail, 50);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("resize"));
+    });
+
+    await waitFor(() => {
+      const actions = getByTestId("processed-toggle-blk-a").closest(
+        ".readpara__actions",
+      ) as HTMLElement | null;
+      expect(actions).toHaveStyle({ top: "90px" });
+    });
+  });
+});

@@ -219,7 +219,19 @@ export function ProcessedSpanButtons({
     }
     remeasure();
     const dom = editor.view.dom as HTMLElement;
-    const onTx = () => remeasure();
+    // Gate on docChanged: decoration-only and cursor-move transactions (docChanged===false)
+    // do not alter paragraph geometry, so the O(N) getBoundingClientRect remeasure is
+    // skipped. Mirrors the guard in packages/editor/src/SourceEditor.tsx (line 179).
+    let rafPending = false;
+    const onTx = ({ transaction }: { transaction: { docChanged: boolean } }) => {
+      if (!transaction.docChanged) return;
+      if (rafPending) return;
+      rafPending = true;
+      requestAnimationFrame(() => {
+        rafPending = false;
+        remeasure();
+      });
+    };
     editor.on("transaction", onTx);
     let ro: ResizeObserver | null = null;
     if (typeof ResizeObserver !== "undefined") {
