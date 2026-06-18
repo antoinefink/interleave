@@ -31,8 +31,12 @@ type SourceRefRepos = Pick<Repositories, "elements" | "sources" | "review">;
 /**
  * Extended repos slice for the batched {@link resolveSourceRefMany}.
  * Adds batch-read methods alongside the per-item ones already in {@link SourceRefRepos}.
+ *
+ * File-local: callers (db-service) pass `this.repos` which satisfies this structurally.
+ * Not exported from index.ts — use {@link SourceRefRepos} (the single-item slice) for
+ * the public surface, or {@link Repositories} for the full object.
  */
-export type SourceRefManyRepos = {
+type SourceRefManyRepos = {
   elements: {
     findById(id: ElementId): Element | null | undefined;
     findManyLive(ids: readonly ElementId[]): Element[];
