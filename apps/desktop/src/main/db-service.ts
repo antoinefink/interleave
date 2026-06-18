@@ -3194,10 +3194,28 @@ export class DbService {
         .findManyLive(fused.hits.map((hit) => hit.id as ElementId))
         .map((el) => [el.id, el] as const),
     );
+    // Build the residual per-hit enrichment (source refblock, queue summary, first
+    // concept name) ONCE over the live hit ids — the same batch+trim `search()` does —
+    // instead of the per-hit `refMeta` + `summaryFor` + duplicate `conceptForElement`
+    // that remained inside `enrichFusedHit` after `93e8dbc8`.
+    const now = new Date();
+    const fusedIds = [...resultElements.keys()];
+    const fusedSourceRefs = resolveSourceRefMany(this.repos, fusedIds);
+    const fusedSummaries = this.queueQuery.summaryForMany(
+      fusedIds,
+      now.toISOString() as IsoTimestamp,
+    );
+    const fusedConceptNames = this.repos.concepts.firstConceptNameMapForMembers(fusedIds);
     const results = fused.hits
       .map((hit) => {
         const el = resultElements.get(hit.id as ElementId);
-        return el ? this.enrichFusedHit(hit, el) : null;
+        return el
+          ? this.enrichFusedHit(hit, el, now, {
+              sourceRef: fusedSourceRefs.get(el.id) ?? null,
+              summary: fusedSummaries.get(el.id) ?? null,
+              concept: fusedConceptNames.get(el.id) ?? null,
+            })
+          : null;
       })
       .filter((r): r is SemanticSearchResultRow => r !== null);
 
@@ -3426,14 +3444,24 @@ export class DbService {
     // per-hit findById here — the N+1 that, together with the full inspector below,
     // blocked the main process on every /search keystroke).
     element: Element,
+    // `now` and the residual enrichment (source refblock, queue summary, first concept
+    // name) are resolved ONCE by the caller in batched reads and threaded in, instead
+    // of the per-hit `refMeta` + `summaryFor` + duplicate `conceptForElement` this
+    // method used to run. The concept comes from the SAME map the row's source ref /
+    // summary do — one source of truth, no duplicate concept resolution.
+    now: Date,
+    enrichment: {
+      sourceRef: SourceRef | null;
+      summary: QueueItemSummary | null;
+      concept: string | null;
+    },
   ): SemanticSearchResultRow | null {
-    const { sourceTitle, sourceLocationLabel } = this.refMetaForElement(element.id);
     // The SchedulerChip signals ONLY (not the full inspector): a source hit's full
     // inspector recomputes the read-%/yield + block-processing rollup, which is the
     // bulk of the per-hit cost. `includeYield:false` skips it — the yield chip is a
     // selection-detail nicety, not list data. See docs/solutions/performance-issues.
-    const summary = this.queueQuery.summaryFor(element.id);
-    const scheduler = this.inspectorQuery.buildSchedulerSignals(element, new Date(), {
+    const { sourceRef, summary, concept } = enrichment;
+    const scheduler = this.inspectorQuery.buildSchedulerSignals(element, now, {
       includeYield: false,
     });
     return {
@@ -3445,9 +3473,9 @@ export class DbService {
       score: hit.ftsScore ?? 0,
       priority: element.priority,
       priorityLabel: priorityToLabel(element.priority),
-      concept: this.conceptForElement(element.id),
-      sourceTitle,
-      sourceLocationLabel,
+      concept,
+      sourceTitle: sourceRef?.sourceTitle ?? null,
+      sourceLocationLabel: sourceRef?.locationLabel ?? null,
       dueAt: summary?.dueAt ?? element.dueAt ?? null,
       scheduler,
       due: summary?.due ?? "soon",
@@ -6170,26 +6198,6 @@ export class DbService {
    */
   private libraryItemFor(element: Element): LibraryItem {
     return this.enrichLibraryItems([element])[0] as LibraryItem;
-  }
-
-  /**
-   * Resolve the source title + location label for a search row's refblock through
-   * the ONE shared {@link resolveSourceRef} (the same T043 resolver the inspector,
-   * review face, and extract view use), so the library row reads a reference
-   * identically. A `source` hit references itself; an `extract`/`card` references
-   * its owning source element + its source-location anchor (a card additionally
-   * falls back to its `cards.source_location_id`). A soft-deleted/missing source
-   * degrades to `null` (a calm "no source"), never a broken reference.
-   */
-  private refMetaForElement(id: ElementId): {
-    sourceTitle: string | null;
-    sourceLocationLabel: string | null;
-  } {
-    const ref = resolveSourceRef(this.repos, id);
-    return {
-      sourceTitle: ref?.sourceTitle ?? null,
-      sourceLocationLabel: ref?.locationLabel ?? null,
-    };
   }
 
   /** The element's organize state (concepts + tags), or `null` when soft-deleted/unknown. */

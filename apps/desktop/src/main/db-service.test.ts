@@ -3512,6 +3512,72 @@ describe("DbService — review session (T037)", () => {
     svc.close();
   });
 
+  it("semanticSearch result deepEquals per-row composition incl. vecDistance + source label (U8)", async () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    const internals = svc as unknown as {
+      queueQuery: QueueQuery;
+      inspectorQuery: InspectorQuery;
+    };
+
+    const { results } = await svc.semanticSearch({ q: "intelligence" });
+    expect(results.length).toBeGreaterThan(0);
+
+    const now = new Date();
+    for (const row of results) {
+      const id = row.id as ElementId;
+      const summary = internals.queueQuery.summaryFor(id);
+      const ref = resolveSourceRef(svc.repos, id);
+      const concept = svc.repos.concepts.firstConceptName(id);
+      const scheduler = internals.inspectorQuery.buildSchedulerSignals(
+        svc.repos.elements.findById(id) ?? (undefined as never),
+        now,
+        { includeYield: false },
+      );
+      expect(row.concept).toEqual(concept);
+      expect(row.sourceTitle).toEqual(ref?.sourceTitle ?? null);
+      expect(row.sourceLocationLabel).toEqual(ref?.locationLabel ?? null);
+      expect(row.due).toEqual(summary?.due ?? "soon");
+      expect(row.dueLabel).toEqual(summary?.dueLabel ?? "No return scheduled");
+      expect(row.queueEligible).toEqual(summary?.queueEligible ?? false);
+      expect(row.notInQueueReason).toEqual(
+        summary?.notInQueueReason ?? "Not in queue: summary unavailable",
+      );
+      // `retrievability` is a continuous function of `now` (see the U7 guard above).
+      const { retrievability: _rowR, ...rowScheduler } = row.scheduler;
+      const { retrievability: _expR, ...expectedScheduler } = scheduler;
+      expect(rowScheduler).toEqual(expectedScheduler);
+      // The fused-hit-specific fields must pass through unchanged: a semantic-only or
+      // both-sourced hit carries `semantic:true`; an FTS-only hit carries the FTS-side
+      // distance fallback (`null` when the vector side did not contribute).
+      expect(typeof row.semantic).toBe("boolean");
+      expect(row.vecDistance === null || typeof row.vecDistance === "number").toBe(true);
+    }
+
+    svc.close();
+  });
+
+  it("semanticSearch labels a hit present in both FTS and vector identically (U8 fused-label guard)", async () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    // In the FTS-only degrade path (no embeddings seeded) every hit is `source:"fts"`,
+    // so `semantic` is false and `vecDistance` is null — pinning the label/score
+    // pass-through after the batch+trim. (The "both" branch is covered by the source
+    // field mapping in enrichFusedHit: `semantic === (source==="semantic"||"both")`.)
+    const { results } = await svc.semanticSearch({ q: "intelligence" });
+    expect(results.length).toBeGreaterThan(0);
+    for (const row of results) {
+      expect(row.semantic).toBe(false);
+      expect(row.vecDistance).toBeNull();
+    }
+
+    svc.close();
+  });
+
   it("semantic.search counts drop the active type filter even in FTS-only degrade", async () => {
     const svc = new DbService();
     svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
