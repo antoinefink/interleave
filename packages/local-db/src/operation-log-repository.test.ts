@@ -901,6 +901,82 @@ describe("OperationLogRepository.postponeCountsForMany (U4 parity)", () => {
     expect(effective).toEqual(new Map());
     expect(raw).toEqual(new Map());
   });
+
+  it("chunk-boundary parity: > one IN-chunk worth of ids matches per-element folds", () => {
+    // SQLITE_SAFE_IN_ARRAY_SIZE is 900; 910 ids forces a multi-chunk scan. The
+    // per-element fold (created_at,rowid order) must still be correct because each
+    // element's rows are all gathered within ITS chunk before folding. Cheap
+    // fixture: trivial sources, only a few carry ops.
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+
+    const ids: ElementId[] = [];
+    for (let i = 0; i < 910; i++) {
+      ids.push(
+        elements.create({
+          type: "source",
+          status: "active",
+          stage: "raw_source",
+          priority: 0.5,
+          title: `s${i}`,
+        }).id,
+      );
+    }
+
+    const head = ids[0] as ElementId;
+    const second = ids[905] as ElementId; // lands in the SECOND IN-chunk (index >= 900)
+
+    // head: 4 postpones, then reset, then 2 more → effective 2, raw 6.
+    for (let i = 0; i < 4; i++) {
+      handle.db.transaction((tx) =>
+        log.append(tx, {
+          opType: "reschedule_element",
+          payload: { postpone: true },
+          elementId: head,
+        }),
+      );
+    }
+    handle.db.transaction((tx) =>
+      log.append(tx, {
+        opType: "update_element",
+        payload: { chronicPostponeReset: true, prevEffectivePostponeCount: 4 },
+        elementId: head,
+      }),
+    );
+    for (let i = 0; i < 2; i++) {
+      handle.db.transaction((tx) =>
+        log.append(tx, {
+          opType: "reschedule_element",
+          payload: { postpone: true },
+          elementId: head,
+        }),
+      );
+    }
+
+    // second: 3 postpones → effective 3, raw 3.
+    for (let i = 0; i < 3; i++) {
+      handle.db.transaction((tx) =>
+        log.append(tx, {
+          opType: "reschedule_element",
+          payload: { postpone: true },
+          elementId: second,
+        }),
+      );
+    }
+
+    const { effective, raw } = log.postponeCountsForMany(ids);
+
+    // Byte-identical to the per-element canonical folds for EVERY id across the boundary.
+    for (const id of ids) {
+      expect(effective.get(id) ?? 0).toBe(log.countPostpones(id));
+      expect(raw.get(id) ?? 0).toBe(rawPostponeCountViaDb(handle, id));
+    }
+    // Spot-check the seeded values directly.
+    expect(effective.get(head)).toBe(2);
+    expect(raw.get(head)).toBe(6);
+    expect(effective.get(second)).toBe(3);
+    expect(raw.get(second)).toBe(3);
+  });
 });
 
 describe("OperationLogRepository.currentScheduleProjectionsForMany (U1 batched twin)", () => {

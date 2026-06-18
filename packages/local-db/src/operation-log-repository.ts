@@ -15,6 +15,7 @@
 import type { ElementId, OperationLogEntry, OperationType } from "@interleave/core";
 import { operationLog } from "@interleave/db";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { chunkIds } from "./chunk-in-array";
 import { newOperationId, nowIso } from "./ids";
 import type { DbClient } from "./types";
 
@@ -495,22 +496,28 @@ export class OperationLogRepository {
 
     // The LATEST `reschedule_element` row per element (newest-first, first wins) — the
     // single row `currentScheduleProjection` reads with `limit(1)`. One `inArray` scan.
+    // Chunk the IN (...) list so an unbounded id set stays under SQLite's
+    // variable limit. Each element appears in exactly one chunk, so the
+    // newest-first "first row per element wins" fold is output-identical to one
+    // scan: every row for an element comes back ordered within ITS chunk.
     const latestByElement = new Map<ElementId, Record<string, unknown> | null>();
-    const rows = this.db
-      .select({ elementId: operationLog.elementId, payload: operationLog.payload })
-      .from(operationLog)
-      .where(
-        and(
-          inArray(operationLog.elementId, ids as ElementId[]),
-          eq(operationLog.opType, "reschedule_element"),
-        ),
-      )
-      .orderBy(desc(operationLog.createdAt), desc(sql`rowid`))
-      .all();
-    for (const row of rows) {
-      const eid = row.elementId as ElementId;
-      if (latestByElement.has(eid)) continue;
-      latestByElement.set(eid, payloadObject(JSON.parse(row.payload)));
+    for (const chunk of chunkIds(ids as ElementId[])) {
+      const rows = this.db
+        .select({ elementId: operationLog.elementId, payload: operationLog.payload })
+        .from(operationLog)
+        .where(
+          and(
+            inArray(operationLog.elementId, chunk),
+            eq(operationLog.opType, "reschedule_element"),
+          ),
+        )
+        .orderBy(desc(operationLog.createdAt), desc(sql`rowid`))
+        .all();
+      for (const row of rows) {
+        const eid = row.elementId as ElementId;
+        if (latestByElement.has(eid)) continue;
+        latestByElement.set(eid, payloadObject(JSON.parse(row.payload)));
+      }
     }
 
     for (const [id, currentDueAt] of idToDueAt) {
@@ -555,33 +562,46 @@ export class OperationLogRepository {
   } {
     if (ids.length === 0) return { effective: new Map(), raw: new Map() };
 
-    // One scan: reschedule_element (postpone markers) + update_element (reset markers).
-    // Order: oldest-first so the effective-count fold mirrors listForElement().reverse().
-    const rows = this.db
-      .select({
-        elementId: operationLog.elementId,
-        opType: operationLog.opType,
-        payload: operationLog.payload,
-      })
-      .from(operationLog)
-      .where(
-        and(
-          inArray(operationLog.elementId, ids as ElementId[]),
-          inArray(operationLog.opType, ["reschedule_element", "update_element"]),
-        ),
-      )
-      .orderBy(asc(operationLog.createdAt), asc(sql`rowid`))
-      .all();
+    // Per-chunk scan: reschedule_element (postpone markers) + update_element
+    // (reset markers). Order: oldest-first so the effective-count fold mirrors
+    // listForElement().reverse(). We chunk the IN (...) list so an unbounded id
+    // set (e.g. ALL live elements) stays under SQLite's variable limit.
+    type PostponeRow = {
+      elementId: string | null;
+      opType: string;
+      payload: string;
+    };
 
-    // Group rows by elementId (preserving oldest-first order from the query).
-    const byElement = new Map<ElementId, typeof rows>();
-    for (const row of rows) {
-      const eid = row.elementId as ElementId;
-      const list = byElement.get(eid);
-      if (list) {
-        list.push(row);
-      } else {
-        byElement.set(eid, [row]);
+    // Group rows by elementId (preserving oldest-first order from each query).
+    // Each element appears in exactly one chunk, so all of its rows are gathered
+    // (and stay correctly ordered) before the fold below — making the chunked
+    // scan output-identical to one big scan.
+    const byElement = new Map<ElementId, PostponeRow[]>();
+    for (const chunk of chunkIds(ids as ElementId[])) {
+      const rows = this.db
+        .select({
+          elementId: operationLog.elementId,
+          opType: operationLog.opType,
+          payload: operationLog.payload,
+        })
+        .from(operationLog)
+        .where(
+          and(
+            inArray(operationLog.elementId, chunk),
+            inArray(operationLog.opType, ["reschedule_element", "update_element"]),
+          ),
+        )
+        .orderBy(asc(operationLog.createdAt), asc(sql`rowid`))
+        .all();
+
+      for (const row of rows) {
+        const eid = row.elementId as ElementId;
+        const list = byElement.get(eid);
+        if (list) {
+          list.push(row);
+        } else {
+          byElement.set(eid, [row]);
+        }
       }
     }
 

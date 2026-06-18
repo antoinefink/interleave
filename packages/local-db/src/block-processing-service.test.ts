@@ -388,6 +388,55 @@ describe("BlockProcessingService", () => {
       expect(map.get(s2)).toEqual(service.getSourceProcessingSummary(s2));
     });
 
+    it("chunk-boundary parity: > one IN-chunk worth of sources matches per-source (no SQLite var-limit crash)", () => {
+      // SQLITE_SAFE_IN_ARRAY_SIZE is 900; 905 source ids forces a multi-chunk
+      // batched scan. Cheap fixture: 2 real sources (with documents/processing
+      // state, one straddling the boundary) plus many bare source elements that
+      // just inflate the id list past the chunk boundary.
+      const repo = new ElementRepository(handle.db);
+      const service = new BlockProcessingService(handle.db);
+
+      const real1 = seedSource();
+      service.markBlockIgnored({
+        sourceElementId: real1,
+        stableBlockId: blocksOf(real1)[0] as BlockId,
+      });
+
+      const ids: ElementId[] = [real1];
+      for (let i = 0; i < 903; i++) {
+        ids.push(
+          repo.create({
+            type: "source",
+            status: "active",
+            stage: "raw_source",
+            priority: 0.5,
+            title: `bare-${i}`,
+          }).id,
+        );
+      }
+      // A real source whose id lands in the SECOND chunk (index >= 900).
+      const real2 = seedSource();
+      service.markBlockProcessed({
+        sourceElementId: real2,
+        stableBlockId: blocksOf(real2)[1] as BlockId,
+      });
+      ids.push(real2);
+      expect(ids.length).toBe(905);
+
+      const summaries = service.getSourceProcessingSummaryForMany(ids);
+      const views = service.listBlockViewsForMany(ids);
+
+      // Byte-identical to the per-source path for the two real sources across the
+      // chunk boundary; bare sources resolve to a zero/empty projection.
+      expect(summaries.get(real1)).toEqual(service.getSourceProcessingSummary(real1));
+      expect(summaries.get(real2)).toEqual(service.getSourceProcessingSummary(real2));
+      expect(views.get(real1)).toEqual(service.listBlockViews(real1));
+      expect(views.get(real2)).toEqual(service.listBlockViews(real2));
+      // Every id resolved without throwing (a bare source yields a zero summary).
+      expect(summaries.get(real2)?.processedBlocks).toBe(1);
+      expect(summaries.get(ids[10] as ElementId)?.totalBlocks).toBe(0);
+    });
+
     it("tolerates a stale/missing id (zero summary, no throw) and guards the empty id list", () => {
       const live = seedSource();
       const service = new BlockProcessingService(handle.db);

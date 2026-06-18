@@ -754,3 +754,42 @@ describe("SourceYieldQuery.aggregateYieldByAuthorAndDomain", () => {
     expect([...first.byDomain.entries()]).toEqual([...second.byDomain.entries()]);
   });
 });
+
+describe("SourceYieldQuery.listSourceYield — chunk-boundary parity (SQLITE_SAFE_IN_ARRAY_SIZE)", () => {
+  it("rolls up > one IN-chunk worth of live sources without a SQLite var-limit crash, readPct intact across the boundary", () => {
+    // SQLITE_SAFE_IN_ARRAY_SIZE is 900; 905 live sources force the batched
+    // read-% + block-processing passes (computeReadPctForMany / *ForMany) to
+    // split into multiple IN (...) chunks. Cheap fixture: 905 tiny 2-block
+    // sources; two carry read-points (one in each chunk) plus a card+review so
+    // the whole-library review-log read is also exercised across the boundary.
+    const COUNT = 905;
+    const ids: ElementId[] = [];
+    for (let i = 0; i < COUNT; i++) {
+      ids.push(seedSource(handle, `boundary-${i}`, 2));
+    }
+    const firstChunkSource = ids[0] as ElementId;
+    const secondChunkSource = ids[902] as ElementId; // index >= 900
+    const midSource = ids[500] as ElementId;
+    // First chunk: read-point fully read (index 1 of 2 → 100%).
+    setReadPoint(handle, firstChunkSource, 1);
+    // Second chunk (index >= 900): read-point at first block (index 0 of 2 → 50%)
+    // plus a card with a review so review-log rollup spans the boundary too.
+    setReadPoint(handle, secondChunkSource, 0);
+    const card = seedCard(handle, secondChunkSource, { stability: CARD_MATURE_STABILITY_DAYS + 1 });
+    seedReview(handle, card, 4321, "2024-01-01T00:00:00.000Z");
+
+    const q = new SourceYieldQuery(handle.db);
+    const rows = q.listSourceYield(ASOF, { limit: Number.MAX_SAFE_INTEGER }).rows;
+
+    // Every live source resolved (no var-limit crash, chunked == single big read).
+    expect(rows.length).toBe(COUNT);
+    const byId = new Map(rows.map((r) => [r.source.id, r]));
+    expect(byId.get(firstChunkSource)?.readPct).toBeCloseTo(1);
+    expect(byId.get(secondChunkSource)?.readPct).toBeCloseTo(0.5);
+    expect(byId.get(secondChunkSource)?.timeSpentMs).toBe(4321);
+    expect(byId.get(secondChunkSource)?.reviewCount).toBe(1);
+    expect(byId.get(secondChunkSource)?.cardsCreated).toBe(1);
+    // A source with no read-point reads as 0 regardless of which chunk it's in.
+    expect(byId.get(midSource)?.readPct).toBe(0);
+  });
+});

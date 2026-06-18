@@ -15,6 +15,7 @@ import {
 } from "@interleave/core";
 import { cards, type InterleaveDatabase, reviewLogs } from "@interleave/db";
 import { inArray, sql } from "drizzle-orm";
+import { chunkIds } from "./chunk-in-array";
 
 export type TimeCostConfidence = "learned" | "default";
 export type CardTimingBucket = CardKind | "audio";
@@ -92,7 +93,6 @@ const MAX_VALID_REVIEW_MS = 10 * 60 * 1000;
 const ROLLING_BUCKET_OBSERVATIONS = 50;
 const LEARNED_OBSERVATION_THRESHOLD = 3;
 const MS_PER_MINUTE = 60_000;
-const SQLITE_SAFE_IN_ARRAY_SIZE = 900;
 
 interface TimingBucketStats {
   readonly bucket: CardTimingBucket;
@@ -252,8 +252,7 @@ export class TimeCostQuery {
     const ids = [...new Set(items.filter((item) => item.type === "card").map((item) => item.id))];
     if (ids.length === 0) return new Map();
     const rows: { elementId: string; kind: string; mediaRef: string | null }[] = [];
-    for (let i = 0; i < ids.length; i += SQLITE_SAFE_IN_ARRAY_SIZE) {
-      const chunk = ids.slice(i, i + SQLITE_SAFE_IN_ARRAY_SIZE);
+    for (const chunk of chunkIds(ids)) {
       rows.push(
         ...this.db
           .select({ elementId: cards.elementId, kind: cards.kind, mediaRef: cards.mediaRef })

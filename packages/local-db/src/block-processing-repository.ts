@@ -17,6 +17,7 @@ import {
   sourceLocations,
 } from "@interleave/db";
 import { and, eq, inArray, isNull } from "drizzle-orm";
+import { chunkIds } from "./chunk-in-array";
 import { newRowId, nowIso } from "./ids";
 import { OperationLogRepository } from "./operation-log-repository";
 import type { DbClient } from "./types";
@@ -385,16 +386,20 @@ export class BlockProcessingRepository {
   listRowsForMany(sourceIds: readonly ElementId[]): Map<ElementId, SourceBlockProcessingRow[]> {
     const out = new Map<ElementId, SourceBlockProcessingRow[]>();
     if (sourceIds.length === 0) return out;
-    const rows = this.db
-      .select()
-      .from(sourceBlockProcessing)
-      .where(inArray(sourceBlockProcessing.sourceElementId, sourceIds as ElementId[]))
-      .all();
-    for (const raw of rows) {
-      const row = rowToProcessing(raw);
-      const list = out.get(row.sourceElementId) ?? [];
-      list.push(row);
-      out.set(row.sourceElementId, list);
+    // Chunk the IN (...) list so an unbounded source set stays under SQLite's
+    // variable limit; per-source accumulation is order-independent across chunks.
+    for (const chunk of chunkIds(sourceIds as ElementId[])) {
+      const rows = this.db
+        .select()
+        .from(sourceBlockProcessing)
+        .where(inArray(sourceBlockProcessing.sourceElementId, chunk))
+        .all();
+      for (const raw of rows) {
+        const row = rowToProcessing(raw);
+        const list = out.get(row.sourceElementId) ?? [];
+        list.push(row);
+        out.set(row.sourceElementId, list);
+      }
     }
     return out;
   }
@@ -404,19 +409,23 @@ export class BlockProcessingRepository {
   ): Map<ElementId, { stableBlockId: BlockId; order: number }[]> {
     const out = new Map<ElementId, { stableBlockId: BlockId; order: number }[]>();
     if (sourceIds.length === 0) return out;
-    const rows = this.db
-      .select({
-        documentId: documentBlocks.documentId,
-        stableBlockId: documentBlocks.stableBlockId,
-        order: documentBlocks.order,
-      })
-      .from(documentBlocks)
-      .where(inArray(documentBlocks.documentId, sourceIds as ElementId[]))
-      .all();
-    for (const row of rows) {
-      const list = out.get(row.documentId as ElementId) ?? [];
-      list.push({ stableBlockId: row.stableBlockId as BlockId, order: row.order });
-      out.set(row.documentId as ElementId, list);
+    // Chunk the IN (...) list so an unbounded source set stays under SQLite's
+    // variable limit; the final sort makes per-source order chunk-independent.
+    for (const chunk of chunkIds(sourceIds as ElementId[])) {
+      const rows = this.db
+        .select({
+          documentId: documentBlocks.documentId,
+          stableBlockId: documentBlocks.stableBlockId,
+          order: documentBlocks.order,
+        })
+        .from(documentBlocks)
+        .where(inArray(documentBlocks.documentId, chunk))
+        .all();
+      for (const row of rows) {
+        const list = out.get(row.documentId as ElementId) ?? [];
+        list.push({ stableBlockId: row.stableBlockId as BlockId, order: row.order });
+        out.set(row.documentId as ElementId, list);
+      }
     }
     // Match the single-source `listSourceBlocks` ordering (by `order` ASC).
     for (const list of out.values()) list.sort((a, b) => a.order - b.order);
@@ -426,28 +435,34 @@ export class BlockProcessingRepository {
   getReadPointOrderForMany(sourceIds: readonly ElementId[]): Map<ElementId, number> {
     const out = new Map<ElementId, number>();
     if (sourceIds.length === 0) return out;
-    const rps = this.db
-      .select({ elementId: readPoints.elementId, blockId: readPoints.blockId })
-      .from(readPoints)
-      .where(inArray(readPoints.elementId, sourceIds as ElementId[]))
-      .all();
-    if (rps.length === 0) return out;
-    // Resolve each read-point block's order via one batched `document_blocks` read.
-    const docIds = rps.map((rp) => rp.elementId);
-    const blockOrders = this.db
-      .select({
-        documentId: documentBlocks.documentId,
-        stableBlockId: documentBlocks.stableBlockId,
-        order: documentBlocks.order,
-      })
-      .from(documentBlocks)
-      .where(inArray(documentBlocks.documentId, docIds))
-      .all();
-    const orderByKey = new Map<string, number>();
-    for (const b of blockOrders) orderByKey.set(`${b.documentId} ${b.stableBlockId}`, b.order);
-    for (const rp of rps) {
-      const order = orderByKey.get(`${rp.elementId} ${rp.blockId}`);
-      if (order != null) out.set(rp.elementId as ElementId, order);
+    // Chunk the IN (...) list so an unbounded source set stays under SQLite's
+    // variable limit. Each source appears in exactly one chunk, so resolving its
+    // read-point order within that chunk is output-identical to one big read; the
+    // inner document_blocks read is bounded by the chunk's read-point count.
+    for (const chunk of chunkIds(sourceIds as ElementId[])) {
+      const rps = this.db
+        .select({ elementId: readPoints.elementId, blockId: readPoints.blockId })
+        .from(readPoints)
+        .where(inArray(readPoints.elementId, chunk))
+        .all();
+      if (rps.length === 0) continue;
+      // Resolve each read-point block's order via one batched `document_blocks` read.
+      const docIds = rps.map((rp) => rp.elementId);
+      const blockOrders = this.db
+        .select({
+          documentId: documentBlocks.documentId,
+          stableBlockId: documentBlocks.stableBlockId,
+          order: documentBlocks.order,
+        })
+        .from(documentBlocks)
+        .where(inArray(documentBlocks.documentId, docIds))
+        .all();
+      const orderByKey = new Map<string, number>();
+      for (const b of blockOrders) orderByKey.set(`${b.documentId} ${b.stableBlockId}`, b.order);
+      for (const rp of rps) {
+        const order = orderByKey.get(`${rp.elementId} ${rp.blockId}`);
+        if (order != null) out.set(rp.elementId as ElementId, order);
+      }
     }
     return out;
   }
@@ -455,22 +470,7 @@ export class BlockProcessingRepository {
   listLiveOutputsForMany(sourceIds: readonly ElementId[]): Map<ElementId, LiveBlockOutput[]> {
     const out = new Map<ElementId, LiveBlockOutput[]>();
     if (sourceIds.length === 0) return out;
-    const ids = sourceIds as ElementId[];
 
-    const linked = this.db
-      .select({
-        sourceElementId: sourceBlockProcessingOutputs.sourceElementId,
-        stableBlockId: sourceBlockProcessingOutputs.stableBlockId,
-        outputElementId: sourceBlockProcessingOutputs.outputElementId,
-        outputType: sourceBlockProcessingOutputs.outputType,
-        sourceLocationId: sourceBlockProcessingOutputs.sourceLocationId,
-      })
-      .from(sourceBlockProcessingOutputs)
-      .innerJoin(elements, eq(elements.id, sourceBlockProcessingOutputs.outputElementId))
-      .where(
-        and(inArray(sourceBlockProcessingOutputs.sourceElementId, ids), isNull(elements.deletedAt)),
-      )
-      .all();
     // Per-source de-dup seen set, mirroring the single-source `listLiveOutputs`.
     const seen = new Map<ElementId, Set<string>>();
     const seenFor = (sourceId: ElementId): Set<string> => {
@@ -481,55 +481,80 @@ export class BlockProcessingRepository {
       }
       return s;
     };
-    for (const row of linked) {
-      const sourceId = row.sourceElementId as ElementId;
-      const list = out.get(sourceId) ?? [];
-      list.push({
-        sourceElementId: sourceId,
-        stableBlockId: row.stableBlockId as BlockId,
-        outputElementId: row.outputElementId as ElementId,
-        outputType: row.outputType as SourceBlockOutputType,
-        sourceLocationId: row.sourceLocationId,
-      });
-      out.set(sourceId, list);
-      seenFor(sourceId).add(`${row.stableBlockId}:${row.outputElementId}`);
-    }
 
-    const locationRows = this.db
-      .select({
-        sourceElementId: sourceLocations.sourceElementId,
-        locationId: sourceLocations.id,
-        elementId: sourceLocations.elementId,
-        elementType: elements.type,
-        blockIds: sourceLocations.blockIds,
-      })
-      .from(sourceLocations)
-      .innerJoin(elements, eq(elements.id, sourceLocations.elementId))
-      .where(and(inArray(sourceLocations.sourceElementId, ids), isNull(elements.deletedAt)))
-      .all();
-    for (const row of locationRows) {
-      const sourceId = row.sourceElementId as ElementId;
-      let blockIds: string[] = [];
-      try {
-        blockIds = JSON.parse(row.blockIds) as string[];
-      } catch {
-        blockIds = [];
-      }
-      const s = seenFor(sourceId);
-      const list = out.get(sourceId) ?? [];
-      for (const blockId of blockIds) {
-        const key = `${blockId}:${row.elementId}`;
-        if (s.has(key)) continue;
-        s.add(key);
+    // Chunk the IN (...) list so an unbounded source set stays under SQLite's
+    // variable limit. Each source appears in exactly one chunk, so both reads
+    // (linked then derived-from-location) for that source happen in the SAME
+    // chunk iteration and in the SAME order as the unchunked path — making the
+    // per-source de-dup + assembly output-identical to one big read.
+    for (const chunk of chunkIds(sourceIds as ElementId[])) {
+      const linked = this.db
+        .select({
+          sourceElementId: sourceBlockProcessingOutputs.sourceElementId,
+          stableBlockId: sourceBlockProcessingOutputs.stableBlockId,
+          outputElementId: sourceBlockProcessingOutputs.outputElementId,
+          outputType: sourceBlockProcessingOutputs.outputType,
+          sourceLocationId: sourceBlockProcessingOutputs.sourceLocationId,
+        })
+        .from(sourceBlockProcessingOutputs)
+        .innerJoin(elements, eq(elements.id, sourceBlockProcessingOutputs.outputElementId))
+        .where(
+          and(
+            inArray(sourceBlockProcessingOutputs.sourceElementId, chunk),
+            isNull(elements.deletedAt),
+          ),
+        )
+        .all();
+      for (const row of linked) {
+        const sourceId = row.sourceElementId as ElementId;
+        const list = out.get(sourceId) ?? [];
         list.push({
           sourceElementId: sourceId,
-          stableBlockId: blockId as BlockId,
-          outputElementId: row.elementId as ElementId,
-          outputType: outputTypeForElement(row.elementType),
-          sourceLocationId: row.locationId,
+          stableBlockId: row.stableBlockId as BlockId,
+          outputElementId: row.outputElementId as ElementId,
+          outputType: row.outputType as SourceBlockOutputType,
+          sourceLocationId: row.sourceLocationId,
         });
+        out.set(sourceId, list);
+        seenFor(sourceId).add(`${row.stableBlockId}:${row.outputElementId}`);
       }
-      if (list.length > 0) out.set(sourceId, list);
+
+      const locationRows = this.db
+        .select({
+          sourceElementId: sourceLocations.sourceElementId,
+          locationId: sourceLocations.id,
+          elementId: sourceLocations.elementId,
+          elementType: elements.type,
+          blockIds: sourceLocations.blockIds,
+        })
+        .from(sourceLocations)
+        .innerJoin(elements, eq(elements.id, sourceLocations.elementId))
+        .where(and(inArray(sourceLocations.sourceElementId, chunk), isNull(elements.deletedAt)))
+        .all();
+      for (const row of locationRows) {
+        const sourceId = row.sourceElementId as ElementId;
+        let blockIds: string[] = [];
+        try {
+          blockIds = JSON.parse(row.blockIds) as string[];
+        } catch {
+          blockIds = [];
+        }
+        const s = seenFor(sourceId);
+        const list = out.get(sourceId) ?? [];
+        for (const blockId of blockIds) {
+          const key = `${blockId}:${row.elementId}`;
+          if (s.has(key)) continue;
+          s.add(key);
+          list.push({
+            sourceElementId: sourceId,
+            stableBlockId: blockId as BlockId,
+            outputElementId: row.elementId as ElementId,
+            outputType: outputTypeForElement(row.elementType),
+            sourceLocationId: row.locationId,
+          });
+        }
+        if (list.length > 0) out.set(sourceId, list);
+      }
     }
     return out;
   }
@@ -537,13 +562,17 @@ export class BlockProcessingRepository {
   sourcePriorityForMany(sourceIds: readonly ElementId[]): Map<ElementId, number> {
     const out = new Map<ElementId, number>();
     if (sourceIds.length === 0) return out;
-    const rows = this.db
-      .select({ id: elements.id, priority: elements.priority })
-      .from(elements)
-      .where(inArray(elements.id, sourceIds as ElementId[]))
-      .all();
-    for (const row of rows) {
-      if (row.priority != null) out.set(row.id as ElementId, row.priority);
+    // Chunk the IN (...) list so an unbounded source set stays under SQLite's
+    // variable limit; per-source priority is keyed by id, so merging is identical.
+    for (const chunk of chunkIds(sourceIds as ElementId[])) {
+      const rows = this.db
+        .select({ id: elements.id, priority: elements.priority })
+        .from(elements)
+        .where(inArray(elements.id, chunk))
+        .all();
+      for (const row of rows) {
+        if (row.priority != null) out.set(row.id as ElementId, row.priority);
+      }
     }
     return out;
   }

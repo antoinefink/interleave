@@ -38,6 +38,7 @@ import {
   tags,
 } from "@interleave/db";
 import { and, eq, inArray, isNull } from "drizzle-orm";
+import { chunkIds } from "./chunk-in-array";
 import { liveDescendantsWithin } from "./descendant-query";
 import { newElementId, newRelationId, newRowId, nowIso } from "./ids";
 import { rowToElement } from "./mappers";
@@ -718,12 +719,21 @@ export class ElementRepository {
   /** Live (not soft-deleted) elements whose ids are in `ids`, preserving none of the order. */
   findManyLive(ids: readonly ElementId[]): Element[] {
     if (ids.length === 0) return [];
-    return this.db
-      .select()
-      .from(elements)
-      .where(and(inArray(elements.id, ids as ElementId[]), isNull(elements.deletedAt)))
-      .all()
-      .map(rowToElement);
+    // Chunk the IN (...) list so an unbounded id set (e.g. concept members over
+    // the whole vault) stays under SQLite's variable limit. Merging chunks is
+    // output-identical: this read does not depend on order across the id list.
+    const out: Element[] = [];
+    for (const chunk of chunkIds(ids as ElementId[])) {
+      out.push(
+        ...this.db
+          .select()
+          .from(elements)
+          .where(and(inArray(elements.id, chunk), isNull(elements.deletedAt)))
+          .all()
+          .map(rowToElement),
+      );
+    }
+    return out;
   }
 
   /**
@@ -738,12 +748,21 @@ export class ElementRepository {
    */
   findManyById(ids: readonly ElementId[]): Element[] {
     if (ids.length === 0) return [];
-    return this.db
-      .select()
-      .from(elements)
-      .where(inArray(elements.id, ids as ElementId[]))
-      .all()
-      .map(rowToElement);
+    // Chunk the IN (...) list so an unbounded id set stays under SQLite's
+    // variable limit. Merging chunks is output-identical: this read does not
+    // depend on order across the id list.
+    const out: Element[] = [];
+    for (const chunk of chunkIds(ids as ElementId[])) {
+      out.push(
+        ...this.db
+          .select()
+          .from(elements)
+          .where(inArray(elements.id, chunk))
+          .all()
+          .map(rowToElement),
+      );
+    }
+    return out;
   }
 
   /**
@@ -928,25 +947,31 @@ export class ElementRepository {
   listTagsForMany(ids: readonly ElementId[]): Map<ElementId, string[]> {
     if (ids.length === 0) return new Map();
 
-    // One join query: element_tags ⋈ tags, filtered to the requested element ids.
-    // We order by elementId then tagId so the fold loop below can build each
-    // element's list in the same order listTags returns (tag rows sorted by id).
-    const rows = this.db
-      .select({ elementId: elementTags.elementId, tagName: tags.name, tagId: tags.id })
-      .from(elementTags)
-      .innerJoin(tags, eq(elementTags.tagId, tags.id))
-      .where(inArray(elementTags.elementId, ids as ElementId[]))
-      .orderBy(elementTags.elementId, tags.id)
-      .all();
-
+    // One join query per chunk: element_tags ⋈ tags, filtered to the requested
+    // element ids. We chunk the IN (...) list so an unbounded id set (e.g. the
+    // full uncapped due set) stays under SQLite's variable limit. We order by
+    // elementId then tagId so the fold builds each element's list in the same
+    // order listTags returns (tag rows sorted by id). Chunking by element id is
+    // safe: every row for a given element comes back within ITS chunk and stays
+    // ordered, so merging into the map is output-identical to one big read.
     const out = new Map<ElementId, string[]>();
-    for (const row of rows) {
-      const eid = row.elementId as ElementId;
-      const list = out.get(eid);
-      if (list) {
-        list.push(row.tagName);
-      } else {
-        out.set(eid, [row.tagName]);
+    for (const chunk of chunkIds(ids as ElementId[])) {
+      const rows = this.db
+        .select({ elementId: elementTags.elementId, tagName: tags.name, tagId: tags.id })
+        .from(elementTags)
+        .innerJoin(tags, eq(elementTags.tagId, tags.id))
+        .where(inArray(elementTags.elementId, chunk))
+        .orderBy(elementTags.elementId, tags.id)
+        .all();
+
+      for (const row of rows) {
+        const eid = row.elementId as ElementId;
+        const list = out.get(eid);
+        if (list) {
+          list.push(row.tagName);
+        } else {
+          out.set(eid, [row.tagName]);
+        }
       }
     }
     return out;

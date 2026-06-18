@@ -81,6 +81,7 @@ import {
 import { isCardMature } from "@interleave/scheduler";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { BlockProcessingService } from "./block-processing-service";
+import { chunkIds } from "./chunk-in-array";
 import { DocumentRepository } from "./document-repository";
 import { inboxSourceDomain } from "./inbox-query";
 
@@ -391,26 +392,31 @@ export class SourceYieldQuery {
       .all()
       .map((row) => row.id);
     if (liveSynthesisNoteIds.length > 0 && liveTargets.size > 0) {
-      const referenceEdges = this.db
-        .select({
-          noteId: elementRelations.fromElementId,
-          targetId: elementRelations.toElementId,
-        })
-        .from(elementRelations)
-        .where(
-          and(
-            eq(elementRelations.relationType, "references"),
-            inArray(elementRelations.fromElementId, liveSynthesisNoteIds),
-          ),
-        )
-        .all();
-      for (const edge of referenceEdges) {
-        const target = liveTargets.get(edge.targetId);
-        if (!target) continue;
-        const t = ensure(target.sourceId);
-        t.synthesisNoteIds.add(edge.noteId);
-        if (target.type === "extract") {
-          t.synthesisReferencedExtractIds.add(target.id);
+      // Chunk the IN (...) list so a whole-library synthesis-note set stays under
+      // SQLite's variable limit; the fold below accumulates per source/target and
+      // is order-independent across chunks.
+      for (const noteChunk of chunkIds(liveSynthesisNoteIds)) {
+        const referenceEdges = this.db
+          .select({
+            noteId: elementRelations.fromElementId,
+            targetId: elementRelations.toElementId,
+          })
+          .from(elementRelations)
+          .where(
+            and(
+              eq(elementRelations.relationType, "references"),
+              inArray(elementRelations.fromElementId, noteChunk),
+            ),
+          )
+          .all();
+        for (const edge of referenceEdges) {
+          const target = liveTargets.get(edge.targetId);
+          if (!target) continue;
+          const t = ensure(target.sourceId);
+          t.synthesisNoteIds.add(edge.noteId);
+          if (target.type === "extract") {
+            t.synthesisReferencedExtractIds.add(target.id);
+          }
         }
       }
     }
@@ -423,27 +429,32 @@ export class SourceYieldQuery {
       { ms: number; count: number; lastReviewedAt: string | null }
     >();
     if (allCardIds.length > 0) {
-      const logs = this.db
-        .select({
-          elementId: reviewLogs.elementId,
-          responseMs: reviewLogs.responseMs,
-          reviewedAt: reviewLogs.reviewedAt,
-        })
-        .from(reviewLogs)
-        // Exclude T125 re-stabilization marker rows — not reviews; they must not inflate
-        // a source's review ms/count or advance its lastReviewedAt.
-        .where(and(inArray(reviewLogs.elementId, allCardIds), isNull(reviewLogs.editMarkerAt)))
-        .all();
-      for (const log of logs) {
-        let agg = timeByCard.get(log.elementId);
-        if (!agg) {
-          agg = { ms: 0, count: 0, lastReviewedAt: null };
-          timeByCard.set(log.elementId, agg);
-        }
-        agg.ms += log.responseMs;
-        agg.count += 1;
-        if (agg.lastReviewedAt === null || log.reviewedAt > agg.lastReviewedAt) {
-          agg.lastReviewedAt = log.reviewedAt;
+      // Chunk the IN (...) list so a whole-library card set stays under SQLite's
+      // variable limit; the per-card aggregation below is order-independent across
+      // chunks (sum/count accumulate, lastReviewedAt takes the max).
+      for (const cardChunk of chunkIds(allCardIds)) {
+        const logs = this.db
+          .select({
+            elementId: reviewLogs.elementId,
+            responseMs: reviewLogs.responseMs,
+            reviewedAt: reviewLogs.reviewedAt,
+          })
+          .from(reviewLogs)
+          // Exclude T125 re-stabilization marker rows — not reviews; they must not inflate
+          // a source's review ms/count or advance its lastReviewedAt.
+          .where(and(inArray(reviewLogs.elementId, cardChunk), isNull(reviewLogs.editMarkerAt)))
+          .all();
+        for (const log of logs) {
+          let agg = timeByCard.get(log.elementId);
+          if (!agg) {
+            agg = { ms: 0, count: 0, lastReviewedAt: null };
+            timeByCard.set(log.elementId, agg);
+          }
+          agg.ms += log.responseMs;
+          agg.count += 1;
+          if (agg.lastReviewedAt === null || log.reviewedAt > agg.lastReviewedAt) {
+            agg.lastReviewedAt = log.reviewedAt;
+          }
         }
       }
     }
@@ -635,20 +646,25 @@ export class SourceYieldQuery {
     let reviewCount = 0;
     let lastReviewedAt: string | null = null;
     if (t.cardIds.length > 0) {
-      const logs = this.db
-        .select({
-          responseMs: reviewLogs.responseMs,
-          reviewedAt: reviewLogs.reviewedAt,
-        })
-        .from(reviewLogs)
-        // Exclude T125 re-stabilization marker rows — not reviews.
-        .where(and(inArray(reviewLogs.elementId, t.cardIds), isNull(reviewLogs.editMarkerAt)))
-        .all();
-      for (const log of logs) {
-        timeSpentMs += log.responseMs;
-        reviewCount += 1;
-        if (lastReviewedAt === null || log.reviewedAt > lastReviewedAt) {
-          lastReviewedAt = log.reviewedAt;
+      // Chunk the IN (...) list so a source with a very large card set stays under
+      // SQLite's variable limit; sum/count accumulate and lastReviewedAt takes the
+      // max, so the result is order-independent across chunks.
+      for (const cardChunk of chunkIds(t.cardIds)) {
+        const logs = this.db
+          .select({
+            responseMs: reviewLogs.responseMs,
+            reviewedAt: reviewLogs.reviewedAt,
+          })
+          .from(reviewLogs)
+          // Exclude T125 re-stabilization marker rows — not reviews.
+          .where(and(inArray(reviewLogs.elementId, cardChunk), isNull(reviewLogs.editMarkerAt)))
+          .all();
+        for (const log of logs) {
+          timeSpentMs += log.responseMs;
+          reviewCount += 1;
+          if (lastReviewedAt === null || log.reviewedAt > lastReviewedAt) {
+            lastReviewedAt = log.reviewedAt;
+          }
         }
       }
     }
@@ -1014,29 +1030,34 @@ export class SourceYieldQuery {
     synthesisReferencedExtractIds: Set<string>,
   ): void {
     if (liveTargets.size === 0) return;
-    const referenceEdges = this.db
-      .select({
-        noteId: elementRelations.fromElementId,
-        targetId: elementRelations.toElementId,
-      })
-      .from(elementRelations)
-      .innerJoin(elements, eq(elementRelations.fromElementId, elements.id))
-      .where(
-        and(
-          eq(elementRelations.relationType, "references"),
-          eq(elements.type, "synthesis_note"),
-          isNull(elements.deletedAt),
-          inArray(elementRelations.toElementId, [...liveTargets.keys()]),
-        ),
-      )
-      .all();
+    // Chunk the IN (...) list so a source with a very large extract/card subtree
+    // stays under SQLite's variable limit; the fold accumulates into shared sets
+    // and is order-independent across chunks.
+    for (const targetChunk of chunkIds([...liveTargets.keys()])) {
+      const referenceEdges = this.db
+        .select({
+          noteId: elementRelations.fromElementId,
+          targetId: elementRelations.toElementId,
+        })
+        .from(elementRelations)
+        .innerJoin(elements, eq(elementRelations.fromElementId, elements.id))
+        .where(
+          and(
+            eq(elementRelations.relationType, "references"),
+            eq(elements.type, "synthesis_note"),
+            isNull(elements.deletedAt),
+            inArray(elementRelations.toElementId, targetChunk),
+          ),
+        )
+        .all();
 
-    for (const edge of referenceEdges) {
-      const target = liveTargets.get(edge.targetId);
-      if (!target) continue;
-      synthesisNoteIds.add(edge.noteId);
-      if (target.type === "extract") {
-        synthesisReferencedExtractIds.add(target.id);
+      for (const edge of referenceEdges) {
+        const target = liveTargets.get(edge.targetId);
+        if (!target) continue;
+        synthesisNoteIds.add(edge.noteId);
+        if (target.type === "extract") {
+          synthesisReferencedExtractIds.add(target.id);
+        }
       }
     }
   }
@@ -1074,31 +1095,39 @@ export class SourceYieldQuery {
     const ids = sourceIds as ElementId[];
 
     // All blocks for these sources, grouped + ordered exactly like `listBlocks`.
+    // Chunk the IN (...) list so an unbounded (whole-library) source set stays
+    // under SQLite's variable limit; per-source accumulation + the final sort make
+    // the result chunk-independent.
     const blocksBySource = new Map<string, { stableBlockId: string; order: number }[]>();
-    const blockRows = this.db
-      .select({
-        documentId: documentBlocks.documentId,
-        stableBlockId: documentBlocks.stableBlockId,
-        order: documentBlocks.order,
-      })
-      .from(documentBlocks)
-      .where(inArray(documentBlocks.documentId, ids))
-      .all();
-    for (const b of blockRows) {
-      const list = blocksBySource.get(b.documentId) ?? [];
-      list.push({ stableBlockId: b.stableBlockId, order: b.order });
-      blocksBySource.set(b.documentId, list);
+    for (const chunk of chunkIds(ids)) {
+      const blockRows = this.db
+        .select({
+          documentId: documentBlocks.documentId,
+          stableBlockId: documentBlocks.stableBlockId,
+          order: documentBlocks.order,
+        })
+        .from(documentBlocks)
+        .where(inArray(documentBlocks.documentId, chunk))
+        .all();
+      for (const b of blockRows) {
+        const list = blocksBySource.get(b.documentId) ?? [];
+        list.push({ stableBlockId: b.stableBlockId, order: b.order });
+        blocksBySource.set(b.documentId, list);
+      }
     }
     for (const list of blocksBySource.values()) list.sort((a, b) => a.order - b.order);
 
-    // The read-point block id per source (one per element).
+    // The read-point block id per source (one per element). Chunked for the same
+    // variable-limit reason; one row per source, so set() is order-independent.
     const readPointBlockBySource = new Map<string, string>();
-    const rpRows = this.db
-      .select({ elementId: readPoints.elementId, blockId: readPoints.blockId })
-      .from(readPoints)
-      .where(inArray(readPoints.elementId, ids))
-      .all();
-    for (const rp of rpRows) readPointBlockBySource.set(rp.elementId, rp.blockId);
+    for (const chunk of chunkIds(ids)) {
+      const rpRows = this.db
+        .select({ elementId: readPoints.elementId, blockId: readPoints.blockId })
+        .from(readPoints)
+        .where(inArray(readPoints.elementId, chunk))
+        .all();
+      for (const rp of rpRows) readPointBlockBySource.set(rp.elementId, rp.blockId);
+    }
 
     for (const id of sourceIds) {
       const blocks = blocksBySource.get(id) ?? [];

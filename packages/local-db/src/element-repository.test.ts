@@ -433,3 +433,82 @@ describe("ElementRepository.listTagsForMany — batched tag map (U2 parity)", ()
     expect(elements.listTagsForMany([])).toEqual(new Map());
   });
 });
+
+describe("ElementRepository batched reads — chunk-boundary parity (SQLITE_SAFE_IN_ARRAY_SIZE)", () => {
+  // SQLITE_SAFE_IN_ARRAY_SIZE is 900; use > one chunk's worth so the batched read
+  // must split into multiple IN (...) chunks and merge them. These prove the chunk
+  // boundary is output-identical to the single-call / per-row expectation (and that
+  // a large id set no longer throws SQLite "too many SQL variables").
+  const OVER_ONE_CHUNK = 910;
+
+  function seedManyExtracts(count: number): ElementId[] {
+    const ids: ElementId[] = [];
+    for (let i = 0; i < count; i++) {
+      ids.push(
+        elements.create({
+          type: "extract",
+          status: "active",
+          stage: "raw_extract",
+          priority: 0.5,
+          title: `e${i}`,
+        }).id,
+      );
+    }
+    return ids;
+  }
+
+  it("findManyLive over > one chunk returns every live id (chunked == single big read)", () => {
+    const ids = seedManyExtracts(OVER_ONE_CHUNK);
+    const first = ids[0] as ElementId;
+    const last = ids[OVER_ONE_CHUNK - 1] as ElementId;
+    // Soft-delete a couple so the liveness filter is exercised across chunks.
+    elements.softDelete(first);
+    elements.softDelete(last);
+
+    const live = elements.findManyLive(ids);
+    const liveIds = new Set(live.map((e) => e.id));
+
+    expect(live.length).toBe(OVER_ONE_CHUNK - 2);
+    expect(liveIds.has(first)).toBe(false);
+    expect(liveIds.has(last)).toBe(false);
+    // Every other id is present exactly once.
+    for (let i = 1; i < OVER_ONE_CHUNK - 1; i++) {
+      expect(liveIds.has(ids[i] as ElementId)).toBe(true);
+    }
+  });
+
+  it("findManyById over > one chunk includes soft-deleted rows across the boundary", () => {
+    const ids = seedManyExtracts(OVER_ONE_CHUNK);
+    const deleted = ids[5] as ElementId;
+    elements.softDelete(deleted);
+
+    const found = elements.findManyById(ids);
+    const foundIds = new Set(found.map((e) => e.id));
+
+    expect(found.length).toBe(OVER_ONE_CHUNK);
+    // findManyById is liveness-agnostic: the soft-deleted row is still returned.
+    expect(foundIds.has(deleted)).toBe(true);
+    for (const id of ids) expect(foundIds.has(id)).toBe(true);
+  });
+
+  it("listTagsForMany over > one chunk equals per-element listTags at the boundary", () => {
+    const ids = seedManyExtracts(OVER_ONE_CHUNK);
+    const head = ids[0] as ElementId;
+    const tail = ids[901] as ElementId;
+    // Tag a handful, including ids in the second chunk (index >= 900).
+    elements.addTag(head, "alpha");
+    elements.addTag(head, "beta");
+    elements.addTag(ids[450] as ElementId, "mid");
+    elements.addTag(tail, "tail-a");
+    elements.addTag(tail, "tail-b");
+
+    const map = elements.listTagsForMany(ids);
+    // Batched (chunked) result is byte-identical to per-element listTags, including
+    // for tagged elements that straddle the chunk boundary (index >= 900).
+    for (const id of ids) {
+      expect(map.get(id) ?? []).toEqual(elements.listTags(id));
+    }
+    expect(map.get(tail)).toEqual(elements.listTags(tail));
+    expect(map.get(tail)?.length).toBe(2);
+  });
+});
