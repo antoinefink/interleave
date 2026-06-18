@@ -938,7 +938,14 @@ export class QueueQuery {
     tagName: string,
     membership: ReadonlyMap<ElementId, string[]>,
   ): (elementId: ElementId) => boolean {
-    return (elementId) => (membership.get(elementId) ?? []).includes(tagName);
+    // Convert the string[] arrays to Set<string> once so each per-element lookup
+    // is O(1) (`.has`) rather than O(tag-count) (`.includes`). This mirrors the
+    // O(1) path in buildConceptMatcher.
+    const membershipSets = new Map<ElementId, Set<string>>();
+    for (const [id, tags] of membership) {
+      membershipSets.set(id, new Set(tags));
+    }
+    return (elementId) => membershipSets.get(elementId)?.has(tagName) ?? false;
   }
 
   /**
