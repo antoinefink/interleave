@@ -6,7 +6,13 @@
  * without mutating state or inventing historical graduation crossings.
  */
 
-import type { BlockId, DistillationStage, ElementId, IsoTimestamp } from "@interleave/core";
+import {
+  type BlockId,
+  type DistillationStage,
+  type ElementId,
+  type IsoTimestamp,
+  PRIORITY_LABEL_VALUE,
+} from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
 import { cards, operationLog, reviewLogs, reviewStates, tasks } from "@interleave/db";
 import { CARD_MATURE_STABILITY_DAYS } from "@interleave/scheduler";
@@ -16,6 +22,8 @@ import { ConceptRepository } from "./concept-repository";
 import { DocumentRepository } from "./document-repository";
 import { ElementRepository } from "./element-repository";
 import { newReviewLogId } from "./ids";
+import { RetentionService } from "./retention-service";
+import { SettingsRepository } from "./settings-repository";
 import { createInMemoryDb } from "./test-db";
 import { TopicKnowledgeStateQuery } from "./topic-knowledge-state-query";
 
@@ -422,5 +430,132 @@ describe("TopicKnowledgeStateQuery.getTopicKnowledgeState", () => {
     );
     const [subject] = summary.subjects;
     expect(subject?.staleness).toEqual({ staleItems: 0, needsReverify: 0 });
+  });
+});
+
+describe("U12 drift: strictestResolvedTarget batched vs per-card resolveForCard", () => {
+  /**
+   * Seeds a concept with multiple cards whose retention is sourced from different
+   * rules (per-concept override, per-band/priority, global default, per-card override).
+   * Asserts that the batched `strictestResolvedTarget` path produces the same retention
+   * target as the old per-card `retention.resolveForCard` path would.
+   */
+  it("batched retention target matches per-card resolveForCard across all rule sources", () => {
+    const settings = new SettingsRepository(handle.db);
+    const retention = new RetentionService(handle.db);
+
+    // Enable band targeting + set global + band-A target.
+    settings.updateAppSettings({
+      defaultDesiredRetention: 0.88,
+      retentionByBandEnabled: true,
+      retentionByBand: { A: 0.93, B: 0.91 },
+    });
+
+    // Concept with its own per-concept target (0.95).
+    const concept = conceptsRepo.createConcept({ name: "Drift test concept" });
+    conceptsRepo.setConceptRetention(concept.id, 0.95);
+
+    const sourceId = seedSourceWithReadPoint("Drift source");
+    const extractId = seedElement("Drift extract", {
+      type: "extract",
+      parentId: sourceId,
+      sourceId,
+      stage: "clean_extract",
+    });
+
+    // Card 1: concept membership → resolves via concept rule (0.95).
+    const conceptCard = seedCard(sourceId, extractId, { stability: 20 });
+    conceptsRepo.assignConcept(conceptCard, concept.id);
+
+    // Card 2: A-band priority, no concept → resolves via band (0.93).
+    const bandCard = seedCard(sourceId, extractId, { stability: 15 });
+    elementsRepo.update(bandCard, { priority: PRIORITY_LABEL_VALUE.A });
+
+    // Card 3: B-band, no concept → resolves via band (0.91).
+    const bandCardB = seedCard(sourceId, extractId, { stability: 10 });
+    elementsRepo.update(bandCardB, { priority: PRIORITY_LABEL_VALUE.B });
+
+    // Card 4: per-card override (0.97) — wins over everything.
+    const overrideCard = seedCard(sourceId, extractId, { stability: 8 });
+    retention.setCardRetention(overrideCard, 0.97);
+
+    // Card 5: default-band card (no concept, C-band) → resolves via global (0.88).
+    const globalCard = seedCard(sourceId, extractId, { stability: 5 });
+    elementsRepo.update(globalCard, { priority: PRIORITY_LABEL_VALUE.C });
+
+    conceptsRepo.assignConcept(sourceId, concept.id);
+
+    // Compute the per-card targets using the OLD per-card resolveForCard path.
+    const targets = retention.targets();
+    const allCardIds = [conceptCard, bandCard, bandCardB, overrideCard, globalCard];
+    const perCardStrictest = allCardIds.reduce<number | null>((acc, cardId) => {
+      const resolved = retention.resolveForCard(cardId, targets).target;
+      return acc === null ? resolved : Math.max(acc, resolved);
+    }, null);
+
+    // Run the batched query.
+    const summary = new TopicKnowledgeStateQuery(handle.db).getTopicKnowledgeState(ASOF, {
+      subjectType: "concept",
+      subjectId: concept.id,
+    });
+
+    const subject = summary.subjects[0];
+    expect(subject).toBeDefined();
+    // Strictest across all 5 cards: overrideCard has 0.97 → should win.
+    expect(subject?.retention.retentionTarget).toBeCloseTo(0.97, 6);
+    // Drift guard: batched result equals the per-card path.
+    expect(subject?.retention.retentionTarget).toBeCloseTo(perCardStrictest ?? 0, 6);
+  });
+
+  it("returns null retention target for a subject with zero active cards (same as before)", () => {
+    const concept = conceptsRepo.createConcept({ name: "Empty concept" });
+    const sourceId = seedElement("Empty source", { type: "source" });
+    conceptsRepo.assignConcept(sourceId, concept.id);
+
+    const summary = new TopicKnowledgeStateQuery(handle.db).getTopicKnowledgeState(ASOF, {
+      subjectType: "concept",
+      subjectId: concept.id,
+    });
+
+    const subject = summary.subjects[0];
+    expect(subject).toBeDefined();
+    expect(subject?.retention.retentionTarget).toBeNull();
+  });
+
+  it("per-concept override wins over band for a card assigned to concept (non-vacuous correctness)", () => {
+    const settings = new SettingsRepository(handle.db);
+    settings.updateAppSettings({
+      defaultDesiredRetention: 0.88,
+      retentionByBandEnabled: true,
+      retentionByBand: { A: 0.93 },
+    });
+
+    const concept = conceptsRepo.createConcept({ name: "High-value concept" });
+    conceptsRepo.setConceptRetention(concept.id, 0.95);
+
+    const sourceId = seedSourceWithReadPoint("Concept priority source");
+    const extractId = seedElement("Concept priority extract", {
+      type: "extract",
+      parentId: sourceId,
+      sourceId,
+      stage: "clean_extract",
+    });
+
+    // A-band card assigned to concept: concept (0.95) > band (0.93) → concept wins.
+    const cardId = seedCard(sourceId, extractId, { stability: 20 });
+    elementsRepo.update(cardId, { priority: PRIORITY_LABEL_VALUE.A });
+    conceptsRepo.assignConcept(cardId, concept.id);
+    conceptsRepo.assignConcept(sourceId, concept.id);
+
+    const summary = new TopicKnowledgeStateQuery(handle.db).getTopicKnowledgeState(ASOF, {
+      subjectType: "concept",
+      subjectId: concept.id,
+    });
+
+    const subject = summary.subjects[0];
+    expect(subject?.retention.retentionTarget).toBeCloseTo(0.95, 6);
+
+    // Non-vacuous: if we inject 0.93 (the band value) instead, the assertion would fail.
+    expect(subject?.retention.retentionTarget).not.toBeCloseTo(0.93, 6);
   });
 });

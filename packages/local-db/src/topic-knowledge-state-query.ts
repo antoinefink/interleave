@@ -11,6 +11,7 @@
 import { type ElementId, type IsoTimestamp, priorityToLabel } from "@interleave/core";
 import {
   cards,
+  concepts,
   elementRelations,
   elements,
   type InterleaveDatabase,
@@ -18,7 +19,7 @@ import {
   reviewStates,
   tasks,
 } from "@interleave/db";
-import { isCardMature } from "@interleave/scheduler";
+import { isCardMature, resolveDesiredRetentionDetailed } from "@interleave/scheduler";
 import { and, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import { BlockProcessingService } from "./block-processing-service";
 import { ConceptRepository } from "./concept-repository";
@@ -151,6 +152,7 @@ interface CardInfo {
   readonly isRetired: boolean;
   readonly stability: number | null;
   readonly fsrsState: string | null;
+  readonly desiredRetention: number | null;
 }
 
 interface ReviewInfo {
@@ -200,6 +202,7 @@ export class TopicKnowledgeStateQuery {
     const reviews = this.reviewsForWindow(asOf, windowDays);
     const openTasksByLinked = this.openVerificationTasksByLinkedElement();
     const retentionTargets = this.retention.targets();
+    const conceptNameMap = this.conceptNameMap();
 
     const seeds = this.subjectSeeds(liveElements, childIdsByParent, membership, options);
     const seedPage = options.order === "needs_attention" ? seeds : seeds.slice(0, limit);
@@ -213,6 +216,8 @@ export class TopicKnowledgeStateQuery {
         reviews,
         openTasksByLinked,
         retentionTargets,
+        membership,
+        conceptNameMap,
         asOf,
         windowDays,
       ),
@@ -377,11 +382,32 @@ export class TopicKnowledgeStateQuery {
         isRetired: cards.isRetired,
         stability: reviewStates.stability,
         fsrsState: reviewStates.fsrsState,
+        desiredRetention: cards.desiredRetention,
       })
       .from(cards)
       .leftJoin(reviewStates, eq(reviewStates.elementId, cards.elementId))
       .all();
-    return new Map(rows.map((row) => [row.id, row]));
+    return new Map(
+      rows.map((row) => [row.id, { ...row, desiredRetention: row.desiredRetention ?? null }]),
+    );
+  }
+
+  /** Build a concept-id → name map for all live concepts (used to map membership ids to names). */
+  private conceptNameMap(): Map<string, string> {
+    const liveConceptIds = new Set(
+      this.db
+        .select({ id: elements.id })
+        .from(elements)
+        .where(and(eq(elements.type, "concept"), isNull(elements.deletedAt)))
+        .all()
+        .map((r) => r.id),
+    );
+    const rows = this.db.select({ id: concepts.id, name: concepts.name }).from(concepts).all();
+    const out = new Map<string, string>();
+    for (const row of rows) {
+      if (liveConceptIds.has(row.id)) out.set(row.id, row.name);
+    }
+    return out;
   }
 
   private reviewsForWindow(asOf: string, windowDays: number): ReviewInfo[] {
@@ -433,6 +459,8 @@ export class TopicKnowledgeStateQuery {
     reviews: readonly ReviewInfo[],
     openTasksByLinked: Map<string, number>,
     retentionTargets: ReturnType<RetentionService["targets"]>,
+    membershipMap: Map<ElementId, Set<ElementId>>,
+    conceptNameMap: Map<string, string>,
     asOf: IsoTimestamp,
     windowDays: number,
   ): TopicKnowledgeStateSubject {
@@ -459,7 +487,14 @@ export class TopicKnowledgeStateQuery {
 
     const stability = this.stabilityBuckets(cardIds, cardInfo);
     const relevantReviews = reviews.filter((review) => activeCardIdSet.has(review.cardId));
-    const retentionTarget = this.strictestResolvedTarget(activeCardIds, retentionTargets);
+    const retentionTarget = this.strictestResolvedTarget(
+      activeCardIds,
+      retentionTargets,
+      liveElements,
+      membershipMap,
+      conceptNameMap,
+      cardInfo,
+    );
     const retention = this.retentionTrend(
       relevantReviews,
       retentionTarget,
@@ -558,13 +593,43 @@ export class TopicKnowledgeStateQuery {
     return buckets;
   }
 
+  /**
+   * Resolve the strictest (highest) retention target across all active cards using
+   * pre-fetched maps — zero per-card DB reads.
+   *
+   * Previously called `retention.resolveForCard(cardId, targets)` per card, which did
+   * a `findCardById` + `conceptsForElement` DB read for each card (N+1 over all cards
+   * across up to 50 subjects). The pure `resolveDesiredRetentionDetailed` is inlined
+   * here reading priority from `liveElements`, override from `cardInfo`, and concept
+   * names by joining `membershipMap` (conceptId set) to `conceptNameMap` (id→name).
+   */
   private strictestResolvedTarget(
     cardIds: readonly string[],
     targets: ReturnType<RetentionService["targets"]>,
+    liveElements: Map<string, LiveElement>,
+    membershipMap: Map<ElementId, Set<ElementId>>,
+    conceptNameMap: Map<string, string>,
+    cardInfo: Map<string, CardInfo>,
   ): number | null {
     let strictest: number | null = null;
     for (const cardId of cardIds) {
-      const resolved = this.retention.resolveForCard(cardId as ElementId, targets).target;
+      const el = liveElements.get(cardId);
+      const info = cardInfo.get(cardId);
+      // Map the card's concept ids (from membership map) to concept names (for resolver).
+      const conceptIds = membershipMap.get(cardId as ElementId);
+      const conceptNames: string[] = [];
+      if (conceptIds) {
+        for (const conceptId of conceptIds) {
+          const name = conceptNameMap.get(conceptId);
+          if (name !== undefined) conceptNames.push(name);
+        }
+      }
+      const resolved = resolveDesiredRetentionDetailed({
+        priority: el?.priority ?? 0.5,
+        conceptNames,
+        cardOverride: info?.desiredRetention ?? null,
+        targets,
+      }).target;
       strictest = strictest === null ? resolved : Math.max(strictest, resolved);
     }
     return strictest;
