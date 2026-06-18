@@ -28,6 +28,7 @@ import type {
   IsoTimestamp,
   RegionRect,
   ReliabilityTier,
+  ReviewState,
   SourceLocationId,
   SourceRef,
   SourceType,
@@ -36,7 +37,7 @@ import { deriveExpiryStatus, priorityToLabel } from "@interleave/core";
 import type { SourceRetirementSuggestion } from "@interleave/scheduler";
 import { cardRowToLifetime } from "./card-edit-service";
 import type { Repositories } from "./index";
-import type { CurrentScheduleReason } from "./operation-log-repository";
+import type { CurrentScheduleProjection, CurrentScheduleReason } from "./operation-log-repository";
 import { resolveSourceRef } from "./source-ref-query";
 
 /** Which scheduler an element type is governed by (the FSRS vs attention split). */
@@ -292,10 +293,103 @@ export class InspectorQuery {
   ): SchedulerSignals {
     const { review } = this.repos;
     const id = element.id;
-    const includeYield = options.includeYield ?? true;
 
     if (element.type === "card") {
       const state = review.findReviewState(id);
+      return this.schedulerSignalsFrom(element, asOf, options, { reviewState: state ?? null });
+    }
+
+    const scheduleProjection = this.repos.operationLog.currentScheduleProjection(id, element.dueAt);
+    return this.schedulerSignalsFrom(element, asOf, options, { scheduleProjection });
+  }
+
+  /**
+   * Batched equivalent of {@link buildSchedulerSignals} for a set of elements.
+   * Issues ONE `findReviewStatesForMany` read for all cards and ONE
+   * `currentScheduleProjectionsForMany` read for all attention elements in the set,
+   * then assembles each element's {@link SchedulerSignals} from those maps — the same
+   * per-element core as `buildSchedulerSignals` via the shared private
+   * `schedulerSignalsFrom` helper, so single-row and batched outputs cannot drift.
+   *
+   * Use instead of calling `buildSchedulerSignals` per-element in a loop.
+   * `includeYield` follows the same semantics as the single-row method: list rows
+   * pass `includeYield:false` because the yield chip is selection-detail only.
+   *
+   * Empty `elements` → empty map. Elements absent from the DB-backed maps (e.g. no
+   * review state yet) follow the same fallback logic as the single-row path.
+   */
+  buildSchedulerSignalsForMany(
+    elements: readonly Element[],
+    asOf: Date,
+    options: { includeYield?: boolean } = {},
+  ): Map<ElementId, SchedulerSignals> {
+    const result = new Map<ElementId, SchedulerSignals>();
+    if (elements.length === 0) return result;
+
+    const cardIds = elements.filter((el) => el.type === "card").map((el) => el.id);
+    const attentionElements = elements.filter((el) => el.type !== "card");
+
+    // One read for all cards' FSRS state (mirrors findReviewState per-card).
+    const reviewStates =
+      cardIds.length > 0
+        ? this.repos.review.findReviewStatesForMany(cardIds)
+        : new Map<ElementId, ReviewState>();
+
+    // One read for all attention elements' schedule projections (mirrors
+    // currentScheduleProjection per-element).
+    const idToDueAt = new Map<ElementId, string | null>(
+      attentionElements.map((el) => [el.id, el.dueAt]),
+    );
+    const scheduleProjections =
+      idToDueAt.size > 0
+        ? this.repos.operationLog.currentScheduleProjectionsForMany(idToDueAt)
+        : new Map<ElementId, CurrentScheduleProjection>();
+
+    for (const element of elements) {
+      if (element.type === "card") {
+        const state = reviewStates.get(element.id) ?? null;
+        result.set(
+          element.id,
+          this.schedulerSignalsFrom(element, asOf, options, { reviewState: state }),
+        );
+      } else {
+        const scheduleProjection = scheduleProjections.get(element.id) ?? {
+          effectivePostponeCount: 0,
+          reason: null,
+        };
+        result.set(
+          element.id,
+          this.schedulerSignalsFrom(element, asOf, options, { scheduleProjection }),
+        );
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Core per-element assembly shared by {@link buildSchedulerSignals} (single-row)
+   * and {@link buildSchedulerSignalsForMany} (batched). Callers resolve the
+   * DB-backed inputs (`reviewState` for cards, `scheduleProjection` for attention
+   * elements) and pass them in, so this function is pure and cannot drift between
+   * the two call sites.
+   *
+   * For cards: pass `{ reviewState }` (null when the card has never been reviewed).
+   * For attention elements: pass `{ scheduleProjection }`.
+   */
+  private schedulerSignalsFrom(
+    element: Element,
+    asOf: Date,
+    options: { includeYield?: boolean },
+    resolved:
+      | { reviewState: ReviewState | null; scheduleProjection?: undefined }
+      | { scheduleProjection: CurrentScheduleProjection; reviewState?: undefined },
+  ): SchedulerSignals {
+    const id = element.id;
+    const includeYield = options.includeYield ?? true;
+
+    if (element.type === "card") {
+      const state = resolved.reviewState ?? null;
       const retrievability = state
         ? approximateRetrievability(state.stability, state.lastReviewedAt, asOf)
         : null;
@@ -332,7 +426,10 @@ export class InspectorQuery {
         };
       }
     }
-    const scheduleProjection = this.repos.operationLog.currentScheduleProjection(id, element.dueAt);
+    const scheduleProjection = resolved.scheduleProjection ?? {
+      effectivePostponeCount: 0,
+      reason: null,
+    };
     return {
       kind: "attention",
       retrievability: null,

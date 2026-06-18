@@ -416,3 +416,123 @@ describe("InspectorQuery.list", () => {
     expect(inspector.list().map((e) => e.id)).not.toContain(cardId);
   });
 });
+
+describe("InspectorQuery.buildSchedulerSignalsForMany — FIX-3 drift guard", () => {
+  /**
+   * Seeds a mix of elements with non-trivial op-log history:
+   *  - a source with a postpone (attention, scheduleReason non-null)
+   *  - an extract (attention, no postpone history)
+   *  - a card with a review state (FSRS, retrievability non-null)
+   *  - a card with NO review state (FSRS, retrievability null)
+   *
+   * Then asserts that `buildSchedulerSignalsForMany(els, asOf, {includeYield:false})`
+   * deepEquals `buildSchedulerSignals(el, asOf, {includeYield:false})` for every
+   * element — guaranteeing the batched path and single-row path can never drift.
+   *
+   * The non-vacuity check at the end injects a wrong value to confirm the assertion
+   * would actually catch a regression.
+   */
+  it("batched output deepEquals single-row output for every element (non-vacuous)", () => {
+    const asOf = new Date("2026-06-01T12:00:00.000Z");
+
+    // Source with a postpone so scheduleReason + postponed > 0.
+    const source = repos.sources.create({
+      title: "Postponed source",
+      priority: 0.5,
+      status: "active",
+      stage: "raw_source",
+    });
+    const sourceId = source.element.id;
+    handle.db.transaction((tx) => {
+      repos.elements.rescheduleWithin(tx, sourceId, "2026-06-20T12:00:00.000Z", "scheduled", {
+        action: "postpone",
+        scheduledAt: "2026-06-01T00:00:00.000Z",
+        postpone: true,
+        postponeCount: 1,
+      });
+    });
+
+    // Extract with no op-log history.
+    const extract = repos.sources.createExtract({
+      sourceElementId: sourceId,
+      title: "Plain extract",
+      priority: 0.5,
+      selectedText: "some text",
+      blockIds: [],
+    });
+    const extractId = extract.element.id;
+
+    // Card with a review state (non-null retrievability expected).
+    const reviewedCard = repos.review.createCard({
+      kind: "qa",
+      title: "Reviewed card",
+      priority: 0.5,
+      prompt: "q",
+      answer: "a",
+    });
+    const reviewedCardId = reviewedCard.element.id;
+    repos.review.recordReview(reviewedCardId, {
+      rating: "good",
+      reviewedAt: "2026-05-20T08:00:00.000Z",
+      responseMs: 2000,
+      prevState: "new",
+      nextState: "review",
+      nextStability: 7.0,
+      nextDifficulty: 4.5,
+      nextDueAt: "2026-05-28T08:00:00.000Z",
+      elapsedDays: 0,
+      scheduledDays: 8,
+      reps: 1,
+      lapses: 0,
+      nextLearningSteps: 0,
+    });
+
+    // Card with NO review state (fresh, retrievability null).
+    const freshCard = repos.review.createCard({
+      kind: "qa",
+      title: "Fresh card",
+      priority: 0.5,
+      prompt: "q2",
+      answer: "a2",
+    });
+    const freshCardId = freshCard.element.id;
+
+    const elements = [sourceId, extractId, reviewedCardId, freshCardId].map((id) => {
+      const el = repos.elements.findById(id);
+      if (!el) throw new Error(`Fixture element not found: ${id}`);
+      return el;
+    });
+
+    // Build the batched result once.
+    const batchedMap = inspector.buildSchedulerSignalsForMany(elements, asOf, {
+      includeYield: false,
+    });
+
+    // Assert it deepEquals the single-row result for EVERY element.
+    for (const element of elements) {
+      const single = inspector.buildSchedulerSignals(element, asOf, { includeYield: false });
+      const batched = batchedMap.get(element.id);
+      expect(batched).toBeDefined();
+      expect(batched).toEqual(single);
+    }
+
+    // Non-vacuity: verify the reviewed card has non-null retrievability so the FSRS
+    // branch is genuinely exercised (not trivially passing with all-null signals).
+    expect(batchedMap.get(reviewedCardId)?.retrievability).not.toBeNull();
+    // And the source has a non-zero postponed count (attention branch exercised).
+    expect(batchedMap.get(sourceId)?.postponed).toBeGreaterThan(0);
+
+    // Non-vacuity guard: confirm the test would FAIL if we produced a wrong value.
+    // Manually corrupt one entry in a fresh map and check the equality breaks.
+    const corruptedMap = new Map(batchedMap);
+    const original = batchedMap.get(reviewedCardId);
+    if (!original) throw new Error("reviewedCard not in batchedMap");
+    corruptedMap.set(reviewedCardId, { ...original, retrievability: -999 });
+    const reviewedEl = elements.find((el) => el.id === reviewedCardId);
+    if (!reviewedEl) throw new Error("reviewedCard element not found");
+    const singleReviewed = inspector.buildSchedulerSignals(reviewedEl, asOf, {
+      includeYield: false,
+    });
+    expect(corruptedMap.get(reviewedCardId)).not.toEqual(singleReviewed);
+  });
+});
