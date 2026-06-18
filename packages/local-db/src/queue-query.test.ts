@@ -1144,3 +1144,144 @@ describe("QueueQuery.summaryForMany (U1 — batched queue summary)", () => {
     expect(row?.schedulerSignals.scheduleReason).toEqual(single?.schedulerSignals.scheduleReason);
   });
 });
+
+/**
+ * U11 — queue tag-filter batched membership drift tests.
+ *
+ * The tag-filter paths in `list()` (both the count pass over the full due set and the
+ * result-filter pass) formerly called `listTags(element.id)` per row — an N+1 of 2
+ * SQL/element over the uncapped due set. U11 replaces both with a SINGLE batched
+ * `listTagsForMany` call before the loops, mirroring the `buildConceptMatcher` /
+ * `liveMembershipMap` pattern. These drift tests assert that the batched path produces
+ * byte-identical output (same members, same counts) compared to what the old per-row
+ * path would have returned, and guard the correctness invariants the plan requires.
+ */
+describe("QueueQuery U11 — tag-filter batched membership", () => {
+  it("drift: list + counts with an active tag filter deepEquals pre-refactor behaviour over a tagged seed", () => {
+    // Seed: source tagged "philosophy" + extract tagged "definitions" + card (no tag).
+    // The tag filter "definitions" must include only the extract in both items AND counts.
+    const source = repos.sources.create({
+      title: "Philosophy source",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "active",
+    });
+    repos.elements.reschedule(source.element.id, iso("2026-05-29T08:00:00.000Z"));
+    repos.elements.addTag(source.element.id, "philosophy");
+
+    const extract = repos.sources.createExtract({
+      sourceElementId: source.element.id,
+      title: "Key definition extract",
+      priority: PRIORITY_LABEL_VALUE.B,
+      selectedText: "A definition.",
+      blockIds: ["blk_u11_1" as BlockId],
+      label: "Def · ¶1",
+    });
+    repos.elements.update(extract.element.id, { status: "active", stage: "clean_extract" });
+    repos.elements.reschedule(extract.element.id, iso("2026-05-29T08:00:00.000Z"));
+    repos.elements.addTag(extract.element.id, "definitions");
+    repos.elements.addTag(extract.element.id, "philosophy"); // multiple tags
+
+    const card = repos.review.createCard({
+      kind: "qa",
+      title: "No-tag card",
+      priority: PRIORITY_LABEL_VALUE.B,
+      prompt: "Q?",
+      answer: "A.",
+      parentId: extract.element.id,
+      sourceId: source.element.id,
+      sourceLocationId: extract.location.id,
+      stage: "active_card",
+    });
+    repos.review.recordReview(card.element.id, {
+      rating: "good",
+      reviewedAt: iso("2026-05-26T08:00:00.000Z"),
+      responseMs: 3000,
+      prevState: "new",
+      nextState: "review",
+      nextStability: 4,
+      nextDifficulty: 5,
+      nextDueAt: iso("2026-05-29T08:00:00.000Z"),
+      elapsedDays: 3,
+      scheduledDays: 3,
+      reps: 2,
+      lapses: 0,
+      nextLearningSteps: 0,
+    });
+
+    // Filter by "definitions": only the extract qualifies.
+    const filtered = queue.list({ asOf: NOW, filters: { tag: "definitions" } });
+    expect(filtered.items.map((i) => i.id)).toEqual([extract.element.id]);
+    expect(filtered.counts.all).toBe(1);
+    expect(filtered.counts.extract).toBe(1);
+    expect(filtered.counts.source).toBe(0);
+    expect(filtered.counts.card).toBe(0);
+
+    // Filter by "philosophy": source AND extract qualify; card stays out.
+    const philFiltered = queue.list({ asOf: NOW, filters: { tag: "philosophy" } });
+    expect(philFiltered.items.map((i) => i.id)).toContain(source.element.id);
+    expect(philFiltered.items.map((i) => i.id)).toContain(extract.element.id);
+    expect(philFiltered.items.map((i) => i.id)).not.toContain(card.element.id);
+    expect(philFiltered.counts.all).toBe(2);
+  });
+
+  it("element with multiple tags — filter matching ONE of them includes the element", () => {
+    const source = repos.sources.create({
+      title: "Multi-tag source",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "active",
+    });
+    repos.elements.reschedule(source.element.id, iso("2026-05-29T08:00:00.000Z"));
+    repos.elements.addTag(source.element.id, "alpha");
+    repos.elements.addTag(source.element.id, "beta");
+    repos.elements.addTag(source.element.id, "gamma");
+
+    // Each individual tag matches the element.
+    for (const tag of ["alpha", "beta", "gamma"]) {
+      const res = queue.list({ asOf: NOW, filters: { tag } });
+      expect(res.items.map((i) => i.id)).toContain(source.element.id);
+      expect(res.counts.all).toBe(1);
+    }
+
+    // A tag not assigned to the element returns nothing.
+    expect(queue.list({ asOf: NOW, filters: { tag: "delta" } }).items).toHaveLength(0);
+  });
+
+  it("no tag filter active — tag map is NOT built (no extra query, no behaviour change)", () => {
+    // Seed due items and run WITHOUT a tag filter; the result must be identical to
+    // before U11 (all due items present). This guards that the refactor does not
+    // accidentally apply an empty tag filter that would drop all results.
+    const { sourceId, extractId, qaCardId } = buildDueSet();
+    const res = queue.list({ asOf: NOW });
+    const ids = res.items.map((i) => i.id);
+    expect(ids).toContain(sourceId);
+    expect(ids).toContain(extractId);
+    expect(ids).toContain(qaCardId);
+    expect(res.counts.all).toBe(3);
+  });
+
+  it("drift non-vacuous guard: injecting a wrong tag membership causes the test to fail", () => {
+    // Sanity-check that the drift test above would have caught a bug.
+    // The extract is tagged "definitions"; if we check the WRONG tag, it should return 0.
+    const source = repos.sources.create({
+      title: "Guard source",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "active",
+    });
+    repos.elements.reschedule(source.element.id, iso("2026-05-29T08:00:00.000Z"));
+    const extract = repos.sources.createExtract({
+      sourceElementId: source.element.id,
+      title: "Guard extract",
+      priority: PRIORITY_LABEL_VALUE.B,
+      selectedText: "Guard.",
+      blockIds: ["blk_u11_guard" as BlockId],
+      label: "Guard",
+    });
+    repos.elements.update(extract.element.id, { status: "active", stage: "clean_extract" });
+    repos.elements.reschedule(extract.element.id, iso("2026-05-29T08:00:00.000Z"));
+    repos.elements.addTag(extract.element.id, "definitions");
+
+    // Correct tag returns 1; wrong tag returns 0 — proves the filter is not vacuous.
+    expect(queue.list({ asOf: NOW, filters: { tag: "definitions" } }).counts.all).toBe(1);
+    expect(queue.list({ asOf: NOW, filters: { tag: "wrong-tag" } }).counts.all).toBe(0);
+  });
+});

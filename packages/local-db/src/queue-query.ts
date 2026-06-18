@@ -455,6 +455,21 @@ export class QueueQuery {
     // the filter is a map lookup, not a `conceptsForElement` query per row (no N+1).
     const conceptMatch = filters.concept ? this.buildConceptMatcher(filters.concept) : null;
 
+    // Pre-resolve tag membership ONCE (U11): when a tag-name filter is active, build the
+    // `element -> tags[]` map from a SINGLE batched query over the full due candidate set,
+    // then the count pass and the filter pass both read from the map — no per-element
+    // `listTags` SQL in either loop. When no tag filter is active, the map is NOT built
+    // (no extra query). Mirrors the `buildConceptMatcher` approach above exactly.
+    const dueIds: ElementId[] = [
+      ...(filters.tag ? dueCardsFull.map(({ element }) => element.id) : []),
+      ...(filters.tag ? dueAttention.map((el) => el.id) : []),
+    ];
+    const tagMembership =
+      filters.tag && dueIds.length > 0
+        ? this.repos.elements.listTagsForMany(dueIds)
+        : new Map<ElementId, string[]>();
+    const tagMatch = filters.tag ? this.buildTagMatcher(filters.tag, tagMembership) : null;
+
     // DRILL-DOWN counts + the budget gauge over the FULL due set (T100) — a CHEAP pass
     // straight over the raw elements (no summaries, no scoring): the per-type / at-risk
     // counts must respect every ACTIVE filter EXCEPT the type dimension (the chips drive
@@ -478,7 +493,7 @@ export class QueueQuery {
       dueAt: string | null,
       card?: { readonly kind: string; readonly mediaRef: string | null },
     ): void => {
-      if (!this.matchesElementFilters(element, filters, conceptMatch)) return;
+      if (!this.matchesElementFilters(element, filters, conceptMatch, tagMatch)) return;
       counts.all++;
       if (!filters.types || filters.types.length === 0 || filters.types.includes(element.type)) {
         timeCostSummary = queueTimeCostSummaryWithItem(timeCostSummary, element, card);
@@ -528,7 +543,7 @@ export class QueueQuery {
     // Apply ALL active filters (type included), then ORDER by the T076 scoring function
     // (priority/due/retrievability/type + sibling/source/concept de-clumping, modulated
     // by the session `mode`). The renderer's seeded jitter still runs on top.
-    let rows = all.filter((r) => this.matchesFilters(r, filters, conceptMatch));
+    let rows = all.filter((r) => this.matchesFilters(r, filters, conceptMatch, {}, tagMatch));
     rows = scoreQueueItems(rows, { mode, asOf: asOfIso });
     const timeCostItems = rows;
     if (options.limit !== undefined) rows = rows.slice(0, options.limit);
@@ -764,6 +779,13 @@ export class QueueQuery {
       ...dueCardsFull.map(({ element }) => element.id),
       ...dueAttention.map((element) => element.id),
     ];
+    // Tag membership batched (U11): build ONCE over the full candidate set when a tag filter
+    // is active, matching the same pattern as the concept matcher above.
+    const candidateTagMembership =
+      filters.tag && candidateIds.length > 0
+        ? this.repos.elements.listTagsForMany(candidateIds)
+        : new Map<ElementId, string[]>();
+    const tagMatch = filters.tag ? this.buildTagMatcher(filters.tag, candidateTagMembership) : null;
     const batch: BatchContext = {
       siblingGroups: wantsCards ? this.repos.elements.liveSiblingGroupMap() : new Map(),
       conceptNames: this.repos.concepts.firstConceptNameMapForMembers(candidateIds),
@@ -773,7 +795,7 @@ export class QueueQuery {
     const rowsForScoring: QueueItemSummary[] = [];
     for (const { element, state, card } of dueCardsFull) {
       const row = this.toCardSummary(element, asOfMs, batch, state);
-      if (!this.matchesFilters(row, filters, conceptMatch)) continue;
+      if (!this.matchesFilters(row, filters, conceptMatch, {}, tagMatch)) continue;
       rowsForScoring.push(row);
       timeCostSummary = queueTimeCostSummaryWithItem(timeCostSummary, element, {
         kind: card.kind,
@@ -782,7 +804,7 @@ export class QueueQuery {
     }
     for (const element of dueAttention) {
       const row = this.toAttentionSummary(element, asOfMs, batch);
-      if (!this.matchesFilters(row, filters, conceptMatch)) continue;
+      if (!this.matchesFilters(row, filters, conceptMatch, {}, tagMatch)) continue;
       if (candidateOptions.excludeWeeklyReview && row.taskType === "weekly_review") continue;
       rowsForScoring.push(row);
       timeCostSummary = queueTimeCostSummaryWithItem(timeCostSummary, element);
@@ -840,11 +862,15 @@ export class QueueQuery {
    * per-type counts + budget stay truthful in deep overload without materializing a
    * summary per row. It applies status/concept/tag (the type dimension is dropped, as
    * the drill-down counts require) reading the element's own `status`/`id`.
+   *
+   * When a tag filter is active, `tagMatch` is the pre-built batched membership
+   * function (U11) — one map lookup instead of a per-element `listTags` SQL call.
    */
   private matchesElementFilters(
     element: Element,
     filters: QueueFilters,
     conceptMatch: ((elementId: ElementId) => boolean) | null,
+    tagMatch: ((elementId: ElementId) => boolean) | null = null,
   ): boolean {
     if (filters.statuses && filters.statuses.length > 0) {
       if (!filters.statuses.includes(element.status as ElementStatus)) return false;
@@ -854,7 +880,13 @@ export class QueueQuery {
       if (!conceptMatch?.(element.id)) return false;
     }
     if (filters.tag) {
-      if (!this.repos.elements.listTags(element.id).includes(filters.tag)) return false;
+      // Use the pre-built batched matcher (U11) when available; fall back to the
+      // per-element repo call only on code paths that have not pre-built it.
+      if (tagMatch) {
+        if (!tagMatch(element.id)) return false;
+      } else {
+        if (!this.repos.elements.listTags(element.id).includes(filters.tag)) return false;
+      }
     }
     return true;
   }
@@ -864,6 +896,7 @@ export class QueueQuery {
     filters: QueueFilters,
     conceptMatch: ((elementId: ElementId) => boolean) | null,
     options: { countType?: boolean } = {},
+    tagMatch: ((elementId: ElementId) => boolean) | null = null,
   ): boolean {
     const applyType = options.countType ?? true;
     if (applyType && filters.types && filters.types.length > 0) {
@@ -880,11 +913,32 @@ export class QueueQuery {
       if (!conceptMatch?.(row.id as ElementId)) return false;
     }
     if (filters.tag) {
-      // Tag filtering (T041): the element must carry the tag (filter in the repo
-      // layer, never React).
-      if (!this.repos.elements.listTags(row.id as ElementId).includes(filters.tag)) return false;
+      // Tag filtering (T041): use the pre-built batched membership function (U11) when
+      // supplied; fall back to the per-element repo call for paths that do not pre-build it.
+      if (tagMatch) {
+        if (!tagMatch(row.id as ElementId)) return false;
+      } else {
+        if (!this.repos.elements.listTags(row.id as ElementId).includes(filters.tag)) return false;
+      }
     }
     return true;
+  }
+
+  /**
+   * Build a tag-NAME filter to a reusable, non-N+1 membership matcher (U11): given a
+   * pre-fetched `Map<ElementId, string[]>` built by ONE batched `listTagsForMany` call,
+   * return a predicate that tests whether an element carries the given tag. This mirrors
+   * {@link buildConceptMatcher} exactly — the map is built ONCE before the count/filter
+   * loops and each element's membership is a map lookup.
+   *
+   * When `filters.tag` is absent, this method is never called (the `tagMatch` stays `null`
+   * and the tag branch in the predicates is skipped entirely — no extra query).
+   */
+  private buildTagMatcher(
+    tagName: string,
+    membership: ReadonlyMap<ElementId, string[]>,
+  ): (elementId: ElementId) => boolean {
+    return (elementId) => (membership.get(elementId) ?? []).includes(tagName);
   }
 
   /**
