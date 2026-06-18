@@ -53,6 +53,7 @@ import {
   type TopicKnowledgeStateSubject,
   type TopicUnfallowRequest,
 } from "../../lib/appApi";
+import { formatShortDate } from "../../lib/formatDate";
 // The inbox triage section is screen-specific UI; the inspector renders it only when
 // gated to an inbox source (see InspectorBody). Importing a `pages/` section into this
 // shared component mirrors the established precedent of `components/queue/DoneIntentMenu`
@@ -2269,15 +2270,6 @@ function SourceLineageSection({
 }
 
 /** The full metadata view for one inspected element. */
-/** Short date for the relocated "Parked {date}" context line (matches the Library detail column). */
-function formatParkedDate(iso: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(new Date(iso));
-}
-
 function InspectorBody({
   data,
   lineage,
@@ -2413,7 +2405,7 @@ function InspectorBody({
         <div className="insp-sec insp-library" data-testid="inspector-library-actions">
           {libraryPanel.parkedAt ? (
             <div className="insp-library__reason" data-testid="inspector-parked-date">
-              Parked {formatParkedDate(libraryPanel.parkedAt)}
+              Parked {formatShortDate(libraryPanel.parkedAt)}
             </div>
           ) : null}
           {libraryPanel.notInQueueReason ? (

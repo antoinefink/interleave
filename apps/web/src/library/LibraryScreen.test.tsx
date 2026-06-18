@@ -1389,6 +1389,8 @@ describe("LibraryScreen", () => {
     expect(sourcePanel.openLabel).toBe("Open source");
     act(() => sourcePanel.onOpen());
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/source/$id", params: { id: "src-1" } });
+    // The load-bearing leak guard: the payload is cleared before navigating away.
+    expect(h.setLibraryPanelSpy).toHaveBeenLastCalledWith(null);
 
     h.searchQuery.mockClear();
     fireEvent.click(screen.getByTestId("library-filter-type-card"));
@@ -1409,6 +1411,23 @@ describe("LibraryScreen", () => {
       to: "/card/$id",
       params: { id: "card-1" },
     });
+  });
+
+  it("clears the published payload on unmount (cross-route leak guard)", async () => {
+    const { unmount } = render(<LibraryScreen />);
+    fireEvent.change(screen.getByTestId("library-search-input"), {
+      target: { value: "intelligence" },
+    });
+    await waitFor(() =>
+      expect(h.searchQuery).toHaveBeenCalledWith(expect.objectContaining({ q: "intelligence" })),
+    );
+    const sourceGroup = await screen.findByTestId("library-group-source");
+    fireEvent.click(within(sourceGroup).getByTestId("library-result"));
+    await panelFor("src-1");
+
+    unmount();
+    // The belt of the leak guard: the bridge payload is cleared on unmount.
+    expect(h.setLibraryPanelSpy).toHaveBeenLastCalledWith(null);
   });
 
   it("selecting a search result publishes the open payload and sets universal selection", async () => {

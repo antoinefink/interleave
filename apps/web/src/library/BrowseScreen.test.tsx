@@ -629,6 +629,8 @@ describe("BrowseScreen", () => {
     expect(sourcePanel.openLabel).toBe("Open source");
     act(() => sourcePanel.onOpen());
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/source/$id", params: { id: "src-1" } });
+    // The load-bearing leak guard: the payload is cleared before navigating away.
+    expect(h.setLibraryPanelSpy).toHaveBeenLastCalledWith(null);
 
     const cardGroup = screen.getByTestId("library-group-card");
     fireEvent.click(within(cardGroup).getByTestId("library-result"));
@@ -638,6 +640,18 @@ describe("BrowseScreen", () => {
       to: "/card/$id",
       params: { id: "card-1" },
     });
+  });
+
+  it("clears the published payload on unmount (cross-route leak guard)", async () => {
+    const { unmount } = render(<BrowseScreen />);
+    const sourceGroup = await screen.findByTestId("library-group-source");
+    fireEvent.click(within(sourceGroup).getByTestId("library-result"));
+    await panelFor("src-1");
+
+    unmount();
+    // The belt of the leak guard: the bridge payload is cleared so the relocated
+    // controls never paint on the destination route after the screen unmounts.
+    expect(h.setLibraryPanelSpy).toHaveBeenLastCalledWith(null);
   });
 
   it("Open task jumps to the protected card detail surface, not the task row itself", async () => {

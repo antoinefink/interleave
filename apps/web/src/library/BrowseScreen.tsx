@@ -33,6 +33,7 @@ import {
   type LibraryBrowseType,
   type LibraryItem,
 } from "../lib/appApi";
+import { formatShortDate } from "../lib/formatDate";
 import { openQueueItem } from "../pages/queue/openQueueItem";
 import { useLibraryInspectorPanel } from "../shell/libraryInspectorPanel";
 import { useSelection } from "../shell/selection";
@@ -72,14 +73,6 @@ const STATUSES: readonly { value: string; label: string }[] = [
 function parseStatus(value: unknown): string | null {
   const parsed = parseStringParam(value);
   return parsed && STATUSES.some((status) => status.value === parsed) ? parsed : null;
-}
-
-function formatShortDate(iso: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(new Date(iso));
 }
 
 export function BrowseScreen() {
