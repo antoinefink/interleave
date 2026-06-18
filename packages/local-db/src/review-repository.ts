@@ -405,6 +405,46 @@ export class ReviewRepository {
     return row ? rowToReviewState(row) : null;
   }
 
+  /**
+   * Batched twin of {@link findReviewState}: one `inArray(review_states.element_id, ids)`
+   * read returning `Map<ElementId, ReviewState>` for the cards that have a row. A card id
+   * with no `review_states` row is absent from the map (mirrors `findReviewState` → null).
+   * Empty `ids` → empty map.
+   *
+   * Required by {@link QueueQuery.summaryForMany} (U1): the batched due join
+   * (`dueCardsWithState`) is due-filtered, so it cannot serve an ARBITRARY id set (the
+   * library/concept inventory passes non-due, retired, parked, and fallow elements).
+   * This is the only way to resolve FSRS state for every requested id in one read.
+   */
+  findReviewStatesForMany(ids: readonly ElementId[]): Map<ElementId, ReviewState> {
+    if (ids.length === 0) return new Map();
+    const rows = this.db
+      .select()
+      .from(reviewStates)
+      .where(inArray(reviewStates.elementId, ids as ElementId[]))
+      .all();
+    return new Map(rows.map((row) => [row.elementId as ElementId, rowToReviewState(row)]));
+  }
+
+  /**
+   * Batched twin of {@link findCardById}'s card-row read: one
+   * `inArray(cards.element_id, ids)` read returning `Map<ElementId, CardRow>` for the ids
+   * that have a `cards` row. A non-card / unknown id is absent. Empty `ids` → empty map.
+   *
+   * Used by {@link QueueQuery.summaryForMany} (U1) to resolve the per-card RETIRED flag
+   * (`card.isRetired` — drives `queueEligibilityFor`) and the card KIND (`card.kind` →
+   * `cardType`) in one read instead of a per-row `findCardById`.
+   */
+  findCardsForMany(ids: readonly ElementId[]): Map<ElementId, CardRow> {
+    if (ids.length === 0) return new Map();
+    const rows = this.db
+      .select()
+      .from(cards)
+      .where(inArray(cards.elementId, ids as ElementId[]))
+      .all();
+    return new Map(rows.map((row) => [row.elementId as ElementId, row]));
+  }
+
   /** All review logs for a card, newest first. */
   listReviewLogs(elementId: ElementId): ReviewLog[] {
     return this.db

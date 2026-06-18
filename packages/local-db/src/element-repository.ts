@@ -727,6 +727,26 @@ export class ElementRepository {
   }
 
   /**
+   * Batched twin of {@link findById}: elements whose ids are in `ids`, INCLUDING
+   * soft-deleted rows (no `deleted_at` filter — matching `findById`'s liveness-agnostic
+   * read). Order is not preserved; missing ids are simply absent.
+   *
+   * Used where a batched path must reproduce a `findById` parent-chain walk exactly — e.g.
+   * {@link QueueQuery.buildFallowContextMap} resolves fallow-topic ancestors with `findById`
+   * semantics, so a soft-deleted ancestor stays visible to the walk (parity with the
+   * single-row `fallowContextFor`).
+   */
+  findManyById(ids: readonly ElementId[]): Element[] {
+    if (ids.length === 0) return [];
+    return this.db
+      .select()
+      .from(elements)
+      .where(inArray(elements.id, ids as ElementId[]))
+      .all()
+      .map(rowToElement);
+  }
+
+  /**
    * Add a typed edge between two elements + log `add_relation`, atomically.
    * Lineage is modeled as explicit rows (not implicit nesting), and sibling
    * groups keep interfering cloze/Q&A siblings from being shown back-to-back.

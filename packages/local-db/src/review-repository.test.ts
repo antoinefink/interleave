@@ -590,3 +590,56 @@ describe("recordReview — timing and FSRS transition snapshot", () => {
     expect(opsAfterReject).toBe(opsAfterFirst);
   });
 });
+
+describe("findReviewStatesForMany / findCardsForMany (U1 batched reads)", () => {
+  it("returns review states keyed by element id, parity with findReviewState", () => {
+    const review = new ReviewRepository(handle.db);
+    const a = review.createCard({
+      kind: "qa",
+      title: "A",
+      priority: 0.5,
+      prompt: "q",
+      answer: "a",
+    });
+    const b = review.createCard({
+      kind: "cloze",
+      title: "B",
+      priority: 0.25,
+      cloze: "{{c1::x}}",
+    });
+    const noState = "el_no_state" as ElementId;
+
+    const map = review.findReviewStatesForMany([a.element.id, b.element.id, noState]);
+    expect(map.size).toBe(2);
+    expect(map.get(a.element.id)).toEqual(review.findReviewState(a.element.id));
+    expect(map.get(b.element.id)).toEqual(review.findReviewState(b.element.id));
+    expect(map.has(noState)).toBe(false);
+    expect(review.findReviewStatesForMany([]).size).toBe(0);
+  });
+
+  it("returns card rows keyed by element id (kind + isRetired), parity with findCardById", () => {
+    const review = new ReviewRepository(handle.db);
+    const a = review.createCard({
+      kind: "qa",
+      title: "A",
+      priority: 0.5,
+      prompt: "q",
+      answer: "a",
+    });
+    const b = review.createCard({
+      kind: "cloze",
+      title: "B",
+      priority: 0.25,
+      cloze: "{{c1::x}}",
+    });
+    const notCard = "el_not_card" as ElementId;
+
+    const map = review.findCardsForMany([a.element.id, b.element.id, notCard]);
+    expect(map.size).toBe(2);
+    expect(map.get(a.element.id)).toEqual(review.findCardById(a.element.id)?.card);
+    expect(map.get(b.element.id)?.kind).toBe("cloze");
+    expect(map.get(a.element.id)?.isRetired).toBe(false);
+    expect(map.has(notCard)).toBe(false);
+    expect(review.findCardsForMany([]).size).toBe(0);
+  });
+});

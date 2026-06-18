@@ -1,7 +1,7 @@
 import type { ElementId, IsoTimestamp } from "@interleave/core";
 import { elements, type InterleaveDatabase, retirementSuggestionDismissals } from "@interleave/db";
 import { type SourceRetirementSuggestion, sourceRetirementSuggestion } from "@interleave/scheduler";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { BlockProcessingService } from "./block-processing-service";
 import { nowIso } from "./ids";
 import { OperationLogRepository } from "./operation-log-repository";
@@ -61,6 +61,42 @@ export class RetirementSuggestionRepository {
       .get();
     if (dismissal?.signalHash === suggestion.signalHash) return null;
     return suggestion;
+  }
+
+  /**
+   * Batched twin of {@link visibleForSource}: resolve the visible retirement suggestion
+   * for many SOURCE element ids, returning `Map<ElementId, VisibleSourceRetirementSuggestion>`
+   * with entries ONLY for the sources that currently have a non-dismissed suggestion (a
+   * source with no suggestion, or whose suggestion is dismissed, is absent — mirroring
+   * `visibleForSource` returning `null`). Empty `ids` → empty map.
+   *
+   * Used by {@link QueueQuery.summaryForMany} (U1) so the batched inventory rows carry the
+   * SAME `retirementSuggestion` the single-row `summaryFor` resolves, instead of the
+   * `list()` `BatchContext` hardcoded `null` (which is valid only for the due-only path).
+   * The per-source signal still derives from `rawForSource` (the block-processing rollup is
+   * inherently per-source), but the dismissal lookup is batched into ONE
+   * `inArray` read folded per source.
+   */
+  visibleForSourceMany(
+    ids: readonly ElementId[],
+  ): Map<ElementId, VisibleSourceRetirementSuggestion> {
+    const result = new Map<ElementId, VisibleSourceRetirementSuggestion>();
+    if (ids.length === 0) return result;
+    const dismissalHash = new Map<ElementId, string>();
+    for (const row of this.db
+      .select()
+      .from(retirementSuggestionDismissals)
+      .where(inArray(retirementSuggestionDismissals.sourceElementId, ids as ElementId[]))
+      .all()) {
+      dismissalHash.set(row.sourceElementId as ElementId, row.signalHash);
+    }
+    for (const id of ids) {
+      const suggestion = this.rawForSource(id);
+      if (!suggestion) continue;
+      if (dismissalHash.get(id) === suggestion.signalHash) continue;
+      result.set(id, suggestion);
+    }
+    return result;
   }
 
   dismiss(

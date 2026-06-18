@@ -306,6 +306,47 @@ function currentScheduleReasonFromPayload(
   }
 }
 
+/**
+ * The pure schedule-reason derivation shared by {@link OperationLogRepository.currentScheduleProjection}
+ * and its batched twin {@link OperationLogRepository.currentScheduleProjectionsForMany}: given the
+ * already-parsed LATEST `reschedule_element` payload (or `null` when the element has none), the
+ * element's current `due_at`, and its effective postpone count, return the structured reason that
+ * still governs that due time (or `null`). Both paths MUST share this so the single-row and batched
+ * projections never drift (U1).
+ */
+function scheduleReasonFromLatestReschedule(
+  latestReschedulePayload: Record<string, unknown> | null,
+  currentDueAt: string,
+  effectivePostponeCount: number,
+): CurrentScheduleReason | null {
+  const payload = latestReschedulePayload;
+  if (!payload || payload.dueAt !== currentDueAt) return null;
+  if (payload.choice !== undefined || payload.queueSoon === true) return null;
+
+  const persistedReason = currentScheduleReasonFromPayload(
+    payload.scheduleReason,
+    effectivePostponeCount,
+  );
+  if (persistedReason) return persistedReason;
+
+  const adaptiveReason = adaptiveReasonFromPayload(payload);
+  if (adaptiveReason) return adaptiveReason;
+
+  if (payload.postpone === true) {
+    if (effectivePostponeCount <= 0) return null;
+    const intervalDays = intervalDaysBetween(payload.scheduledAt, payload.dueAt);
+    return {
+      kind: "postpone_recession",
+      baseIntervalDays: null,
+      finalIntervalDays: intervalDays,
+      intervalAfterPostponeDays: intervalDays,
+      postponeCount: effectivePostponeCount,
+    };
+  }
+
+  return null;
+}
+
 export class OperationLogRepository {
   constructor(private readonly db: DbClient) {}
 
@@ -418,42 +459,72 @@ export class OperationLogRepository {
       .orderBy(desc(operationLog.createdAt), desc(sql`rowid`))
       .limit(1)
       .get();
-    if (!row) return { effectivePostponeCount, reason: null };
-
-    const payload = payloadObject(JSON.parse(row.payload));
-    if (!payload || payload.dueAt !== currentDueAt) {
-      return { effectivePostponeCount, reason: null };
-    }
-
-    if (payload.choice !== undefined || payload.queueSoon === true) {
-      return { effectivePostponeCount, reason: null };
-    }
-
-    const persistedReason = currentScheduleReasonFromPayload(
-      payload.scheduleReason,
+    const latestPayload = row ? payloadObject(JSON.parse(row.payload)) : null;
+    return {
       effectivePostponeCount,
-    );
-    if (persistedReason) return { effectivePostponeCount, reason: persistedReason };
-
-    const adaptiveReason = adaptiveReasonFromPayload(payload);
-    if (adaptiveReason) return { effectivePostponeCount, reason: adaptiveReason };
-
-    if (payload.postpone === true) {
-      if (effectivePostponeCount <= 0) return { effectivePostponeCount, reason: null };
-      const intervalDays = intervalDaysBetween(payload.scheduledAt, payload.dueAt);
-      return {
+      reason: scheduleReasonFromLatestReschedule(
+        latestPayload,
+        currentDueAt,
         effectivePostponeCount,
-        reason: {
-          kind: "postpone_recession",
-          baseIntervalDays: null,
-          finalIntervalDays: intervalDays,
-          intervalAfterPostponeDays: intervalDays,
-          postponeCount: effectivePostponeCount,
-        },
-      };
+      ),
+    };
+  }
+
+  /**
+   * Batched twin of {@link currentScheduleProjection}: resolve the schedule projection
+   * (effective postpone count + current schedule reason) for many elements in a CONSTANT
+   * number of reads instead of a per-element call. Returns `Map<ElementId,
+   * CurrentScheduleProjection>` with an entry for EVERY requested id (an id with no
+   * op-log history resolves to `{ effectivePostponeCount: 0, reason: null }`, matching the
+   * single-row path). Empty `idToDueAt` → empty map.
+   *
+   * Required helper read for {@link QueueQuery.summaryForMany} (U1): the attention-row
+   * `postponed` count + `scheduleReason` must be byte-identical to the single-row
+   * `summaryFor`, which calls `currentScheduleProjection`. The effective counts come from
+   * {@link postponeCountsForMany}; the reason comes from the SAME pure derivation the
+   * single-row path uses, fed by the latest `reschedule_element` row per element (read in
+   * one `inArray` scan, newest-first, first-per-element wins).
+   */
+  currentScheduleProjectionsForMany(
+    idToDueAt: ReadonlyMap<ElementId, string | null>,
+  ): Map<ElementId, CurrentScheduleProjection> {
+    const result = new Map<ElementId, CurrentScheduleProjection>();
+    if (idToDueAt.size === 0) return result;
+    const ids = [...idToDueAt.keys()];
+    const { effective } = this.postponeCountsForMany(ids);
+
+    // The LATEST `reschedule_element` row per element (newest-first, first wins) — the
+    // single row `currentScheduleProjection` reads with `limit(1)`. One `inArray` scan.
+    const latestByElement = new Map<ElementId, Record<string, unknown> | null>();
+    const rows = this.db
+      .select({ elementId: operationLog.elementId, payload: operationLog.payload })
+      .from(operationLog)
+      .where(
+        and(
+          inArray(operationLog.elementId, ids as ElementId[]),
+          eq(operationLog.opType, "reschedule_element"),
+        ),
+      )
+      .orderBy(desc(operationLog.createdAt), desc(sql`rowid`))
+      .all();
+    for (const row of rows) {
+      const eid = row.elementId as ElementId;
+      if (latestByElement.has(eid)) continue;
+      latestByElement.set(eid, payloadObject(JSON.parse(row.payload)));
     }
 
-    return { effectivePostponeCount, reason: null };
+    for (const [id, currentDueAt] of idToDueAt) {
+      const effectivePostponeCount = effective.get(id) ?? 0;
+      const reason = currentDueAt
+        ? scheduleReasonFromLatestReschedule(
+            latestByElement.get(id) ?? null,
+            currentDueAt,
+            effectivePostponeCount,
+          )
+        : null;
+      result.set(id, { effectivePostponeCount, reason });
+    }
+    return result;
   }
 
   /**

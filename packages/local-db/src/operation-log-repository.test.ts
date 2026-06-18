@@ -12,6 +12,7 @@
  *    `postpone === true` marker, and ignores everything else.
  */
 
+import type { ElementId } from "@interleave/core";
 import type { DbHandle } from "@interleave/db";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ElementRepository } from "./element-repository";
@@ -899,5 +900,63 @@ describe("OperationLogRepository.postponeCountsForMany (U4 parity)", () => {
     const { effective, raw } = log.postponeCountsForMany([]);
     expect(effective).toEqual(new Map());
     expect(raw).toEqual(new Map());
+  });
+});
+
+describe("OperationLogRepository.currentScheduleProjectionsForMany (U1 batched twin)", () => {
+  it("matches currentScheduleProjection per element (count + reason), 0 for absent ids", () => {
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+
+    // A postponed element with a postpone_recession reason on its current due.
+    const postponed = elements.create({
+      type: "extract",
+      status: "active",
+      stage: "clean_extract",
+      priority: 0.5,
+      title: "Postponed",
+      dueAt: "2026-06-05T12:00:00.000Z",
+    });
+    handle.db.transaction((tx) => {
+      for (let i = 0; i < 2; i += 1) {
+        log.append(tx, {
+          opType: "reschedule_element",
+          payload: {
+            postpone: true,
+            scheduledAt: "2026-05-30T12:00:00.000Z",
+            dueAt: "2026-06-05T12:00:00.000Z",
+          },
+          elementId: postponed.id,
+        });
+      }
+    });
+
+    // An element with no schedule history at all.
+    const untouched = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.5,
+      title: "Untouched",
+      dueAt: "2026-06-05T12:00:00.000Z",
+    });
+    const absent = "el_absent" as ElementId;
+
+    const idToDueAt = new Map<ElementId, string | null>([
+      [postponed.id, postponed.dueAt],
+      [untouched.id, untouched.dueAt],
+      [absent, null],
+    ]);
+    const map = log.currentScheduleProjectionsForMany(idToDueAt);
+
+    expect(map.get(postponed.id)).toEqual(
+      log.currentScheduleProjection(postponed.id, postponed.dueAt),
+    );
+    expect(map.get(postponed.id)?.effectivePostponeCount).toBe(2);
+    expect(map.get(untouched.id)).toEqual(
+      log.currentScheduleProjection(untouched.id, untouched.dueAt),
+    );
+    expect(map.get(absent)).toEqual({ effectivePostponeCount: 0, reason: null });
+    expect(log.currentScheduleProjectionsForMany(new Map()).size).toBe(0);
   });
 });
