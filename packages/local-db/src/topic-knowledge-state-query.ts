@@ -394,19 +394,18 @@ export class TopicKnowledgeStateQuery {
 
   /** Build a concept-id → name map for all live concepts (used to map membership ids to names). */
   private conceptNameMap(): Map<string, string> {
-    const liveConceptIds = new Set(
-      this.db
-        .select({ id: elements.id })
-        .from(elements)
-        .where(and(eq(elements.type, "concept"), isNull(elements.deletedAt)))
-        .all()
-        .map((r) => r.id),
-    );
-    const rows = this.db.select({ id: concepts.id, name: concepts.name }).from(concepts).all();
+    // Single concepts ⋈ elements JOIN — one round-trip instead of two reads + a JS filter.
+    // Only live concept elements (type='concept', deletedAt IS NULL) are joined.
+    const rows = this.db
+      .select({ id: concepts.id, name: concepts.name })
+      .from(concepts)
+      .innerJoin(
+        elements,
+        and(eq(elements.id, concepts.id), eq(elements.type, "concept"), isNull(elements.deletedAt)),
+      )
+      .all();
     const out = new Map<string, string>();
-    for (const row of rows) {
-      if (liveConceptIds.has(row.id)) out.set(row.id, row.name);
-    }
+    for (const row of rows) out.set(row.id, row.name);
     return out;
   }
 
