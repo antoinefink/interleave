@@ -510,6 +510,138 @@ describe("SourceYieldQuery.getSourceYield (single-source drift)", () => {
   });
 });
 
+describe("SourceYieldQuery.listSourceYield (U10 batched read-pct + block-processing)", () => {
+  it("per-source read-% + processed-block counts equal the single-source helpers (drift guard)", () => {
+    // A spread of shapes: read partial, fully read, no read-point, no document,
+    // some with block-processing outcomes, some with extracts/cards.
+    const partial = seedSource(handle, "Partial", 4);
+    setReadPoint(handle, partial, 1);
+    const full = seedSource(handle, "Full", 5);
+    setReadPoint(handle, full, 4);
+    const noRp = seedSource(handle, "No read-point", 3);
+    const noDoc = seedSource(handle, "No document", 0);
+
+    const processed = seedSource(handle, "Processed", 4);
+    setReadPoint(handle, processed, 2);
+    seedExtract(handle, processed, { fate: "reference" });
+    const pBlocks = new DocumentRepository(handle.db).listBlocks(processed);
+    const bps = new BlockProcessingService(handle.db);
+    bps.markBlockProcessed({
+      sourceElementId: processed,
+      stableBlockId: pBlocks[0]?.stableBlockId as BlockId,
+    });
+    bps.markBlockIgnored({
+      sourceElementId: processed,
+      stableBlockId: pBlocks[1]?.stableBlockId as BlockId,
+    });
+
+    const q = new SourceYieldQuery(handle.db);
+    const rows = q.listSourceYield(ASOF, { limit: Number.MAX_SAFE_INTEGER }).rows;
+    const truthBps = new BlockProcessingService(handle.db);
+
+    for (const id of [partial, full, noRp, noDoc, processed]) {
+      const row = rows.find((r) => r.source.id === id);
+      expect(row).toBeDefined();
+      // read-% source of truth: the single-source getSourceYield path (computeReadPct).
+      expect(row?.readPct).toBe(q.getSourceYield(id, ASOF)?.readPct);
+      // block-processing source of truth: the per-source getSourceProcessingSummary.
+      const summary = truthBps.getSourceProcessingSummary(id);
+      expect(row?.processedBlockRatio).toBe(summary.terminalRatio);
+      expect(row?.ignoredBlockRatio).toBe(summary.ignoredRatio);
+      expect(row?.unresolvedBlocks).toBe(summary.unresolvedBlocks);
+      expect(row?.extractedOutputCount).toBe(summary.extractedOutputCount);
+    }
+  });
+
+  it("whole-library output is internally consistent: every row deepEquals its single-source getSourceYield", () => {
+    seedSource(handle, "Empty edge", 0);
+    const a = seedSource(handle, "A", 3);
+    setReadPoint(handle, a, 1);
+    seedExtract(handle, a);
+    seedCard(handle, a, { stability: CARD_MATURE_STABILITY_DAYS + 2 });
+    const b = seedSource(handle, "B", 2);
+    const e = seedExtract(handle, b);
+    seedSynthesisNote(handle, [e]);
+
+    const q = new SourceYieldQuery(handle.db);
+    const rows = q.listSourceYield(ASOF, { limit: Number.MAX_SAFE_INTEGER }).rows;
+    for (const row of rows) {
+      expect(q.getSourceYield(row.source.id as ElementId, ASOF)).toEqual(row);
+    }
+  });
+
+  it("zero-sources vault returns an empty valid result with no IN () error", () => {
+    const q = new SourceYieldQuery(handle.db);
+    expect(() => q.listSourceYield(ASOF)).not.toThrow();
+    expect(q.listSourceYield(ASOF).rows).toEqual([]);
+  });
+
+  it("sources but no synthesis notes returns a valid result with no IN () error", () => {
+    const s1 = seedSource(handle, "S1", 3);
+    setReadPoint(handle, s1, 1);
+    seedExtract(handle, s1);
+    seedSource(handle, "S2", 0); // no document, no synthesis
+    const q = new SourceYieldQuery(handle.db);
+    expect(() => q.listSourceYield(ASOF)).not.toThrow();
+    expect(q.listSourceYield(ASOF).rows).toHaveLength(2);
+  });
+
+  it("tolerates a source soft-deleted from the live set without crashing the whole call", () => {
+    // The batched block-processing path must NOT route through requireSourceElement,
+    // which throws on a soft-deleted/missing source. A soft-deleted source is simply
+    // absent from the live set; the remaining sources still roll up cleanly.
+    const repo = new ElementRepository(handle.db);
+    const live = seedSource(handle, "Live", 3);
+    setReadPoint(handle, live, 2);
+    const blocks = new DocumentRepository(handle.db).listBlocks(live);
+    new BlockProcessingService(handle.db).markBlockIgnored({
+      sourceElementId: live,
+      stableBlockId: blocks[0]?.stableBlockId as BlockId,
+    });
+    const dead = seedSource(handle, "Dead", 3);
+    setReadPoint(handle, dead, 1);
+    repo.softDelete(dead);
+
+    const q = new SourceYieldQuery(handle.db);
+    expect(() => q.listSourceYield(ASOF)).not.toThrow();
+    const rows = q.listSourceYield(ASOF).rows;
+    expect(rows.map((r) => r.source.id)).toEqual([live]);
+    expect(rows[0]?.ignoredBlockRatio).toBeCloseTo(1 / 3);
+  });
+
+  it("getSourceProcessingSummaryForMany matches the per-source summary and tolerates a stale id (no throw)", () => {
+    const src = seedSource(handle, "Has blocks", 4);
+    const blocks = new DocumentRepository(handle.db).listBlocks(src);
+    const bps = new BlockProcessingService(handle.db);
+    bps.markBlockProcessed({
+      sourceElementId: src,
+      stableBlockId: blocks[0]?.stableBlockId as BlockId,
+    });
+
+    const stale = "ghost-source" as ElementId;
+    const map = bps.getSourceProcessingSummaryForMany([src, stale]);
+    // Live source: identical to the single-source summary.
+    expect(map.get(src)).toEqual(bps.getSourceProcessingSummary(src));
+    // Stale id: zero summary, NOT a throw (the single-source path WOULD throw).
+    expect(() => bps.getSourceProcessingSummary(stale)).toThrow();
+    expect(map.get(stale)?.totalBlocks).toBe(0);
+    expect(map.get(stale)?.terminalRatio).toBe(1);
+    expect(map.get(stale)?.canMarkDoneWithoutConfirmation).toBe(true);
+  });
+
+  it("drift guard is non-vacuous: a wrong batched read-% would fail vs the single-source truth", () => {
+    const src = seedSource(handle, "Guard", 4);
+    setReadPoint(handle, src, 1); // (1+1)/4 = 0.5
+    const q = new SourceYieldQuery(handle.db);
+    const row = q
+      .listSourceYield(ASOF, { limit: Number.MAX_SAFE_INTEGER })
+      .rows.find((r) => r.source.id === src);
+    expect(row?.readPct).toBe(q.getSourceYield(src, ASOF)?.readPct);
+    // A wrong value would not match the single-source truth (proving teeth).
+    expect(0.99).not.toBe(q.getSourceYield(src, ASOF)?.readPct);
+  });
+});
+
 /** Insert the `sources` side-table row carrying author + URL for an existing source element. */
 function setSourceMeta(
   handle: DbHandle,

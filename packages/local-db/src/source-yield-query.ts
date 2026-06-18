@@ -69,9 +69,11 @@ import {
 } from "@interleave/core";
 import {
   cards as cardsTable,
+  documentBlocks,
   elementRelations,
   elements,
   type InterleaveDatabase,
+  readPoints,
   reviewLogs,
   reviewStates,
   sources as sourcesTable,
@@ -461,7 +463,19 @@ export class SourceYieldQuery {
       lastUpdatedAt: null,
     });
 
-    // 6) Assemble each source's row through the shared builder so the per-source math
+    // 6) Batch the remaining per-source rollups (U10): read-% + block-processing
+    //    summary, both over the live source ids in grouped passes BEFORE the assembly
+    //    loop, replacing the per-source `computeReadPct` + `getSourceProcessingSummary`
+    //    N+1. `sourceRows` is already the LIVE source set, so the batched
+    //    block-processing path is safe to skip `requireSourceElement` (stale ids can't
+    //    appear here; the batched read tolerates them regardless — U10 stale-source
+    //    safety). Both batched reads guard the empty id list internally (`IN ()`).
+    const liveSourceIds = sourceRows.map((s) => s.id as ElementId);
+    const readPctBySource = this.computeReadPctForMany(liveSourceIds);
+    const blockSummaryBySource =
+      this.blockProcessing.getSourceProcessingSummaryForMany(liveSourceIds);
+
+    // 7) Assemble each source's row through the shared builder so the per-source math
     //    here is byte-identical to the single-source `getSourceYield` path.
     const rows: SourceYieldRow[] = sourceRows.map((s) => {
       const t = tallies.get(s.id) ?? emptyTally();
@@ -482,11 +496,17 @@ export class SourceYieldQuery {
         }
       }
 
-      return this.assembleRow(s, urlById.get(s.id) ?? null, t, {
-        timeSpentMs,
-        reviewCount,
-        lastReviewedAt,
-      });
+      const blockSummary =
+        blockSummaryBySource.get(s.id as ElementId) ??
+        this.blockProcessing.getSourceProcessingSummary(s.id as ElementId);
+
+      return this.assembleRow(
+        s,
+        urlById.get(s.id) ?? null,
+        t,
+        { timeSpentMs, reviewCount, lastReviewedAt },
+        { readPct: readPctBySource.get(s.id as ElementId) ?? 0, blockSummary },
+      );
     });
 
     // Sort lowest-yield first (the whole point); tie-break by id ASC for stability.
@@ -652,6 +672,13 @@ export class SourceYieldQuery {
     url: string | null,
     t: DescendantTally,
     review: { timeSpentMs: number; reviewCount: number; lastReviewedAt: string | null },
+    precomputed?: {
+      readPct: number;
+      blockSummary: Pick<
+        ReturnType<BlockProcessingService["getSourceProcessingSummary"]>,
+        "terminalRatio" | "ignoredRatio" | "unresolvedBlocks" | "extractedOutputCount"
+      >;
+    },
   ): SourceYieldRow {
     const extractsCreated = t.extracts;
     const productiveExtracts = new Set([...t.fatedExtractIds, ...t.synthesisReferencedExtractIds])
@@ -659,8 +686,12 @@ export class SourceYieldQuery {
     const synthesisReferencedExtracts = t.synthesisReferencedExtractIds.size;
     const synthesisNotesCreated = t.synthesisNoteIds.size;
 
-    const readPct = this.computeReadPct(source.id as ElementId);
-    const blockSummary = this.blockProcessing.getSourceProcessingSummary(source.id as ElementId);
+    // Batched callers (listSourceYield, U10) pass pre-built read-% + block-processing
+    // maps; the single-source getSourceYield path falls back to per-source reads.
+    const readPct = precomputed?.readPct ?? this.computeReadPct(source.id as ElementId);
+    const blockSummary =
+      precomputed?.blockSummary ??
+      this.blockProcessing.getSourceProcessingSummary(source.id as ElementId);
     const lastActivityAt = maxIso(t.lastUpdatedAt, review.lastReviewedAt);
 
     const verdict = scoreSourceYield({
@@ -1028,6 +1059,66 @@ export class SourceYieldQuery {
     }
     const pct = (index + 1) / blocks.length;
     return Math.min(1, Math.max(0, pct));
+  }
+
+  /**
+   * Batched (perf U10) read-% map over many sources — the grouped equivalent of
+   * {@link computeReadPct}, byte-identical per source. Reads every source's blocks +
+   * read-point in two `IN (sourceIds)` passes instead of N per-source pairs. Empty id
+   * list → empty map (guarded; `IN ()` would be a SQLite syntax error). A source with
+   * no blocks or no read-point is `0`; a stale read-point whose block is gone is `1`.
+   */
+  private computeReadPctForMany(sourceIds: readonly ElementId[]): Map<ElementId, number> {
+    const out = new Map<ElementId, number>();
+    if (sourceIds.length === 0) return out;
+    const ids = sourceIds as ElementId[];
+
+    // All blocks for these sources, grouped + ordered exactly like `listBlocks`.
+    const blocksBySource = new Map<string, { stableBlockId: string; order: number }[]>();
+    const blockRows = this.db
+      .select({
+        documentId: documentBlocks.documentId,
+        stableBlockId: documentBlocks.stableBlockId,
+        order: documentBlocks.order,
+      })
+      .from(documentBlocks)
+      .where(inArray(documentBlocks.documentId, ids))
+      .all();
+    for (const b of blockRows) {
+      const list = blocksBySource.get(b.documentId) ?? [];
+      list.push({ stableBlockId: b.stableBlockId, order: b.order });
+      blocksBySource.set(b.documentId, list);
+    }
+    for (const list of blocksBySource.values()) list.sort((a, b) => a.order - b.order);
+
+    // The read-point block id per source (one per element).
+    const readPointBlockBySource = new Map<string, string>();
+    const rpRows = this.db
+      .select({ elementId: readPoints.elementId, blockId: readPoints.blockId })
+      .from(readPoints)
+      .where(inArray(readPoints.elementId, ids))
+      .all();
+    for (const rp of rpRows) readPointBlockBySource.set(rp.elementId, rp.blockId);
+
+    for (const id of sourceIds) {
+      const blocks = blocksBySource.get(id) ?? [];
+      if (blocks.length === 0) {
+        out.set(id, 0);
+        continue;
+      }
+      const readPointBlockId = readPointBlockBySource.get(id);
+      if (readPointBlockId === undefined) {
+        out.set(id, 0);
+        continue;
+      }
+      const index = blocks.findIndex((b) => b.stableBlockId === readPointBlockId);
+      if (index < 0) {
+        out.set(id, 1);
+        continue;
+      }
+      out.set(id, Math.min(1, Math.max(0, (index + 1) / blocks.length)));
+    }
+    return out;
   }
 }
 

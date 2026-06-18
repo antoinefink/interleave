@@ -361,4 +361,49 @@ describe("BlockProcessingService", () => {
 
     expect(() => service.getSourceProcessingSummary(topic.id)).toThrow(/source .* not found/);
   });
+
+  describe("batched read projections (U10)", () => {
+    it("listBlockViewsForMany matches per-source listBlockViews for each source", () => {
+      const s1 = seedSource();
+      const s2 = seedSource();
+      const service = new BlockProcessingService(handle.db);
+      const b1 = blocksOf(s1);
+      service.markBlockIgnored({ sourceElementId: s1, stableBlockId: b1[0] as BlockId });
+      service.markBlockProcessed({ sourceElementId: s1, stableBlockId: b1[1] as BlockId });
+      // s2 left in its default (unread) state.
+
+      const map = service.listBlockViewsForMany([s1, s2]);
+      expect(map.get(s1)).toEqual(service.listBlockViews(s1));
+      expect(map.get(s2)).toEqual(service.listBlockViews(s2));
+    });
+
+    it("getSourceProcessingSummaryForMany matches per-source summaries", () => {
+      const s1 = seedSource();
+      const s2 = seedSource();
+      const service = new BlockProcessingService(handle.db);
+      service.markBlockIgnored({ sourceElementId: s1, stableBlockId: blocksOf(s1)[0] as BlockId });
+
+      const map = service.getSourceProcessingSummaryForMany([s1, s2]);
+      expect(map.get(s1)).toEqual(service.getSourceProcessingSummary(s1));
+      expect(map.get(s2)).toEqual(service.getSourceProcessingSummary(s2));
+    });
+
+    it("tolerates a stale/missing id (zero summary, no throw) and guards the empty id list", () => {
+      const live = seedSource();
+      const service = new BlockProcessingService(handle.db);
+      const stale = "ghost" as ElementId;
+
+      // The single-source path throws on the stale id; the batched path does not.
+      expect(() => service.getSourceProcessingSummary(stale)).toThrow(/source .* not found/);
+      const map = service.getSourceProcessingSummaryForMany([live, stale]);
+      expect(map.get(stale)?.totalBlocks).toBe(0);
+      expect(map.get(stale)?.terminalRatio).toBe(1);
+      expect(map.get(live)).toEqual(service.getSourceProcessingSummary(live));
+
+      // Empty id list → empty maps, never an `IN ()` SQLite error.
+      expect(() => service.listBlockViewsForMany([])).not.toThrow();
+      expect(service.listBlockViewsForMany([]).size).toBe(0);
+      expect(service.getSourceProcessingSummaryForMany([]).size).toBe(0);
+    });
+  });
 });

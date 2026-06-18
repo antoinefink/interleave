@@ -265,9 +265,141 @@ export class BlockProcessingService {
     return views;
   }
 
+  /**
+   * Batched (perf U10) read-only block views for many sources at once. Mirrors
+   * {@link listBlockViews} per source but resolves every underlying read with one
+   * grouped `IN (sourceIds)` pass, returning a `Map<ElementId, …views>`.
+   *
+   * Unlike {@link listBlockViews}, this does NOT call `requireSourceElement`: it is a
+   * pure read projection over whatever `sourceIds` the caller passes (the caller is
+   * responsible for scoping to live sources). A stale / soft-deleted / non-source id
+   * simply yields an empty view list instead of throwing — so one stale id can never
+   * crash a whole-library rollup (see
+   * `docs/solutions/runtime-errors/block-processing-stale-source-ids-zero-summary.md`).
+   * Mutation paths keep the strict `requireSourceElement` guard.
+   */
+  listBlockViewsForMany(
+    sourceIds: readonly ElementId[],
+  ): Map<ElementId, SourceBlockProcessingView[]> {
+    const result = new Map<ElementId, SourceBlockProcessingView[]>();
+    if (sourceIds.length === 0) return result;
+
+    const blocksBySource = this.repo.listSourceBlocksForMany(sourceIds);
+    const rowsBySource = this.repo.listRowsForMany(sourceIds);
+    const readPointOrderBySource = this.repo.getReadPointOrderForMany(sourceIds);
+    const outputsBySource = this.repo.listLiveOutputsForMany(sourceIds);
+
+    for (const sourceElementId of sourceIds) {
+      const blocks = blocksBySource.get(sourceElementId) ?? [];
+      const rows = new Map(
+        (rowsBySource.get(sourceElementId) ?? []).map((row) => [row.stableBlockId, row]),
+      );
+      const currentBlockIds = new Set(blocks.map((block) => block.stableBlockId));
+      const readPointOrder = readPointOrderBySource.get(sourceElementId) ?? null;
+      const outputsByBlock = new Map<BlockId, ElementId[]>();
+      for (const output of outputsBySource.get(sourceElementId) ?? []) {
+        const list = outputsByBlock.get(output.stableBlockId) ?? [];
+        list.push(output.outputElementId);
+        outputsByBlock.set(output.stableBlockId, list);
+      }
+
+      const views = blocks.map((block) => {
+        const row = rows.get(block.stableBlockId) ?? null;
+        const outputElementIds = outputsByBlock.get(block.stableBlockId) ?? [];
+        let state: SourceBlockProcessingState;
+        let derivedFrom: SourceBlockProcessingDerivation;
+        if (row?.state === "stale_after_edit") {
+          state = "stale_after_edit";
+          derivedFrom = "explicit";
+        } else if (outputElementIds.length > 0) {
+          state = "extracted";
+          derivedFrom = "explicit";
+        } else if (row && row.state !== "extracted") {
+          state = row.state;
+          derivedFrom = "explicit";
+        } else if (readPointOrder != null && block.order <= readPointOrder) {
+          state = "read";
+          derivedFrom = "read_point";
+        } else {
+          state = "unread";
+          derivedFrom = "missing";
+        }
+        return {
+          sourceElementId,
+          stableBlockId: block.stableBlockId,
+          order: block.order,
+          state,
+          storedState: row?.state ?? null,
+          blockContentHash: row?.blockContentHash ?? null,
+          outputElementIds,
+          derivedFrom,
+        };
+      });
+
+      let missingOrder = blocks.length;
+      for (const row of rows.values()) {
+        if (currentBlockIds.has(row.stableBlockId) || row.state !== "stale_after_edit") continue;
+        views.push({
+          sourceElementId,
+          stableBlockId: row.stableBlockId,
+          order: missingOrder++,
+          state: "stale_after_edit",
+          storedState: row.state,
+          blockContentHash: row.blockContentHash,
+          outputElementIds: outputsByBlock.get(row.stableBlockId) ?? [],
+          derivedFrom: "explicit",
+        });
+      }
+
+      result.set(sourceElementId, views);
+    }
+    return result;
+  }
+
+  /**
+   * Batched (perf U10) per-source processing summary map. Folds
+   * {@link listBlockViewsForMany} into the same {@link SourceBlockProcessingSummary}
+   * shape {@link getSourceProcessingSummary} produces single-source, sharing the fold
+   * via {@link summarizeViews}. Stale-tolerant like {@link listBlockViewsForMany}: an
+   * id with no live source / no blocks yields the empty zero-summary, never a throw.
+   * The reverify-output count is resolved only for sources that actually have a
+   * `stale_after_edit` block (mirroring the single-source skip on the clean path).
+   */
+  getSourceProcessingSummaryForMany(
+    sourceIds: readonly ElementId[],
+  ): Map<ElementId, SourceBlockProcessingSummary> {
+    const result = new Map<ElementId, SourceBlockProcessingSummary>();
+    if (sourceIds.length === 0) return result;
+    const viewsBySource = this.listBlockViewsForMany(sourceIds);
+    const priorityBySource = this.repo.sourcePriorityForMany(sourceIds);
+    for (const sourceElementId of sourceIds) {
+      const views = viewsBySource.get(sourceElementId) ?? [];
+      result.set(
+        sourceElementId,
+        this.summarizeViews(sourceElementId, views, priorityBySource.get(sourceElementId) ?? null),
+      );
+    }
+    return result;
+  }
+
   getSourceProcessingSummary(sourceElementId: ElementId): SourceBlockProcessingSummary {
     const views = this.listBlockViews(sourceElementId);
     const priority = this.repo.sourcePriority(sourceElementId);
+    return this.summarizeViews(sourceElementId, views, priority);
+  }
+
+  /**
+   * The shared {@link SourceBlockProcessingSummary} fold over a source's resolved
+   * block views — used by both {@link getSourceProcessingSummary} (single-source) and
+   * {@link getSourceProcessingSummaryForMany} (batched) so the two paths can never
+   * drift. The reverify-output count is resolved per source ONLY when the source has
+   * a `stale_after_edit` block (the existing hot-path skip).
+   */
+  private summarizeViews(
+    sourceElementId: ElementId,
+    views: readonly SourceBlockProcessingView[],
+    priority: number | null,
+  ): SourceBlockProcessingSummary {
     const highPrioritySource =
       priority != null && (priorityToLabel(priority) === "A" || priorityToLabel(priority) === "B");
     const stateCounts = {
