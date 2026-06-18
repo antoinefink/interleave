@@ -375,3 +375,61 @@ describe("ElementRepository.softDeleteSubtreeWithin (T135/U4)", () => {
     expect(elements.findById(cardId)?.deletedAt).toBeNull();
   });
 });
+
+describe("ElementRepository.listTagsForMany — batched tag map (U2 parity)", () => {
+  it("parity: listTagsForMany(ids).get(id) deepEquals listTags(id) for each element", () => {
+    const a = elements.create({
+      type: "extract",
+      status: "active",
+      stage: "raw_extract",
+      priority: 0.5,
+      title: "a",
+    }).id;
+    const b = elements.create({
+      type: "extract",
+      status: "active",
+      stage: "raw_extract",
+      priority: 0.5,
+      title: "b",
+    }).id;
+    const c = elements.create({
+      type: "extract",
+      status: "active",
+      stage: "raw_extract",
+      priority: 0.5,
+      title: "c",
+    }).id;
+
+    elements.addTag(a, "alpha");
+    elements.addTag(a, "beta");
+    elements.addTag(b, "beta");
+    // c has no tags
+
+    const ids = [a, b, c];
+    const map = elements.listTagsForMany(ids);
+
+    for (const id of ids) {
+      const single = elements.listTags(id);
+      const batched = map.get(id) ?? [];
+      expect(batched).toEqual(single);
+    }
+  });
+
+  it("element with no tags is absent from the map (matching listTags returning [])", () => {
+    const el = elements.create({
+      type: "extract",
+      status: "active",
+      stage: "raw_extract",
+      priority: 0.5,
+      title: "untagged",
+    }).id;
+    const map = elements.listTagsForMany([el]);
+    // listTags returns [] for untagged; map has no entry (consumer falls back to [])
+    expect(map.has(el)).toBe(false);
+    expect(elements.listTags(el)).toEqual([]);
+  });
+
+  it("empty ids → empty map", () => {
+    expect(elements.listTagsForMany([])).toEqual(new Map());
+  });
+});

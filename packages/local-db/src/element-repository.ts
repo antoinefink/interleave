@@ -900,6 +900,39 @@ export class ElementRepository {
   }
 
   /**
+   * Tag names for MANY elements in one query — the batched twin of {@link listTags}.
+   * Returns a `Map<ElementId, string[]>` where each value preserves the SAME
+   * ordering `listTags` returns (by `tags.id`, which is insertion order). Elements
+   * with no tags are absent from the map. Empty `ids` → empty map.
+   */
+  listTagsForMany(ids: readonly ElementId[]): Map<ElementId, string[]> {
+    if (ids.length === 0) return new Map();
+
+    // One join query: element_tags ⋈ tags, filtered to the requested element ids.
+    // We order by elementId then tagId so the fold loop below can build each
+    // element's list in the same order listTags returns (tag rows sorted by id).
+    const rows = this.db
+      .select({ elementId: elementTags.elementId, tagName: tags.name, tagId: tags.id })
+      .from(elementTags)
+      .innerJoin(tags, eq(elementTags.tagId, tags.id))
+      .where(inArray(elementTags.elementId, ids as ElementId[]))
+      .orderBy(elementTags.elementId, tags.id)
+      .all();
+
+    const out = new Map<ElementId, string[]>();
+    for (const row of rows) {
+      const eid = row.elementId as ElementId;
+      const list = out.get(eid);
+      if (list) {
+        list.push(row.tagName);
+      } else {
+        out.set(eid, [row.tagName]);
+      }
+    }
+    return out;
+  }
+
+  /**
    * All tags with their LIVE usage count (T041) — the read behind the library
    * filterbar's tag list. Counts only assignments to live (not soft-deleted)
    * elements, so a tag whose only owners were trashed reports `0`. Read-only.
