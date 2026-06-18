@@ -37,6 +37,7 @@ import type {
   ReviewState,
   SiblingGroupId,
   SourceLocationId,
+  SourceRef,
 } from "@interleave/core";
 import {
   AiDisabledError,
@@ -104,6 +105,7 @@ import {
   PurgeBlockedByLiveDescendantsError,
   QueueActionService,
   type QueueFilters,
+  type QueueItemSummary,
   QueueQuery,
   RecoveryModeService,
   type RelatedItem,
@@ -120,6 +122,8 @@ import {
   type ReviewOutcome,
   ReviewSessionService,
   resolveSourceRef,
+  resolveSourceRefMany,
+  type SchedulerSignals,
   type SemanticResolveContext,
   SessionPlanQuery,
   SourceYieldQuery,
@@ -590,6 +594,14 @@ interface ConversionSessionSnapshot {
 }
 
 const CONVERSION_SESSION_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * Safe chunk size for the batched inventory-row enrichment (`enrichElementRows`).
+ * The concept-members consumer passes an UNBOUNDED member set; chunking keeps every
+ * batched `inArray` read under SQLite's default `SQLITE_MAX_VARIABLE_NUMBER` (999 on
+ * older builds) with headroom, while staying output-identical to one large read.
+ */
+const ENRICH_ROW_CHUNK_SIZE = 500;
 
 function conversionDraftRequestKey(
   elementId: string,
@@ -5998,8 +6010,109 @@ export class DbService {
     };
     const { items: elements, counts } = this.libraryQuery.browse(filters);
 
-    const items = elements.map((element) => this.libraryItemFor(element));
+    const items = this.enrichLibraryItems(elements);
     return { items, counts };
+  }
+
+  /**
+   * Shared batched row enrichment for the inventory list surfaces (library browse +
+   * concept members). Resolves the load-bearing display fields — the source-ref
+   * refblock, the first concept name, and the queue-eligibility/due summary — in a
+   * CONSTANT number of batched reads over the WHOLE working set, instead of the old
+   * per-row `inspectorQuery.get` + `summaryFor` + `refMeta` + `concept` (the same
+   * N+1 / over-enrichment `93e8dbc8` removed for `/search`). The per-element
+   * scheduler chip is built from the lightweight {@link InspectorQuery.buildSchedulerSignals}
+   * slice with `includeYield:false` — the expensive per-source yield/block rollup is
+   * inspector-selection detail (the list chip never surfaces it), exactly as `search`
+   * already trims. The `enrichElementRow` callback reads only from the pre-built maps
+   * + the already-fetched `Element`, so each consumer composes its own row shape with
+   * zero extra DB round-trips per row.
+   *
+   * The batched primitives (`summaryForMany`, `resolveSourceRefMany`,
+   * `firstConceptNameMapForMembers`) all key off the element ids; an `Element` already
+   * carries every direct column (priority/status/stage/dueAt/parkedAt/updatedAt), so
+   * no per-row element re-read is needed.
+   */
+  private enrichElementRows<T>(
+    elements: readonly Element[],
+    asOf: Date,
+    enrichElementRow: (input: {
+      element: Element;
+      scheduler: SchedulerSignals;
+      summary: QueueItemSummary | null;
+      sourceRef: SourceRef | null;
+      concept: string | null;
+    }) => T,
+  ): T[] {
+    const asOfIso = asOf.toISOString() as IsoTimestamp;
+    const rows: T[] = [];
+    // The concept-members consumer passes an UNBOUNDED member set, so the batched
+    // `inArray` reads inside `summaryForMany` / `resolveSourceRefMany` could otherwise
+    // exceed SQLite's `SQLITE_MAX_VARIABLE_NUMBER` parameter ceiling. Process the
+    // working set in safe-sized chunks: each chunk's rows depend only on that chunk's
+    // own elements, so chunking the batched reads is output-identical to one big read.
+    for (let i = 0; i < elements.length; i += ENRICH_ROW_CHUNK_SIZE) {
+      const chunk = elements.slice(i, i + ENRICH_ROW_CHUNK_SIZE);
+      const ids = chunk.map((el) => el.id);
+      const summaries = this.queueQuery.summaryForMany(ids, asOfIso);
+      const sourceRefs = resolveSourceRefMany(this.repos, ids);
+      const conceptNames = this.repos.concepts.firstConceptNameMapForMembers(ids);
+
+      for (const element of chunk) {
+        rows.push(
+          enrichElementRow({
+            element,
+            scheduler: this.inspectorQuery.buildSchedulerSignals(element, asOf, {
+              includeYield: false,
+            }),
+            summary: summaries.get(element.id) ?? null,
+            sourceRef: sourceRefs.get(element.id) ?? null,
+            concept: conceptNames.get(element.id) ?? null,
+          }),
+        );
+      }
+    }
+    return rows;
+  }
+
+  /**
+   * Build the {@link LibraryItem} rows for a live-element working set via the shared
+   * batched {@link enrichElementRows} enrichment (no per-row inspector/queue/refblock
+   * reads). `task` rows additionally carry their protected-element link + task type,
+   * resolved with a bounded per-task `findTask` (the set is the few task rows in the
+   * page, not every row).
+   */
+  private enrichLibraryItems(elements: readonly Element[]): LibraryItem[] {
+    return this.enrichElementRows(
+      elements,
+      new Date(),
+      ({ element, scheduler, summary, sourceRef, concept }) => {
+        const task = element.type === "task" ? this.repos.tasks.findTask(element.id) : null;
+        const linked = task?.linkedElement ?? null;
+        return {
+          id: element.id,
+          type: element.type as LibraryItem["type"],
+          title: element.title,
+          priority: element.priority,
+          priorityLabel: priorityToLabel(element.priority),
+          status: element.status,
+          stage: element.stage,
+          concept,
+          sourceTitle: sourceRef?.sourceTitle ?? null,
+          sourceLocationLabel: sourceRef?.locationLabel ?? null,
+          dueAt: summary?.dueAt ?? element.dueAt ?? null,
+          parkedAt: element.parkedAt,
+          scheduler,
+          due: summary?.due ?? "soon",
+          dueLabel: summary?.dueLabel ?? "No return scheduled",
+          queueEligible: summary?.queueEligible ?? false,
+          notInQueueReason: summary?.notInQueueReason ?? "Not in queue: summary unavailable",
+          linkedElementId: linked?.id ?? null,
+          linkedElementType: linked?.type ?? null,
+          taskType: task?.taskType ?? null,
+        };
+      },
+    );
   }
 
   /**
@@ -6056,56 +6169,14 @@ export class DbService {
     return { item: element && !element.deletedAt ? this.libraryItemFor(element) : null };
   }
 
+  /**
+   * Build ONE {@link LibraryItem} for a single live element (the parked-action
+   * single-row reply). Routes through the shared batched {@link enrichLibraryItems}
+   * over a one-element set, so this row reads identically to a browse row with no
+   * separate enrichment code path.
+   */
   private libraryItemFor(element: Element): LibraryItem {
-    // The owning-source provenance + location for the row's refblock (shared
-    // T043 resolver — a source references itself; extract/card reference their
-    // owning source + location anchor).
-    const { sourceTitle, sourceLocationLabel } = this.refMetaForElement(element.id);
-
-    // The load-bearing scheduler chip + due badge — reuse the SAME builders the
-    // inspector + queue use so the chip/due read identically across surfaces. Both
-    // are best-effort: a row that vanished mid-read degrades to a calm attention
-    // "Scheduled" default rather than dropping out of the browse.
-    const inspectorData = this.inspectorQuery.get(element.id);
-    const summary = this.queueQuery.summaryFor(element.id);
-    const task = element.type === "task" ? this.repos.tasks.findTask(element.id) : null;
-    const linked = task?.linkedElement ?? null;
-    const scheduler = inspectorData?.scheduler ?? {
-      kind: "attention" as const,
-      retrievability: null,
-      stability: null,
-      difficulty: null,
-      reps: null,
-      lapses: null,
-      fsrsState: null,
-      stage: element.stage,
-      postponed: 0,
-      scheduleReason: null,
-      lastProcessedAt: element.updatedAt ?? null,
-    };
-
-    return {
-      id: element.id,
-      type: element.type as LibraryItem["type"],
-      title: element.title,
-      priority: element.priority,
-      priorityLabel: priorityToLabel(element.priority),
-      status: element.status,
-      stage: element.stage,
-      concept: this.conceptForElement(element.id),
-      sourceTitle,
-      sourceLocationLabel,
-      dueAt: summary?.dueAt ?? element.dueAt ?? null,
-      parkedAt: element.parkedAt,
-      scheduler,
-      due: summary?.due ?? "soon",
-      dueLabel: summary?.dueLabel ?? "No return scheduled",
-      queueEligible: summary?.queueEligible ?? false,
-      notInQueueReason: summary?.notInQueueReason ?? "Not in queue: summary unavailable",
-      linkedElementId: linked?.id ?? null,
-      linkedElementType: linked?.type ?? null,
-      taskType: task?.taskType ?? null,
-    };
+    return this.enrichLibraryItems([element])[0] as LibraryItem;
   }
 
   /**

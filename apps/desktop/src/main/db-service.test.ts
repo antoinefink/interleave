@@ -13,8 +13,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ElementId, IsoTimestamp } from "@interleave/core";
-import { DEFAULT_EMBEDDING_MODEL_ID, priorityFromLabel } from "@interleave/core";
+import { DEFAULT_EMBEDDING_MODEL_ID, priorityFromLabel, priorityToLabel } from "@interleave/core";
 import { MIGRATIONS_DIR, openDatabase } from "@interleave/db";
+import { resolveSourceRef } from "@interleave/local-db";
 import { seedDemoCollection } from "@interleave/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -3930,6 +3931,211 @@ describe("DbService — review session (T037)", () => {
     expect(afterDelete).not.toContain(sourceId);
 
     second.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batch + trim drift guards (U5 libraryBrowse, U6 conceptMembers).
+//
+// The optimization replaces the old per-row `inspectorQuery.get` + `summaryFor` +
+// `refMeta` + `concept` enrichment with batched maps + the lightweight
+// `buildSchedulerSignals(includeYield:false)` slice (the SAME trim `93e8dbc8` applied
+// to `/search`). The correctness guarantee is ZERO behavior drift: each batched row
+// must deepEqual the row produced by the per-row composition of the SAME primitives
+// (single-id `summaryFor` + `resolveSourceRef` + `firstConceptName` +
+// `buildSchedulerSignals(includeYield:false)` + the element fields). These tests pin
+// that equality over a mixed fixture (source/extract/card/topic, including non-due,
+// retired, parked, and fallow rows; a tagged source; a concept-assigned card).
+// ---------------------------------------------------------------------------
+
+describe("DbService — batch+trim drift (U5 libraryBrowse)", () => {
+  /** Reach the production private query getters so the reference uses the EXACT same instances. */
+  function queries(svc: DbService): {
+    queueQuery: {
+      summaryFor: (id: ElementId, asOf?: IsoTimestamp) => Record<string, unknown> | null;
+    };
+    inspectorQuery: {
+      buildSchedulerSignals: (
+        element: unknown,
+        asOf: Date,
+        options: { includeYield: boolean },
+      ) => unknown;
+    };
+  } {
+    return svc as unknown as ReturnType<typeof queries>;
+  }
+
+  /** The per-row LibraryItem reference: identical to the new builder, but un-batched. */
+  function referenceLibraryItem(
+    svc: DbService,
+    id: ElementId,
+    asOf: Date,
+  ): Record<string, unknown> {
+    const element = svc.repos.elements.findById(id);
+    if (!element || element.deletedAt) throw new Error(`not a live element: ${id}`);
+    const summary = queries(svc).queueQuery.summaryFor(id, asOf.toISOString() as IsoTimestamp);
+    const ref = resolveSourceRef(svc.repos, id);
+    const scheduler = queries(svc).inspectorQuery.buildSchedulerSignals(element, asOf, {
+      includeYield: false,
+    });
+    const task = element.type === "task" ? svc.repos.tasks.findTask(id) : null;
+    const linked = task?.linkedElement ?? null;
+    return {
+      id: element.id,
+      type: element.type,
+      title: element.title,
+      priority: element.priority,
+      priorityLabel: priorityToLabel(element.priority),
+      status: element.status,
+      stage: element.stage,
+      concept: svc.repos.concepts.firstConceptName(id),
+      sourceTitle: ref?.sourceTitle ?? null,
+      sourceLocationLabel: ref?.locationLabel ?? null,
+      dueAt: summary?.dueAt ?? element.dueAt ?? null,
+      parkedAt: element.parkedAt,
+      scheduler,
+      due: summary?.due ?? "soon",
+      dueLabel: summary?.dueLabel ?? "No return scheduled",
+      queueEligible: summary?.queueEligible ?? false,
+      notInQueueReason: summary?.notInQueueReason ?? "Not in queue: summary unavailable",
+      linkedElementId: linked?.id ?? null,
+      linkedElementType: linked?.type ?? null,
+      taskType: task?.taskType ?? null,
+    };
+  }
+
+  /**
+   * Seed a mixed fixture spanning every lifecycle the inventory surfaces serve:
+   * a due card (FSRS), a retired card, a parked source, an inbox source with a tag,
+   * a scheduled extract, a fallow-paused topic + a child extract under it, and a
+   * concept the card + a source belong to.
+   */
+  function seedMixedFixture(svc: DbService): { conceptId: ElementId; allIds: ElementId[] } {
+    const demo = svc.seedIfEmpty();
+    expect(demo).toBe(true);
+
+    // A tag on an inbox source (a row a tagged-source consumer must enrich identically).
+    const inboxSource = svc.repos.elements.create({
+      type: "source",
+      status: "inbox",
+      stage: "raw_source",
+      priority: priorityFromLabel("B"),
+      title: "Tagged inbox source",
+    });
+    svc.addTag({ elementId: inboxSource.id, tag: "drift-tag" });
+
+    // A parked source (queueEligible:false / parked reason — NOT the due-only shortcut).
+    const parkedSource = svc.repos.elements.create({
+      type: "source",
+      status: "parked",
+      stage: "raw_source",
+      priority: priorityFromLabel("C"),
+      title: "Parked source",
+    });
+    svc.repos.elements.update(parkedSource.id, {
+      parkedAt: "2026-01-01T00:00:00.000Z" as IsoTimestamp,
+    });
+
+    // A fallow-paused topic + a scheduled extract beneath it (fallow-context path).
+    const topic = svc.repos.elements.create({
+      type: "topic",
+      status: "active",
+      stage: "rough_topic",
+      priority: priorityFromLabel("B"),
+      title: "Fallow topic",
+      fallowUntil: "2099-01-01T00:00:00.000Z" as IsoTimestamp,
+    });
+    const childExtract = svc.repos.elements.create({
+      type: "extract",
+      status: "scheduled",
+      stage: "raw_extract",
+      priority: priorityFromLabel("C"),
+      title: "Extract under fallow topic",
+      parentId: topic.id,
+      dueAt: "2026-03-01T00:00:00.000Z" as IsoTimestamp,
+    });
+
+    // A concept whose members span types: the seeded retired card + the inbox source.
+    const concept = svc.repos.concepts.createConcept({ name: "Drift concept" });
+    svc.repos.concepts.assignConcept(demoRetiredCardId(svc), concept.id);
+    svc.repos.concepts.assignConcept(inboxSource.id, concept.id);
+
+    return {
+      conceptId: concept.id,
+      allIds: [inboxSource.id, parkedSource.id, topic.id, childExtract.id],
+    };
+  }
+
+  /** The seeded retired card's element id (a queueEligible:false card row). */
+  function demoRetiredCardId(svc: DbService): ElementId {
+    const row = svc.raw.sqlite
+      .prepare(
+        `SELECT e.id AS id FROM elements e JOIN cards c ON c.element_id = e.id
+         WHERE c.is_retired = 1 AND e.deleted_at IS NULL LIMIT 1`,
+      )
+      .get() as { id: string } | undefined;
+    if (!row) throw new Error("seed has no retired card");
+    return row.id as ElementId;
+  }
+
+  it("libraryBrowse rows deepEqual the per-row composition (same rows, order, eligibility, scheduler, refs, concept)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    seedMixedFixture(svc);
+
+    // Freeze the clock so the batched read + the reference read see the SAME `new Date()`
+    // (the relative due labels + retrievability depend on it).
+    const asOf = new Date("2026-06-18T12:00:00.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(asOf);
+    try {
+      const items = svc.libraryBrowse({}).items;
+      expect(items.length).toBeGreaterThan(5);
+      const reference = items.map((row) => referenceLibraryItem(svc, row.id as ElementId, asOf));
+      expect(items).toEqual(reference);
+
+      // The drift fixture must actually exercise the lifecycles the shortcut would mishandle.
+      expect(items.some((r) => r.status === "parked" && r.queueEligible === false)).toBe(true);
+      expect(items.some((r) => r.type === "card" && r.queueEligible === false)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+    svc.close();
+  });
+
+  it("libraryBrowse source rows carry the scheduler chip with yield null (the includeYield:false trim)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    seedMixedFixture(svc);
+
+    const sources = svc.libraryBrowse({ types: ["source"] }).items;
+    expect(sources.length).toBeGreaterThan(0);
+    for (const row of sources) {
+      // The chip data is present (kind/stage) but the expensive yield rollup is trimmed.
+      expect(row.scheduler.kind).toBe("attention");
+      expect(row.scheduler.yield ?? null).toBeNull();
+    }
+    svc.close();
+  });
+
+  it("libraryBrowse on an empty library is empty; a soft-deleted row is excluded", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    expect(svc.libraryBrowse({}).items).toEqual([]);
+
+    const source = svc.repos.elements.create({
+      type: "source",
+      status: "inbox",
+      stage: "raw_source",
+      priority: priorityFromLabel("B"),
+      title: "Solo source",
+    });
+    expect(svc.libraryBrowse({}).items.map((r) => r.id)).toEqual([source.id]);
+
+    svc.repos.elements.softDelete(source.id);
+    expect(svc.libraryBrowse({}).items).toEqual([]);
+    svc.close();
   });
 });
 

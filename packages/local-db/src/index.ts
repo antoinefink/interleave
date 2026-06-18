@@ -552,7 +552,7 @@ export {
   deriveSourceLocationLabel,
   type LabelBlock,
 } from "./source-location-label";
-export { resolveSourceRef } from "./source-ref-query";
+export { resolveSourceRef, resolveSourceRefMany } from "./source-ref-query";
 export {
   type CreateExtractInput,
   type CreateSourceInput,
