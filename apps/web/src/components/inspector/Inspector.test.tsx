@@ -5,6 +5,8 @@ import type { ElementSummary, InspectorData, TopicKnowledgeStateGetResult } from
 const h = vi.hoisted(() => ({
   desktop: true,
   selectedId: null as string | null,
+  // The inbox triage panel the inspector reads (null = no relocated triage section).
+  triagePanel: null as import("../../shell/inboxTriagePanel").InboxTriagePanel | null,
   select: vi.fn(),
   navigate: vi.fn(),
   navigateToLocation: vi.fn(),
@@ -46,6 +48,18 @@ vi.mock("../../review/ReviewModeButton", () => ({
 
 vi.mock("../../shell/selection", () => ({
   useSelection: () => ({ selectedId: h.selectedId, select: h.select }),
+}));
+
+vi.mock("../../shell/inboxTriagePanel", () => ({
+  useInboxTriagePanel: () => ({
+    panel: h.triagePanel,
+    setPanel: vi.fn(),
+    registerSection: vi.fn(),
+    registerReadNowButton: vi.fn(),
+    sectionRef: { current: null },
+    readNowRef: { current: null },
+    registrationTick: 0,
+  }),
 }));
 
 vi.mock("../ConflictSection", () => ({
@@ -364,6 +378,7 @@ function sourceData(): InspectorData {
 beforeEach(() => {
   h.desktop = true;
   h.selectedId = null;
+  h.triagePanel = null;
   h.select.mockReset();
   h.navigate.mockReset();
   h.navigateToLocation.mockReset();
@@ -1356,6 +1371,203 @@ describe("Inspector", () => {
       await screen.findByTestId("lineage-tree");
       expect(screen.queryByRole("button", { name: /show deleted/i })).toBeNull();
       expect(screen.queryByTestId("lineage-tombstone-tag")).toBeNull();
+    });
+  });
+
+  describe("relocated inbox triage section", () => {
+    function triagePanel(
+      overrides: Partial<import("../../shell/inboxTriagePanel").InboxTriagePanel> = {},
+    ): import("../../shell/inboxTriagePanel").InboxTriagePanel {
+      return {
+        targetId: "src-1",
+        priority: 0.5,
+        busy: false,
+        suggestion: null,
+        placementAssigned: false,
+        triageHighlighted: false,
+        onReadNow: vi.fn(),
+        onTriage: vi.fn(),
+        onPickPriority: vi.fn(),
+        onAcceptSuggestion: vi.fn(),
+        onAcceptPlacement: vi.fn(),
+        ...overrides,
+      };
+    }
+
+    const bandedSuggestion = {
+      kind: "suggestion",
+      band: "A",
+      placement: { conceptId: "c-1", conceptName: "Quantum mechanics" },
+      justification: { signals: [{ kind: "semantic", neighborCount: 3, lean: "A" }] },
+      signalHash: "hash-1",
+    } satisfies import("../../lib/appApi").TriageSuggestionSuggestionDto;
+
+    it("renders the triage section ABOVE Properties for a matching inbox source", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.triagePanel = triagePanel();
+
+      render(<Inspector />);
+
+      const triage = await screen.findByTestId("inbox-triage-actions");
+      expect(triage).toHaveTextContent("1 · 2 · 3 · 6");
+      const properties = screen.getByText("Properties").closest(".insp-sec");
+      if (!properties) throw new Error("Missing Properties section");
+      // Triage precedes Properties in the DOM (rendered above it).
+      expect(
+        triage.compareDocumentPosition(properties) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    });
+
+    it("fires the triage handlers on click", async () => {
+      const panel = triagePanel();
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.triagePanel = panel;
+
+      render(<Inspector />);
+
+      fireEvent.click(await screen.findByTestId("inbox-read-now"));
+      expect(panel.onReadNow).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByTestId("inbox-queue-soon"));
+      expect(panel.onTriage).toHaveBeenCalledWith("queueSoon");
+      fireEvent.click(screen.getByTestId("inbox-keep"));
+      expect(panel.onTriage).toHaveBeenCalledWith("keepForLater");
+      fireEvent.click(screen.getByTestId("inbox-delete"));
+      expect(panel.onTriage).toHaveBeenCalledWith("delete");
+    });
+
+    it("renders the provenance-aware picker and suppresses the generic Set priority", async () => {
+      const panel = triagePanel();
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.triagePanel = panel;
+
+      render(<Inspector />);
+
+      await screen.findByTestId("inbox-triage-actions");
+      // The relocated picker is present; the inspector's generic picker is hidden.
+      expect(screen.getByTestId("inbox-priority")).toBeInTheDocument();
+      expect(screen.queryByTestId("inspector-priority")).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId("inbox-priority-A"));
+      expect(panel.onPickPriority).toHaveBeenCalledWith("A");
+    });
+
+    it("keeps the generic Set priority when no triage panel is active", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.triagePanel = null;
+
+      render(<Inspector />);
+
+      await screen.findByTestId("provenance-url");
+      expect(screen.queryByTestId("inbox-triage-actions")).not.toBeInTheDocument();
+      expect(screen.getByTestId("inspector-priority")).toBeInTheDocument();
+    });
+
+    it("disables the controls when busy", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.triagePanel = triagePanel({ busy: true });
+
+      render(<Inspector />);
+
+      expect(await screen.findByTestId("inbox-read-now")).toBeDisabled();
+      expect(screen.getByTestId("inbox-priority-A")).toBeDisabled();
+    });
+
+    it("applies the highlight when triageHighlighted", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.triagePanel = triagePanel({ triageHighlighted: true });
+
+      render(<Inspector />);
+
+      expect(await screen.findByTestId("inbox-triage-actions")).toHaveAttribute(
+        "data-highlighted",
+        "true",
+      );
+    });
+
+    it("does NOT render for a non-source element even with a payload", async () => {
+      h.selectedId = "topic-1";
+      h.getInspectorData.mockResolvedValue({ data: topicData("Topic one") });
+      h.triagePanel = triagePanel({ targetId: "topic-1" });
+
+      render(<Inspector />);
+
+      await screen.findByTestId("inspector-title");
+      expect(screen.queryByTestId("inbox-triage-actions")).not.toBeInTheDocument();
+    });
+
+    it("does NOT render when the payload targets a different element", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.triagePanel = triagePanel({ targetId: "some-other-id" });
+
+      render(<Inspector />);
+
+      await screen.findByTestId("provenance-url");
+      expect(screen.queryByTestId("inbox-triage-actions")).not.toBeInTheDocument();
+    });
+
+    it("renders the suggested-priority accept and placement affordances", async () => {
+      const panel = triagePanel({ suggestion: bandedSuggestion });
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.triagePanel = panel;
+
+      render(<Inspector />);
+
+      await screen.findByTestId("inbox-triage-actions");
+      fireEvent.click(screen.getByTestId("inbox-suggestion-chip"));
+      expect(panel.onAcceptSuggestion).toHaveBeenCalledTimes(1);
+      fireEvent.click(screen.getByTestId("inbox-suggestion-placement-accept"));
+      expect(panel.onAcceptPlacement).toHaveBeenCalledWith("c-1");
+    });
+
+    it("shows the confirmed placement state when already assigned", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.triagePanel = triagePanel({ suggestion: bandedSuggestion, placementAssigned: true });
+
+      render(<Inspector />);
+
+      await screen.findByTestId("inbox-triage-actions");
+      expect(screen.getByTestId("inbox-suggestion-placement-assigned")).toBeInTheDocument();
+      expect(screen.queryByTestId("inbox-suggestion-placement-accept")).not.toBeInTheDocument();
+    });
+
+    it("does not unmount/remount the section when the payload re-publishes (no flicker)", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.triagePanel = triagePanel({ busy: false });
+
+      const { rerender } = render(<Inspector />);
+      const before = await screen.findByTestId("inbox-triage-actions");
+
+      // Re-publish with only `busy` changed (the common case during triage), the
+      // shape InboxScreen produces on every busy/highlight tick. The section must
+      // re-render in place, not remount — the DOM node identity must be preserved
+      // (KTD-2 no-flicker), and the busy state must apply.
+      h.triagePanel = triagePanel({ busy: true });
+      rerender(<Inspector />);
+
+      const after = screen.getByTestId("inbox-triage-actions");
+      expect(after).toBe(before);
+      expect(screen.getByTestId("inbox-read-now")).toBeDisabled();
+    });
+
+    it("renders no suggestion affordance for a pending suggestion", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.triagePanel = triagePanel({ suggestion: "pending" });
+
+      render(<Inspector />);
+
+      await screen.findByTestId("inbox-triage-actions");
+      expect(screen.queryByTestId("inbox-suggestion")).not.toBeInTheDocument();
+      expect(screen.queryByTestId("inbox-suggestion-placement")).not.toBeInTheDocument();
     });
   });
 });

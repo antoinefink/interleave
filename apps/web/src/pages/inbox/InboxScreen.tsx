@@ -21,13 +21,13 @@
 
 import { buildSchema, SourceEditor } from "@interleave/editor";
 import { useNavigate } from "@tanstack/react-router";
-import { type Ref, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BalanceBanner } from "../../components/BalanceBanner";
 import { ExternalUrlLink } from "../../components/ExternalUrlLink";
 import { Icon, type IconName } from "../../components/Icon";
-import { Status } from "../../components/inspector/primitives";
+import { requestInspectorRefresh } from "../../components/inspector/Inspector";
 import { Snackbar } from "../../components/Snackbar";
-import { HelpLink, InlineHint } from "../../help/Contextual";
+import { InlineHint } from "../../help/Contextual";
 import {
   appApi,
   type InboxBulkTriageAction,
@@ -36,26 +36,20 @@ import {
   type InboxItemSummary,
   type InboxTriageSuggestionProvenance,
   isDesktop,
-  PRIORITY_LABELS,
   type PriorityLabelInput,
   type SourceDuplicateSummary,
   type TriageSuggestionSuggestionDto,
 } from "../../lib/appApi";
 import { useActiveScope } from "../../shell/activeScope";
-import { Kbd } from "../../shell/Kbd";
+import { useInboxTriagePanel } from "../../shell/inboxTriagePanel";
 import { NEW_SOURCE_EVENT, UNDO_EVENT } from "../../shell/nav";
 import { useSelection } from "../../shell/selection";
 import { BulkActionPanel } from "./BulkActionPanel";
 import { ImportFileModal } from "./ImportFileModal";
 import { ImportUrlModal } from "./ImportUrlModal";
-import {
-  groupInboxItems,
-  type InboxGroupBy,
-  InboxGroupedList,
-  type InboxRowSuggestion,
-} from "./InboxGroupedList";
+import { groupInboxItems, type InboxGroupBy, InboxGroupedList } from "./InboxGroupedList";
 import { NewSourceModal } from "./NewSourceModal";
-import { formatTriageJustification, SuggestionChip } from "./SuggestionChip";
+import { priorityToLabel } from "./priority";
 import { useInboxSuggestions } from "./useInboxSuggestions";
 import { useInboxTriageShortcuts } from "./useInboxTriageShortcuts";
 import "../source/reader.css";
@@ -91,15 +85,6 @@ function bulkResultMessage(action: InboxBulkTriageAction, result: InboxBulkTriag
   return parts.join(" · ");
 }
 
-/** Numeric priority `0.0`–`1.0` → coarse A/B/C/D label (mirrors core/priority). */
-function priorityToLabel(priority: number): PriorityLabelInput {
-  const v = Math.min(1, Math.max(0, priority));
-  if (v >= 0.75) return "A";
-  if (v >= 0.5) return "B";
-  if (v >= 0.25) return "C";
-  return "D";
-}
-
 /**
  * The per-sweep selection cap, mirroring the IPC contract's `ids.max(1000)` (KTD-8 —
  * one synchronous better-sqlite3 transaction must stay bounded). The renderer caps the
@@ -107,12 +92,6 @@ function priorityToLabel(priority: number): PriorityLabelInput {
  * failing the whole batch at zod validation.
  */
 const BULK_SELECTION_CAP = 1000;
-const PRIORITY_HINT: Record<PriorityLabelInput, string> = {
-  A: "Protected · review daily",
-  B: "Important · frequent",
-  C: "Normal cadence",
-  D: "Someday · low cadence",
-};
 
 /**
  * Import-strip options, all live. "Paste text" / "Manual note" open the New-source
@@ -176,53 +155,6 @@ function mediaImportMessage(error: unknown): string {
   return codes[code] ?? "Could not import that media.";
 }
 
-/** A triage action button (block, with a keyboard hint). */
-function TriageButton({
-  icon,
-  label,
-  hint,
-  danger,
-  primary,
-  disabled,
-  ariaLabel,
-  onClick,
-  testid,
-  buttonRef,
-}: {
-  icon: IconName;
-  label: string;
-  hint: string;
-  danger?: boolean;
-  primary?: boolean;
-  disabled?: boolean;
-  ariaLabel?: string;
-  onClick: () => void;
-  testid: string;
-  buttonRef?: Ref<HTMLButtonElement>;
-}) {
-  const tone = danger
-    ? "border-danger-soft bg-danger-soft text-danger hover:opacity-90"
-    : primary
-      ? "border-transparent bg-accent text-text-on-accent hover:opacity-90"
-      : "border-border bg-surface text-text-2 hover:text-text";
-  return (
-    <button
-      type="button"
-      data-testid={testid}
-      ref={buttonRef}
-      disabled={disabled}
-      aria-label={ariaLabel}
-      onClick={onClick}
-      className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 font-medium text-sm disabled:cursor-not-allowed disabled:opacity-55 ${tone}`}
-    >
-      <Icon name={icon} size={14} />
-      <span>{label}</span>
-      <span className="flex-1" />
-      <Kbd keys={hint} />
-    </button>
-  );
-}
-
 const inboxPreviewSchema = buildSchema();
 
 function validBodyDoc(value: unknown): unknown | null {
@@ -235,53 +167,21 @@ function validBodyDoc(value: unknown): unknown | null {
   }
 }
 
-/** The right preview + metadata + triage rail for the selected item. */
-function PreviewPane({
-  detail,
-  busy,
-  suggestion,
-  placementAssigned,
-  onReadNow,
-  onTriage,
-  onSetPriority,
-  onAcceptSuggestion,
-  onAcceptPlacement,
-  triageActionsRef,
-  readNowButtonRef,
-  triageHighlighted,
-}: {
-  detail: InboxItemDetail;
-  busy: boolean;
-  /** The selected item's triage suggestion (verdict / `"pending"` / `null`). */
-  suggestion: InboxRowSuggestion;
-  /** Whether the suggested placement concept has already been assigned this session. */
-  placementAssigned: boolean;
-  onReadNow: () => void;
-  onTriage: (kind: "queueSoon" | "keepForLater" | "delete") => void;
-  /** Set a priority band. The caller decides accepted-vs-overridden provenance. */
-  onSetPriority: (label: PriorityLabelInput) => void;
-  /** Accept the suggested band as-is (records `accepted` provenance). */
-  onAcceptSuggestion: () => void;
-  /** Accept the suggested placement concept (`assignConcept`); re-accept is a no-op. */
-  onAcceptPlacement: (conceptId: string) => void;
-  triageActionsRef: Ref<HTMLElement>;
-  readNowButtonRef: Ref<HTMLButtonElement>;
-  triageHighlighted: boolean;
-}) {
+/**
+ * The article preview for the selected item. Triage, the priority picker, and the
+ * suggestion affordances now live in the shell inspector's gated triage section
+ * (see `InboxTriageSection`), so this pane is article-only: a full-width scroll
+ * owner with the prose centered at the reader measure for comfortable lines.
+ */
+function PreviewPane({ detail }: { detail: InboxItemDetail }) {
   const { summary, provenance } = detail;
   const bodyDoc = validBodyDoc(detail.bodyDoc);
   const fallbackText = detail.bodyText ?? detail.bodyPreview ?? null;
-  const current = priorityToLabel(summary.priority);
-  // A banded suggestion drives the accept affordance + justification + placement;
-  // `insufficient_signal` / `"pending"` / `null` render none of it.
-  const banded: TriageSuggestionSuggestionDto | null =
-    typeof suggestion === "object" && suggestion?.kind === "suggestion" ? suggestion : null;
-  const justification = banded ? formatTriageJustification(banded.justification) : "";
-  const placement = banded?.placement ?? null;
   return (
-    <div className="flex min-w-0 flex-1" data-testid="inbox-preview">
-      {/* body preview */}
-      <div className="min-w-0 flex-1 overflow-y-auto px-7 py-5">
+    <div className="min-w-0 flex-1 overflow-y-auto" data-testid="inbox-preview">
+      {/* Full-width scroll owner; the content centers at the reader measure so the
+          freed width gives a comfortable line length rather than sprawling. */}
+      <div className="mx-auto w-full max-w-[var(--reader-text-measure)] px-7 py-5">
         <div className="mb-2.5 flex items-center gap-2 text-sm text-text-3">
           <span className="rounded bg-surface-2 px-1.5 py-0.5 text-2xs">{summary.srcType}</span>
           {summary.accessedAt ? (
@@ -335,187 +235,6 @@ function PreviewPane({
           </p>
         )}
       </div>
-
-      {/* metadata + triage rail */}
-      <div className="flex w-72 flex-none flex-col gap-5 overflow-y-auto border-border border-l p-4">
-        <section>
-          <div className="mb-2 font-medium text-text-2 text-xs uppercase tracking-wide">
-            Metadata
-          </div>
-          <dl className="space-y-1.5 text-sm">
-            <div className="flex justify-between gap-3">
-              <dt className="text-text-3">Author</dt>
-              <dd className="truncate text-text">{provenance.author ?? "—"}</dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt className="text-text-3">Published</dt>
-              <dd className="text-text">{provenance.publishedAt?.slice(0, 10) ?? "—"}</dd>
-            </div>
-            <div className="flex justify-between gap-3">
-              <dt className="text-text-3">Accessed</dt>
-              <dd className="text-text" data-testid="inbox-preview-accessed">
-                {provenance.accessedAt?.slice(0, 10) ?? "—"}
-              </dd>
-            </div>
-            {provenance.canonicalUrl ? (
-              <div className="flex justify-between gap-3">
-                <dt className="text-text-3">Canonical</dt>
-                <dd className="min-w-0 text-right text-text">
-                  <ExternalUrlLink
-                    className="justify-end text-right"
-                    testId="inbox-preview-canonical"
-                    url={provenance.canonicalUrl}
-                  />
-                </dd>
-              </div>
-            ) : null}
-            <div className="flex items-center justify-between gap-3">
-              <dt className="text-text-3">Status</dt>
-              <dd>
-                <Status status={summary.status} />
-              </dd>
-            </div>
-          </dl>
-          {provenance.reasonAdded ? (
-            <p className="mt-2 text-sm text-text-2">{provenance.reasonAdded}</p>
-          ) : null}
-        </section>
-
-        <section data-testid="inbox-priority">
-          <div className="mb-2 flex items-center gap-1.5 font-medium text-text-2 text-xs uppercase tracking-wide">
-            Priority <HelpLink slug="priority-abcd" />
-          </div>
-          <div className="flex gap-1.5">
-            {PRIORITY_LABELS.map((p) => {
-              const active = current === p;
-              return (
-                <button
-                  key={p}
-                  type="button"
-                  data-testid={`inbox-priority-${p}`}
-                  aria-pressed={active}
-                  disabled={busy}
-                  onClick={() => onSetPriority(p)}
-                  className={
-                    active
-                      ? "inline-flex flex-1 items-center justify-center gap-1.5 rounded-md border border-accent-soft-bd bg-accent-soft px-2 py-1 font-medium text-accent-text text-sm"
-                      : "inline-flex flex-1 items-center justify-center gap-1.5 rounded-md border border-border bg-surface px-2 py-1 font-medium text-sm text-text-2 hover:text-text"
-                  }
-                >
-                  <span
-                    className="size-2 rounded-full"
-                    style={{ background: `var(--prio-${p.toLowerCase()})` }}
-                  />
-                  {p}
-                </button>
-              );
-            })}
-          </div>
-          <p className="mt-1.5 text-text-3 text-xs">{PRIORITY_HINT[current]}</p>
-
-          {/* Suggested priority (T127 — U6): accept-as-is (Enter does the same), or
-              override by picking a DIFFERENT chip above. Only a banded suggestion
-              renders; `insufficient_signal` shows nothing (never a confident guess). */}
-          {banded ? (
-            <div className="mt-3 flex flex-col gap-1.5" data-testid="inbox-suggestion">
-              <div className="flex items-center gap-2">
-                <SuggestionChip band={banded.band} onAccept={onAcceptSuggestion} busy={busy} />
-                <span className="text-text-3 text-xs">Press Enter to accept</span>
-              </div>
-              {justification ? (
-                <p className="text-text-3 text-xs" data-testid="inbox-suggestion-justification">
-                  {justification}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-        </section>
-
-        {/* Suggested placement (T127 — U6): assign the concept the neighbors share,
-            via the existing assignConcept command. Re-accept is a no-op (shows the
-            confirmed "assigned" state). */}
-        {placement ? (
-          <section data-testid="inbox-suggestion-placement">
-            <div className="mb-2 font-medium text-text-2 text-xs uppercase tracking-wide">
-              Suggested placement
-            </div>
-            {placementAssigned ? (
-              <span
-                className="inline-flex items-center gap-1.5 rounded-md border border-ok-soft bg-ok-soft px-2 py-1 text-ok text-xs"
-                data-testid="inbox-suggestion-placement-assigned"
-              >
-                <Icon name="check" size={13} />
-                Assigned to {placement.conceptName}
-              </span>
-            ) : (
-              <button
-                type="button"
-                data-testid="inbox-suggestion-placement-accept"
-                disabled={busy}
-                onClick={() => onAcceptPlacement(placement.conceptId)}
-                className="inline-flex items-center gap-1.5 rounded-md border border-accent-soft-bd border-dashed bg-accent-soft px-2 py-1 text-accent-text text-xs hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-55"
-              >
-                <Icon name="sparkle" size={13} />
-                Place in {placement.conceptName}
-              </button>
-            )}
-          </section>
-        ) : null}
-
-        <section
-          ref={triageActionsRef}
-          data-testid="inbox-triage-actions"
-          data-highlighted={triageHighlighted ? "true" : undefined}
-          className={
-            triageHighlighted
-              ? "rounded-md ring-2 ring-accent ring-offset-2 ring-offset-surface motion-safe:animate-pulse"
-              : undefined
-          }
-        >
-          <div className="mb-2 font-medium text-text-2 text-xs uppercase tracking-wide">
-            Triage <span className="font-normal text-text-3 normal-case">1 · 2 · 3 · 6</span>
-          </div>
-          <div className="space-y-2">
-            <TriageButton
-              testid="inbox-read-now"
-              buttonRef={readNowButtonRef}
-              icon="play"
-              label="Read now"
-              hint="1"
-              ariaLabel="Read now: activate and open in reader"
-              primary
-              disabled={busy}
-              onClick={onReadNow}
-            />
-            <TriageButton
-              testid="inbox-queue-soon"
-              icon="queue"
-              label="Queue soon"
-              hint="2"
-              ariaLabel="Queue soon: schedule in the due queue without opening"
-              disabled={busy}
-              onClick={() => onTriage("queueSoon")}
-            />
-            <TriageButton
-              testid="inbox-keep"
-              icon="bookmark"
-              label="Save for later"
-              hint="3"
-              disabled={busy}
-              onClick={() => onTriage("keepForLater")}
-            />
-            <TriageButton
-              testid="inbox-delete"
-              icon="trash"
-              label="Delete"
-              hint="6"
-              danger
-              disabled={busy}
-              onClick={() => onTriage("delete")}
-            />
-          </div>
-        </section>
-      </div>
     </div>
   );
 }
@@ -524,6 +243,18 @@ export function InboxScreen() {
   const desktop = isDesktop();
   const navigate = useNavigate();
   const { selectedId, select } = useSelection();
+  // The relocated triage cluster renders in the shell inspector; this bridge
+  // publishes the active payload and exposes the section/read-now nodes the
+  // inspector registers (so reveal can scroll/focus across the component tree).
+  // `registerSection` / `registerReadNowButton` are consumed by the inspector (it
+  // owns the section's DOM); here we only need to publish the payload and read the
+  // registered nodes back for the reveal affordance.
+  const {
+    setPanel: setTriagePanel,
+    sectionRef: triageActionsRef,
+    readNowRef: readNowButtonRef,
+    registrationTick: triageRegistrationTick,
+  } = useInboxTriagePanel();
   const [items, setItems] = useState<readonly InboxItemSummary[]>([]);
   const [selId, setSelId] = useState<string | null>(null);
   const [detail, setDetail] = useState<InboxItemDetail | null>(null);
@@ -533,8 +264,6 @@ export function InboxScreen() {
   const [defaultSourcePriority, setDefaultSourcePriority] = useState<PriorityLabelInput>("C");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const triageActionsRef = useRef<HTMLElement | null>(null);
-  const readNowButtonRef = useRef<HTMLButtonElement | null>(null);
   const triageHighlightTimerRef = useRef<number | null>(null);
   const pendingTriageFocusRef = useRef<string | null>(null);
   const selectedIdRef = useRef<string | null>(selectedId);
@@ -672,6 +401,7 @@ export function InboxScreen() {
     };
   }, [selId, select, multiSelect]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: section/read-now nodes are read from stable context refs at call time, not reactive deps; only the stable setter/timer refs are used.
   const revealInboxTriageActions = useCallback(() => {
     const triageActions = triageActionsRef.current;
     const readNowButton = readNowButtonRef.current;
@@ -696,13 +426,18 @@ export function InboxScreen() {
     }
   }, [revealInboxTriageActions, selId]);
 
+  // Retry a pending reveal when the detail loads OR when the inspector registers
+  // the triage section's Read-now node (KTD-4): the inspector mounts that node
+  // after its OWN fetch, which can land after the inbox detail does, so keying the
+  // retry on `detail` alone would let the reveal no-op before the node exists.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: triageRegistrationTick is a deliberate retry trigger (the node is read via a ref, not a value dep).
   useEffect(() => {
     const pendingId = pendingTriageFocusRef.current;
     if (!pendingId || detail?.summary.id !== pendingId) return;
     if (revealInboxTriageActions()) {
       pendingTriageFocusRef.current = null;
     }
-  }, [detail, revealInboxTriageActions]);
+  }, [detail, revealInboxTriageActions, triageRegistrationTick]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset pending triage focus when the selected row changes.
   useEffect(() => {
@@ -796,13 +531,18 @@ export function InboxScreen() {
       setSelectedIds((prev) => (prev.size === 0 ? prev : new Set()));
       setBulkPriority(null);
       anchorRef.current = null;
+      // Clear the triage payload BEFORE navigating so the relocated triage section
+      // cannot briefly paint on the reader route during the navigate->unmount gap
+      // (the source is now active, but the type+target gate would still match until
+      // InboxScreen's unmount cleanup runs). Defense in depth over unmount timing.
+      setTriagePanel(null);
       void navigate({ to: "/source/$id", params: { id: selId } });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
-  }, [selId, busy, navigate, refresh]);
+  }, [selId, busy, navigate, refresh, setTriagePanel]);
 
   const onOpenExistingDuplicate = useCallback(
     async (match: SourceDuplicateSummary) => {
@@ -913,6 +653,10 @@ export function InboxScreen() {
           // The write landed → the suggested band is now the current band, so the
           // chip would be a no-op; drop it (suppress-when-equal, no clobber).
           dropSuggestion(selId);
+          // The relocated triage picker writes priority from inside the shell
+          // inspector; refresh it so its own Properties priority value re-syncs
+          // (the inspector fetches independently and would otherwise lag a band).
+          requestInspectorRefresh();
         } else {
           // The item left the inbox since render — surface cleanly, drop the chip.
           setError("Inbox item is no longer available.");
@@ -998,6 +742,54 @@ export function InboxScreen() {
     },
     [selId, busy, assignedPlacements, placementKey],
   );
+
+  // Whether the cursor row's suggested placement concept has already been assigned
+  // this session (drives the "assigned" confirmed state in the relocated section).
+  const triagePlacementAssigned =
+    selId && cursorSuggestion?.placement
+      ? assignedPlacements.has(placementKey(selId, cursorSuggestion.placement.conceptId))
+      : false;
+
+  // Publish the triage payload for the single selected inbox source so the shell
+  // inspector renders the relocated triage section (above Properties). Cleared when
+  // nothing single is selected, in multi-select, or while detail is catching up to
+  // the cursor — and on unmount (below) — so the section never leaks to other routes.
+  useEffect(() => {
+    if (!selId || multiSelect || !detail || detail.summary.id !== selId) {
+      setTriagePanel(null);
+      return;
+    }
+    setTriagePanel({
+      targetId: detail.summary.id,
+      priority: detail.summary.priority,
+      busy,
+      suggestion: suggestions.get(selId) ?? "pending",
+      placementAssigned: triagePlacementAssigned,
+      triageHighlighted,
+      onReadNow,
+      onTriage,
+      onPickPriority,
+      onAcceptSuggestion,
+      onAcceptPlacement,
+    });
+  }, [
+    selId,
+    multiSelect,
+    detail,
+    busy,
+    suggestions,
+    triagePlacementAssigned,
+    triageHighlighted,
+    onReadNow,
+    onTriage,
+    onPickPriority,
+    onAcceptSuggestion,
+    onAcceptPlacement,
+    setTriagePanel,
+  ]);
+
+  // Clear the published payload on unmount so triage never shows on other routes.
+  useEffect(() => () => setTriagePanel(null), [setTriagePanel]);
 
   // --- Selection / grouping / bulk dispatch (T126 — U5) ---
 
@@ -1596,26 +1388,7 @@ export function InboxScreen() {
                 onApplySuggestions={() => void onBulkApplySuggestions()}
               />
             ) : detail && detail.summary.id === selId ? (
-              <PreviewPane
-                detail={detail}
-                busy={busy}
-                suggestion={suggestions.get(selId) ?? "pending"}
-                placementAssigned={
-                  selId && cursorSuggestion?.placement
-                    ? assignedPlacements.has(
-                        placementKey(selId, cursorSuggestion.placement.conceptId),
-                      )
-                    : false
-                }
-                onReadNow={onReadNow}
-                onTriage={onTriage}
-                onSetPriority={onPickPriority}
-                onAcceptSuggestion={onAcceptSuggestion}
-                onAcceptPlacement={(conceptId) => void onAcceptPlacement(conceptId)}
-                triageActionsRef={triageActionsRef}
-                readNowButtonRef={readNowButtonRef}
-                triageHighlighted={triageHighlighted}
-              />
+              <PreviewPane detail={detail} />
             ) : (
               <div className="flex flex-1 items-center justify-center text-sm text-text-3">
                 Loading…

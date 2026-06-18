@@ -42,6 +42,7 @@ import { WelcomeModal } from "../onboarding/WelcomeModal";
 import { applyTheme, getStoredTheme, type Theme } from "../theme";
 import { CheatSheet } from "./CheatSheet";
 import { CommandPalette } from "./CommandPalette";
+import { InboxTriagePanelProvider } from "./inboxTriagePanel";
 import { Kbd } from "./Kbd";
 import {
   type NavItem,
@@ -742,9 +743,11 @@ function ShellInner() {
 export function Shell() {
   return (
     <SelectionProvider>
-      <StatusHintProvider>
-        <ShellInner />
-      </StatusHintProvider>
+      <InboxTriagePanelProvider>
+        <StatusHintProvider>
+          <ShellInner />
+        </StatusHintProvider>
+      </InboxTriagePanelProvider>
     </SelectionProvider>
   );
 }

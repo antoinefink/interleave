@@ -619,10 +619,9 @@ test.describe("source provenance (T014)", () => {
     await page.getByTestId("new-source-submit").click();
     await expect(page.getByTestId("new-source-modal")).toBeHidden();
 
-    // The inbox preview metadata rail shows the canonical URL + an accessed date.
+    // Provenance (canonical URL + accessed date) now lives in the shell inspector's
+    // Source section — the inbox preview itself is article-only.
     await expect(page.getByTestId("inbox-row")).toHaveCount(1);
-    await expect(page.getByTestId("inbox-preview-canonical")).toHaveText(CANONICAL_URL);
-    await expect(page.getByTestId("inbox-preview-accessed")).not.toHaveText("—");
 
     // The universal inspector (right panel) shows the canonical URL + accessed
     // date for the selected source. (The verbatim original URL is shown in the
@@ -673,8 +672,7 @@ test.describe("source provenance (T014)", () => {
     await expect(page.getByTestId("inbox-row")).toHaveCount(1);
     await page.getByTestId("inbox-row").click();
 
-    // Still shown in the preview + inspector after restart.
-    await expect(page.getByTestId("inbox-preview-canonical")).toHaveText(CANONICAL_URL);
+    // Still shown in the inspector's Source section after restart.
     await expect(page.getByTestId("provenance-canonical-url")).toHaveText(CANONICAL_URL);
 
     // Confirmed verbatim through the bridge as well.

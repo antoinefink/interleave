@@ -53,10 +53,17 @@ import {
   type TopicKnowledgeStateSubject,
   type TopicUnfallowRequest,
 } from "../../lib/appApi";
+// The inbox triage section is screen-specific UI; the inspector renders it only when
+// gated to an inbox source (see InspectorBody). Importing a `pages/` section into this
+// shared component mirrors the established precedent of `components/queue/DoneIntentMenu`
+// importing from `pages/queue/`. The cross-tree state channel itself stays UI-only via
+// the shell-level `inboxTriagePanel` context (no shell -> pages dependency).
+import { InboxTriageSection } from "../../pages/inbox/InboxTriageSection";
 import { useNavigateToLocation } from "../../reader/navigateToLocation";
 import { ReviewModeButton } from "../../review/ReviewModeButton";
 import "../../review/review.css";
 import { isScopeActive } from "../../shell/activeScope";
+import { useInboxTriagePanel } from "../../shell/inboxTriagePanel";
 import { useSelection } from "../../shell/selection";
 import { ConflictSection } from "../ConflictSection";
 import { ExternalUrlLink } from "../ExternalUrlLink";
@@ -2317,6 +2324,17 @@ function InspectorBody({
     review,
     lifetime,
   } = data;
+  // The relocated inbox triage cluster (buttons + provenance-aware priority picker
+  // + suggestions) renders above Properties ONLY when an inbox source with a
+  // matching published payload is inspected — keeping inbox behavior off every
+  // other route that shares this universal inspector. When active, the generic
+  // Properties "Set priority" row is suppressed to avoid a duplicate control
+  // (the relocated picker is the provenance-aware one — see InboxTriageSection).
+  const { panel: inboxTriagePanel, registerSection, registerReadNowButton } = useInboxTriagePanel();
+  const showInboxTriage =
+    inboxTriagePanel !== null &&
+    inboxTriagePanel.targetId === element.id &&
+    element.type === "source";
   const [lineageDeletedVisibility, setLineageDeletedVisibility] = useState<{
     elementId: string;
     showDeleted: boolean;
@@ -2361,6 +2379,16 @@ function InspectorBody({
         </div>
       </div>
 
+      {/* Inbox triage (relocated from the inbox preview rail) — gated to an inbox
+          source with a matching published payload, above Properties. */}
+      {showInboxTriage && inboxTriagePanel ? (
+        <InboxTriageSection
+          panel={inboxTriagePanel}
+          registerSection={registerSection}
+          registerReadNowButton={registerReadNowButton}
+        />
+      ) : null}
+
       {/* Properties: the editable control surface. */}
       <div className="insp-sec">
         <div className="insp-sec__title">Properties</div>
@@ -2380,15 +2408,19 @@ function InspectorBody({
               out ↑ A B C D ↓ on one calm line. In the 2-column MetaRow the ~147px
               value cell is too narrow and the last band ("D") clips at the fixed
               296px inspector edge — so the label sits on its own line and the
-              control spans below it. The control's own flex-wrap is the safety net. */}
-          <div className="meta-row meta-row--stack">
-            <span className="meta-key">Set priority</span>
-            <PriorityControl
-              priority={element.priority}
-              busy={priorityBusy}
-              onSetPriority={onSetPriority}
-            />
-          </div>
+              control spans below it. The control's own flex-wrap is the safety net.
+              Suppressed for an inbox source whose triage section is active above —
+              that section's picker is the provenance-aware one (avoids a duplicate). */}
+          {showInboxTriage ? null : (
+            <div className="meta-row meta-row--stack">
+              <span className="meta-key">Set priority</span>
+              <PriorityControl
+                priority={element.priority}
+                busy={priorityBusy}
+                onSetPriority={onSetPriority}
+              />
+            </div>
+          )}
           <MetaRow k="Due">
             <span data-testid="meta-due">{fmtDate(element.dueAt)}</span>
           </MetaRow>

@@ -216,7 +216,49 @@ vi.mock("../../lib/appApi", async () => {
 });
 
 import { hasActiveScope, isScopeActive } from "../../shell/activeScope";
+import { InboxTriagePanelProvider, useInboxTriagePanel } from "../../shell/inboxTriagePanel";
 import { InboxScreen } from "./InboxScreen";
+import { InboxTriageSection } from "./InboxTriageSection";
+
+/**
+ * Test harness: the triage cluster now renders in the shell inspector, not the
+ * inbox preview. The inspector is not mounted here, so this probe renders the real
+ * `InboxTriageSection` from the payload `InboxScreen` publishes — giving the same
+ * triage testids in the DOM, driven by the real handlers/state. This keeps the
+ * triage button / picker / suggestion / reveal tests exercising the live code path.
+ */
+function TriagePanelProbe() {
+  const { panel, registerSection, registerReadNowButton } = useInboxTriagePanel();
+  if (!panel) return null;
+  return (
+    <InboxTriageSection
+      panel={panel}
+      registerSection={registerSection}
+      registerReadNowButton={registerReadNowButton}
+    />
+  );
+}
+
+function InboxHarness() {
+  return (
+    <InboxTriagePanelProvider>
+      <InboxScreen />
+      <TriagePanelProbe />
+    </InboxTriagePanelProvider>
+  );
+}
+
+// Mounts InboxScreen conditionally under a persistent provider + probe, so a test
+// can unmount InboxScreen (mount=false) while the probe stays mounted to observe
+// that the published triage payload is cleared on unmount (no cross-route leak).
+function ConditionalInboxHarness({ mount }: { mount: boolean }) {
+  return (
+    <InboxTriagePanelProvider>
+      {mount ? <InboxScreen /> : null}
+      <TriagePanelProbe />
+    </InboxTriagePanelProvider>
+  );
+}
 
 const items = [
   {
@@ -339,7 +381,7 @@ beforeEach(() => {
 describe("InboxScreen", () => {
   it("renders the desktop-only fallback without the bridge", () => {
     h.desktop = false;
-    const { getByTestId, getByText } = render(<InboxScreen />);
+    const { getByTestId, getByText } = render(<InboxHarness />);
 
     expect(getByTestId("route-inbox")).toBeInTheDocument();
     expect(getByText(/open the Electron app/i)).toBeInTheDocument();
@@ -347,7 +389,7 @@ describe("InboxScreen", () => {
   });
 
   it("loads inbox rows, selects the first item, and renders its preview", async () => {
-    const { getAllByTestId, getByTestId, findByTestId } = render(<InboxScreen />);
+    const { getAllByTestId, getByTestId, findByTestId } = render(<InboxHarness />);
 
     expect(await findByTestId("inbox-list")).toBeInTheDocument();
     expect(getAllByTestId("inbox-row")).toHaveLength(2);
@@ -358,12 +400,8 @@ describe("InboxScreen", () => {
     expect(getByTestId("inbox-preview-title")).toHaveTextContent("Inbox source");
     expect(getByTestId("inbox-preview-url")).toHaveAttribute("href", "https://example.com/article");
     expect(getByTestId("inbox-preview-url")).toHaveAttribute("target", "_blank");
-    expect(getByTestId("inbox-preview-canonical")).toHaveAttribute(
-      "href",
-      "https://example.com/article",
-    );
-    expect(getByTestId("inbox-preview-canonical")).toHaveAttribute("target", "_blank");
-    expect(getByTestId("inbox-preview-canonical")).toHaveClass("external-url-link");
+    // Canonical/author/accessed metadata moved to the shell inspector's Source
+    // section (covered by Inspector.test.tsx); the inbox preview is article-only.
     expect(getByTestId("mock-source-editor")).toHaveTextContent("Formatted article");
     expect(getByTestId("mock-source-editor")).toHaveTextContent("Formatted tail sentinel");
     expect(getByTestId("mock-source-editor")).toHaveClass("inbox-preview-reader");
@@ -394,7 +432,7 @@ describe("InboxScreen", () => {
       ],
     });
 
-    const { findByTestId, getAllByTestId } = render(<InboxScreen />);
+    const { findByTestId, getAllByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     const rows = getAllByTestId("inbox-row");
@@ -433,14 +471,18 @@ describe("InboxScreen", () => {
   });
 
   it("shows and focuses the selected item's triage actions when the balance banner action is clicked", async () => {
-    const { getByTestId, findByTestId } = render(<InboxScreen />);
+    const { getByTestId, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-read-now");
     expect(getByTestId("mock-balance-triage-inbox")).toHaveTextContent("Show triage actions");
     fireEvent.click(getByTestId("mock-balance-triage-inbox"));
 
-    expect(getByTestId("inbox-triage-actions")).toHaveAttribute("data-highlighted", "true");
-    expect(getByTestId("inbox-read-now")).toHaveFocus();
+    // Focus is set synchronously by the reveal; the highlight rides the payload
+    // re-publish (InboxScreen → inspector section), so it can land a cycle later.
+    await waitFor(() => expect(getByTestId("inbox-read-now")).toHaveFocus());
+    await waitFor(() =>
+      expect(getByTestId("inbox-triage-actions")).toHaveAttribute("data-highlighted", "true"),
+    );
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
   });
 
@@ -451,7 +493,7 @@ describe("InboxScreen", () => {
         resolveDetail = resolve;
       }),
     );
-    const { getByTestId, findByTestId } = render(<InboxScreen />);
+    const { getByTestId, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(getByTestId("mock-balance-triage-inbox"));
@@ -459,7 +501,11 @@ describe("InboxScreen", () => {
 
     await findByTestId("inbox-read-now");
     await waitFor(() => expect(getByTestId("inbox-read-now")).toHaveFocus());
-    expect(getByTestId("inbox-triage-actions")).toHaveAttribute("data-highlighted", "true");
+    // The highlight flows through the payload re-publish (InboxScreen → inspector
+    // section), so it lands a render cycle after focus — wait for it.
+    await waitFor(() =>
+      expect(getByTestId("inbox-triage-actions")).toHaveAttribute("data-highlighted", "true"),
+    );
   });
 
   it("does not replay a pending balance banner triage click onto a newly selected item", async () => {
@@ -471,7 +517,7 @@ describe("InboxScreen", () => {
         }),
       )
       .mockResolvedValueOnce({ detail: detail("src-2") });
-    const { getAllByTestId, getByTestId, findByTestId } = render(<InboxScreen />);
+    const { getAllByTestId, getByTestId, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(getByTestId("mock-balance-triage-inbox"));
@@ -488,8 +534,22 @@ describe("InboxScreen", () => {
     expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
   });
 
+  it("clears the published triage payload when InboxScreen unmounts (no cross-route leak)", async () => {
+    const { findByTestId, queryByTestId, rerender } = render(
+      <ConditionalInboxHarness mount={true} />,
+    );
+
+    // The payload publishes for the selected inbox source -> the probe renders the section.
+    await findByTestId("inbox-read-now");
+
+    // Unmounting InboxScreen (e.g. navigating to another route) must clear the payload
+    // via its cleanup effect, so the triage section can never paint on other routes.
+    rerender(<ConditionalInboxHarness mount={false} />);
+    await waitFor(() => expect(queryByTestId("inbox-read-now")).not.toBeInTheDocument());
+  });
+
   it("reads now by activating the selected item and navigating to the source reader", async () => {
-    const { getByTestId, findByTestId, getByRole } = render(<InboxScreen />);
+    const { getByTestId, findByTestId, getByRole } = render(<InboxHarness />);
 
     await findByTestId("inbox-read-now");
     expect(getByRole("button", { name: /read now/i })).toBeInTheDocument();
@@ -506,7 +566,7 @@ describe("InboxScreen", () => {
   });
 
   it("queues the selected item soon without navigating away from inbox", async () => {
-    const { getByTestId, findByTestId } = render(<InboxScreen />);
+    const { getByTestId, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-queue-soon");
     h.listInbox.mockClear();
@@ -523,7 +583,7 @@ describe("InboxScreen", () => {
   });
 
   it("keeps a queue-soon refresh error visible and removes the acted row locally", async () => {
-    const { getByTestId, findByTestId, queryByText } = render(<InboxScreen />);
+    const { getByTestId, findByTestId, queryByText } = render(<InboxHarness />);
 
     await findByTestId("inbox-queue-soon");
     h.listInbox.mockClear();
@@ -542,7 +602,7 @@ describe("InboxScreen", () => {
         resolveTriage = resolve;
       }),
     );
-    const { getAllByTestId, getByTestId, findByTestId } = render(<InboxScreen />);
+    const { getAllByTestId, getByTestId, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-queue-soon");
     h.listInbox.mockClear();
@@ -569,7 +629,7 @@ describe("InboxScreen", () => {
         resolveTriage = resolve;
       }),
     );
-    const { findByTestId } = render(<InboxScreen />);
+    const { findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-queue-soon");
     fireEvent.keyDown(window, { key: "2" });
@@ -590,7 +650,7 @@ describe("InboxScreen", () => {
       },
     });
 
-    const { findByTestId, queryByTestId } = render(<InboxScreen />);
+    const { findByTestId, queryByTestId } = render(<InboxHarness />);
 
     expect(await findByTestId("inbox-preview-body")).toHaveTextContent(
       "Full second paragraph with every word.",
@@ -608,7 +668,7 @@ describe("InboxScreen", () => {
       },
     });
 
-    const { findByTestId, queryByTestId } = render(<InboxScreen />);
+    const { findByTestId, queryByTestId } = render(<InboxHarness />);
 
     expect(await findByTestId("inbox-preview-body")).toHaveTextContent(
       "Full text survives malformed formatted JSON.",
@@ -617,7 +677,7 @@ describe("InboxScreen", () => {
   });
 
   it("reprioritizes the selected item through the bridge", async () => {
-    const { getByTestId, findByTestId } = render(<InboxScreen />);
+    const { getByTestId, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-priority-A");
     await waitFor(() => expect(h.getInboxItem).toHaveBeenCalledWith({ id: "src-1" }));
@@ -641,7 +701,7 @@ describe("InboxScreen", () => {
 
   it("uses the 1 shortcut for Read now and does not navigate when activation fails", async () => {
     h.triageInboxItem.mockRejectedValueOnce(new Error("cannot activate"));
-    const { findByTestId } = render(<InboxScreen />);
+    const { findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-read-now");
     fireEvent.keyDown(window, { key: "1" });
@@ -651,7 +711,7 @@ describe("InboxScreen", () => {
   });
 
   it("uses the 2 shortcut for Queue soon and does not navigate", async () => {
-    const { findByTestId } = render(<InboxScreen />);
+    const { findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-queue-soon");
     h.listInbox.mockClear();
@@ -669,7 +729,7 @@ describe("InboxScreen", () => {
 
   it("does not navigate when Read now returns a stale inbox result", async () => {
     h.triageInboxItem.mockResolvedValueOnce({ item: null, deleted: false });
-    const { findByTestId, getByTestId } = render(<InboxScreen />);
+    const { findByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-read-now");
     h.listInbox.mockClear();
@@ -681,7 +741,7 @@ describe("InboxScreen", () => {
   });
 
   it("opens import modals and refreshes after child imports", async () => {
-    const { getByTestId, findByTestId } = render(<InboxScreen />);
+    const { getByTestId, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-import-paste-text");
     fireEvent.click(getByTestId("inbox-import-paste-text"));
@@ -707,7 +767,7 @@ describe("InboxScreen", () => {
   });
 
   it("opens an existing URL duplicate by closing the modal and navigating to its source", async () => {
-    const { getByTestId, findByTestId, queryByTestId } = render(<InboxScreen />);
+    const { getByTestId, findByTestId, queryByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-import-paste-url");
     fireEvent.click(getByTestId("inbox-import-paste-url"));
@@ -732,7 +792,7 @@ describe("InboxScreen", () => {
       item: { ...items[0], id: "existing-inbox-1", status: "active" },
       deleted: false,
     });
-    const { getByTestId, findByTestId, queryByTestId } = render(<InboxScreen />);
+    const { getByTestId, findByTestId, queryByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-import-paste-url");
     fireEvent.click(getByTestId("inbox-import-paste-url"));
@@ -754,7 +814,7 @@ describe("InboxScreen", () => {
   });
 
   it("marks enabled import options as clickable", async () => {
-    const { getByTestId, findByTestId } = render(<InboxScreen />);
+    const { getByTestId, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-import-paste-url");
     expect(getByTestId("inbox-import-paste-url")).toHaveClass("cursor-pointer");
@@ -763,7 +823,7 @@ describe("InboxScreen", () => {
   });
 
   it("imports PDF/media and routes browser capture to settings", async () => {
-    const { getByTestId, findByTestId } = render(<InboxScreen />);
+    const { getByTestId, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-import-import-pdf");
     fireEvent.click(getByTestId("inbox-import-paste-text"));
@@ -790,7 +850,7 @@ describe("InboxScreen", () => {
 
   it("shows friendly PDF import errors", async () => {
     h.importPdfSource.mockRejectedValueOnce(new Error("encrypted: locked"));
-    const { getByTestId, findByTestId } = render(<InboxScreen />);
+    const { getByTestId, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-import-import-pdf");
     fireEvent.click(getByTestId("inbox-import-import-pdf"));
@@ -799,7 +859,7 @@ describe("InboxScreen", () => {
 
   it("renders inbox zero when there are no items", async () => {
     h.listInbox.mockResolvedValue({ items: [] });
-    const { findByTestId } = render(<InboxScreen />);
+    const { findByTestId } = render(<InboxHarness />);
 
     expect(await findByTestId("inbox-empty")).toBeInTheDocument();
   });
@@ -902,7 +962,7 @@ function rowById(container: HTMLElement, id: string): HTMLElement {
 describe("InboxScreen bulk triage (T126)", () => {
   it("buckets rows by origin, domain, and type with a stable Other group", async () => {
     mountBulk();
-    const { findAllByTestId, getAllByTestId, getByTestId } = render(<InboxScreen />);
+    const { findAllByTestId, getAllByTestId, getByTestId } = render(<InboxHarness />);
 
     await findAllByTestId("inbox-row");
     // Origin axis: URL / Manual / Other (null origin -> Other), counts correct.
@@ -924,7 +984,7 @@ describe("InboxScreen bulk triage (T126)", () => {
 
   it("renders a single-item domain group", async () => {
     mountBulk();
-    const { findByTestId, getByTestId, getAllByTestId } = render(<InboxScreen />);
+    const { findByTestId, getByTestId, getAllByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(getByTestId("inbox-group-by-domain"));
@@ -934,7 +994,7 @@ describe("InboxScreen bulk triage (T126)", () => {
 
   it("click selects a single row; the bulk panel stays hidden at size 1", async () => {
     mountBulk();
-    const { container, findByTestId, getByTestId, queryByTestId } = render(<InboxScreen />);
+    const { container, findByTestId, getByTestId, queryByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(rowById(container, "u1"));
@@ -947,7 +1007,7 @@ describe("InboxScreen bulk triage (T126)", () => {
 
   it("shift-click selects the contiguous range from the anchor", async () => {
     mountBulk();
-    const { container, findByTestId, getByTestId } = render(<InboxScreen />);
+    const { container, findByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(rowById(container, "u1"));
@@ -963,7 +1023,7 @@ describe("InboxScreen bulk triage (T126)", () => {
 
   it("ctrl/cmd-click toggles a single id in and out of the set", async () => {
     mountBulk();
-    const { container, findByTestId } = render(<InboxScreen />);
+    const { container, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(rowById(container, "u1"));
@@ -977,7 +1037,7 @@ describe("InboxScreen bulk triage (T126)", () => {
 
   it("select-group selects every id in the group", async () => {
     mountBulk();
-    const { container, findByTestId, getAllByTestId, getByTestId } = render(<InboxScreen />);
+    const { container, findByTestId, getAllByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     // The first group header (URL) — select its two rows.
@@ -990,7 +1050,7 @@ describe("InboxScreen bulk triage (T126)", () => {
 
   it("select-all selects the whole inbox and Esc clears it", async () => {
     mountBulk();
-    const { container, findByTestId, getByTestId, queryByTestId } = render(<InboxScreen />);
+    const { container, findByTestId, getByTestId, queryByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(getByTestId("inbox-select-all"));
@@ -1003,7 +1063,7 @@ describe("InboxScreen bulk triage (T126)", () => {
 
   it("switching the group-by axis keeps the selected id set", async () => {
     mountBulk();
-    const { container, findByTestId, getByTestId } = render(<InboxScreen />);
+    const { container, findByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(rowById(container, "u1"));
@@ -1019,7 +1079,7 @@ describe("InboxScreen bulk triage (T126)", () => {
 
   it("size>=2 shows the bulk panel and suppresses the per-cursor detail fetch", async () => {
     mountBulk();
-    const { container, findByTestId, getByTestId, queryByTestId } = render(<InboxScreen />);
+    const { container, findByTestId, getByTestId, queryByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(rowById(container, "u1"));
@@ -1033,9 +1093,25 @@ describe("InboxScreen bulk triage (T126)", () => {
     expect(h.getInboxItem).not.toHaveBeenCalled();
   });
 
+  it("clears the relocated triage payload when entering multi-select", async () => {
+    mountBulk();
+    const { container, findByTestId, getByTestId, queryByTestId } = render(<InboxHarness />);
+
+    await findByTestId("inbox-list");
+    fireEvent.click(rowById(container, "u1"));
+    // Single selection -> the inspector triage section is published (probe renders it).
+    await findByTestId("inbox-read-now");
+
+    // Extend to two -> multi-select -> the payload is cleared, so triage disappears
+    // (it must never show while the bulk panel owns the surface).
+    fireEvent.click(rowById(container, "u2"), { metaKey: true });
+    expect(getByTestId("inbox-bulk-panel")).toBeInTheDocument();
+    expect(queryByTestId("inbox-read-now")).not.toBeInTheDocument();
+  });
+
   it("reverts to the cursor row's detail when the selection empties to 0", async () => {
     mountBulk();
-    const { container, findByTestId, getByTestId, queryByTestId } = render(<InboxScreen />);
+    const { container, findByTestId, getByTestId, queryByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(rowById(container, "u1"));
@@ -1057,7 +1133,7 @@ describe("InboxScreen bulk triage (T126)", () => {
       skipped: [],
       errored: [],
     });
-    const { container, findByTestId, getByTestId } = render(<InboxScreen />);
+    const { container, findByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(getByTestId("inbox-select-all"));
@@ -1077,7 +1153,7 @@ describe("InboxScreen bulk triage (T126)", () => {
 
   it("clicking a priority chip ARMS it without firing any IPC call", async () => {
     mountBulk();
-    const { findByTestId, getAllByTestId, getByTestId } = render(<InboxScreen />);
+    const { findByTestId, getAllByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(getAllByTestId("inbox-select-group")[0] as HTMLElement); // URL group (u1,u2)
@@ -1101,7 +1177,7 @@ describe("InboxScreen bulk triage (T126)", () => {
       skipped: [],
       errored: [],
     });
-    const { findByTestId, getAllByTestId, getByTestId } = render(<InboxScreen />);
+    const { findByTestId, getAllByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(getAllByTestId("inbox-select-group")[0] as HTMLElement); // URL group (u1,u2)
@@ -1128,7 +1204,7 @@ describe("InboxScreen bulk triage (T126)", () => {
       skipped: [],
       errored: [],
     });
-    const { container, findByTestId, getAllByTestId, getByTestId } = render(<InboxScreen />);
+    const { container, findByTestId, getAllByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(getAllByTestId("inbox-select-group")[0] as HTMLElement); // URL group (u1,u2)
@@ -1164,7 +1240,7 @@ describe("InboxScreen bulk triage (T126)", () => {
       ],
       errored: [],
     });
-    const { findByTestId, getByTestId } = render(<InboxScreen />);
+    const { findByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(getByTestId("inbox-select-all"));
@@ -1175,7 +1251,7 @@ describe("InboxScreen bulk triage (T126)", () => {
 
   it("does not show the bulk panel for an empty selection", async () => {
     mountBulk();
-    const { findByTestId, queryByTestId } = render(<InboxScreen />);
+    const { findByTestId, queryByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     expect(queryByTestId("inbox-bulk-panel")).not.toBeInTheDocument();
@@ -1192,7 +1268,7 @@ describe("InboxScreen bulk triage (T126)", () => {
       errored: [],
     });
     const { container, findByTestId, getAllByTestId, getByTestId, queryByTestId } = render(
-      <InboxScreen />,
+      <InboxHarness />,
     );
 
     await findByTestId("inbox-list");
@@ -1218,7 +1294,7 @@ describe("InboxScreen bulk triage (T126)", () => {
       skipped: [],
       errored: [],
     });
-    const { findByTestId, getByTestId } = render(<InboxScreen />);
+    const { findByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(getByTestId("inbox-select-all"));
@@ -1238,7 +1314,7 @@ describe("InboxScreen bulk triage (T126)", () => {
       skipped: [],
       errored: [],
     });
-    const { findByTestId, getAllByTestId, getByTestId } = render(<InboxScreen />);
+    const { findByTestId, getAllByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(getAllByTestId("inbox-select-group")[0] as HTMLElement); // URL group
@@ -1263,7 +1339,7 @@ describe("InboxScreen bulk triage (T126)", () => {
       skipped: [{ id: "z", reason: "deleted" }],
       errored: [],
     });
-    const { findByTestId, getAllByTestId, getByTestId } = render(<InboxScreen />);
+    const { findByTestId, getAllByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(getAllByTestId("inbox-select-group")[0] as HTMLElement);
@@ -1288,7 +1364,7 @@ describe("InboxScreen bulk triage (T126)", () => {
     h.bulkTriageInboxUndo.mockResolvedValue({ undone: true, count: 2 });
     const undoListener = vi.fn();
     window.addEventListener("interleave:undo", undoListener);
-    const { findByTestId, getByTestId, queryByTestId } = render(<InboxScreen />);
+    const { findByTestId, getByTestId, queryByTestId } = render(<InboxHarness />);
 
     try {
       await findByTestId("inbox-list");
@@ -1327,7 +1403,7 @@ describe("InboxScreen bulk triage (T126)", () => {
     });
     const undoListener = vi.fn();
     window.addEventListener("interleave:undo", undoListener);
-    const { findByTestId, getByTestId } = render(<InboxScreen />);
+    const { findByTestId, getByTestId } = render(<InboxHarness />);
 
     try {
       await findByTestId("inbox-list");
@@ -1364,7 +1440,7 @@ describe("InboxScreen bulk triage (T126)", () => {
         resolveUndo = resolve;
       }),
     );
-    const { findByTestId, getByTestId } = render(<InboxScreen />);
+    const { findByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(getByTestId("inbox-select-all"));
@@ -1389,7 +1465,7 @@ describe("InboxScreen bulk triage (T126)", () => {
       skipped: [],
       errored: [{ id: "u1", error: "disk on fire" }],
     });
-    const { container, findByTestId, getAllByTestId, getByTestId } = render(<InboxScreen />);
+    const { container, findByTestId, getAllByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     // Select the two URL rows (u1, u2), then fire a REMOVING verb (Queue soon).
@@ -1431,7 +1507,7 @@ describe("InboxScreen keyboard triage scope (T126 — U6)", () => {
 
   it("registers the `triage` active scope while the inbox list is shown so global keys defer", async () => {
     mountBulk();
-    const { findByTestId } = render(<InboxScreen />);
+    const { findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     // The inbox is the active triage surface — the shell defers `o`/`u`/`+`/`-`.
@@ -1441,7 +1517,7 @@ describe("InboxScreen keyboard triage scope (T126 — U6)", () => {
 
   it("⌘Z is NOT bound by the inbox scope — it never fires a bulk undo (global undo always works)", async () => {
     mountBulk();
-    const { container, findByTestId } = render(<InboxScreen />);
+    const { container, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.click(rowById(container, "u1"));
@@ -1464,7 +1540,7 @@ describe("InboxScreen keyboard triage scope (T126 — U6)", () => {
       skipped: [],
       errored: [],
     });
-    const { findByTestId } = render(<InboxScreen />);
+    const { findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     // One keypress selects the whole 30-item group (NOT 30 keypresses), then one
@@ -1491,7 +1567,7 @@ describe("InboxScreen keyboard triage scope (T126 — U6)", () => {
       skipped: [],
       errored: [],
     });
-    const { findByTestId } = render(<InboxScreen />);
+    const { findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.keyDown(window, { key: "s" }); // select the whole group
@@ -1509,7 +1585,7 @@ describe("InboxScreen keyboard triage scope (T126 — U6)", () => {
 
   it("with an EMPTY selection a verb key acts on exactly the cursor row (no widening)", async () => {
     mountBulk();
-    const { findByTestId } = render(<InboxScreen />);
+    const { findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     // No multi-select — the verb falls back to the single cursor row via the
@@ -1529,7 +1605,7 @@ describe("InboxScreen keyboard triage scope (T126 — U6)", () => {
   it("the empty-selection 1 key reads the cursor row now and falls back to per-item accept", async () => {
     mountBulk();
     h.triageInboxItem.mockResolvedValue({ item: { ...bulkRows[0] }, deleted: false });
-    const { findByTestId } = render(<InboxScreen />);
+    const { findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.keyDown(window, { key: "1" }); // Read now (cursor row)
@@ -1545,7 +1621,7 @@ describe("InboxScreen keyboard triage scope (T126 — U6)", () => {
 
   it("j / k move the roving cursor without changing the selection", async () => {
     mountBulk();
-    const { container, findByTestId } = render(<InboxScreen />);
+    const { container, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     // The first row (u1) is the initial cursor.
@@ -1563,7 +1639,7 @@ describe("InboxScreen keyboard triage scope (T126 — U6)", () => {
 
   it("x toggles the cursor row into the set; ⇧j extends the range", async () => {
     mountBulk();
-    const { container, findByTestId, getByTestId } = render(<InboxScreen />);
+    const { container, findByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     await waitFor(() => expect(rowById(container, "u1")).toHaveAttribute("data-cursor", "true"));
@@ -1578,7 +1654,7 @@ describe("InboxScreen keyboard triage scope (T126 — U6)", () => {
 
   it("⌘A selects all and Esc clears via the keyboard", async () => {
     mountBulk();
-    const { container, findByTestId, getByTestId, queryByTestId } = render(<InboxScreen />);
+    const { container, findByTestId, getByTestId, queryByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     fireEvent.keyDown(window, { key: "a", metaKey: true });
@@ -1626,7 +1702,7 @@ describe("InboxScreen triage suggestions (T127 — U6)", () => {
         { id: "src-2", suggestion: { kind: "insufficient_signal", reason: "no_signal_fired" } },
       ],
     });
-    const { container, findByTestId, getAllByTestId } = render(<InboxScreen />);
+    const { container, findByTestId, getAllByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     // The suggested row carries the chip + the formatted justification line.
@@ -1656,7 +1732,7 @@ describe("InboxScreen triage suggestions (T127 — U6)", () => {
         resolveSuggest = resolve;
       }),
     );
-    const { container, findByTestId } = render(<InboxScreen />);
+    const { container, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     // In flight: the row shows the neutral pending placeholder, not a blank.
@@ -1683,7 +1759,7 @@ describe("InboxScreen triage suggestions (T127 — U6)", () => {
       item: { ...items[0], priority: 0.875 },
       deleted: false,
     });
-    const { container, findByTestId } = render(<InboxScreen />);
+    const { container, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     await waitFor(() =>
@@ -1719,7 +1795,7 @@ describe("InboxScreen triage suggestions (T127 — U6)", () => {
       item: { ...items[0], priority: 0.875 },
       deleted: false,
     });
-    const { findByTestId, queryByTestId } = render(<InboxScreen />);
+    const { findByTestId, queryByTestId } = render(<InboxHarness />);
 
     // The preview pane suggestion block carries the accept chip + the justification.
     const suggestion = await findByTestId("inbox-suggestion");
@@ -1752,7 +1828,7 @@ describe("InboxScreen triage suggestions (T127 — U6)", () => {
       item: { ...items[0], priority: 0.625 },
       deleted: false,
     });
-    const { findByTestId, getByTestId } = render(<InboxScreen />);
+    const { findByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-suggestion");
     fireEvent.click(getByTestId("inbox-priority-B"));
@@ -1780,7 +1856,7 @@ describe("InboxScreen triage suggestions (T127 — U6)", () => {
       item: { ...items[0], priority: 0.875 },
       deleted: false,
     });
-    const { findByTestId, getByTestId } = render(<InboxScreen />);
+    const { findByTestId, getByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-priority-A");
     await waitFor(() => expect(h.suggestTriage).toHaveBeenCalled());
@@ -1805,7 +1881,7 @@ describe("InboxScreen triage suggestions (T127 — U6)", () => {
         },
       ],
     });
-    const { findByTestId, getByTestId, queryByTestId } = render(<InboxScreen />);
+    const { findByTestId, getByTestId, queryByTestId } = render(<InboxHarness />);
 
     const accept = await findByTestId("inbox-suggestion-placement-accept");
     expect(accept).toHaveTextContent("Statistics");
@@ -1839,7 +1915,7 @@ describe("InboxScreen triage suggestions (T127 — U6)", () => {
         { id: "src-2", suggestion: bandedSuggestion("A") },
       ],
     });
-    const { container, findByTestId } = render(<InboxScreen />);
+    const { container, findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     // Move the cursor to src-2 (the band-A row whose live priority is already A).
@@ -1863,7 +1939,7 @@ describe("InboxScreen triage suggestions (T127 — U6)", () => {
 
   it("Enter is a no-op when the cursor row has no suggestion", async () => {
     // Default: every row is insufficient → Enter writes nothing.
-    const { findByTestId } = render(<InboxScreen />);
+    const { findByTestId } = render(<InboxHarness />);
 
     await findByTestId("inbox-list");
     await waitFor(() => expect(h.suggestTriage).toHaveBeenCalled());

@@ -732,6 +732,30 @@
   align-items: center;
   justify-content: space-between;
 }
+/* Reveal highlight for the relocated inbox triage section ("Show triage actions"
+   from the balance banner scrolls + focuses + briefly highlights it). Token-based
+   ring (matches --focus-ring) so it reads native in light + dark, with a gentle
+   pulse only when reduced-motion is not requested. */
+.insp-triage--highlighted {
+  border-radius: var(--r-md);
+  box-shadow: var(--focus-ring);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .insp-triage--highlighted {
+    animation: insp-triage-pulse 1.4s ease-in-out;
+  }
+}
+@keyframes insp-triage-pulse {
+  0%,
+  100% {
+    box-shadow: var(--focus-ring);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px var(--canvas),
+      0 0 0 6px var(--accent);
+  }
+}
 /* T123 content-staleness advisory line in the scheduler section. Advisory `--warn`
    severity (not `--danger`); informs that the source changed (resolution is T124). */
 .insp-reverify {
