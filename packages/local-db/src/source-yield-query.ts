@@ -507,9 +507,15 @@ export class SourceYieldQuery {
         }
       }
 
-      const blockSummary =
-        blockSummaryBySource.get(s.id as ElementId) ??
-        this.blockProcessing.getSourceProcessingSummary(s.id as ElementId);
+      // getSourceProcessingSummaryForMany is stale-tolerant: it always returns an entry
+      // for every input id (zero-summary when no blocks exist), so the fallback to the
+      // strict single-source path (which throws on a stale id) is dead and removed.
+      const blockSummary = blockSummaryBySource.get(s.id as ElementId) ?? {
+        terminalRatio: 1,
+        ignoredRatio: 0,
+        unresolvedBlocks: 0,
+        extractedOutputCount: 0,
+      };
 
       return this.assembleRow(
         s,
