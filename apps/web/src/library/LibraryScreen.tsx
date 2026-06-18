@@ -5,8 +5,9 @@
  * Rebuilt from the design kit (`design/kit/app/screen-library.jsx`) for the React
  * 19 renderer: a search input, Results/Map segmented tabs, the left `filterbar`
  * (type / concept / priority + stubbed maintenance rows), grouped + query-
- * highlighted `result` rows, a selection detail panel with the source `refblock`
- * and open-in-context, and the read-only `ConceptGraph` map tab.
+ * highlighted `result` rows (the selection's open action + provenance now render
+ * in the shared shell inspector, not a local detail column), and the read-only
+ * `ConceptGraph` map tab.
  *
  * Architecture (non-negotiable): UI only. Keyword search runs in SQLite FTS5
  * behind the typed `window.appApi.search.query` command; empty-query facet counters
@@ -27,14 +28,7 @@ import {
 } from "react";
 import { ConceptGraph } from "../components/ConceptGraph";
 import { Icon } from "../components/Icon";
-import {
-  ConceptTag,
-  Prio,
-  SchedulerChip,
-  TypeIcon,
-  typeLabel,
-} from "../components/inspector/primitives";
-import { RefBlock } from "../components/RefBlock";
+import { ConceptTag, Prio, TypeIcon, typeLabel } from "../components/inspector/primitives";
 import { AutoVirtualList } from "../components/VirtualList";
 import { CollectionExplorerModeSwitch } from "./CollectionExplorerModeSwitch";
 import { LibrarySearchField } from "./LibrarySearchField";
@@ -54,6 +48,7 @@ import {
 } from "../lib/appApi";
 import { ReviewModeButton } from "../review/ReviewModeButton";
 import "../review/review.css";
+import { useLibraryInspectorPanel } from "../shell/libraryInspectorPanel";
 import { useSelection } from "../shell/selection";
 import {
   explorerSearchParams,
@@ -115,22 +110,6 @@ function emptyQueryBrowseRequest(filters: {
     ...(filters.conceptFilter ? { conceptId: filters.conceptFilter } : {}),
     ...(filters.priorityFilter ? { priorityLabel: filters.priorityFilter } : {}),
   };
-}
-
-/** A due-state badge (overdue / today / soon) — matches the queue's `DueBadge`. */
-function DueBadge({ result }: { result: SearchResult }) {
-  const cls = !result.queueEligible
-    ? "badge--soft"
-    : result.due === "overdue"
-      ? "badge--overdue"
-      : result.due === "today"
-        ? "badge--due"
-        : "badge--soft";
-  return (
-    <span className={`badge ${cls}`} data-testid="library-detail-due">
-      {result.dueLabel}
-    </span>
-  );
 }
 
 /**
@@ -393,6 +372,7 @@ export function LibraryScreen() {
   const navigate = useNavigate();
   const routeSearch = useSearch({ strict: false }) as Record<string, unknown>;
   const { select } = useSelection();
+  const { setPanel: setLibraryPanel } = useLibraryInspectorPanel();
   const routeQuery = parseStringParam(routeSearch.q) ?? "";
   const routeType = parseSearchableType(routeSearch.type);
   const routeConceptId = parseStringParam(routeSearch.conceptId);
@@ -753,12 +733,36 @@ export function LibraryScreen() {
 
   const open = useCallback(
     (r: SearchResult) => {
+      // Clear the relocated inspector controls before navigating away (leak guard);
+      // the unmount cleanup below is the belt, this is the suspenders.
+      setLibraryPanel(null);
       if (r.type === "source") void navigate({ to: "/source/$id", params: { id: r.id } });
       else if (r.type === "extract") void navigate({ to: "/extract/$id", params: { id: r.id } });
       else if (r.type === "card") void navigate({ to: "/card/$id", params: { id: r.id } });
     },
-    [navigate],
+    [navigate, setLibraryPanel],
   );
+
+  // Publish the selected result's relocated Open control to the shared shell
+  // inspector (gated to the matching element there; cleared when nothing is
+  // selected). Search results are never parked, so `parked`/`parkedAt` are null.
+  useEffect(() => {
+    if (!selected) {
+      setLibraryPanel(null);
+      return;
+    }
+    setLibraryPanel({
+      targetId: selected.id,
+      openLabel: `Open ${typeLabel(selected.type).toLowerCase()}`,
+      onOpen: () => open(selected),
+      parkedAt: null,
+      notInQueueReason: selected.notInQueueReason,
+      parked: null,
+    });
+  }, [selected, open, setLibraryPanel]);
+
+  // Clear the published payload on unmount so the controls never show on other routes.
+  useEffect(() => () => setLibraryPanel(null), [setLibraryPanel]);
 
   // Stable row-select handler so the memoized `ResultRow` isn't invalidated by a new
   // closure identity on every render.
@@ -868,217 +872,145 @@ export function LibraryScreen() {
         />
 
         {tab === "results" ? (
-          <>
-            <div className="lib-results" data-testid="library-results">
-              <div className="lib-results__inner" ref={resultsRef}>
-                {error ? (
-                  <p className="lib-error" data-testid="library-error">
-                    {error}
-                  </p>
-                ) : null}
-                {/* Semantic-search affordance (T087): an HONEST hint, shown only when
+          <div className="lib-results" data-testid="library-results">
+            <div className="lib-results__inner" ref={resultsRef}>
+              {error ? (
+                <p className="lib-error" data-testid="library-error">
+                  {error}
+                </p>
+              ) : null}
+              {/* Semantic-search affordance (T087): an HONEST hint, shown only when
                     it tells the user something they can't already see. The happy path
                     (semantic ran, index healthy) shows NOTHING — the per-row `related`
                     badge already marks meaning-only hits, so a standing "semantic on"
                     banner is pure chrome. We surface a line only for the exceptions:
                     a genuine in-flight index build, honestly-degraded partial coverage,
                     or a keyword-only fallback (and why). Only shown once there is a query. */}
-                {hasQuery ? (
-                  indexBuilding ? (
-                    <div className="lib-hint" data-testid="library-semantic-building">
-                      {semanticIndex.embedded < semanticIndex.total
-                        ? `Indexing… ${semanticIndex.embedded} of ${semanticIndex.total}.`
-                        : "Indexing…"}
-                    </div>
-                  ) : searchMode === "semantic" ? (
-                    partialCoverage ? (
-                      <div className="lib-hint" data-testid="library-semantic-partial">
-                        Partial coverage — newer items may only match by keyword until indexing
-                        finishes.
-                      </div>
-                    ) : null
-                  ) : searchMode === "fts" || searchMode === "disabled" ? (
-                    <div className="lib-hint" data-testid="library-semantic-off">
-                      {keywordFallbackHint}
+              {hasQuery ? (
+                indexBuilding ? (
+                  <div className="lib-hint" data-testid="library-semantic-building">
+                    {semanticIndex.embedded < semanticIndex.total
+                      ? `Indexing… ${semanticIndex.embedded} of ${semanticIndex.total}.`
+                      : "Indexing…"}
+                  </div>
+                ) : searchMode === "semantic" ? (
+                  partialCoverage ? (
+                    <div className="lib-hint" data-testid="library-semantic-partial">
+                      Partial coverage — newer items may only match by keyword until indexing
+                      finishes.
                     </div>
                   ) : null
-                ) : null}
-                {/* T096 — launch a TARGETED review over the CARDS matching this query
+                ) : searchMode === "fts" || searchMode === "disabled" ? (
+                  <div className="lib-hint" data-testid="library-semantic-off">
+                    {keywordFallbackHint}
+                  </div>
+                ) : null
+              ) : null}
+              {/* T096 — launch a TARGETED review over the CARDS matching this query
                     (keyword always; semantic when available). Each button resolves its own
                     subset count and is omitted when no cards match. */}
-                {hasQuery ? (
-                  <div className="lib-review-modes" data-testid="library-review-modes">
-                    <ReviewModeButton
-                      selector={{ kind: "search", query: debouncedTerm }}
-                      hideWhileLoading
-                      label={(n) => `Review ${n} matching card${n === 1 ? "" : "s"}`}
-                      testId="library-review-search"
-                    />
-                    {semanticAvailable ? (
-                      <ReviewModeButton
-                        selector={{ kind: "semantic", query: debouncedTerm }}
-                        hideWhileLoading
-                        icon="sparkle"
-                        label={(n) => `Review ${n} related card${n === 1 ? "" : "s"}`}
-                        testId="library-review-semantic"
-                      />
-                    ) : null}
-                  </div>
-                ) : null}
-                {showSemanticBuildIndex ? (
-                  <button
-                    type="button"
-                    className="lib-build-index"
-                    data-testid="library-build-index"
-                    disabled={reindexing}
-                    onClick={() => void onReindex()}
-                  >
-                    {reindexing
-                      ? "Building index…"
-                      : `Build index (${semanticIndex.embedded} of ${semanticIndex.total} embedded)`}
-                  </button>
-                ) : null}
-                {!hasQuery ? (
-                  <div className="lib-empty" data-testid="library-prompt">
-                    <div className="lib-empty__icon">
-                      <Icon name="search" size={26} />
-                    </div>
-                    <h2 className="lib-empty__title">Search your collection</h2>
-                    <p className="lib-empty__body">
-                      {hasActiveFacet
-                        ? `Type to search within ${pendingFilterSummary}.`
-                        : "Find any source, extract, or card by title, body, prompt, answer, or tag."}
-                    </p>
-                    {hasActiveFacet ? (
-                      <div className="lib-pending" data-testid="library-pending-filters">
-                        <Icon name="filter" size={14} />
-                        <span>
-                          Pending constraints: {pendingFilterSummary}. They apply when you type.
-                        </span>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : loading && visible.length === 0 ? (
-                  <p className="lib-loading" data-testid="library-loading">
-                    Searching…
-                  </p>
-                ) : visible.length === 0 ? (
-                  <div className="lib-empty" data-testid="library-empty">
-                    <div className="lib-empty__icon">
-                      <Icon name="search" size={26} />
-                    </div>
-                    <h2 className="lib-empty__title">
-                      {hasQuery
-                        ? `No matches for “${debouncedTerm}”`
-                        : "No matches for selected filters"}
-                    </h2>
-                    <p className="lib-empty__body">
-                      {hasQuery
-                        ? "Try a different term, or clear the type/concept/priority filters."
-                        : "Clear the type/concept/priority filters to return to the search prompt."}
-                    </p>
-                  </div>
-                ) : (
-                  TYPE_GROUPS.map((g) => {
-                    const rows = visible.filter((r) => r.type === g.type);
-                    if (rows.length === 0) return null;
-                    return (
-                      <div className="lib-sec" key={g.type} data-testid={`library-group-${g.type}`}>
-                        <div className="lib-sec__head">
-                          <span className="lib-sec__title">
-                            {g.title} · {rows.length}
-                          </span>
-                        </div>
-                        {/* Virtualized once a single type-group crosses the threshold
-                            (years-of-use scale, T100); inline below it so the everyday
-                            result list keeps its exact kit layout. */}
-                        <AutoVirtualList
-                          items={rows}
-                          itemKey={(r) => r.id}
-                          estimateSize={64}
-                          height={520}
-                          className="lib-sec__vlist"
-                          testId={`library-group-${g.type}-list`}
-                          renderInline={() => <>{rows.map((r) => renderResult(r))}</>}
-                          renderItem={(r) => renderResult(r)}
-                        />
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-            {selected ? (
-              <div className="lib-detail" data-testid="library-detail">
-                <div className="lib-detail__head">
-                  <TypeIcon type={selected.type} lg />
-                  <div style={{ minWidth: 0 }}>
-                    <div className="lib-detail__title">{selected.title}</div>
-                    <div className="lib-detail__type">{typeLabel(selected.type)}</div>
-                  </div>
-                </div>
-                <div className="lib-detail__row">
-                  <Prio priority={selected.priority} />
-                  {selected.concept ? <ConceptTag name={selected.concept} /> : null}
-                  {/* The load-bearing scheduler split + due status, matching the
-                      kit's detail panel (Prio / ConceptTag / SchedulerChip / Status). */}
-                  <SchedulerChip scheduler={selected.scheduler} />
-                  {selected.dueAt ? <DueBadge result={selected} /> : null}
-                </div>
-                {selected.notInQueueReason ? (
-                  <div className="lib-detail__reason" data-testid="library-detail-queue-reason">
-                    {selected.notInQueueReason}
-                  </div>
-                ) : null}
-                {selected.snippet ? (
-                  <div className="refblock" data-testid="library-detail-snippet">
-                    {selected.snippet}
-                  </div>
-                ) : null}
-                {/* Source reference (T043) — the shared RefBlock so the library
-                    reads a source reference the same way the inspector/review do.
-                    A `source` hit references itself (just its title); an extract/card
-                    shows its originating source title + location. The search payload
-                    carries title + location (T042); URL/author/date are resolved in
-                    the inspector when the element is opened. */}
-                {selected.sourceTitle ? (
-                  <RefBlock
-                    ref={{
-                      sourceElementId: null,
-                      sourceTitle: selected.sourceTitle,
-                      url: null,
-                      author: null,
-                      publishedAt: null,
-                      locationLabel: selected.sourceLocationLabel,
-                      snippet: null,
-                      // The library mini-ref does not carry reliability metadata (T091);
-                      // the badge surfaces in the inspector/review refblock instead.
-                      sourceType: null,
-                      reliabilityTier: null,
-                      confidence: null,
-                      reliabilityNotes: null,
-                    }}
-                    showSnippet={false}
-                    testId="library-detail-ref"
+              {hasQuery ? (
+                <div className="lib-review-modes" data-testid="library-review-modes">
+                  <ReviewModeButton
+                    selector={{ kind: "search", query: debouncedTerm }}
+                    hideWhileLoading
+                    label={(n) => `Review ${n} matching card${n === 1 ? "" : "s"}`}
+                    testId="library-review-search"
                   />
-                ) : (
-                  <div className="lib-detail__type" data-testid="library-detail-nosrc">
-                    No source
-                  </div>
-                )}
+                  {semanticAvailable ? (
+                    <ReviewModeButton
+                      selector={{ kind: "semantic", query: debouncedTerm }}
+                      hideWhileLoading
+                      icon="sparkle"
+                      label={(n) => `Review ${n} related card${n === 1 ? "" : "s"}`}
+                      testId="library-review-semantic"
+                    />
+                  ) : null}
+                </div>
+              ) : null}
+              {showSemanticBuildIndex ? (
                 <button
                   type="button"
-                  className="lib-btn"
-                  data-testid="library-detail-open"
-                  onClick={() => open(selected)}
+                  className="lib-build-index"
+                  data-testid="library-build-index"
+                  disabled={reindexing}
+                  onClick={() => void onReindex()}
                 >
-                  <Icon name="external" size={14} />
-                  Open {typeLabel(selected.type).toLowerCase()}
+                  {reindexing
+                    ? "Building index…"
+                    : `Build index (${semanticIndex.embedded} of ${semanticIndex.total} embedded)`}
                 </button>
-              </div>
-            ) : null}
-          </>
+              ) : null}
+              {!hasQuery ? (
+                <div className="lib-empty" data-testid="library-prompt">
+                  <div className="lib-empty__icon">
+                    <Icon name="search" size={26} />
+                  </div>
+                  <h2 className="lib-empty__title">Search your collection</h2>
+                  <p className="lib-empty__body">
+                    {hasActiveFacet
+                      ? `Type to search within ${pendingFilterSummary}.`
+                      : "Find any source, extract, or card by title, body, prompt, answer, or tag."}
+                  </p>
+                  {hasActiveFacet ? (
+                    <div className="lib-pending" data-testid="library-pending-filters">
+                      <Icon name="filter" size={14} />
+                      <span>
+                        Pending constraints: {pendingFilterSummary}. They apply when you type.
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+              ) : loading && visible.length === 0 ? (
+                <p className="lib-loading" data-testid="library-loading">
+                  Searching…
+                </p>
+              ) : visible.length === 0 ? (
+                <div className="lib-empty" data-testid="library-empty">
+                  <div className="lib-empty__icon">
+                    <Icon name="search" size={26} />
+                  </div>
+                  <h2 className="lib-empty__title">
+                    {hasQuery
+                      ? `No matches for “${debouncedTerm}”`
+                      : "No matches for selected filters"}
+                  </h2>
+                  <p className="lib-empty__body">
+                    {hasQuery
+                      ? "Try a different term, or clear the type/concept/priority filters."
+                      : "Clear the type/concept/priority filters to return to the search prompt."}
+                  </p>
+                </div>
+              ) : (
+                TYPE_GROUPS.map((g) => {
+                  const rows = visible.filter((r) => r.type === g.type);
+                  if (rows.length === 0) return null;
+                  return (
+                    <div className="lib-sec" key={g.type} data-testid={`library-group-${g.type}`}>
+                      <div className="lib-sec__head">
+                        <span className="lib-sec__title">
+                          {g.title} · {rows.length}
+                        </span>
+                      </div>
+                      {/* Virtualized once a single type-group crosses the threshold
+                            (years-of-use scale, T100); inline below it so the everyday
+                            result list keeps its exact kit layout. */}
+                      <AutoVirtualList
+                        items={rows}
+                        itemKey={(r) => r.id}
+                        estimateSize={64}
+                        height={520}
+                        className="lib-sec__vlist"
+                        testId={`library-group-${g.type}-list`}
+                        renderInline={() => <>{rows.map((r) => renderResult(r))}</>}
+                        renderItem={(r) => renderResult(r)}
+                      />
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
         ) : (
           <div className="lib-map" data-testid="library-map">
             <div className="lib-map__canvas">

@@ -1,12 +1,15 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ElementSummary, InspectorData, TopicKnowledgeStateGetResult } from "../../lib/appApi";
+import type { LibraryInspectorPanel } from "../../shell/libraryInspectorPanel";
 
 const h = vi.hoisted(() => ({
   desktop: true,
   selectedId: null as string | null,
   // The inbox triage panel the inspector reads (null = no relocated triage section).
   triagePanel: null as import("../../shell/inboxTriagePanel").InboxTriagePanel | null,
+  // The Library inspector panel the inspector reads (null = no relocated controls).
+  libraryPanel: null as import("../../shell/libraryInspectorPanel").LibraryInspectorPanel | null,
   select: vi.fn(),
   navigate: vi.fn(),
   navigateToLocation: vi.fn(),
@@ -60,6 +63,10 @@ vi.mock("../../shell/inboxTriagePanel", () => ({
     readNowRef: { current: null },
     registrationTick: 0,
   }),
+}));
+
+vi.mock("../../shell/libraryInspectorPanel", () => ({
+  useLibraryInspectorPanel: () => ({ panel: h.libraryPanel, setPanel: vi.fn() }),
 }));
 
 vi.mock("../ConflictSection", () => ({
@@ -379,6 +386,7 @@ beforeEach(() => {
   h.desktop = true;
   h.selectedId = null;
   h.triagePanel = null;
+  h.libraryPanel = null;
   h.select.mockReset();
   h.navigate.mockReset();
   h.navigateToLocation.mockReset();
@@ -1568,6 +1576,128 @@ describe("Inspector", () => {
       await screen.findByTestId("inbox-triage-actions");
       expect(screen.queryByTestId("inbox-suggestion")).not.toBeInTheDocument();
       expect(screen.queryByTestId("inbox-suggestion-placement")).not.toBeInTheDocument();
+    });
+  });
+
+  // The Library detail column was removed; its unique controls (Open + parked
+  // actions + context lines) relocated here, published via the libraryInspectorPanel
+  // bridge and gated to the inspected element.
+  describe("relocated Library controls (U3)", () => {
+    function makeLibraryPanel(
+      overrides: Partial<LibraryInspectorPanel> = {},
+    ): LibraryInspectorPanel {
+      return {
+        targetId: "src-1",
+        openLabel: "Open source",
+        onOpen: vi.fn(),
+        parkedAt: null,
+        notInQueueReason: null,
+        parked: null,
+        ...overrides,
+      };
+    }
+
+    it("renders the full-width Open button for the matching element and invokes onOpen", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      const onOpen = vi.fn();
+      h.libraryPanel = makeLibraryPanel({ onOpen });
+      render(<Inspector />);
+
+      const btn = await screen.findByTestId("inspector-open-element");
+      expect(btn.textContent).toContain("Open source");
+      expect(btn.className).toContain("insp-add__btn--accent");
+      fireEvent.click(btn);
+      expect(onOpen).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not render the controls when the payload targets a different element (leak guard)", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.libraryPanel = makeLibraryPanel({ targetId: "some-other-id" });
+      render(<Inspector />);
+
+      await screen.findByTestId("inspector-content");
+      expect(screen.queryByTestId("inspector-library-actions")).toBeNull();
+      expect(screen.queryByTestId("inspector-open-element")).toBeNull();
+    });
+
+    it("does not render the controls when no payload is published", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.libraryPanel = null;
+      render(<Inspector />);
+
+      await screen.findByTestId("inspector-content");
+      expect(screen.queryByTestId("inspector-open-element")).toBeNull();
+    });
+
+    it("renders parked quick-actions only when parked, and wires their handlers", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      const onMoveToInbox = vi.fn();
+      const onQueueSoon = vi.fn();
+      const onDismiss = vi.fn();
+      h.libraryPanel = makeLibraryPanel({
+        parked: { busy: false, onMoveToInbox, onQueueSoon, onDismiss },
+      });
+      render(<Inspector />);
+
+      fireEvent.click(await screen.findByTestId("inspector-parked-inbox"));
+      fireEvent.click(screen.getByTestId("inspector-parked-schedule"));
+      fireEvent.click(screen.getByTestId("inspector-parked-dismiss"));
+      expect(onMoveToInbox).toHaveBeenCalledTimes(1);
+      expect(onQueueSoon).toHaveBeenCalledTimes(1);
+      expect(onDismiss).toHaveBeenCalledTimes(1);
+    });
+
+    it("omits parked quick-actions when the element is not a parked source", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.libraryPanel = makeLibraryPanel({ parked: null });
+      render(<Inspector />);
+
+      await screen.findByTestId("inspector-open-element");
+      expect(screen.queryByTestId("inspector-parked-actions")).toBeNull();
+    });
+
+    it("disables the parked buttons while a parked action is busy", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.libraryPanel = makeLibraryPanel({
+        parked: { busy: true, onMoveToInbox: vi.fn(), onQueueSoon: vi.fn(), onDismiss: vi.fn() },
+      });
+      render(<Inspector />);
+
+      expect(await screen.findByTestId("inspector-parked-inbox")).toBeDisabled();
+      expect(screen.getByTestId("inspector-parked-schedule")).toBeDisabled();
+      expect(screen.getByTestId("inspector-parked-dismiss")).toBeDisabled();
+    });
+
+    it("renders the parked-date and queue-reason context lines when present", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.libraryPanel = makeLibraryPanel({
+        parkedAt: "2026-07-02T00:00:00.000Z",
+        notInQueueReason: "Not in queue: returns Jul 2",
+      });
+      render(<Inspector />);
+
+      expect((await screen.findByTestId("inspector-parked-date")).textContent).toContain("Parked");
+      expect(screen.getByTestId("inspector-queue-reason").textContent).toContain(
+        "Not in queue: returns Jul 2",
+      );
+    });
+
+    it("omits the context lines when parkedAt and notInQueueReason are null (no regression placeholder)", async () => {
+      h.selectedId = "src-1";
+      h.getInspectorData.mockResolvedValue({ data: sourceData() });
+      h.libraryPanel = makeLibraryPanel({ parkedAt: null, notInQueueReason: null });
+      render(<Inspector />);
+
+      await screen.findByTestId("inspector-open-element");
+      expect(screen.queryByTestId("inspector-parked-date")).toBeNull();
+      expect(screen.queryByTestId("inspector-queue-reason")).toBeNull();
     });
   });
 });

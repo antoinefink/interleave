@@ -332,55 +332,6 @@
   color: var(--text-3);
 }
 
-/* selection detail panel */
-.lib-detail {
-  width: 320px;
-  flex: none;
-  border-left: 1px solid var(--border);
-  overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.lib-detail__head {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-}
-.lib-detail__title {
-  font-weight: 600;
-  font-size: var(--t-sm);
-  color: var(--text);
-  /* Match the kit's truncated detail title: a long title stays one line inside
-     the fixed-width detail panel (its head wrapper carries `min-width: 0`). */
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.lib-detail__type {
-  font-size: var(--t-2xs);
-  color: var(--text-3);
-  text-transform: capitalize;
-}
-.lib-detail__row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.lib-detail__reason {
-  font-size: var(--t-2xs);
-  line-height: 1.45;
-  color: var(--text-3);
-}
-.lib-actions {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
-}
-
 /* empty state */
 .lib-empty {
   display: flex;
@@ -569,24 +520,4 @@
   padding: 6px 8px 10px;
   color: var(--text-3);
   font-size: var(--t-sm);
-}
-
-/* primary "open" button in the selection detail */
-.lib-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 8px 12px;
-  border-radius: var(--r-md);
-  font-size: var(--t-sm);
-  font-weight: 500;
-  cursor: pointer;
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: var(--text-on-accent);
-  width: 100%;
-}
-.lib-btn:hover {
-  filter: brightness(1.05);
 }

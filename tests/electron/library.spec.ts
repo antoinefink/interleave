@@ -79,14 +79,20 @@ test("opening /library lists the seeded elements WITHOUT typing a query (the bro
   // The calm count summary shows a non-zero total.
   await expect(page.getByTestId("library-count")).toContainText("element");
 
-  // Selecting the seeded source row shows its detail panel + refblock + the chip.
+  // Selecting the seeded source row populates the shared shell inspector (the
+  // redundant detail column was removed) and surfaces the relocated Open action.
   const sourceRow = page.getByTestId("library-group-source").getByTestId("library-result").first();
   await sourceRow.click();
-  const detail = page.getByTestId("library-detail");
-  await expect(detail).toBeVisible();
-  await expect(page.getByTestId("library-detail-ref")).toContainText(SOURCE_TITLE);
-  // A source is on the attention scheduler (the load-bearing split).
-  await expect(detail.getByTestId("scheduler-chip")).toHaveAttribute("data-scheduler", "attention");
+  await expect(page.getByTestId("inspector-content")).toBeVisible();
+  await expect(page.getByTestId("inspector-title")).toHaveText(SOURCE_TITLE);
+  await expect(page.getByTestId("inspector-open-element")).toHaveText(/Open source/i);
+  // A source is on the attention scheduler (the load-bearing split) — shown by the
+  // inspector's own scheduler section, not a duplicate in a detail column.
+  await expect(
+    page.locator('[data-testid="scheduler-chip"][data-scheduler="attention"]').first(),
+  ).toBeVisible();
+  // The old detail column is gone.
+  await expect(page.getByTestId("library-detail")).toHaveCount(0);
 
   await app.close();
 });
@@ -103,10 +109,11 @@ test("toggling a Type facet narrows the list to that type", async () => {
   await expect(page.getByTestId("library-group-source")).toHaveCount(0);
   await expect(page.getByTestId("library-group-extract")).toHaveCount(0);
 
-  // Opening the selected card row navigates to card detail.
+  // Opening the selected card row (via the inspector's relocated Open button)
+  // navigates to card detail.
   const cardRow = page.getByTestId("library-group-card").getByTestId("library-result").first();
   await cardRow.click();
-  await page.getByTestId("library-detail-open").click();
+  await page.getByTestId("inspector-open-element").click();
   await expect(page).toHaveURL(/\/card\//);
 
   await app.close();
@@ -190,10 +197,9 @@ test("Open task from Library jumps to the protected card detail surface", async 
     .first();
   await expect(taskRow).toBeVisible();
   await taskRow.click();
-  await expect(page.getByTestId("library-detail")).toBeVisible();
-  await expect(page.getByTestId("library-detail-open")).toHaveText(/Open task/i);
+  await expect(page.getByTestId("inspector-open-element")).toHaveText(/Open task/i);
 
-  await page.getByTestId("library-detail-open").click();
+  await page.getByTestId("inspector-open-element").click();
 
   await expect(page).toHaveURL(new RegExp(`/card/${linkedCardId}`));
   await expect(page.getByTestId("route-card")).toBeVisible();

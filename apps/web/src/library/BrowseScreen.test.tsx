@@ -7,8 +7,9 @@
  *    (the browse-first default — unlike /search, which shows a prompt when empty);
  *  - toggling a Type / Priority / Status / Concept facet re-calls `libraryBrowse`
  *    with the right filter (the renderer holds no SQL — it toggles facet state);
- *  - selecting a row shows the detail panel + RefBlock + the load-bearing chip;
- *  - Open navigates per type;
+ *  - selecting a row publishes the element's open + parked payload to the shared
+ *    shell inspector bridge (the redundant detail column was removed);
+ *  - Open (invoked via the published payload) navigates per type;
  *  - the Map tab renders the shared ConceptGraph.
  *
  * `appApi` + the router are mocked so the test exercises ONLY this component's
@@ -18,6 +19,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConceptNode, LibraryItem } from "../lib/appApi";
+import type { LibraryInspectorPanel } from "../shell/libraryInspectorPanel";
 
 const h = vi.hoisted(() => {
   const attentionScheduler: LibraryItem["scheduler"] = {
@@ -195,6 +197,7 @@ const h = vi.hoisted(() => {
     navigateSpy: vi.fn(),
     routeSearch: {} as Record<string, unknown>,
     selectSpy: vi.fn(),
+    setLibraryPanelSpy: vi.fn(),
     libraryBrowse: vi.fn(),
     libraryParkedAction: vi.fn(),
     listConcepts: vi.fn(),
@@ -208,6 +211,14 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("../shell/selection", () => ({
   useSelection: () => ({ selectedId: null, select: h.selectSpy }),
+}));
+
+// The detail column's unique controls (Open + parked actions + context lines) now
+// publish to the shared shell inspector via this bridge. The inspector isn't
+// mounted in these unit tests, so we capture the published payload and assert on it
+// (and invoke its handlers) instead of clicking the old `.lib-detail` DOM.
+vi.mock("../shell/libraryInspectorPanel", () => ({
+  useLibraryInspectorPanel: () => ({ panel: null, setPanel: h.setLibraryPanelSpy }),
 }));
 
 vi.mock("../lib/appApi", async () => {
@@ -240,6 +251,25 @@ function parkedCounts(count: number) {
       suspended: 0,
     },
   };
+}
+
+/** The latest non-null payload published to the shell inspector bridge. */
+function latestPanel(): LibraryInspectorPanel | null {
+  const calls = h.setLibraryPanelSpy.mock.calls;
+  for (let i = calls.length - 1; i >= 0; i--) {
+    const arg = calls[i]?.[0];
+    if (arg) return arg as LibraryInspectorPanel;
+  }
+  return null;
+}
+
+/** Wait until a payload for `id` is published to the bridge, then return it. */
+async function panelFor(id: string): Promise<LibraryInspectorPanel> {
+  return await waitFor(() => {
+    const p = latestPanel();
+    expect(p?.targetId).toBe(id);
+    return p as LibraryInspectorPanel;
+  });
 }
 
 beforeEach(() => {
@@ -359,10 +389,10 @@ describe("BrowseScreen", () => {
   });
 
   it.each([
-    ["library-unpark-inbox", "moveToInbox"],
-    ["library-unpark-schedule", "queueSoon"],
-    ["library-unpark-dismiss", "dismiss"],
-  ] as const)("sends %s parked action and refreshes counts", async (testId, kind) => {
+    ["onMoveToInbox", "moveToInbox"],
+    ["onQueueSoon", "queueSoon"],
+    ["onDismiss", "dismiss"],
+  ] as const)("publishes %s parked action and refreshes counts", async (handler, kind) => {
     h.libraryBrowse
       .mockResolvedValueOnce({ items: [h.sourceRow, h.topicRow, h.cardRow], counts: h.counts })
       .mockResolvedValueOnce({ items: [h.parkedRow], counts: parkedCounts(1) })
@@ -379,11 +409,14 @@ describe("BrowseScreen", () => {
     const sourceGroup = await screen.findByTestId("library-group-source");
     fireEvent.click(within(sourceGroup).getByTestId("library-result"));
 
-    const detail = await screen.findByTestId("library-detail");
-    expect(within(detail).getByTestId("library-detail-parked-date").textContent).toContain(
-      "Parked",
-    );
-    fireEvent.click(within(detail).getByTestId(testId));
+    // The parked controls + "Parked {date}" context line are published to the
+    // inspector bridge, not rendered in the screen.
+    const panel = await panelFor("src-parked-1");
+    expect(panel.parkedAt).toBeTruthy();
+    expect(panel.parked).not.toBeNull();
+    await act(async () => {
+      panel.parked?.[handler]();
+    });
     await waitFor(() =>
       expect(h.libraryParkedAction).toHaveBeenCalledWith({
         id: "src-parked-1",
@@ -394,6 +427,8 @@ describe("BrowseScreen", () => {
     expect(screen.getByTestId("library-count").textContent).toContain("0 elements");
     expect(screen.queryByTestId("library-detail")).toBeNull();
     expect(h.selectSpy).toHaveBeenLastCalledWith(null);
+    // The selection cleared, so the published payload is cleared too.
+    await waitFor(() => expect(h.setLibraryPanelSpy).toHaveBeenLastCalledWith(null));
   });
 
   it("renders parked action errors without removing the selected row", async () => {
@@ -407,9 +442,10 @@ describe("BrowseScreen", () => {
     fireEvent.click(screen.getByTestId("library-filter-status-parked"));
     await screen.findByTestId("library-group-source");
     fireEvent.click(screen.getByTestId("library-result"));
-    fireEvent.click(
-      within(await screen.findByTestId("library-detail")).getByTestId("library-unpark-inbox"),
-    );
+    const panel = await panelFor("src-parked-1");
+    await act(async () => {
+      panel.parked?.onMoveToInbox();
+    });
 
     expect(await screen.findByTestId("library-error")).toHaveTextContent(
       "Unable to move parked source",
@@ -435,18 +471,19 @@ describe("BrowseScreen", () => {
     await screen.findByTestId("library-group-source");
     fireEvent.click(screen.getByTestId("library-result"));
 
-    const detail = await screen.findByTestId("library-detail");
-    fireEvent.click(within(detail).getByTestId("library-unpark-schedule"));
-    await waitFor(() => {
-      expect(within(detail).getByTestId("library-unpark-inbox")).toBeDisabled();
-      expect(within(detail).getByTestId("library-unpark-schedule")).toBeDisabled();
-      expect(within(detail).getByTestId("library-unpark-dismiss")).toBeDisabled();
+    const panel = await panelFor("src-parked-1");
+    expect(panel.parked?.busy).toBe(false);
+    act(() => {
+      panel.parked?.onQueueSoon();
     });
+    // While the action is pending the bridge re-publishes with `busy: true`, which
+    // is what disables the relocated buttons in the inspector.
+    await waitFor(() => expect(latestPanel()?.parked?.busy).toBe(true));
 
     await act(async () => {
       resolveAction({ item: { ...h.parkedRow, status: "scheduled", parkedAt: null } });
     });
-    await waitFor(() => expect(screen.queryByTestId("library-detail")).toBeNull());
+    await waitFor(() => expect(h.setLibraryPanelSpy).toHaveBeenLastCalledWith(null));
   });
 
   it("re-calls libraryBrowse with a concept filter when a Concept facet is toggled", async () => {
@@ -571,34 +608,32 @@ describe("BrowseScreen", () => {
     expect(screen.queryByTestId("library-empty-title")).toBeNull();
   });
 
-  it("selecting a row shows the detail panel, the RefBlock, and the scheduler chip", async () => {
+  it("selecting a row publishes the element's open payload and renders no detail column", async () => {
     render(<BrowseScreen />);
     const cardGroup = await screen.findByTestId("library-group-card");
     fireEvent.click(within(cardGroup).getByTestId("library-result"));
 
     expect(h.selectSpy).toHaveBeenCalledWith("card-1");
-    const detail = await screen.findByTestId("library-detail");
-    // The load-bearing scheduler split (FSRS chip for the card).
-    expect(within(detail).getByTestId("scheduler-chip").getAttribute("data-scheduler")).toBe(
-      "fsrs",
-    );
-    expect(within(detail).getByTestId("library-detail-due").textContent).toContain("Due today");
-    // The shared RefBlock shows the owning source.
-    expect(within(detail).getByTestId("library-detail-ref").textContent).toContain(
-      "On the Measure of Intelligence",
-    );
+    const panel = await panelFor("card-1");
+    expect(panel.openLabel).toBe("Open card");
+    expect(panel.parked).toBeNull();
+    // The redundant detail column is gone; the inspector renders the selection.
+    expect(screen.queryByTestId("library-detail")).toBeNull();
   });
 
   it("Open navigates per type (source → reader, card → detail)", async () => {
     render(<BrowseScreen />);
     const sourceGroup = await screen.findByTestId("library-group-source");
     fireEvent.click(within(sourceGroup).getByTestId("library-result"));
-    fireEvent.click(await screen.findByTestId("library-detail-open"));
+    const sourcePanel = await panelFor("src-1");
+    expect(sourcePanel.openLabel).toBe("Open source");
+    act(() => sourcePanel.onOpen());
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/source/$id", params: { id: "src-1" } });
 
     const cardGroup = screen.getByTestId("library-group-card");
     fireEvent.click(within(cardGroup).getByTestId("library-result"));
-    fireEvent.click(await screen.findByTestId("library-detail-open"));
+    const cardPanel = await panelFor("card-1");
+    act(() => cardPanel.onOpen());
     expect(h.navigateSpy).toHaveBeenCalledWith({
       to: "/card/$id",
       params: { id: "card-1" },
@@ -619,7 +654,8 @@ describe("BrowseScreen", () => {
     render(<BrowseScreen />);
     const taskGroup = await screen.findByTestId("library-group-task");
     fireEvent.click(within(taskGroup).getByTestId("library-result"));
-    fireEvent.click(await screen.findByTestId("library-detail-open"));
+    const panel = await panelFor("task-1");
+    act(() => panel.onOpen());
 
     expect(h.selectSpy).toHaveBeenCalledWith(null);
     expect(h.navigateSpy).toHaveBeenCalledWith({
@@ -646,7 +682,8 @@ describe("BrowseScreen", () => {
     render(<BrowseScreen />);
     const taskGroup = await screen.findByTestId("library-group-task");
     fireEvent.click(within(taskGroup).getByTestId("library-result"));
-    fireEvent.click(await screen.findByTestId("library-detail-open"));
+    const panel = await panelFor("task-weekly-1");
+    act(() => panel.onOpen());
 
     expect(h.selectSpy).toHaveBeenCalledWith("task-weekly-1");
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/weekly", search: {} });
@@ -688,7 +725,8 @@ describe("BrowseScreen", () => {
     render(<BrowseScreen />);
     const taskGroup = await screen.findByTestId("library-group-task");
     fireEvent.click(within(taskGroup).getByTestId("library-result"));
-    fireEvent.click(await screen.findByTestId("library-detail-open"));
+    const panel = await panelFor("task-unlinked");
+    act(() => panel.onOpen());
 
     expect(h.selectSpy).toHaveBeenCalledWith("task-unlinked");
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/process", search: {} });
@@ -772,11 +810,11 @@ describe("BrowseScreen", () => {
 
   it("resets the row selection when the active facets exclude the selected row", async () => {
     // Select a row, then change a facet so the new payload no longer contains it.
-    // The detail panel must close (selId is reset) rather than dangling on a gone row.
+    // The published payload must clear (selId is reset) rather than dangling on a gone row.
     render(<BrowseScreen />);
     const cardGroup = await screen.findByTestId("library-group-card");
     fireEvent.click(within(cardGroup).getByTestId("library-result"));
-    await screen.findByTestId("library-detail");
+    await panelFor("card-1");
 
     // The next browse returns only the source row (the selected card is gone).
     h.libraryBrowse.mockResolvedValueOnce({
@@ -790,8 +828,8 @@ describe("BrowseScreen", () => {
       },
     });
     fireEvent.click(screen.getByTestId("library-filter-type-source"));
-    // The detail panel closes because the previously-selected card is no longer present.
-    await waitFor(() => expect(screen.queryByTestId("library-detail")).toBeNull());
+    // The published payload clears because the previously-selected card is gone.
+    await waitFor(() => expect(h.setLibraryPanelSpy).toHaveBeenLastCalledWith(null));
   });
 
   it("shows the empty state when facets exclude everything", async () => {

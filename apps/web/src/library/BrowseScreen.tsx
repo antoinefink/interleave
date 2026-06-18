@@ -7,7 +7,7 @@
  * covers `topic`/`synthesis_note`/`task` too, which keyword search can never
  * return. Rebuilt from the design kit (`design/kit/app/screen-library.jsx`) for
  * the React 19 renderer, reusing the SAME `library.css` markup (filterbar /
- * result rows / lib-detail / lib-map) and the inspector primitives.
+ * result rows / lib-map) and the inspector primitives.
  *
  * Architecture (non-negotiable): UI only. The browse read runs MAIN-side in
  * `LibraryQuery` behind the typed `window.appApi.library.browse` command (the
@@ -22,15 +22,7 @@ import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConceptGraph } from "../components/ConceptGraph";
 import { Icon } from "../components/Icon";
-import {
-  ConceptTag,
-  Prio,
-  SchedulerChip,
-  Status,
-  TypeIcon,
-  typeLabel,
-} from "../components/inspector/primitives";
-import { RefBlock } from "../components/RefBlock";
+import { ConceptTag, Prio, TypeIcon, typeLabel } from "../components/inspector/primitives";
 import { CollectionExplorerModeSwitch } from "./CollectionExplorerModeSwitch";
 import "../components/inspector/inspector.css";
 import {
@@ -42,6 +34,7 @@ import {
   type LibraryItem,
 } from "../lib/appApi";
 import { openQueueItem } from "../pages/queue/openQueueItem";
+import { useLibraryInspectorPanel } from "../shell/libraryInspectorPanel";
 import { useSelection } from "../shell/selection";
 import {
   explorerSearchParams,
@@ -81,22 +74,6 @@ function parseStatus(value: unknown): string | null {
   return parsed && STATUSES.some((status) => status.value === parsed) ? parsed : null;
 }
 
-/** A due-state badge (overdue / today / soon) — matches the queue's `DueBadge`. */
-function DueBadge({ item }: { item: LibraryItem }) {
-  const cls = !item.queueEligible
-    ? "badge--soft"
-    : item.due === "overdue"
-      ? "badge--overdue"
-      : item.due === "today"
-        ? "badge--due"
-        : "badge--soft";
-  return (
-    <span className={`badge ${cls}`} data-testid="library-detail-due">
-      {item.dueLabel}
-    </span>
-  );
-}
-
 function formatShortDate(iso: string): string {
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
@@ -110,6 +87,7 @@ export function BrowseScreen() {
   const navigate = useNavigate();
   const routeSearch = useSearch({ strict: false }) as Record<string, unknown>;
   const { select } = useSelection();
+  const { setPanel: setLibraryPanel } = useLibraryInspectorPanel();
   const routeType = parseBrowseType(routeSearch.type);
   const routeConceptId = parseStringParam(routeSearch.conceptId);
   const routePriority = parsePriority(routeSearch.priority);
@@ -241,6 +219,12 @@ export function BrowseScreen() {
 
   const open = useCallback(
     (r: LibraryItem) => {
+      // Clear the relocated inspector controls BEFORE navigating away: the
+      // destination may select the same element and the gate would still match,
+      // flashing the controls on the wrong route during the navigate→unmount
+      // frame (the leak guard from the relocation playbook). The unmount cleanup
+      // below is the belt; this is the suspenders.
+      setLibraryPanel(null);
       if (r.type === "synthesis_note") {
         select(r.id);
         void navigate({ to: "/synthesis/$id", params: { id: r.id } });
@@ -248,7 +232,7 @@ export function BrowseScreen() {
         openQueueItem({ item: r, navigate, select });
       }
     },
-    [navigate, select],
+    [navigate, select, setLibraryPanel],
   );
 
   const runParkedAction = useCallback(
@@ -273,6 +257,36 @@ export function BrowseScreen() {
     },
     [browseRequest, statusFilter, select],
   );
+
+  // Publish the selected element's relocated controls (Open + parked actions +
+  // context lines) to the shared shell inspector. Gated to the matching element
+  // there; cleared here when nothing is selected. The button paints once the
+  // inspector's own async element fetch resolves to the same id.
+  useEffect(() => {
+    if (!selected) {
+      setLibraryPanel(null);
+      return;
+    }
+    const isParkedSource = selected.status === "parked" && selected.type === "source";
+    setLibraryPanel({
+      targetId: selected.id,
+      openLabel: `Open ${typeLabel(selected.type).toLowerCase()}`,
+      onOpen: () => open(selected),
+      parkedAt: selected.parkedAt,
+      notInQueueReason: selected.notInQueueReason,
+      parked: isParkedSource
+        ? {
+            busy: parkedActionId !== null,
+            onMoveToInbox: () => void runParkedAction(selected, "moveToInbox"),
+            onQueueSoon: () => void runParkedAction(selected, "queueSoon"),
+            onDismiss: () => void runParkedAction(selected, "dismiss"),
+          }
+        : null,
+    });
+  }, [selected, parkedActionId, open, runParkedAction, setLibraryPanel]);
+
+  // Clear the published payload on unmount so the controls never show on other routes.
+  useEffect(() => () => setLibraryPanel(null), [setLibraryPanel]);
 
   if (!desktop) {
     return (
@@ -469,194 +483,89 @@ export function BrowseScreen() {
         </div>
 
         {tab === "results" ? (
-          <>
-            <div className="lib-results" data-testid="library-results">
-              <div className="lib-results__inner">
-                {error ? (
-                  <p className="lib-error" data-testid="library-error">
-                    {error}
-                  </p>
-                ) : null}
-                {loading && visible.length === 0 ? (
-                  <p className="lib-loading" data-testid="library-loading">
-                    Loading…
-                  </p>
-                ) : visible.length === 0 && titleActive && items.length > 0 ? (
-                  // The facets matched rows but the inline title filter excluded them
-                  // all — blame the title (mirroring /search's "No matches for …"),
-                  // NOT the facets the user may not even have set.
-                  <div className="lib-empty" data-testid="library-empty-title">
-                    <div className="lib-empty__icon">
-                      <Icon name="filter" size={26} />
-                    </div>
-                    <h2 className="lib-empty__title">No matches for “{titleFilter.trim()}”</h2>
-                    <p className="lib-empty__body">
-                      No titles match your filter. Clear the title filter to see all {counts.all}{" "}
-                      matching element{counts.all === 1 ? "" : "s"}.
-                    </p>
+          <div className="lib-results" data-testid="library-results">
+            <div className="lib-results__inner">
+              {error ? (
+                <p className="lib-error" data-testid="library-error">
+                  {error}
+                </p>
+              ) : null}
+              {loading && visible.length === 0 ? (
+                <p className="lib-loading" data-testid="library-loading">
+                  Loading…
+                </p>
+              ) : visible.length === 0 && titleActive && items.length > 0 ? (
+                // The facets matched rows but the inline title filter excluded them
+                // all — blame the title (mirroring /search's "No matches for …"),
+                // NOT the facets the user may not even have set.
+                <div className="lib-empty" data-testid="library-empty-title">
+                  <div className="lib-empty__icon">
+                    <Icon name="filter" size={26} />
                   </div>
-                ) : visible.length === 0 ? (
-                  <div className="lib-empty" data-testid="library-empty">
-                    <div className="lib-empty__icon">
-                      <Icon name="library" size={26} />
-                    </div>
-                    <h2 className="lib-empty__title">Nothing here yet</h2>
-                    <p className="lib-empty__body">
-                      No elements match these facets. Clear the type/concept/priority/status filters
-                      to see your whole collection.
-                    </p>
+                  <h2 className="lib-empty__title">No matches for “{titleFilter.trim()}”</h2>
+                  <p className="lib-empty__body">
+                    No titles match your filter. Clear the title filter to see all {counts.all}{" "}
+                    matching element{counts.all === 1 ? "" : "s"}.
+                  </p>
+                </div>
+              ) : visible.length === 0 ? (
+                <div className="lib-empty" data-testid="library-empty">
+                  <div className="lib-empty__icon">
+                    <Icon name="library" size={26} />
                   </div>
-                ) : (
-                  TYPE_GROUPS.map((g) => {
-                    const rows = visible.filter((r) => r.type === g.type);
-                    if (rows.length === 0) return null;
-                    return (
-                      <div className="lib-sec" key={g.type} data-testid={`library-group-${g.type}`}>
-                        <div className="lib-sec__head">
-                          <span className="lib-sec__title">
-                            {g.title} · {rows.length}
-                          </span>
-                        </div>
-                        {rows.map((r) => (
-                          <button
-                            type="button"
-                            key={r.id}
-                            className={`result${selId === r.id ? " result--on" : ""}`}
-                            data-testid="library-result"
-                            data-result-id={r.id}
-                            data-result-type={r.type}
-                            onClick={() => {
-                              setSelId(r.id);
-                              select(r.id);
-                            }}
-                            onDoubleClick={() => open(r)}
-                          >
-                            <div style={{ minWidth: 0 }}>
-                              <div className="result__title">{r.title}</div>
-                              <div className="result__meta">
-                                {r.concept ? <ConceptTag name={r.concept} /> : null}
-                                {r.sourceTitle ? <span>{r.sourceTitle}</span> : null}
-                                {r.sourceLocationLabel ? (
-                                  <span>{r.sourceLocationLabel}</span>
-                                ) : null}
-                                <span>
-                                  {r.status === "parked" && r.parkedAt
-                                    ? `Parked ${formatShortDate(r.parkedAt)}`
-                                    : r.dueLabel}
-                                </span>
-                              </div>
-                            </div>
-                            <Prio priority={r.priority} />
-                          </button>
-                        ))}
+                  <h2 className="lib-empty__title">Nothing here yet</h2>
+                  <p className="lib-empty__body">
+                    No elements match these facets. Clear the type/concept/priority/status filters
+                    to see your whole collection.
+                  </p>
+                </div>
+              ) : (
+                TYPE_GROUPS.map((g) => {
+                  const rows = visible.filter((r) => r.type === g.type);
+                  if (rows.length === 0) return null;
+                  return (
+                    <div className="lib-sec" key={g.type} data-testid={`library-group-${g.type}`}>
+                      <div className="lib-sec__head">
+                        <span className="lib-sec__title">
+                          {g.title} · {rows.length}
+                        </span>
                       </div>
-                    );
-                  })
-                )}
-              </div>
+                      {rows.map((r) => (
+                        <button
+                          type="button"
+                          key={r.id}
+                          className={`result${selId === r.id ? " result--on" : ""}`}
+                          data-testid="library-result"
+                          data-result-id={r.id}
+                          data-result-type={r.type}
+                          onClick={() => {
+                            setSelId(r.id);
+                            select(r.id);
+                          }}
+                          onDoubleClick={() => open(r)}
+                        >
+                          <div style={{ minWidth: 0 }}>
+                            <div className="result__title">{r.title}</div>
+                            <div className="result__meta">
+                              {r.concept ? <ConceptTag name={r.concept} /> : null}
+                              {r.sourceTitle ? <span>{r.sourceTitle}</span> : null}
+                              {r.sourceLocationLabel ? <span>{r.sourceLocationLabel}</span> : null}
+                              <span>
+                                {r.status === "parked" && r.parkedAt
+                                  ? `Parked ${formatShortDate(r.parkedAt)}`
+                                  : r.dueLabel}
+                              </span>
+                            </div>
+                          </div>
+                          <Prio priority={r.priority} />
+                        </button>
+                      ))}
+                    </div>
+                  );
+                })
+              )}
             </div>
-
-            {selected ? (
-              <div className="lib-detail" data-testid="library-detail">
-                <div className="lib-detail__head">
-                  <TypeIcon type={selected.type} lg />
-                  <div style={{ minWidth: 0 }}>
-                    <div className="lib-detail__title">{selected.title}</div>
-                    <div className="lib-detail__type">{typeLabel(selected.type)}</div>
-                  </div>
-                </div>
-                <div className="lib-detail__row">
-                  <Prio priority={selected.priority} />
-                  {selected.concept ? <ConceptTag name={selected.concept} /> : null}
-                  <Status status={selected.status} />
-                  {/* The load-bearing scheduler split + due status, matching the
-                      kit's detail panel (Prio / ConceptTag / SchedulerChip / Status). */}
-                  <SchedulerChip scheduler={selected.scheduler} />
-                  {selected.dueAt ? <DueBadge item={selected} /> : null}
-                </div>
-                {selected.status === "parked" && selected.parkedAt ? (
-                  <div className="lib-detail__reason" data-testid="library-detail-parked-date">
-                    Parked {formatShortDate(selected.parkedAt)}
-                  </div>
-                ) : null}
-                {selected.notInQueueReason ? (
-                  <div className="lib-detail__reason" data-testid="library-detail-queue-reason">
-                    {selected.notInQueueReason}
-                  </div>
-                ) : null}
-                {/* Source reference (T043) — the shared RefBlock so the library reads
-                    a source reference the same way the inspector/review do. */}
-                {selected.sourceTitle ? (
-                  <RefBlock
-                    ref={{
-                      sourceElementId: null,
-                      sourceTitle: selected.sourceTitle,
-                      url: null,
-                      author: null,
-                      publishedAt: null,
-                      locationLabel: selected.sourceLocationLabel,
-                      snippet: null,
-                      // The library mini-ref does not carry reliability metadata (T091);
-                      // the badge surfaces in the inspector/review refblock instead.
-                      sourceType: null,
-                      reliabilityTier: null,
-                      confidence: null,
-                      reliabilityNotes: null,
-                    }}
-                    showSnippet={false}
-                    testId="library-detail-ref"
-                  />
-                ) : (
-                  <div className="lib-detail__type" data-testid="library-detail-nosrc">
-                    No source
-                  </div>
-                )}
-                {selected.status === "parked" && selected.type === "source" ? (
-                  <div className="lib-actions" data-testid="library-parked-actions">
-                    <button
-                      type="button"
-                      className="lib-btn"
-                      data-testid="library-unpark-inbox"
-                      disabled={parkedActionId !== null}
-                      onClick={() => void runParkedAction(selected, "moveToInbox")}
-                    >
-                      <Icon name="inbox" size={14} />
-                      Move to inbox
-                    </button>
-                    <button
-                      type="button"
-                      className="lib-btn"
-                      data-testid="library-unpark-schedule"
-                      disabled={parkedActionId !== null}
-                      onClick={() => void runParkedAction(selected, "queueSoon")}
-                    >
-                      <Icon name="clock" size={14} />
-                      Queue soon
-                    </button>
-                    <button
-                      type="button"
-                      className="lib-btn"
-                      data-testid="library-unpark-dismiss"
-                      disabled={parkedActionId !== null}
-                      onClick={() => void runParkedAction(selected, "dismiss")}
-                    >
-                      <Icon name="x" size={14} />
-                      Dismiss
-                    </button>
-                  </div>
-                ) : null}
-                <button
-                  type="button"
-                  className="lib-btn"
-                  data-testid="library-detail-open"
-                  onClick={() => open(selected)}
-                >
-                  <Icon name="external" size={14} />
-                  Open {typeLabel(selected.type).toLowerCase()}
-                </button>
-              </div>
-            ) : null}
-          </>
+          </div>
         ) : (
           <div className="lib-map" data-testid="library-map">
             <div className="lib-map__canvas">

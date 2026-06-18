@@ -64,6 +64,7 @@ import { ReviewModeButton } from "../../review/ReviewModeButton";
 import "../../review/review.css";
 import { isScopeActive } from "../../shell/activeScope";
 import { useInboxTriagePanel } from "../../shell/inboxTriagePanel";
+import { useLibraryInspectorPanel } from "../../shell/libraryInspectorPanel";
 import { useSelection } from "../../shell/selection";
 import { ConflictSection } from "../ConflictSection";
 import { ExternalUrlLink } from "../ExternalUrlLink";
@@ -2268,6 +2269,15 @@ function SourceLineageSection({
 }
 
 /** The full metadata view for one inspected element. */
+/** Short date for the relocated "Parked {date}" context line (matches the Library detail column). */
+function formatParkedDate(iso: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(iso));
+}
+
 function InspectorBody({
   data,
   lineage,
@@ -2335,6 +2345,13 @@ function InspectorBody({
     inboxTriagePanel !== null &&
     inboxTriagePanel.targetId === element.id &&
     element.type === "source";
+  // The relocated Library controls (Open + parked actions + context lines), moved
+  // out of the deleted Library detail column. Rendered ONLY when a Library screen
+  // has published a payload for the element this inspector is showing — gated on
+  // the inspector's own loaded `element.id`, so the controls cannot leak onto
+  // other routes (queue / reader / review / card).
+  const { panel: libraryPanel } = useLibraryInspectorPanel();
+  const showLibraryControls = libraryPanel !== null && libraryPanel.targetId === element.id;
   const [lineageDeletedVisibility, setLineageDeletedVisibility] = useState<{
     elementId: string;
     showDeleted: boolean;
@@ -2387,6 +2404,67 @@ function InspectorBody({
           registerSection={registerSection}
           registerReadNowButton={registerReadNowButton}
         />
+      ) : null}
+
+      {/* Library controls (relocated from the deleted Library detail column) —
+          gated to the Library-selected element. Context lines + parked-source
+          quick-actions + the primary Open action. */}
+      {showLibraryControls && libraryPanel ? (
+        <div className="insp-sec insp-library" data-testid="inspector-library-actions">
+          {libraryPanel.parkedAt ? (
+            <div className="insp-library__reason" data-testid="inspector-parked-date">
+              Parked {formatParkedDate(libraryPanel.parkedAt)}
+            </div>
+          ) : null}
+          {libraryPanel.notInQueueReason ? (
+            <div className="insp-library__reason" data-testid="inspector-queue-reason">
+              {libraryPanel.notInQueueReason}
+            </div>
+          ) : null}
+          {libraryPanel.parked ? (
+            <div className="insp-library__parked" data-testid="inspector-parked-actions">
+              <button
+                type="button"
+                className="insp-add__btn"
+                data-testid="inspector-parked-inbox"
+                disabled={libraryPanel.parked.busy}
+                onClick={libraryPanel.parked.onMoveToInbox}
+              >
+                <Icon name="inbox" size={13} />
+                Move to inbox
+              </button>
+              <button
+                type="button"
+                className="insp-add__btn"
+                data-testid="inspector-parked-schedule"
+                disabled={libraryPanel.parked.busy}
+                onClick={libraryPanel.parked.onQueueSoon}
+              >
+                <Icon name="clock" size={13} />
+                Queue soon
+              </button>
+              <button
+                type="button"
+                className="insp-add__btn"
+                data-testid="inspector-parked-dismiss"
+                disabled={libraryPanel.parked.busy}
+                onClick={libraryPanel.parked.onDismiss}
+              >
+                <Icon name="x" size={13} />
+                Dismiss
+              </button>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            className="insp-add__btn insp-add__btn--accent"
+            data-testid="inspector-open-element"
+            onClick={libraryPanel.onOpen}
+          >
+            <Icon name="external" size={13} />
+            {libraryPanel.openLabel}
+          </button>
+        </div>
       ) : null}
 
       {/* Properties: the editable control surface. */}

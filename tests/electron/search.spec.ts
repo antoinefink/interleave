@@ -128,25 +128,30 @@ test("typing a seeded term returns the source, extract, and card grouped + highl
     )
     .toEqual(expect.arrayContaining([TERM.toLowerCase()]));
 
-  // Clicking the seeded source result shows its detail panel + refblock.
+  // Clicking the seeded source result populates the shared shell inspector (the
+  // redundant detail column was removed); the relocated Open action shows there.
   const sourceRow = page.getByTestId("library-group-source").getByTestId("library-result").first();
   await sourceRow.click();
-  await expect(page.getByTestId("library-detail")).toBeVisible();
-  await expect(page.getByTestId("library-detail-ref")).toContainText(SOURCE_TITLE);
-  // The detail surfaces the load-bearing scheduler chip (kit parity) — a source is
-  // on the attention scheduler.
-  const detail = page.getByTestId("library-detail");
-  await expect(detail.getByTestId("scheduler-chip")).toHaveAttribute("data-scheduler", "attention");
+  await expect(page.getByTestId("inspector-content")).toBeVisible();
+  await expect(page.getByTestId("inspector-title")).toHaveText(SOURCE_TITLE);
+  await expect(page.getByTestId("inspector-open-element")).toHaveText(/Open source/i);
+  // The inspector surfaces the load-bearing scheduler chip — a source is on attention.
+  await expect(
+    page.locator('[data-testid="scheduler-chip"][data-scheduler="attention"]').first(),
+  ).toBeVisible();
 
-  // A card hit's snippet is matched prompt/answer text, never the element ULID.
+  // A card hit's snippet (shown in the result row) is matched prompt/answer text,
+  // never the element ULID.
   const cardRow = page.getByTestId("library-group-card").getByTestId("library-result").first();
   const cardId = await cardRow.getAttribute("data-result-id");
-  await cardRow.click();
-  const cardSnippet = page.getByTestId("library-detail-snippet");
+  const cardSnippet = cardRow.locator(".result__snippet");
   await expect(cardSnippet).toBeVisible();
   await expect(cardSnippet).not.toHaveText(cardId ?? "");
-  // The card detail shows the FSRS scheduler chip (the other side of the split).
-  await expect(detail.getByTestId("scheduler-chip")).toHaveAttribute("data-scheduler", "fsrs");
+  await cardRow.click();
+  // The inspector shows the FSRS scheduler chip (the other side of the split).
+  await expect(
+    page.locator('[data-testid="scheduler-chip"][data-scheduler="fsrs"]').first(),
+  ).toBeVisible();
 
   await app.close();
 });

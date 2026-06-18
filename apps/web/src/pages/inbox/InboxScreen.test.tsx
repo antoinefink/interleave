@@ -529,7 +529,12 @@ describe("InboxScreen", () => {
     await waitFor(() =>
       expect(getByTestId("inbox-preview-title")).toHaveTextContent("Second source"),
     );
-    expect(getByTestId("inbox-read-now")).not.toHaveFocus();
+    // Wait for the relocated triage section to settle on the second source before
+    // asserting the no-replay-focus guarantee — under parallel test load the section
+    // can mount a tick after the preview title updates, so a synchronous getByTestId
+    // here is load-flaky. The intent stands: read-now is present but NOT auto-focused.
+    const readNow = await findByTestId("inbox-read-now");
+    expect(readNow).not.toHaveFocus();
     expect(getByTestId("inbox-triage-actions")).not.toHaveAttribute("data-highlighted", "true");
     expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
   });

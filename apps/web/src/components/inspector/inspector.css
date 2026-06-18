@@ -529,6 +529,37 @@
   opacity: 0.5;
   cursor: default;
 }
+/* The accent variant for the relocated Library "Open" action — a full-width
+   primary affordance (mirrors the deleted `.lib-btn`, the Library detail column's
+   solid-accent open button). */
+.insp-add__btn--accent {
+  color: var(--text-on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.insp-add__btn--accent:hover:not(:disabled) {
+  color: var(--text-on-accent);
+  border-color: var(--accent);
+  filter: brightness(1.05);
+}
+
+/* Relocated Library controls block (Open + parked actions + context lines),
+   moved out of the deleted Library detail column into the shared inspector. */
+.insp-library {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.insp-library__reason {
+  font-size: var(--t-2xs);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.insp-library__parked {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
 .insp-add__select {
   font-family: var(--font-ui);
   font-size: var(--t-xs);

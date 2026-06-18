@@ -105,9 +105,11 @@ test("Save for later parks an inbox source, persists, and restores from Library"
   });
   await expect(row).toBeVisible();
   await row.click();
-  await expect(page.getByTestId("library-detail-parked-date")).toContainText("Parked");
+  // The parked controls + "Parked {date}" context line relocated from the removed
+  // detail column into the shared shell inspector.
+  await expect(page.getByTestId("inspector-parked-date")).toContainText("Parked");
 
-  await page.getByTestId("library-unpark-inbox").click();
+  await page.getByTestId("inspector-parked-inbox").click();
   await expect(row).toHaveCount(0);
 
   const restored = await parkedState(page);

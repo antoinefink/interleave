@@ -44,6 +44,7 @@ import { CheatSheet } from "./CheatSheet";
 import { CommandPalette } from "./CommandPalette";
 import { InboxTriagePanelProvider } from "./inboxTriagePanel";
 import { Kbd } from "./Kbd";
+import { LibraryInspectorPanelProvider } from "./libraryInspectorPanel";
 import {
   type NavItem,
   NEW_SOURCE_EVENT,
@@ -744,9 +745,11 @@ export function Shell() {
   return (
     <SelectionProvider>
       <InboxTriagePanelProvider>
-        <StatusHintProvider>
-          <ShellInner />
-        </StatusHintProvider>
+        <LibraryInspectorPanelProvider>
+          <StatusHintProvider>
+            <ShellInner />
+          </StatusHintProvider>
+        </LibraryInspectorPanelProvider>
       </InboxTriagePanelProvider>
     </SelectionProvider>
   );

@@ -25,6 +25,7 @@ import type {
   SearchQueryResult,
   SearchResult,
 } from "../lib/appApi";
+import type { LibraryInspectorPanel } from "../shell/libraryInspectorPanel";
 
 const EMPTY_TEST_SEARCH_COUNTS: SearchQueryResult["counts"] = {
   byType: { source: 0, extract: 0, card: 0 },
@@ -40,6 +41,25 @@ function deferred<T>() {
     reject = rej;
   });
   return { promise, resolve, reject };
+}
+
+/** The latest non-null payload published to the shell inspector bridge. */
+function latestPanel(): LibraryInspectorPanel | null {
+  const calls = h.setLibraryPanelSpy.mock.calls;
+  for (let i = calls.length - 1; i >= 0; i--) {
+    const arg = calls[i]?.[0];
+    if (arg) return arg as LibraryInspectorPanel;
+  }
+  return null;
+}
+
+/** Wait until a payload for `id` is published to the bridge, then return it. */
+async function panelFor(id: string): Promise<LibraryInspectorPanel> {
+  return await waitFor(() => {
+    const p = latestPanel();
+    expect(p?.targetId).toBe(id);
+    return p as LibraryInspectorPanel;
+  });
 }
 
 const h = vi.hoisted(() => {
@@ -197,6 +217,7 @@ const h = vi.hoisted(() => {
     navigateSpy: vi.fn(),
     routeSearch: {} as Record<string, unknown>,
     selectSpy: vi.fn(),
+    setLibraryPanelSpy: vi.fn(),
     searchQuery: vi.fn(),
     libraryBrowse: vi.fn(),
     listConcepts: vi.fn(),
@@ -219,6 +240,13 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("../shell/selection", () => ({
   useSelection: () => ({ selectedId: null, select: h.selectSpy }),
+}));
+
+// The relocated "Open" control now publishes to the shared shell inspector bridge.
+// The inspector isn't mounted here, so capture the published payload and assert on
+// it (and invoke its `onOpen`) instead of clicking the old detail-column button.
+vi.mock("../shell/libraryInspectorPanel", () => ({
+  useLibraryInspectorPanel: () => ({ panel: null, setPanel: h.setLibraryPanelSpy }),
 }));
 
 vi.mock("../lib/appApi", async () => {
@@ -1356,8 +1384,10 @@ describe("LibraryScreen", () => {
     const sourceGroup = await screen.findByTestId("library-group-source");
     fireEvent.click(within(sourceGroup).getByTestId("library-result"));
 
-    // The detail panel shows; clicking Open navigates to the source reader.
-    fireEvent.click(await screen.findByTestId("library-detail-open"));
+    // The Open control is published to the inspector bridge; invoking it navigates.
+    const sourcePanel = await panelFor("src-1");
+    expect(sourcePanel.openLabel).toBe("Open source");
+    act(() => sourcePanel.onOpen());
     expect(h.navigateSpy).toHaveBeenCalledWith({ to: "/source/$id", params: { id: "src-1" } });
 
     h.searchQuery.mockClear();
@@ -1373,14 +1403,15 @@ describe("LibraryScreen", () => {
     await waitFor(() => expect(screen.queryByTestId("library-group-source")).toBeNull());
     const cardGroup = await screen.findByTestId("library-group-card");
     fireEvent.click(within(cardGroup).getByTestId("library-result"));
-    fireEvent.click(await screen.findByTestId("library-detail-open"));
+    const cardPanel = await panelFor("card-1");
+    act(() => cardPanel.onOpen());
     expect(h.navigateSpy).toHaveBeenCalledWith({
       to: "/card/$id",
       params: { id: "card-1" },
     });
   });
 
-  it("selecting a search result updates local detail and universal inspector selection", async () => {
+  it("selecting a search result publishes the open payload and sets universal selection", async () => {
     render(<LibraryScreen />);
     fireEvent.change(screen.getByTestId("library-search-input"), {
       target: { value: "intelligence" },
@@ -1393,7 +1424,9 @@ describe("LibraryScreen", () => {
     fireEvent.click(within(sourceGroup).getByTestId("library-result"));
 
     expect(h.selectSpy).toHaveBeenCalledWith("src-1");
-    expect(await screen.findByTestId("library-detail")).toBeTruthy();
+    const panel = await panelFor("src-1");
+    expect(panel.openLabel).toBe("Open source");
+    expect(panel.parked).toBeNull();
   });
 
   it("does NOT re-render the heavy results subtree on a keystroke (U1 stutter regression)", async () => {
@@ -1466,10 +1499,10 @@ describe("LibraryScreen", () => {
     const firstRow = screen.getAllByTestId("library-result")[0];
     if (!firstRow) throw new Error("expected at least one result row");
     fireEvent.click(firstRow);
-    await waitFor(() => expect(screen.getByTestId("library-detail")).toBeInTheDocument());
+    await waitFor(() => expect(latestPanel()).not.toBeNull());
 
-    // Only the selected row's `Prio` (+ the detail panel's) re-rendered — a small, bounded
-    // delta, NOT the 6+ a full-list reconciliation would cost.
+    // Only the selected row's `Prio` re-rendered — a small, bounded delta, NOT the
+    // 6+ a full-list reconciliation would cost.
     const delta = h.prioRenderCount.current - before;
     expect(delta).toBeLessThanOrEqual(3);
     expect(delta).toBeLessThan(rows.length);
@@ -1535,26 +1568,7 @@ describe("LibraryScreen", () => {
     expect(screen.queryByTestId("library-loading")).toBeNull();
   });
 
-  it("shows the scheduler chip + due badge in the selection detail (kit parity)", async () => {
-    render(<LibraryScreen />);
-    fireEvent.click(screen.getByTestId("library-filter-type-card"));
-    fireEvent.change(screen.getByTestId("library-search-input"), {
-      target: { value: "intelligence" },
-    });
-    await waitFor(() =>
-      expect(h.searchQuery).toHaveBeenCalledWith(
-        expect.objectContaining({ q: "intelligence", type: "card" }),
-      ),
-    );
-    // Select the card hit (FSRS scheduler + a due date).
-    const cardGroup = await screen.findByTestId("library-group-card");
-    fireEvent.click(within(cardGroup).getByTestId("library-result"));
-
-    const detail = await screen.findByTestId("library-detail");
-    // The load-bearing scheduler split is surfaced (FSRS chip for the card).
-    const chip = within(detail).getByTestId("scheduler-chip");
-    expect(chip.getAttribute("data-scheduler")).toBe("fsrs");
-    // And the due badge reflects the result's dueLabel.
-    expect(within(detail).getByTestId("library-detail-due").textContent).toContain("Due today");
-  });
+  // The selection's scheduler chip + due badge moved out of the deleted detail
+  // column into the shared shell inspector (covered by Inspector.test.tsx). The
+  // Library screen no longer renders them, so the kit-parity assertion lives there.
 });
