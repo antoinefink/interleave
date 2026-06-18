@@ -5884,23 +5884,30 @@ export class DbService {
         .map((el) => [el.id, el] as const),
     );
 
+    // Build the residual per-hit enrichment (source refblock, queue summary, first
+    // concept name) ONCE over the live hit ids, instead of the per-hit `refMeta` +
+    // `summaryFor` + `conceptForElement` that remained after `93e8dbc8` batched the
+    // element fetch. The concept now comes from the SAME map the summary's concept is
+    // derived from (one source of truth), so the old duplicate `conceptForElement`
+    // call is gone (was: concept resolved both inside `summaryFor` AND again here).
+    const now = new Date();
+    const hitIds = [...elementsById.keys()];
+    const sourceRefs = resolveSourceRefMany(this.repos, hitIds);
+    const summaries = this.queueQuery.summaryForMany(hitIds, now.toISOString() as IsoTimestamp);
+    const conceptNames = this.repos.concepts.firstConceptNameMapForMembers(hitIds);
+
     const results: SearchResult[] = [];
     for (const hit of hits) {
       const element = elementsById.get(hit.id as ElementId);
       if (!element) continue;
 
-      // Source provenance + location for the row's refblock. For a `source` hit
-      // the element IS the source; for an extract/card, resolve the owning source
-      // and the card's/extract's source-location anchor.
-      const { sourceTitle, sourceLocationLabel } = this.refMetaForElement(element.id);
-
-      // Scheduler chip + due badge for the SELECTION detail (kit parity). The chip
-      // needs only the `SchedulerSignals`, so build JUST those (`includeYield:false`
-      // skips the source read-%/yield + block-processing rollup — the bulk of a source
-      // hit's cost). The queue summary classifies the due state/label. Both are
-      // best-effort: a row that vanished degrades to a calm default rather than dropping.
-      const summary = this.queueQuery.summaryFor(element.id);
-      const scheduler = this.inspectorQuery.buildSchedulerSignals(element, new Date(), {
+      // Source provenance + location for the row's refblock, the queue summary, and
+      // the scheduler chip — all read from the pre-built batched maps / lightweight
+      // `includeYield:false` slice (the source read-%/yield rollup is selection
+      // detail, not list data). A row that vanished degrades to a calm default.
+      const sourceRef = sourceRefs.get(element.id) ?? null;
+      const summary = summaries.get(element.id) ?? null;
+      const scheduler = this.inspectorQuery.buildSchedulerSignals(element, now, {
         includeYield: false,
       });
 
@@ -5912,9 +5919,9 @@ export class DbService {
         score: hit.score,
         priority: element.priority,
         priorityLabel: priorityToLabel(element.priority),
-        concept: this.conceptForElement(element.id),
-        sourceTitle,
-        sourceLocationLabel,
+        concept: conceptNames.get(element.id) ?? null,
+        sourceTitle: sourceRef?.sourceTitle ?? null,
+        sourceLocationLabel: sourceRef?.locationLabel ?? null,
         dueAt: summary?.dueAt ?? element.dueAt ?? null,
         scheduler,
         due: summary?.due ?? "soon",

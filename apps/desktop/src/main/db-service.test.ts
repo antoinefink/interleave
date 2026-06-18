@@ -15,6 +15,7 @@ import path from "node:path";
 import type { ElementId, IsoTimestamp } from "@interleave/core";
 import { DEFAULT_EMBEDDING_MODEL_ID, priorityFromLabel, priorityToLabel } from "@interleave/core";
 import { MIGRATIONS_DIR, openDatabase } from "@interleave/db";
+import type { InspectorQuery, QueueQuery } from "@interleave/local-db";
 import { resolveSourceRef } from "@interleave/local-db";
 import { seedDemoCollection } from "@interleave/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -3414,6 +3415,99 @@ describe("DbService — review session (T037)", () => {
     expect(tagged.some((r) => r.type === "extract")).toBe(true);
     // A non-matching tag excludes everything.
     expect(svc.search({ q: "intelligence", tag: "no-such-tag" }).results).toEqual([]);
+
+    svc.close();
+  });
+
+  it("search.query result deepEquals the per-row composition (batch+trim drift guard, U7)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    // Reach the private query slices the producer composes each row from, so the
+    // expectation is rebuilt with the EXACT single-row primitives the batched path
+    // replaced (`summaryFor` + `resolveSourceRef` + `firstConceptName` + the
+    // scheduler slice). If the batched maps ever drift from the single-row reads,
+    // this field-by-field deepEquals fails.
+    const internals = svc as unknown as {
+      queueQuery: QueueQuery;
+      inspectorQuery: InspectorQuery;
+    };
+
+    const { results } = svc.search({ q: "intelligence" });
+    expect(results.length).toBeGreaterThan(0);
+    // The seed matches all three searchable types (source/extract/card) — the source
+    // hit exercises the `includeYield:false` scheduler slice, the extract/card hits
+    // exercise the owning-source refblock resolution.
+    expect(new Set(results.map((r) => r.type)).size).toBeGreaterThan(1);
+
+    const now = new Date();
+    for (const row of results) {
+      const id = row.id as ElementId;
+      const summary = internals.queueQuery.summaryFor(id);
+      const ref = resolveSourceRef(svc.repos, id);
+      const concept = svc.repos.concepts.firstConceptName(id);
+      const scheduler = internals.inspectorQuery.buildSchedulerSignals(
+        svc.repos.elements.findById(id) ?? (undefined as never),
+        now,
+        { includeYield: false },
+      );
+      // Field-by-field: concept, source ref, due label/state, eligibility, scheduler.
+      expect(row.concept).toEqual(concept);
+      expect(row.sourceTitle).toEqual(ref?.sourceTitle ?? null);
+      expect(row.sourceLocationLabel).toEqual(ref?.locationLabel ?? null);
+      expect(row.due).toEqual(summary?.due ?? "soon");
+      expect(row.dueLabel).toEqual(summary?.dueLabel ?? "No return scheduled");
+      expect(row.queueEligible).toEqual(summary?.queueEligible ?? false);
+      expect(row.notInQueueReason).toEqual(
+        summary?.notInQueueReason ?? "Not in queue: summary unavailable",
+      );
+      // `retrievability` is a continuous function of `now`, so the test's recomputed
+      // value jitters sub-ms against the value the producer computed at its own `now`;
+      // compare every other scheduler field exactly (the slice itself is separately
+      // drift-guarded by `buildSchedulerSignals(includeYield:true) === get().scheduler`).
+      const { retrievability: _rowR, ...rowScheduler } = row.scheduler;
+      const { retrievability: _expR, ...expectedScheduler } = scheduler;
+      expect(rowScheduler).toEqual(expectedScheduler);
+    }
+
+    svc.close();
+  });
+
+  it("search.query carries the concept exactly once, equal to firstConceptName (U7 duplicate-drop guard)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    // The duplicate `conceptForElement` call removed in U7 means the concept must come
+    // from the single shared source — `firstConceptName` — for every row.
+    const { results } = svc.search({ q: "intelligence" });
+    const conceptBearing = results.filter((r) => r.concept !== null);
+    expect(conceptBearing.length).toBeGreaterThan(0);
+    for (const row of results) {
+      expect(row.concept).toEqual(svc.repos.concepts.firstConceptName(row.id as ElementId));
+    }
+
+    svc.close();
+  });
+
+  it("search.query faceted drill-down counts are unchanged after the batch+trim (U7 count-path guard)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+
+    // The count path resolves only {id,type,priority} batched and was NOT touched by
+    // U7. Re-assert the chip-vs-list invariant so a regression in the row enrichment
+    // can never silently shift counts.
+    const counts = svc.search({ q: "intelligence" }).counts;
+    for (const type of ["source", "extract", "card"] as const) {
+      expect(counts.byType[type]).toBe(svc.search({ q: "intelligence", type }).results.length);
+    }
+    for (const priorityLabel of ["A", "B", "C", "D"] as const) {
+      expect(counts.byPriority[priorityLabel]).toBe(
+        svc.search({ q: "intelligence", priorityLabel }).results.length,
+      );
+    }
 
     svc.close();
   });
