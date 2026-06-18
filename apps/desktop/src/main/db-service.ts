@@ -6038,21 +6038,26 @@ export class DbService {
   /**
    * Shared batched row enrichment for the inventory list surfaces (library browse +
    * concept members). Resolves the load-bearing display fields — the source-ref
-   * refblock, the first concept name, and the queue-eligibility/due summary — in a
-   * CONSTANT number of batched reads over the WHOLE working set, instead of the old
-   * per-row `inspectorQuery.get` + `summaryFor` + `refMeta` + `concept` (the same
-   * N+1 / over-enrichment `93e8dbc8` removed for `/search`). The per-element
-   * scheduler chip is built from the lightweight {@link InspectorQuery.buildSchedulerSignals}
-   * slice with `includeYield:false` — the expensive per-source yield/block rollup is
-   * inspector-selection detail (the list chip never surfaces it), exactly as `search`
-   * already trims. The `enrichElementRow` callback reads only from the pre-built maps
-   * + the already-fetched `Element`, so each consumer composes its own row shape with
-   * zero extra DB round-trips per row.
+   * refblock, the first concept name, the queue-eligibility/due summary, and the
+   * scheduler chip — in a CONSTANT number of batched reads over each chunk, instead
+   * of the old per-row `inspectorQuery.get` + `summaryFor` + `refMeta` + `concept`
+   * (the same N+1 / over-enrichment `93e8dbc8` removed for `/search`).
+   *
+   * The scheduler chip is built via {@link InspectorQuery.buildSchedulerSignalsForMany}
+   * with `includeYield:false` — one batched read for all cards' FSRS state and one
+   * batched read for all attention elements' schedule projections per chunk. The
+   * `includeYield:false` trim is intentional: the yield chip (source read-% / extract
+   * count / card count) is selection-detail surfaced by the single-element inspector
+   * get, NOT by list rows. The U5/U6 tests assert `scheduler.yield === null` on list
+   * rows — do not restore the expensive per-source rollup here.
    *
    * The batched primitives (`summaryForMany`, `resolveSourceRefMany`,
-   * `firstConceptNameMapForMembers`) all key off the element ids; an `Element` already
-   * carries every direct column (priority/status/stage/dueAt/parkedAt/updatedAt), so
-   * no per-row element re-read is needed.
+   * `firstConceptNameMapForMembers`, `buildSchedulerSignalsForMany`) all key off the
+   * element ids; an `Element` already carries every direct column
+   * (priority/status/stage/dueAt/parkedAt/updatedAt), so no per-row element re-read
+   * is needed. The `enrichElementRow` callback reads only from the pre-built maps +
+   * the already-fetched `Element`, so each consumer composes its own row shape with
+   * zero extra DB round-trips per row.
    */
   private enrichElementRows<T>(
     elements: readonly Element[],
@@ -6078,14 +6083,17 @@ export class DbService {
       const summaries = this.queueQuery.summaryForMany(ids, asOfIso);
       const sourceRefs = resolveSourceRefMany(this.repos, ids);
       const conceptNames = this.repos.concepts.firstConceptNameMapForMembers(ids);
+      // Batched scheduler: one FSRS-state read + one op-log projection read for the
+      // whole chunk — replaces the residual per-row N+1 that was here before.
+      const schedulerMap = this.inspectorQuery.buildSchedulerSignalsForMany(chunk, asOf, {
+        includeYield: false,
+      });
 
       for (const element of chunk) {
         rows.push(
           enrichElementRow({
             element,
-            scheduler: this.inspectorQuery.buildSchedulerSignals(element, asOf, {
-              includeYield: false,
-            }),
+            scheduler: schedulerMap.get(element.id) as SchedulerSignals,
             summary: summaries.get(element.id) ?? null,
             sourceRef: sourceRefs.get(element.id) ?? null,
             concept: conceptNames.get(element.id) ?? null,
