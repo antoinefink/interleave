@@ -37,7 +37,7 @@
  * The full run is the executable backing of the M20 "Scale QA checklist" steps 1–2.
  */
 
-import { EMBEDDING_DIM, embedTextLocal } from "@interleave/core";
+import { type ElementId, EMBEDDING_DIM, embedTextLocal } from "@interleave/core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { QueueQuery } from "../src/queue-query";
 import { ReviewSessionService } from "../src/review-session-service";
@@ -54,6 +54,12 @@ import {
 let world: BenchWorld;
 let queryVector: number[];
 let conceptName: string | undefined;
+/** A representative 50-element id slice from the seeded DB, for summaryForMany. */
+let sampleElementIds: ElementId[] = [];
+/** A single live source id from the seeded DB, for getSourceYield. */
+let sampleSourceId: ElementId | undefined;
+/** A tag name present in the seeded DB, for the tag-filter queue gauge. */
+let sampleTagName: string | undefined;
 // Collected for the summary table.
 const rows: { name: string; p50: number; p95: number; budget: number; soft?: boolean }[] = [];
 
@@ -67,6 +73,24 @@ beforeAll(() => {
     | { name?: string }
     | undefined;
   conceptName = row?.name;
+
+  // Grab a representative element-id slice (up to 50) for summaryForMany.
+  const elementRows = world.handle.sqlite
+    .prepare("SELECT id FROM elements WHERE deleted_at IS NULL LIMIT 50")
+    .all() as { id: string }[];
+  sampleElementIds = elementRows.map((r) => r.id as ElementId);
+
+  // A single live source id for getSourceYield.
+  const sourceRow = world.handle.sqlite
+    .prepare("SELECT id FROM elements WHERE type='source' AND deleted_at IS NULL LIMIT 1")
+    .get() as { id: string } | undefined;
+  sampleSourceId = sourceRow?.id as ElementId | undefined;
+
+  // A tag name that has at least one membership (seed always creates tags).
+  const tagRow = world.handle.sqlite
+    .prepare("SELECT t.name FROM tags t JOIN element_tags et ON et.tag_id = t.id LIMIT 1")
+    .get() as { name: string } | undefined;
+  sampleTagName = tagRow?.name;
 });
 
 afterAll(() => {
@@ -159,6 +183,92 @@ describe("scale budget gate — hot read paths within p95 budgets", () => {
       void world.repos.lineageGap.lowValueCandidates({ asOf: BENCH_AS_OF });
     });
     expect(p95).toBeLessThanOrEqual(BENCH_BUDGETS_MS.maintenanceReport);
+  });
+
+  // ── U15 gauges: batched hot paths ───────────────────────────────────────────
+
+  it("QueueQuery.summaryForMany (50-element slice) is within budget", () => {
+    if (sampleElementIds.length === 0) {
+      // eslint-disable-next-line no-console
+      console.log("  [skip] QueueQuery.summaryForMany — no seeded elements");
+      return;
+    }
+    const p95 = gauge(
+      "QueueQuery.summaryForMany (50-el)",
+      BENCH_BUDGETS_MS.queueSummaryForMany,
+      () => {
+        void new QueueQuery(world.repos).summaryForMany(sampleElementIds, BENCH_AS_OF);
+      },
+    );
+    expect(p95).toBeLessThanOrEqual(BENCH_BUDGETS_MS.queueSummaryForMany);
+  });
+
+  it("SourceYieldQuery.getSourceYield (single-source, U9) is within budget", () => {
+    if (!sampleSourceId) {
+      // eslint-disable-next-line no-console
+      console.log("  [skip] SourceYieldQuery.getSourceYield — no seeded source");
+      return;
+    }
+    const id = sampleSourceId;
+    const p95 = gauge(
+      "SourceYieldQuery.getSourceYield (single)",
+      BENCH_BUDGETS_MS.sourceYieldSingle,
+      () => {
+        void world.repos.sourceYield.getSourceYield(id, BENCH_AS_OF);
+      },
+    );
+    expect(p95).toBeLessThanOrEqual(BENCH_BUDGETS_MS.sourceYieldSingle);
+  });
+
+  it("SourceYieldQuery.listSourceYield (whole-library, U10) is within budget", () => {
+    const p95 = gauge(
+      "SourceYieldQuery.listSourceYield (all)",
+      BENCH_BUDGETS_MS.sourceYieldList,
+      () => {
+        void world.repos.sourceYield.listSourceYield(BENCH_AS_OF, {
+          limit: Number.MAX_SAFE_INTEGER,
+        });
+      },
+    );
+    expect(p95).toBeLessThanOrEqual(BENCH_BUDGETS_MS.sourceYieldList);
+  });
+
+  it("SchedulerConsistencyQuery.count (U13) is within budget", () => {
+    const p95 = gauge(
+      "SchedulerConsistencyQuery.count",
+      BENCH_BUDGETS_MS.schedulerConsistencyCount,
+      () => {
+        void world.repos.schedulerConsistency.count();
+      },
+    );
+    expect(p95).toBeLessThanOrEqual(BENCH_BUDGETS_MS.schedulerConsistencyCount);
+  });
+
+  it("ChronicPostponeQuery.countDue (U13) is within budget", () => {
+    const p95 = gauge(
+      "ChronicPostponeQuery.countDue",
+      BENCH_BUDGETS_MS.chronicPostponeCountDue,
+      () => {
+        // threshold:5 is the app default (CHRONIC_POSTPONE_THRESHOLD default from core).
+        void world.repos.chronicPostpone.countDue({ threshold: 5 });
+      },
+    );
+    expect(p95).toBeLessThanOrEqual(BENCH_BUDGETS_MS.chronicPostponeCountDue);
+  });
+
+  it("QueueQuery.list (tag-filtered — batched tag-membership path, U11) is within budget", () => {
+    const p95 = gauge(
+      "QueueQuery.list (tag-filtered)",
+      BENCH_BUDGETS_MS.queueListTagFiltered,
+      () => {
+        void new QueueQuery(world.repos).list({
+          asOf: BENCH_AS_OF,
+          limit: 50,
+          ...(sampleTagName ? { filters: { tag: sampleTagName } } : {}),
+        });
+      },
+    );
+    expect(p95).toBeLessThanOrEqual(BENCH_BUDGETS_MS.queueListTagFiltered);
   });
 
   it("backupDatabaseTo (wal_checkpoint + VACUUM INTO) — SOFT ceiling, printed only", () => {

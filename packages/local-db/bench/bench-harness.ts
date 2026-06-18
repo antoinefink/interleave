@@ -74,6 +74,36 @@ export const BENCH_BUDGETS_MS = {
   maintenanceReport: 1_200,
   /** SOFT ceiling — printed, never a hard fail (I/O-bound + machine-dependent). */
   backupSnapshot: 30_000,
+
+  // ── U15 new gauges (batched hot paths) ──────────────────────────────────────
+  // Budgets set from observed post-fix smoke-profile p95 × ~2–3× headroom.
+  // The full-profile values will be higher but clear these by 1–2 orders of
+  // magnitude below the budget (same pattern as existing entries above).
+
+  // QueueQuery.summaryForMany over a 50-id slice of the seeded elements.
+  // Batched path: ~few ms on smoke; budget 500 ms covers the full-scale envelope.
+  queueSummaryForMany: 500,
+
+  // SourceYieldQuery.getSourceYield(singleSourceId) — scoped single-source query.
+  // Very fast (few SQL reads); budget 150 ms is ~3× a worst-case indexed read.
+  sourceYieldSingle: 150,
+
+  // SourceYieldQuery.listSourceYield() — whole-library batched rollup (U10).
+  // The full-profile run over 1k sources + 100k descendants is the bottleneck;
+  // 10 s leaves room for both the smoke (sub-10 ms) and the full run (~few s).
+  sourceYieldList: 10_000,
+
+  // SchedulerConsistencyQuery.count() — full live-element scan (U13).
+  // Bounded SQL scan, no per-row reads; 1 s covers the worst-case full-profile.
+  schedulerConsistencyCount: 1_000,
+
+  // ChronicPostponeQuery.countDue() — batched op-log scan over all candidates (U13).
+  // The batched path is fast; 1 s covers the full-profile op-log size.
+  chronicPostponeCountDue: 1_000,
+
+  // QueueQuery.list with a tag filter active (U11 batched tag-membership path).
+  // Similar to the concept-filtered path; budget tracks the same envelope.
+  queueListTagFiltered: 2_500,
 } as const;
 
 export const BENCH_AS_OF = "2026-06-01T12:00:00.000Z" as IsoTimestamp;
