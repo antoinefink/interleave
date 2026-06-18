@@ -35,6 +35,12 @@ tags:
   - "throttle"
   - "background-jobs"
   - "performance-harness"
+  - "n-plus-one"
+  - "drizzle"
+  - "better-sqlite3"
+  - "main-process"
+  - "search-enrichment"
+  - "batched-read"
 ---
 
 # Search typing stutter is renderer re-render cost, not the nearby async work
@@ -264,6 +270,24 @@ to a genuinely quiesced state and typing was re-measured (still stuttered → Ca
   throttle unit test (a 25-event burst → ≤2 `semanticStatus` reads); and an Electron e2e asserting
   the `CSS.highlights` registry is populated with the matched term (the highlight is invisible to
   jsdom, so it must be checked in real Chromium).
+
+## Follow-up (2026-06-18, #2): with the renderer fixed, a REAL-vault trace exposed the true bottleneck — an O(N) main-process search-enrichment N+1 (~7s → ~41ms)
+
+After the renderer fixes shipped, the user still saw stutter and captured a **production DevTools trace of their real vault**. Separated by process it was decisive: the **renderer (`CrRendererMain`) had no task >9ms during typing** (the renderer fix worked), while the **Electron MAIN process (`CrBrowserMain`) blocked ~850ms per keystroke-settle**, all in SQLite/drizzle (`buildQueryFromSourceParams`, drizzle `is`/`buildSelection`/`getSQL`, better-sqlite3 `Statement.all`, `listBlockViews`). The lesson the synthetic harness could NOT teach: **profile the real workload** — a query that all rows match ("notes…") understated it; the user's changing result set + real vault made the main-process N+1 dominant.
+
+Root cause in `db-service`'s `semanticSearch` + `search`: every fused hit was enriched per-row with the **full `inspectorQuery.get`** (lineage + provenance + tags + the source read-%/**yield** rollup, which calls `listBlockViews`) + `queueQuery.summaryFor` + `refMetaForElement` + `conceptForElement` + a `findById` — drizzle **rebuilding the query AST every call**. Worse, the drill-down **counts** ran that FULL enrichment again just to read `{id,type,priority}`, over the main set **and once per type** — so a single settle ran the heavy enrichment ~**5×N** times.
+
+Fix (`batch + trim`):
+- **Counts** resolve `{id,type,priority}` via ONE batched `elements.findManyLive(ids)` — no enrichment.
+- **Displayed rows** batch the element fetch (one `findManyLive`) and replace `inspectorQuery.get` with a new lightweight `InspectorQuery.buildSchedulerSignals(element, asOf, {includeYield:false})` — the `SchedulerChip` slice only, skipping the lineage/provenance/tags and (the expensive part) the source-yield/`listBlockViews` rollup. `get()` was refactored to call the same method (`includeYield:true`) so the full inspector is unchanged (no drift — guarded by a test asserting `buildSchedulerSignals(...,{includeYield:true}) === get().scheduler`).
+
+Measured over a 960-element seed, same queries: **median ~7150ms → ~41ms (~175×)**; the worst ("source", "notes…") went 7331ms → 46ms.
+
+### Lessons
+
+- **A list/search surface must never enrich rows with the full selection-DETAIL payload.** The inspector/queue/lineage reads are for ONE selected element; running them per result row (×N), and again per count pass (×N per type), is a catastrophic N+1 — made worse by ORMs that rebuild the query AST per call.
+- **Count/aggregate paths must not reuse display-enrichment.** They need only the projection they count over (`{id,type,priority}`) — resolve it batched.
+- **Synthetic perf repros can hide the real cost.** Always confirm against a real workload/vault (here, the user's own trace was the ground truth that redirected the fix from the renderer to the main process).
 
 ## Related
 

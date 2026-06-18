@@ -274,6 +274,90 @@ export class InspectorQuery {
   }
 
   /**
+   * The element's `SchedulerChip` signals ONLY — the slice of {@link get} the
+   * library/search rows need, without composing the (expensive) lineage,
+   * provenance, tags, review summary, and claim-lifetime the full inspector builds.
+   *
+   * `includeYield` (default `true`) controls the SOURCE-only "yield (N extracts /
+   * M cards)" rollup + retirement suggestion. Those are the bulk of a source hit's
+   * cost (a read-%/block-processing rollup), so the `/search` result list passes
+   * `includeYield: false`: a settle enriches N hits, and computing the full yield
+   * for every row blocked the main process (the search-typing stutter). The yield
+   * chip is a selection-detail nicety, not list data. Pure read; appends no op.
+   */
+  buildSchedulerSignals(
+    element: Element,
+    asOf: Date,
+    options: { includeYield?: boolean } = {},
+  ): SchedulerSignals {
+    const { review } = this.repos;
+    const id = element.id;
+    const includeYield = options.includeYield ?? true;
+
+    if (element.type === "card") {
+      const state = review.findReviewState(id);
+      const retrievability = state
+        ? approximateRetrievability(state.stability, state.lastReviewedAt, asOf)
+        : null;
+      return {
+        kind: "fsrs",
+        retrievability,
+        stability: state?.stability ?? null,
+        difficulty: state?.difficulty ?? null,
+        reps: state?.reps ?? null,
+        lapses: state?.lapses ?? null,
+        fsrsState: state?.fsrsState ?? null,
+        stage: element.stage,
+        postponed: 0,
+        scheduleReason: null,
+        lastProcessedAt: state?.lastReviewedAt ?? null,
+        // Yield is a SOURCE concern; a card's panel shows FSRS stats instead.
+        yield: null,
+        retirementSuggestion: null,
+        needsReverify: element.needsReverify,
+      };
+    }
+
+    // The "yield (N extracts / M cards)" chip — only meaningful for a SOURCE (the
+    // lineage root), and only when requested (the search list skips it for cost).
+    let sourceYield: SourceYieldSignals | null = null;
+    if (includeYield && element.type === "source") {
+      const row = this.repos.sourceYield.getSourceYield(id, asOf.toISOString() as IsoTimestamp);
+      if (row) {
+        sourceYield = {
+          readPct: row.readPct,
+          extractsCreated: row.extractsCreated,
+          productiveExtracts: row.productiveExtracts,
+          cardsCreated: row.cardsCreated,
+        };
+      }
+    }
+    const scheduleProjection = this.repos.operationLog.currentScheduleProjection(id, element.dueAt);
+    return {
+      kind: "attention",
+      retrievability: null,
+      stability: null,
+      difficulty: null,
+      reps: null,
+      lapses: null,
+      fsrsState: null,
+      stage: element.stage,
+      // The postponed count is read from the op log (T024): each postpone records
+      // a `postpone` marker on its `reschedule_element` op, so the count needs no
+      // schema column. The full attention scheduler lands with T028.
+      postponed: scheduleProjection.effectivePostponeCount,
+      scheduleReason: scheduleProjection.reason,
+      lastProcessedAt: element.updatedAt,
+      yield: sourceYield,
+      retirementSuggestion:
+        includeYield && element.type === "source"
+          ? this.repos.retirementSuggestions.visibleForSource(element.id)
+          : null,
+      needsReverify: element.needsReverify,
+    };
+  }
+
+  /**
    * The full inspector payload for one element, or `null` when the id is unknown
    * or soft-deleted. Composes the element + its lineage (parent/children/source),
    * provenance, source location, tags, and the type-appropriate scheduler
@@ -345,11 +429,12 @@ export class InspectorQuery {
         }
       : null;
 
-    let scheduler: SchedulerSignals;
+    // The SchedulerChip signals (extracted to {@link buildSchedulerSignals} so the
+    // library/search rows can compute JUST this slice cheaply — see that method).
+    const scheduler = this.buildSchedulerSignals(element, asOf, { includeYield: true });
     let reviewSummary: ReviewSummary | null = null;
     // T090 — the card's claim-lifetime fields + the derived expiry status (cards only).
     let lifetime: FactLifetimeSummary | null = null;
-
     if (element.type === "card") {
       const cardRow = review.findCardById(id)?.card;
       if (cardRow) {
@@ -357,30 +442,10 @@ export class InspectorQuery {
         lifetime = { ...fields, status: deriveExpiryStatus(fields, asOf) };
       }
       const state = review.findReviewState(id);
-      // Exclude T125 re-stabilization marker rows — the inspector's review count is real
-      // grades only (a marker is not a review).
-      const logCount = review.listReviewLogs(id).filter((log) => log.editMarkerAt == null).length;
-      const retrievability = state
-        ? approximateRetrievability(state.stability, state.lastReviewedAt, asOf)
-        : null;
-      scheduler = {
-        kind: "fsrs",
-        retrievability,
-        stability: state?.stability ?? null,
-        difficulty: state?.difficulty ?? null,
-        reps: state?.reps ?? null,
-        lapses: state?.lapses ?? null,
-        fsrsState: state?.fsrsState ?? null,
-        stage: element.stage,
-        postponed: 0,
-        scheduleReason: null,
-        lastProcessedAt: state?.lastReviewedAt ?? null,
-        // Yield is a SOURCE concern; a card's panel shows FSRS stats instead.
-        yield: null,
-        retirementSuggestion: null,
-        needsReverify: element.needsReverify,
-      };
       if (state) {
+        // Exclude T125 re-stabilization marker rows — the inspector's review count is real
+        // grades only (a marker is not a review).
+        const logCount = review.listReviewLogs(id).filter((log) => log.editMarkerAt == null).length;
         reviewSummary = {
           dueAt: state.dueAt,
           stability: state.stability,
@@ -393,48 +458,6 @@ export class InspectorQuery {
           isRetired: review.isCardRetired(id),
         };
       }
-    } else {
-      // The "yield (N extracts / M cards)" chip the attention `SchedulerChip` promises
-      // — only meaningful for a SOURCE (the lineage root). Computed from the SAME
-      // read-only `SourceYieldQuery` rollup (no duplicated read-%/lineage math).
-      let sourceYield: SourceYieldSignals | null = null;
-      if (element.type === "source") {
-        const row = this.repos.sourceYield.getSourceYield(id, asOf.toISOString() as IsoTimestamp);
-        if (row) {
-          sourceYield = {
-            readPct: row.readPct,
-            extractsCreated: row.extractsCreated,
-            productiveExtracts: row.productiveExtracts,
-            cardsCreated: row.cardsCreated,
-          };
-        }
-      }
-      const scheduleProjection = this.repos.operationLog.currentScheduleProjection(
-        id,
-        element.dueAt,
-      );
-      scheduler = {
-        kind: "attention",
-        retrievability: null,
-        stability: null,
-        difficulty: null,
-        reps: null,
-        lapses: null,
-        fsrsState: null,
-        stage: element.stage,
-        // The postponed count is read from the op log (T024): each postpone records
-        // a `postpone` marker on its `reschedule_element` op, so the count needs no
-        // schema column. The full attention scheduler lands with T028.
-        postponed: scheduleProjection.effectivePostponeCount,
-        scheduleReason: scheduleProjection.reason,
-        lastProcessedAt: element.updatedAt,
-        yield: sourceYield,
-        retirementSuggestion:
-          element.type === "source"
-            ? this.repos.retirementSuggestions.visibleForSource(element.id)
-            : null,
-        needsReverify: element.needsReverify,
-      };
     }
 
     return {

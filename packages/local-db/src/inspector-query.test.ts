@@ -98,6 +98,34 @@ function buildChain() {
   return { sourceId, extractId, cardId, locationId: extract.location.id };
 }
 
+describe("InspectorQuery.buildSchedulerSignals (the /search scheduler slice)", () => {
+  it("equals get()'s scheduler when includeYield is true — no drift between the two paths", () => {
+    const { sourceId, cardId } = buildChain();
+    const asOf = new Date("2026-05-28T08:00:00.000Z");
+    const source = repos.elements.findById(sourceId);
+    const card = repos.elements.findById(cardId);
+    if (!source || !card) throw new Error("fixture not found");
+    expect(inspector.buildSchedulerSignals(source, asOf, { includeYield: true })).toEqual(
+      inspector.get(sourceId, asOf)?.scheduler,
+    );
+    expect(inspector.buildSchedulerSignals(card, asOf, { includeYield: true })).toEqual(
+      inspector.get(cardId, asOf)?.scheduler,
+    );
+  });
+
+  it("skips the source read-%/yield + retirement rollups when includeYield is false (the cost the /search list avoids)", () => {
+    const { sourceId } = buildChain();
+    const source = repos.elements.findById(sourceId);
+    if (!source) throw new Error("fixture not found");
+    const trimmed = inspector.buildSchedulerSignals(source, new Date(), { includeYield: false });
+    // The search-list variant carries the chip essentials (kind/stage) but NOT the
+    // expensive source-yield rollup or retirement suggestion (a selection-detail nicety).
+    expect(trimmed.kind).toBe("attention");
+    expect(trimmed.yield).toBeNull();
+    expect(trimmed.retirementSuggestion).toBeNull();
+  });
+});
+
 describe("schedulerKindForType", () => {
   it("puts cards on FSRS and everything else on attention", () => {
     expect(schedulerKindForType("card")).toBe("fsrs");

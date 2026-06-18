@@ -3144,6 +3144,12 @@ export class DbService {
         ...(type ? { type } : {}),
         ...(request.limit !== undefined ? { limit: request.limit } : {}),
       });
+    // Counts need ONLY {id, type, priority} per hit — so resolve those in ONE batched
+    // live-element read instead of running the FULL per-hit enrichment (scheduler +
+    // lineage refblock) just to count. The count passes run over several hit universes
+    // (the main fused set + one per type), so the old full-enrichment-per-hit here was a
+    // dominant cost of a /search keystroke — it blocked the main process (see
+    // docs/solutions/performance-issues). `findManyLive` already drops soft-deleted rows.
     const toCountRows = (
       hits: readonly {
         id: string;
@@ -3154,20 +3160,34 @@ export class DbService {
         vecDistance?: number;
         source: "fts" | "semantic" | "both";
       }[],
-    ) =>
-      hits
-        .map((hit) => this.enrichFusedHit(hit))
-        .filter((r): r is SemanticSearchResultRow => r !== null)
-        .map((row) => ({
-          id: row.id as ElementId,
-          type: row.type,
-          priority: row.priority as Priority,
-        }));
+    ): { id: ElementId; type: "source" | "extract" | "card"; priority: Priority }[] => {
+      const live = new Map(
+        this.repos.elements
+          .findManyLive(hits.map((hit) => hit.id as ElementId))
+          .map((el) => [el.id, el] as const),
+      );
+      const rows: { id: ElementId; type: "source" | "extract" | "card"; priority: Priority }[] = [];
+      for (const hit of hits) {
+        const el = live.get(hit.id as ElementId);
+        if (el) rows.push({ id: el.id, type: hit.type, priority: el.priority as Priority });
+      }
+      return rows;
+    };
 
     const fused = runFused(request.type);
 
+    // Enrich ONLY the displayed hits, resolving their element rows in ONE batched read
+    // (was a per-hit `findById`), then build each row from the pre-fetched element.
+    const resultElements = new Map(
+      this.repos.elements
+        .findManyLive(fused.hits.map((hit) => hit.id as ElementId))
+        .map((el) => [el.id, el] as const),
+    );
     const results = fused.hits
-      .map((hit) => this.enrichFusedHit(hit))
+      .map((hit) => {
+        const el = resultElements.get(hit.id as ElementId);
+        return el ? this.enrichFusedHit(hit, el) : null;
+      })
       .filter((r): r is SemanticSearchResultRow => r !== null);
 
     // DRILL-DOWN faceted counts for the `/search` filterbar. Compact lookup
@@ -3381,33 +3401,30 @@ export class DbService {
    * identically to a keyword row in the library (just labeled "related" when it came
    * purely from the vector side).
    */
-  private enrichFusedHit(hit: {
-    id: string;
-    type: "source" | "extract" | "card";
-    title: string;
-    snippet: string;
-    ftsScore?: number;
-    vecDistance?: number;
-    source: "fts" | "semantic" | "both";
-  }): SemanticSearchResultRow | null {
-    const element = this.repos.elements.findById(hit.id as ElementId);
-    if (!element || element.deletedAt) return null;
+  private enrichFusedHit(
+    hit: {
+      id: string;
+      type: "source" | "extract" | "card";
+      title: string;
+      snippet: string;
+      ftsScore?: number;
+      vecDistance?: number;
+      source: "fts" | "semantic" | "both";
+    },
+    // The live element row, resolved by the caller in a single batched read (was a
+    // per-hit findById here — the N+1 that, together with the full inspector below,
+    // blocked the main process on every /search keystroke).
+    element: Element,
+  ): SemanticSearchResultRow | null {
     const { sourceTitle, sourceLocationLabel } = this.refMetaForElement(element.id);
-    const inspectorData = this.inspectorQuery.get(element.id);
+    // The SchedulerChip signals ONLY (not the full inspector): a source hit's full
+    // inspector recomputes the read-%/yield + block-processing rollup, which is the
+    // bulk of the per-hit cost. `includeYield:false` skips it — the yield chip is a
+    // selection-detail nicety, not list data. See docs/solutions/performance-issues.
     const summary = this.queueQuery.summaryFor(element.id);
-    const scheduler = inspectorData?.scheduler ?? {
-      kind: "attention" as const,
-      retrievability: null,
-      stability: null,
-      difficulty: null,
-      reps: null,
-      lapses: null,
-      fsrsState: null,
-      stage: element.stage,
-      postponed: 0,
-      scheduleReason: null,
-      lastProcessedAt: element.updatedAt ?? null,
-    };
+    const scheduler = this.inspectorQuery.buildSchedulerSignals(element, new Date(), {
+      includeYield: false,
+    });
     return {
       id: element.id,
       type: hit.type,
@@ -5862,37 +5879,32 @@ export class DbService {
       ...(request.limit !== undefined ? { limit: request.limit } : {}),
     });
 
+    // Resolve all hit element rows in ONE batched live read (was a per-hit findById).
+    const elementsById = new Map(
+      this.repos.elements
+        .findManyLive(hits.map((hit) => hit.id as ElementId))
+        .map((el) => [el.id, el] as const),
+    );
+
     const results: SearchResult[] = [];
     for (const hit of hits) {
-      const element = this.repos.elements.findById(hit.id as ElementId);
-      if (!element || element.deletedAt) continue;
+      const element = elementsById.get(hit.id as ElementId);
+      if (!element) continue;
 
       // Source provenance + location for the row's refblock. For a `source` hit
       // the element IS the source; for an extract/card, resolve the owning source
       // and the card's/extract's source-location anchor.
       const { sourceTitle, sourceLocationLabel } = this.refMetaForElement(element.id);
 
-      // Scheduler chip + due badge for the selection detail (kit parity). Reuse the
-      // SAME builders the inspector + queue use so the chip/due read identically:
-      // the inspector resolves the full FSRS/attention `SchedulerSignals`, and the
-      // queue summary classifies the due state/label — no duplicated scheduling math.
-      // Both are best-effort: a row that vanished between the FTS hit and this read
-      // degrades to a calm attention/"Scheduled" default rather than dropping.
-      const inspectorData = this.inspectorQuery.get(element.id);
+      // Scheduler chip + due badge for the SELECTION detail (kit parity). The chip
+      // needs only the `SchedulerSignals`, so build JUST those (`includeYield:false`
+      // skips the source read-%/yield + block-processing rollup — the bulk of a source
+      // hit's cost). The queue summary classifies the due state/label. Both are
+      // best-effort: a row that vanished degrades to a calm default rather than dropping.
       const summary = this.queueQuery.summaryFor(element.id);
-      const scheduler = inspectorData?.scheduler ?? {
-        kind: "attention" as const,
-        retrievability: null,
-        stability: null,
-        difficulty: null,
-        reps: null,
-        lapses: null,
-        fsrsState: null,
-        stage: element.stage,
-        postponed: 0,
-        scheduleReason: null,
-        lastProcessedAt: element.updatedAt ?? null,
-      };
+      const scheduler = this.inspectorQuery.buildSchedulerSignals(element, new Date(), {
+        includeYield: false,
+      });
 
       results.push({
         id: element.id,
