@@ -4,7 +4,8 @@
  * Search/index/ranking all live MAIN-side (`SearchRepository` + the FTS migration);
  * this asserts the RENDERER seam of the library view:
  *  - typing a query calls `appApi.searchQuery` (debounced) with the trimmed term;
- *  - grouped results render with the query highlighted (`<em>`);
+ *  - grouped results render the row text (query highlighting is applied paint-only via the
+ *    CSS Custom Highlight API, not a per-row `<em>`, so it is not observable in jsdom);
  *  - clicking a type/concept filter narrows the call;
  *  - an empty Search stays on the prompt while Type/Concept/Priority filters are pending.
  *
@@ -253,7 +254,7 @@ vi.mock("../components/inspector/primitives", async () => {
   };
 });
 
-import { LibraryScreen } from "./LibraryScreen";
+import { firstMatchIndex, LibraryScreen } from "./LibraryScreen";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -318,7 +319,54 @@ beforeEach(() => {
   h.subscribeJobs.mockReturnValue(() => {});
 });
 
+describe("firstMatchIndex (query-highlight match rule)", () => {
+  it("finds the first case-insensitive occurrence", () => {
+    expect(firstMatchIndex("On the Measure of Intelligence", "intelligence")).toBe(18);
+    expect(firstMatchIndex("Intelligence everywhere", "INTEL")).toBe(0);
+  });
+  it("returns -1 for no match and for an empty/whitespace term", () => {
+    expect(firstMatchIndex("nothing here", "xyz")).toBe(-1);
+    expect(firstMatchIndex("anything", "")).toBe(-1);
+    expect(firstMatchIndex("anything", "   ")).toBe(-1);
+  });
+});
+
 describe("LibraryScreen", () => {
+  it("throttles embed-progress refreshes so an indexing flood can't re-render per event", async () => {
+    // Regression guard for the typing-stutter-DURING-indexing path: the job runner emits
+    // hundreds of `embed` events/sec while a large add indexes, and refreshing per event
+    // floods the renderer (IPC + setState each time). The subscription must coalesce a burst
+    // into a bounded number of `semanticStatus` reads (one immediate + one trailing), not one
+    // per event. (The per-keystroke result repaint is fixed separately via the CSS highlight.)
+    render(<LibraryScreen />);
+    await waitFor(() => expect(h.subscribeJobs).toHaveBeenCalled());
+    const onJob = h.subscribeJobs.mock.calls[0]?.[0] as (job: { type: string }) => void;
+    await waitFor(() => expect(h.semanticStatus.mock.calls.length).toBeGreaterThan(0));
+
+    vi.useFakeTimers();
+    try {
+      h.semanticStatus.mockClear();
+      // A burst of 25 embed events in one tick → 1 immediate refresh, the rest coalesced.
+      act(() => {
+        for (let i = 0; i < 25; i++) onJob({ type: "embed" });
+      });
+      expect(h.semanticStatus).toHaveBeenCalledTimes(1);
+      // The window elapses → exactly ONE trailing refresh (not 24 more).
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(h.semanticStatus).toHaveBeenCalledTimes(2);
+      // Non-embed jobs never trigger a semantic refresh.
+      act(() => {
+        onJob({ type: "extract-clean" });
+        vi.advanceTimersByTime(1000);
+      });
+      expect(h.semanticStatus).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("starts on the search prompt with no default Source browse rows", async () => {
     render(<LibraryScreen />);
     expect(screen.getByTestId("library-prompt")).toBeTruthy();
@@ -584,10 +632,14 @@ describe("LibraryScreen", () => {
     expect(await screen.findByTestId("library-group-source")).toBeTruthy();
     expect(screen.getByTestId("library-group-card")).toBeTruthy();
 
-    // The matched term is highlighted in a result title.
+    // The matched title renders as PLAIN text — highlighting is applied paint-only via the
+    // CSS Custom Highlight API (not a per-row `<em>`), which is the fix for the typing
+    // stutter and is not observable in jsdom. Guard that no inline highlight markup remains
+    // (a regression to `<em>` per row would reintroduce the per-keystroke re-render/repaint).
     const rows = screen.getAllByTestId("library-result");
     expect(rows.length).toBe(2);
-    expect(rows.some((r) => r.querySelector("em"))).toBe(true);
+    expect(rows.some((r) => /intelligence/i.test(r.textContent ?? ""))).toBe(true);
+    expect(rows.some((r) => r.querySelector("em"))).toBe(false);
     expect(await screen.findByTestId("library-semantic-off")).toHaveTextContent(
       /semantic indexing is unavailable on this build/i,
     );

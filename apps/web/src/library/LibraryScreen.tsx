@@ -133,38 +133,111 @@ function DueBadge({ result }: { result: SearchResult }) {
   );
 }
 
-/** Render `text` with the first case-insensitive occurrence of `q` wrapped in <em>. */
-function highlight(text: string, q: string): React.ReactNode {
-  const term = q.trim();
-  if (term.length === 0) return text;
-  const i = text.toLowerCase().indexOf(term.toLowerCase());
-  if (i < 0) return text;
-  return (
-    <>
-      {text.slice(0, i)}
-      <em>{text.slice(i, i + term.length)}</em>
-      {text.slice(i + term.length)}
-    </>
-  );
+/**
+ * Index of the first case-insensitive occurrence of `term` in `text`, or `-1`
+ * (empty/whitespace term → `-1`). The match unit for query highlighting.
+ *
+ * Highlighting used to wrap this match in an `<em>` inside every row's React tree.
+ * That was the long-standing `/search` typing stutter: because the query was a prop
+ * on every `ResultRow`, each keystroke re-rendered all rows AND mutated each row's DOM
+ * (splitting the text around a moving `<em>`), forcing a synchronous style/layout/paint
+ * pass whose cost scaled with the visible row count and landed between keystrokes. The
+ * highlight is now applied via the CSS Custom Highlight API ({@link useSearchHighlight}):
+ * rows render plain text once, and a query change becomes a paint-only highlight update
+ * with no React re-render and no DOM mutation. This helper stays the shared, pure match
+ * rule so the live-DOM ranges line up with what a row would consider "the hit".
+ */
+export function firstMatchIndex(text: string, term: string): number {
+  const t = term.trim();
+  if (t.length === 0) return -1;
+  return text.toLowerCase().indexOf(t.toLowerCase());
+}
+
+/** The document-wide CSS highlight registry name (paired with `::highlight()` in library.css). */
+const SEARCH_HIGHLIGHT_NAME = "library-search-hit";
+
+/**
+ * Min interval between `embed`-job-driven `refreshSemantic()` calls. The job runner emits
+ * hundreds of embed-progress events/sec while a large add indexes; refreshing per event
+ * floods the renderer with an IPC round-trip + re-render each time, pinning the main thread
+ * so typing stutters DURING indexing. Throttling to this cadence keeps the "N of M embedded"
+ * readout advancing smoothly while bounding the work to a few refreshes/sec.
+ */
+const EMBED_REFRESH_THROTTLE_MS = 400;
+
+/**
+ * Paint-only query highlighting via the CSS Custom Highlight API. After each results/
+ * query change, walk the rendered `.result__title` / `.result__snippet` text and register
+ * a {@link Range} over the first match in each (mirroring the former `highlight()`'s
+ * first-occurrence behavior), then hand them to `CSS.highlights` so the browser paints the
+ * highlight WITHOUT a React re-render or DOM mutation. No-ops where the API is unavailable
+ * (jsdom in unit tests), so the rows simply render unhighlighted there.
+ */
+function useSearchHighlight(
+  rootRef: React.RefObject<HTMLElement | null>,
+  term: string,
+  // Re-run when the rendered rows change, not just the query (new/removed/reordered rows
+  // invalidate the previously-registered ranges). The caller passes the visible rows.
+  rows: readonly unknown[],
+): void {
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `rows` identity is the row-set signal.
+  useEffect(() => {
+    // Access the CSS Custom Highlight API via globalThis with our OWN minimal shapes (cast
+    // through `unknown` so we neither depend on nor collide with lib.dom's Map-based
+    // declaration). Absent in jsdom → rows just render plain.
+    const g = globalThis as unknown as {
+      Highlight?: new (...ranges: Range[]) => object;
+      CSS?: { highlights?: { set(name: string, h: object): void; delete(name: string): void } };
+    };
+    const HighlightCtor = g.Highlight;
+    const highlights = g.CSS?.highlights;
+    if (!HighlightCtor || !highlights) return; // unsupported (jsdom)
+    const root = rootRef.current;
+    const needle = term.trim().toLowerCase();
+    if (!root || needle.length === 0) {
+      highlights.delete(SEARCH_HIGHLIGHT_NAME);
+      return;
+    }
+    const ranges: Range[] = [];
+    for (const el of root.querySelectorAll(".result__title, .result__snippet")) {
+      // First text node carrying the match (mirrors the former first-occurrence highlight;
+      // skips nested chrome like the "related" badge span, which is a sibling node).
+      for (let node = el.firstChild; node; node = node.nextSibling) {
+        if (node.nodeType !== Node.TEXT_NODE) continue;
+        const text = node.textContent ?? "";
+        const i = text.toLowerCase().indexOf(needle);
+        if (i < 0) continue;
+        const range = new Range();
+        range.setStart(node, i);
+        range.setEnd(node, i + needle.length);
+        ranges.push(range);
+        break;
+      }
+    }
+    if (ranges.length === 0) highlights.delete(SEARCH_HIGHLIGHT_NAME);
+    else highlights.set(SEARCH_HIGHLIGHT_NAME, new HighlightCtor(...ranges));
+    return () => {
+      highlights.delete(SEARCH_HIGHLIGHT_NAME);
+    };
+  }, [rootRef, term, rows]);
 }
 
 /**
- * One result row, memoized so it re-renders only when its own data, selection state, or
- * the (DEFERRED) highlight query changes — NOT when an unrelated `LibraryScreen` render
- * fires (loading flip, another row's selection, a sibling state change). Combined with
- * the deferred query, a keystroke-adjacent render leaves every row's props unchanged so
- * the whole list skips reconciliation on the hot path.
+ * One result row, memoized so it re-renders only when its own data or selection state
+ * changes — NOT when an unrelated `LibraryScreen` render fires (loading flip, another
+ * row's selection, a sibling state change) and crucially NOT on a query keystroke. The
+ * row carries NO query prop: highlighting is applied out-of-band via the CSS Custom
+ * Highlight API ({@link useSearchHighlight}), so typing leaves every persisting row's
+ * props identical and the whole list skips re-render + repaint on the hot path.
  */
 const ResultRow = memo(function ResultRowImpl({
   result,
   selected,
-  query,
   onSelect,
   onOpen,
 }: {
   readonly result: LibraryRow;
   readonly selected: boolean;
-  readonly query: string;
   readonly onSelect: (id: string) => void;
   readonly onOpen: (result: SearchResult) => void;
 }) {
@@ -180,7 +253,7 @@ const ResultRow = memo(function ResultRowImpl({
     >
       <div style={{ minWidth: 0 }}>
         <div className="result__title">
-          {highlight(result.title, query)}
+          {result.title}
           {result.semantic ? (
             <span
               className="badge badge--soft"
@@ -196,9 +269,7 @@ const ResultRow = memo(function ResultRowImpl({
           {result.concept ? <ConceptTag name={result.concept} /> : null}
           {result.sourceTitle ? <span>{result.sourceTitle}</span> : null}
           {result.sourceLocationLabel ? <span>{result.sourceLocationLabel}</span> : null}
-          {result.snippet ? (
-            <span className="result__snippet">{highlight(result.snippet, query)}</span>
-          ) : null}
+          {result.snippet ? <span className="result__snippet">{result.snippet}</span> : null}
         </div>
       </div>
       <Prio priority={result.priority} />
@@ -371,15 +442,17 @@ export function LibraryScreen() {
   // search right away (no debounce wait) and route resets behave deterministically.
   const debouncedTerm = debouncedQuery.trim();
   const hasQuery = debouncedTerm.length > 0;
-  // The heavy results RENDER (per-row `highlight()`) reads the DEFERRED query so React
-  // 19 reconciles it at LOW priority and YIELDS to keystrokes. The residual typing
-  // stutter was that reconciliation landing between characters once the 150 ms debounce
-  // settled — which, for a normal-speed typist, is every character. Deferring the
-  // highlight + memoizing the rows (so an unchanged deferred query lets the row memo
-  // skip) keeps the keystroke-adjacent render cheap; the result list catches up a frame
-  // later. The results-arrival reconciliation (setResults/setSearchCounts/setSearchMode/
-  // setLoading) is additionally wrapped in `startTransition` (see the search effect) so it
-  // commits at LOW priority and yields to keystrokes too — not just the highlight.
+  // Query highlighting reads the DEFERRED query and is applied OUT OF BAND via the CSS
+  // Custom Highlight API ({@link useSearchHighlight}), NOT as a per-row React prop. This
+  // is the fix for the long-standing typing stutter: highlighting used to be an `<em>`
+  // inside every row, so a keystroke re-rendered all rows AND mutated each row's DOM,
+  // forcing a synchronous style/layout/paint pass whose cost scaled with the visible row
+  // count and landed between characters (measured: ~25–35% of keystrokes dropped frames at
+  // 34–50 rows, Paint/Composite-bound — which is why earlier render-level fixes via memo +
+  // `useDeferredValue` + `startTransition` could not help). With the highlight off the row
+  // render path, a persisting row's props are identical across keystrokes so the row memo
+  // skips entirely; the query change becomes a paint-only highlight update. The deferral
+  // keeps even that highlight repaint off the keystroke's critical frame.
   const deferredQuery = useDeferredValue(debouncedQuery);
   const hasActiveFacet = typeFilter !== null || conceptFilter !== null || priorityFilter !== null;
   const showSemanticBuildIndex =
@@ -492,13 +565,36 @@ export function LibraryScreen() {
     void refreshSemantic();
     const onFocus = () => void refreshSemantic();
     window.addEventListener("focus", onFocus);
+    // THROTTLE the embed-progress refresh (see EMBED_REFRESH_THROTTLE_MS): fire the first
+    // event immediately (responsive), then coalesce a burst into at most one trailing
+    // refresh per window — so a flood of embed events can't pin the renderer mid-typing.
+    let lastRefresh = 0;
+    let trailing: number | null = null;
+    const refreshThrottled = () => {
+      const elapsed = Date.now() - lastRefresh;
+      if (elapsed >= EMBED_REFRESH_THROTTLE_MS) {
+        if (trailing !== null) {
+          window.clearTimeout(trailing);
+          trailing = null;
+        }
+        lastRefresh = Date.now();
+        void refreshSemantic();
+      } else if (trailing === null) {
+        trailing = window.setTimeout(() => {
+          trailing = null;
+          lastRefresh = Date.now();
+          void refreshSemantic();
+        }, EMBED_REFRESH_THROTTLE_MS - elapsed);
+      }
+    };
     const unsubscribe = isDesktop()
       ? appApi.subscribeJobs((job) => {
-          if (job.type === "embed") void refreshSemantic();
+          if (job.type === "embed") refreshThrottled();
         })
       : undefined;
     return () => {
       window.removeEventListener("focus", onFocus);
+      if (trailing !== null) window.clearTimeout(trailing);
       unsubscribe?.();
     };
   }, [refreshSemantic]);
@@ -639,6 +735,11 @@ export function LibraryScreen() {
   // priority filtering: doing it here would re-introduce the chip/list mismatch the
   // reported Library bug was about.
   const visible = results;
+  // Out-of-band, paint-only query highlighting (see `useSearchHighlight` / the deferredQuery
+  // comment): keeps the moving highlight off every row's React render so typing doesn't
+  // re-render + repaint the whole result list each keystroke.
+  const resultsRef = useRef<HTMLDivElement | null>(null);
+  useSearchHighlight(resultsRef, deferredQuery, visible);
   useEffect(() => {
     hasResultsRef.current = results.length > 0;
   }, [results]);
@@ -676,12 +777,14 @@ export function LibraryScreen() {
         key={r.id}
         result={r}
         selected={selId === r.id}
-        query={deferredQuery}
         onSelect={onSelectRow}
         onOpen={open}
       />
     ),
-    [selId, deferredQuery, onSelectRow, open],
+    // NB: intentionally NOT keyed on the query — the row carries no highlight prop, so a
+    // keystroke leaves a persisting row's element identical and its memo skips. Highlight
+    // is applied via `useSearchHighlight` below.
+    [selId, onSelectRow, open],
   );
 
   // The Map tab's "members" volume — the GLOBAL member count across all element
@@ -767,7 +870,7 @@ export function LibraryScreen() {
         {tab === "results" ? (
           <>
             <div className="lib-results" data-testid="library-results">
-              <div className="lib-results__inner">
+              <div className="lib-results__inner" ref={resultsRef}>
                 {error ? (
                   <p className="lib-error" data-testid="library-error">
                     {error}

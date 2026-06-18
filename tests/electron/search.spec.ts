@@ -112,8 +112,21 @@ test("typing a seeded term returns the source, extract, and card grouped + highl
     ).toHaveText(String(conceptCount[1]));
   }
 
-  // The matched term is highlighted in at least one result.
-  await expect(page.locator('[data-testid="library-result"] em').first()).toBeVisible();
+  // The matched term is highlighted — now applied paint-only via the CSS Custom Highlight
+  // API (no per-row `<em>`), which is the fix for the long-standing /search typing stutter.
+  // Assert the highlight registry holds ≥1 range and that a range covers the matched term.
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const reg = (CSS as unknown as { highlights?: Map<string, Iterable<Range>> }).highlights;
+        const hit = reg?.get?.("library-search-hit");
+        if (!hit) return [] as string[];
+        const texts: string[] = [];
+        for (const range of hit) texts.push(range.toString().toLowerCase());
+        return texts;
+      }),
+    )
+    .toEqual(expect.arrayContaining([TERM.toLowerCase()]));
 
   // Clicking the seeded source result shows its detail panel + refblock.
   const sourceRow = page.getByTestId("library-group-source").getByTestId("library-result").first();

@@ -311,11 +311,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.result__title em {
-  font-style: normal;
-  background: var(--mark-hl);
-  border-radius: 2px;
-  padding: 0 2px;
+/* Query-match highlight — applied via the CSS Custom Highlight API (paint-only, no
+   per-row DOM/`<em>`), registered in LibraryScreen's `useSearchHighlight`. Highlight
+   pseudos only honor a small set of properties (color/background/text-decoration/
+   text-shadow), so the former `<em>`'s rounded padding is dropped in favor of a plain
+   background — the deliberate trade that takes the moving highlight off the keystroke
+   render path and kills the typing stutter. */
+::highlight(library-search-hit) {
+  background-color: var(--mark-hl);
 }
 .result__meta {
   display: flex;

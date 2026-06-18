@@ -1,7 +1,7 @@
 ---
 title: "Search typing stutter is renderer re-render cost, not the nearby async work"
 date: "2026-06-15"
-last_updated: "2026-06-15"
+last_updated: "2026-06-18"
 category: "performance-issues"
 module: "apps/web Collection Explorer search input"
 problem_type: "performance_issue"
@@ -28,6 +28,13 @@ tags:
   - "startTransition"
   - "concurrent-react"
   - "render-priority"
+  - "css-custom-highlight-api"
+  - "paint-cost"
+  - "commit-phase"
+  - "input-latency"
+  - "throttle"
+  - "background-jobs"
+  - "performance-harness"
 ---
 
 # Search typing stutter is renderer re-render cost, not the nearby async work
@@ -203,6 +210,60 @@ the interruptibility itself. Verify the actual smoothness in the running app (`p
 A falsifiable signature: a fast *continuous* typing burst stays smooth (the debounce never
 settles mid-burst) while *deliberate* typing is what stutters — so the cost is on the
 debounce-settle path, not the keystroke path.
+
+## Follow-up (2026-06-18): `startTransition` was NOT enough — the real cost is the synchronous COMMIT+PAINT, and it has TWO triggers
+
+The `startTransition` fix shipped in v0.6.0 and the user reported the box **still** stuttered.
+Re-debugging with a **real-renderer performance harness** (Playwright driving the *production*
+Electron build, a CDP `Tracing` capture parsed into main-thread **self-time** buckets, plus the
+in-page **Event Timing API** for per-keystroke input latency, plus an A/B on result-row count)
+falsified the earlier conclusion and found two *distinct* causes. jsdom cannot see either — both
+are paint/commit costs — which is why every prior render-phase fix "passed tests" yet did nothing.
+
+**Lesson 0 (method): measure, don't reason.** Three consecutive fixes (input isolation,
+`useDeferredValue`, `startTransition`) were all plausible and all useless because nobody profiled
+the running app. The harness made every claim falsifiable: it caught a wrong fix in the act —
+`content-visibility: auto` on `.result` rows (a "skip off-screen paint" idea) measured **worse**
+(~4× the paint events, no drop in dropped frames), because it adds per-frame intersection/size
+reconciliation. Do not retry it. The headline metric is **slow keystrokes (>50ms input latency)**;
+the in-run **bare-`<input>` baseline** controls for machine/harness overhead.
+
+**Cause A — the dominant one, present even with the index fully built.** `startTransition` makes
+the *render* interruptible, but React's **commit** and the browser's **style→layout→paint** are
+synchronous and uninterruptible. Highlighting was an `<em>` produced inside every `ResultRow` from
+a `query` prop, so each debounce-settle (≈ every keystroke at deliberate speed) re-rendered every
+row AND mutated each row's DOM (splitting text around the moving `<em>`) → a synchronous
+recalc/layout/paint whose cost **scaled with the visible row count** (measured: ~25–35% of
+keystrokes dropped frames at 34–50 rows; **near-zero at 0 rows**; Paint/Composite-bound, Script
+minor). Fix: take highlighting **out of React** via the **CSS Custom Highlight API**
+(`useSearchHighlight` + `::highlight(library-search-hit)` in `library.css`). Rows render plain text
+once; a query change becomes a paint-only highlight-registry update — no re-render, no DOM
+mutation. `RecalcStyle` 24→4ms, `Layout` 46→18ms, **slow keystrokes 26→9 at 34 rows** (≈ the
+bare-input baseline). Note: highlight pseudos only honor a few properties, so the former `<em>`'s
+rounded padding is dropped for a plain background — the deliberate trade.
+
+**Cause B — distinct, only while indexing (the "stutters when I add lots of elements" case).**
+`LibraryScreen`'s `appApi.subscribeJobs(... if embed → refreshSemantic())` was **unthrottled**.
+The job runner emits *hundreds of `embed` events/sec* during a large add; each did an IPC round-trip
+(`semanticStatus`) + 3 `setState`s, re-rendering the whole screen. The harness saw `/search` sit at
+**~90fps continuous repaint while idle** (Home = 0fps) with ~350 IPC msgs/sec, the loop decaying
+exactly as embeddings drained. Fix: an **immediate-then-coalesce throttle**
+(`EMBED_REFRESH_THROTTLE_MS`) — the readout still advances live, but a burst can't pin the main
+thread. Beware the trap that wasted a profiling pass: seeding ~1000 elements to reproduce the bug
+*triggered mass embedding*, so Cause B masqueraded as the whole problem until the index was driven
+to a genuinely quiesced state and typing was re-measured (still stuttered → Cause A).
+
+### Prevention
+
+- **Keep highlighting (and any per-keystroke decoration) off the per-row React render.** A row that
+  takes the live query as a prop will re-render + repaint the whole result list every keystroke.
+- **Throttle anything driven by background-job events** before it calls `setState` — embed/clean/OCR
+  progress can fire at hundreds/sec.
+- Regression guards added: `firstMatchIndex` unit test (the match rule); a guard that result rows
+  contain **no inline `<em>`** (a regression to per-row highlight would reintroduce the stutter); a
+  throttle unit test (a 25-event burst → ≤2 `semanticStatus` reads); and an Electron e2e asserting
+  the `CSS.highlights` registry is populated with the matched term (the highlight is invisible to
+  jsdom, so it must be checked in real Chromium).
 
 ## Related
 
