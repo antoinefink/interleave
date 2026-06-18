@@ -6057,3 +6057,102 @@ describe("DbService maintenance reads (T099)", () => {
     svc.close();
   });
 });
+
+/**
+ * FIX-8: focused unit test of `enrichFusedHit`'s source→semantic/vecDistance
+ * mapping (U8 branch coverage).
+ *
+ * Seeding a REAL vector hit in db-service.test.ts is infeasible: the test harness
+ * calls `svc.open(dbPath, { migrationsDir })` without a `sqliteVecPath`, so
+ * `vecAvailable` is always `false` and every `semanticSearch` result has
+ * `source:"fts"`. Consequently the `semantic:true` + `vecDistance!==null` branch
+ * in `enrichFusedHit` is never reached by the existing integration tests.
+ *
+ * This describe block exercises `enrichFusedHit` directly (via type coercion)
+ * for each of the three FusedHit source values so the mapping is definitively
+ * verified without requiring a real vec store.
+ */
+describe("enrichFusedHit source→semantic/vecDistance mapping (FIX-8 U8 branch coverage)", () => {
+  type PrivateEnrichFusedHit = {
+    // Access the private method via cast — typed loosely to avoid fighting `Element`
+    // index-signature constraints from the public Element interface.
+    enrichFusedHit: (
+      ...args: unknown[]
+    ) => { semantic: boolean; vecDistance: number | null } | null;
+  };
+
+  let svc: DbService;
+
+  beforeEach(() => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), "interleave-fix8-"));
+    svc = new DbService();
+    svc.open(path.join(d, "fix8.sqlite"), { migrationsDir: MIGRATIONS_DIR });
+    expect(svc.seedIfEmpty()).toBe(true);
+  });
+
+  afterEach(() => {
+    svc.close();
+  });
+
+  /** Fetch a live seeded element to use as the element arg. */
+  function anyElement() {
+    const el = svc.repos.elements.listByType("source")[0];
+    if (!el) throw new Error("No seeded source");
+    return el;
+  }
+
+  it("source:'fts' → semantic===false, vecDistance===null", () => {
+    const priv = svc as unknown as PrivateEnrichFusedHit;
+    const el = anyElement();
+    const row = priv.enrichFusedHit(
+      { id: el.id, type: "source", title: el.title, snippet: "s", ftsScore: -1.5, source: "fts" },
+      el,
+      new Date(),
+      { sourceRef: null, summary: null, concept: null },
+    );
+    expect(row).not.toBeNull();
+    expect(row?.semantic).toBe(false);
+    expect(row?.vecDistance).toBeNull();
+  });
+
+  it("source:'semantic' → semantic===true, vecDistance===number", () => {
+    const priv = svc as unknown as PrivateEnrichFusedHit;
+    const el = anyElement();
+    const row = priv.enrichFusedHit(
+      {
+        id: el.id,
+        type: "source",
+        title: el.title,
+        snippet: "",
+        vecDistance: 0.42,
+        source: "semantic",
+      },
+      el,
+      new Date(),
+      { sourceRef: null, summary: null, concept: null },
+    );
+    expect(row?.semantic).toBe(true);
+    expect(row?.vecDistance).toBe(0.42);
+  });
+
+  it("source:'both' → semantic===true, vecDistance===number (the fused branch)", () => {
+    const priv = svc as unknown as PrivateEnrichFusedHit;
+    const el = anyElement();
+    const row = priv.enrichFusedHit(
+      {
+        id: el.id,
+        type: "source",
+        title: el.title,
+        snippet: "matched text",
+        ftsScore: -2.1,
+        vecDistance: 0.18,
+        source: "both",
+      },
+      el,
+      new Date(),
+      { sourceRef: null, summary: null, concept: null },
+    );
+    expect(row?.semantic).toBe(true);
+    expect(row?.vecDistance).toBe(0.18);
+  });
+});
