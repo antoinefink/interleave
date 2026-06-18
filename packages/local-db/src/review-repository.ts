@@ -37,7 +37,7 @@ import {
   reviewStates,
 } from "@interleave/db";
 import { isLeech } from "@interleave/scheduler";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { ElementRepository } from "./element-repository";
 import { newReviewLogId, nowIso } from "./ids";
 import { rowToElement, rowToReviewLog, rowToReviewState } from "./mappers";
@@ -343,6 +343,29 @@ export class ReviewRepository {
     const card = this.db.select().from(cards).where(eq(cards.elementId, elementId)).get();
     if (!elementRow || !card) return null;
     return { element: rowToElement(elementRow), card };
+  }
+
+  /**
+   * Batch-read the `cards.source_location_id` for many card element ids. Returns a
+   * `Map<ElementId, SourceLocationId | null>` — entries are present for every id that
+   * has a `cards` row; ids with no card row are absent. Empty `ids` → empty map.
+   *
+   * Used by {@link resolveSourceRefMany} to resolve card fallback location anchors in
+   * one query instead of a per-card `findCardById` call.
+   */
+  findCardSourceLocationIds(ids: readonly ElementId[]): Map<ElementId, SourceLocationId | null> {
+    if (ids.length === 0) return new Map();
+    const rows = this.db
+      .select({ elementId: cards.elementId, sourceLocationId: cards.sourceLocationId })
+      .from(cards)
+      .where(inArray(cards.elementId, ids as ElementId[]))
+      .all();
+    return new Map(
+      rows.map((r) => [
+        r.elementId as ElementId,
+        (r.sourceLocationId as SourceLocationId | null) ?? null,
+      ]),
+    );
   }
 
   /**

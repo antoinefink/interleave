@@ -51,7 +51,7 @@ import {
   sourceLocations,
   sources,
 } from "@interleave/db";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { ElementRepository } from "./element-repository";
 import { newRowId, newSourceLocationId, nowIso } from "./ids";
 import { rowToElement, rowToSource, rowToSourceLocation } from "./mappers";
@@ -517,6 +517,69 @@ export class SourceRepository {
     const sourceRow = this.db.select().from(sources).where(eq(sources.elementId, elementId)).get();
     if (!elementRow || !sourceRow) return null;
     return { element: rowToElement(elementRow), source: rowToSource(sourceRow) };
+  }
+
+  /**
+   * Batch-read many sources by element id. Returns a `Map<ElementId, SourceWithElement>`
+   * for all ids that have both an `elements` row and a `sources` provenance row. Ids with
+   * no source row are absent from the map. Empty `ids` → empty map. Read-only.
+   */
+  findManyById(ids: readonly ElementId[]): Map<ElementId, SourceWithElement> {
+    if (ids.length === 0) return new Map();
+    const elementRows = this.db
+      .select()
+      .from(elements)
+      .where(inArray(elements.id, ids as ElementId[]))
+      .all();
+    const sourceRows = this.db
+      .select()
+      .from(sources)
+      .where(inArray(sources.elementId, ids as ElementId[]))
+      .all();
+    const sourceByElementId = new Map(sourceRows.map((r) => [r.elementId as ElementId, r]));
+    const out = new Map<ElementId, SourceWithElement>();
+    for (const er of elementRows) {
+      const sr = sourceByElementId.get(er.id as ElementId);
+      if (sr) out.set(er.id as ElementId, { element: rowToElement(er), source: rowToSource(sr) });
+    }
+    return out;
+  }
+
+  /**
+   * Batch-read `source_locations` keyed by their `elementId` (the extract's element id).
+   * Used by {@link resolveSourceRefMany} to resolve location anchors for many extracts in
+   * one query. Returns at most one location per elementId (mirrors `findLocationForElement`
+   * — a single location per extract). Empty `ids` → empty map. Read-only.
+   */
+  findLocationsByElementIds(ids: readonly ElementId[]): Map<ElementId, ElementLocation> {
+    if (ids.length === 0) return new Map();
+    const rows = this.db
+      .select()
+      .from(sourceLocations)
+      .where(inArray(sourceLocations.elementId, ids as ElementId[]))
+      .all();
+    // Mirror findLocationForElement: return the first (only) location per elementId.
+    const out = new Map<ElementId, ElementLocation>();
+    for (const row of rows) {
+      const eid = row.elementId as ElementId;
+      if (!out.has(eid)) out.set(eid, rowToSourceLocation(row));
+    }
+    return out;
+  }
+
+  /**
+   * Batch-read `source_locations` keyed by their primary-key id. Used by
+   * {@link resolveSourceRefMany} to resolve card fallback location anchors. Empty `ids`
+   * → empty map. Read-only.
+   */
+  findLocationsByIds(ids: readonly SourceLocationId[]): Map<SourceLocationId, ElementLocation> {
+    if (ids.length === 0) return new Map();
+    const rows = this.db
+      .select()
+      .from(sourceLocations)
+      .where(inArray(sourceLocations.id, ids as SourceLocationId[]))
+      .all();
+    return new Map(rows.map((r) => [r.id as SourceLocationId, rowToSourceLocation(r)]));
   }
 
   /**
