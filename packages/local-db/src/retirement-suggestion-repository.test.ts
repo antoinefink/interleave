@@ -136,4 +136,62 @@ describe("RetirementSuggestionRepository", () => {
     expect(retirement.rawForSource(sourceId)).toBeNull();
     expect(retirement.visibleForSource(task.id)).toBeNull();
   });
+
+  describe("visibleForSourceMany — parity against visibleForSource", () => {
+    it("matches visibleForSource for a mix of sources-with and sources-without a suggestion", () => {
+      // Source A: retirable → has a suggestion
+      const { sourceId: sourceA, blocks: blocksA } = seedSource();
+      makeRetirable(sourceA, blocksA);
+
+      // Source B: retirable → suggestion dismissed
+      const { sourceId: sourceB, blocks: blocksB } = seedSource();
+      makeRetirable(sourceB, blocksB);
+      const suggestionB = retirement.visibleForSource(sourceB);
+      expect(suggestionB).not.toBeNull();
+      retirement.dismiss(sourceB, suggestionB?.signalHash ?? "");
+
+      // Source C: not retirable → no suggestion
+      const { sourceId: sourceC } = seedSource();
+
+      const ids = [sourceA, sourceB, sourceC];
+      const many = retirement.visibleForSourceMany(ids);
+
+      // Per-source parity
+      for (const id of ids) {
+        const single = retirement.visibleForSource(id);
+        if (single === null) {
+          expect(many.has(id)).toBe(false);
+        } else {
+          expect(many.get(id)).toEqual(single);
+        }
+      }
+
+      // Source A has a suggestion; B (dismissed) and C (not retirable) do not
+      expect(many.has(sourceA)).toBe(true);
+      expect(many.has(sourceB)).toBe(false);
+      expect(many.has(sourceC)).toBe(false);
+    });
+
+    it("returns empty map for empty ids", () => {
+      expect(retirement.visibleForSourceMany([])).toEqual(new Map());
+    });
+
+    it("excludes deleted and non-source ids from the result", () => {
+      const { sourceId, blocks } = seedSource();
+      makeRetirable(sourceId, blocks);
+      repos.elements.softDelete(sourceId);
+
+      const task = repos.elements.create({
+        type: "task",
+        status: "active",
+        stage: "raw_source",
+        priority: 0.5,
+        title: "Not a source",
+      });
+
+      const many = retirement.visibleForSourceMany([sourceId, task.id]);
+      expect(many.has(sourceId)).toBe(false);
+      expect(many.has(task.id)).toBe(false);
+    });
+  });
 });

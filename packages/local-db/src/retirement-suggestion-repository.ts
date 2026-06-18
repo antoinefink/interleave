@@ -82,6 +82,8 @@ export class RetirementSuggestionRepository {
   ): Map<ElementId, VisibleSourceRetirementSuggestion> {
     const result = new Map<ElementId, VisibleSourceRetirementSuggestion>();
     if (ids.length === 0) return result;
+
+    // Batch the dismissal lookup (one IN read for all ids).
     const dismissalHash = new Map<ElementId, string>();
     for (const row of this.db
       .select()
@@ -90,8 +92,44 @@ export class RetirementSuggestionRepository {
       .all()) {
       dismissalHash.set(row.sourceElementId as ElementId, row.signalHash);
     }
+
+    // Batch the element-type guard: only live source elements can have a suggestion.
+    const liveSourceIds = new Set<ElementId>(
+      this.db
+        .select({ id: elements.id, type: elements.type, deletedAt: elements.deletedAt })
+        .from(elements)
+        .where(inArray(elements.id, ids as ElementId[]))
+        .all()
+        .filter((row) => !row.deletedAt && row.type === "source")
+        .map((row) => row.id as ElementId),
+    );
+
+    // One batched block-processing read for all live sources (replaces per-source
+    // getSourceProcessingSummary calls — the stale-tolerant batched primitive always
+    // returns an entry for every id so the ?? zero-summary fallback is never needed).
+    const summaryBySource = this.blockProcessing.getSourceProcessingSummaryForMany([
+      ...liveSourceIds,
+    ]);
+
     for (const id of ids) {
-      const suggestion = this.rawForSource(id);
+      if (!liveSourceIds.has(id)) continue;
+      const summary = summaryBySource.get(id);
+      if (!summary) continue;
+
+      // Replicate rawForSource's suggestion logic using the batched summary.
+      const suggestion = sourceRetirementSuggestion({
+        sourceId: id,
+        totalBlocks: summary.totalBlocks,
+        terminalBlocks: summary.terminalBlocks,
+        ignoredBlocks: summary.ignoredBlocks,
+        unresolvedBlocks: summary.unresolvedBlocks,
+        unresolvedRatio:
+          summary.totalBlocks === 0 ? 0 : summary.unresolvedBlocks / summary.totalBlocks,
+        terminalRatio: summary.terminalRatio,
+        ignoredRatio: summary.ignoredRatio,
+        extractedOutputCount: summary.extractedOutputCount,
+      });
+
       if (!suggestion) continue;
       if (dismissalHash.get(id) === suggestion.signalHash) continue;
       result.set(id, suggestion);
