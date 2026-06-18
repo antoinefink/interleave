@@ -678,3 +678,226 @@ describe("OperationLogRepository.append — batch_id dual-write", () => {
     expect(count.n).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// postponeCountsForMany — parity tests (U4)
+// ---------------------------------------------------------------------------
+
+/** Replicate rawPostponeCount (private in scheduler-consistency-query.ts) inline. */
+function rawPostponeCountViaDb(handle: DbHandle, elementId: string): number {
+  return (
+    handle.sqlite
+      .prepare(
+        "SELECT payload FROM operation_log WHERE element_id = ? AND op_type = 'reschedule_element'",
+      )
+      .all(elementId) as { payload: string }[]
+  ).filter((row) => {
+    const p = JSON.parse(row.payload) as unknown;
+    return typeof p === "object" && p !== null && (p as { postpone?: unknown }).postpone === true;
+  }).length;
+}
+
+describe("OperationLogRepository.postponeCountsForMany (U4 parity)", () => {
+  it("effective count parity: matches countPostpones for each element", () => {
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+
+    const a = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.5,
+      title: "A",
+    });
+    const b = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.5,
+      title: "B",
+    });
+    const c = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.5,
+      title: "C — no ops",
+    });
+
+    // A: 3 postpones, then a reset, then 1 more → effective = 1
+    for (let i = 0; i < 3; i++) {
+      handle.db.transaction((tx) =>
+        log.append(tx, {
+          opType: "reschedule_element",
+          payload: { postpone: true },
+          elementId: a.id,
+        }),
+      );
+    }
+    handle.db.transaction((tx) =>
+      log.append(tx, {
+        opType: "update_element",
+        payload: { chronicPostponeReset: true, prevEffectivePostponeCount: 3 },
+        elementId: a.id,
+      }),
+    );
+    handle.db.transaction((tx) =>
+      log.append(tx, {
+        opType: "reschedule_element",
+        payload: { postpone: true },
+        elementId: a.id,
+      }),
+    );
+
+    // B: 2 postpones → effective = 2
+    for (let i = 0; i < 2; i++) {
+      handle.db.transaction((tx) =>
+        log.append(tx, {
+          opType: "reschedule_element",
+          payload: { postpone: true },
+          elementId: b.id,
+        }),
+      );
+    }
+
+    // C: no ops → 0
+
+    const ids = [a.id, b.id, c.id];
+    const { effective } = log.postponeCountsForMany(ids);
+
+    for (const id of ids) {
+      const expected = log.countPostpones(id);
+      expect(effective.get(id) ?? 0).toBe(expected);
+    }
+  });
+
+  it("effective count: reset marker zeroes count (parity with countPostpones)", () => {
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+    const el = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.5,
+      title: "Reset test",
+    });
+
+    for (let i = 0; i < 5; i++) {
+      handle.db.transaction((tx) =>
+        log.append(tx, {
+          opType: "reschedule_element",
+          payload: { postpone: true },
+          elementId: el.id,
+        }),
+      );
+    }
+    handle.db.transaction((tx) =>
+      log.append(tx, {
+        opType: "update_element",
+        payload: { chronicPostponeReset: true, prevEffectivePostponeCount: 5 },
+        elementId: el.id,
+      }),
+    );
+
+    const { effective } = log.postponeCountsForMany([el.id]);
+    expect(effective.get(el.id) ?? 0).toBe(0);
+    expect(log.countPostpones(el.id)).toBe(0);
+  });
+
+  it("raw count parity: matches rawPostponeCount (no reset folding)", () => {
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+    const el = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.5,
+      title: "Raw test",
+    });
+
+    for (let i = 0; i < 4; i++) {
+      handle.db.transaction((tx) =>
+        log.append(tx, {
+          opType: "reschedule_element",
+          payload: { postpone: true },
+          elementId: el.id,
+        }),
+      );
+    }
+    // A reset should NOT affect raw count
+    handle.db.transaction((tx) =>
+      log.append(tx, {
+        opType: "update_element",
+        payload: { chronicPostponeReset: true, prevEffectivePostponeCount: 4 },
+        elementId: el.id,
+      }),
+    );
+
+    const { raw } = log.postponeCountsForMany([el.id]);
+    const expectedRaw = rawPostponeCountViaDb(handle, el.id);
+    expect(raw.get(el.id) ?? 0).toBe(expectedRaw);
+    // raw > effective (4 > 0) — this is the detector condition
+    expect((raw.get(el.id) ?? 0) > log.countPostpones(el.id)).toBe(true);
+  });
+
+  it("two ops sharing the same created_at ms fold in insertion order (rowid tiebreak)", () => {
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+    const el = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.5,
+      title: "Same-ms tiebreak",
+    });
+
+    // Force the same createdAt by writing directly to the DB.
+    const sameTs = "2026-06-18T12:00:00.000Z";
+    handle.sqlite
+      .prepare(
+        "INSERT INTO operation_log (id, op_type, payload, element_id, created_at, batch_id) VALUES (?, ?, ?, ?, ?, NULL)",
+      )
+      .run("op-1", "reschedule_element", JSON.stringify({ postpone: true }), el.id, sameTs);
+    handle.sqlite
+      .prepare(
+        "INSERT INTO operation_log (id, op_type, payload, element_id, created_at, batch_id) VALUES (?, ?, ?, ?, ?, NULL)",
+      )
+      .run(
+        "op-2",
+        "update_element",
+        JSON.stringify({ chronicPostponeReset: true, prevEffectivePostponeCount: 1 }),
+        el.id,
+        sameTs,
+      );
+
+    // The reset (op-2, higher rowid) should win and zero the count.
+    const { effective } = log.postponeCountsForMany([el.id]);
+    // countPostpones reads newest-first (listForElement.reverse() = oldest-first):
+    // op-1 first → count=1, op-2 (reset) → count=0
+    expect(effective.get(el.id) ?? 0).toBe(log.countPostpones(el.id));
+  });
+
+  it("absent element (no op rows) returns 0 for both maps", () => {
+    const elements = new ElementRepository(handle.db);
+    const log = new OperationLogRepository(handle.db);
+    const el = elements.create({
+      type: "source",
+      status: "active",
+      stage: "raw_source",
+      priority: 0.5,
+      title: "No ops",
+    });
+
+    const { effective, raw } = log.postponeCountsForMany([el.id]);
+    expect(effective.get(el.id) ?? 0).toBe(0);
+    expect(raw.get(el.id) ?? 0).toBe(0);
+    expect(log.countPostpones(el.id)).toBe(0);
+  });
+
+  it("empty ids → empty maps", () => {
+    const log = new OperationLogRepository(handle.db);
+    const { effective, raw } = log.postponeCountsForMany([]);
+    expect(effective).toEqual(new Map());
+    expect(raw).toEqual(new Map());
+  });
+});

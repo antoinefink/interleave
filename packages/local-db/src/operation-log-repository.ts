@@ -12,9 +12,9 @@
  * client) so the op row and the data mutation commit or roll back together.
  */
 
-import type { OperationLogEntry, OperationType } from "@interleave/core";
+import type { ElementId, OperationLogEntry, OperationType } from "@interleave/core";
 import { operationLog } from "@interleave/db";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { newOperationId, nowIso } from "./ids";
 import type { DbClient } from "./types";
 
@@ -454,6 +454,117 @@ export class OperationLogRepository {
     }
 
     return { effectivePostponeCount, reason: null };
+  }
+
+  /**
+   * Batched twin of {@link countPostpones} and `rawPostponeCount` (in
+   * `scheduler-consistency-query.ts`). One `operation_log` scan over
+   * `WHERE element_id IN (ids) AND op_type IN ('reschedule_element', 'update_element')`,
+   * folded per-element in JS, replacing per-element `countPostpones` /
+   * `rawPostponeCount` in list/search/queue paths.
+   *
+   * Returns `{ effective, raw }` where:
+   * - `effective` — the FULL `countPostpones` marker logic (including
+   *   `update_element` reset/restore markers that zero/restore the count). Consumed
+   *   by `QueueQuery.summaryForMany` (U1).
+   * - `raw` — replicates `rawPostponeCount`: count ONLY `reschedule_element` rows
+   *   with `payload.postpone === true`, NO reset-marker folding. Consumed by
+   *   `SchedulerConsistencyQuery` (U13). The `raw > effective` detection would break
+   *   if the reset fold were applied here.
+   *
+   * **Ordering:** `countPostpones` consumes `listForElement(id).reverse()` — i.e.
+   * oldest-first — so rows are ordered `created_at ASC, rowid ASC` (the `rowid`
+   * tiebreak is required; same-ms ops must fold in insertion order).
+   *
+   * Elements absent from the scan return 0 in BOTH maps. Empty `ids` → empty maps.
+   */
+  postponeCountsForMany(ids: readonly ElementId[]): {
+    effective: Map<ElementId, number>;
+    raw: Map<ElementId, number>;
+  } {
+    if (ids.length === 0) return { effective: new Map(), raw: new Map() };
+
+    // One scan: reschedule_element (postpone markers) + update_element (reset markers).
+    // Order: oldest-first so the effective-count fold mirrors listForElement().reverse().
+    const rows = this.db
+      .select({
+        elementId: operationLog.elementId,
+        opType: operationLog.opType,
+        payload: operationLog.payload,
+      })
+      .from(operationLog)
+      .where(
+        and(
+          inArray(operationLog.elementId, ids as ElementId[]),
+          inArray(operationLog.opType, ["reschedule_element", "update_element"]),
+        ),
+      )
+      .orderBy(asc(operationLog.createdAt), asc(sql`rowid`))
+      .all();
+
+    // Group rows by elementId (preserving oldest-first order from the query).
+    const byElement = new Map<ElementId, typeof rows>();
+    for (const row of rows) {
+      const eid = row.elementId as ElementId;
+      const list = byElement.get(eid);
+      if (list) {
+        list.push(row);
+      } else {
+        byElement.set(eid, [row]);
+      }
+    }
+
+    const effective = new Map<ElementId, number>();
+    const raw = new Map<ElementId, number>();
+
+    for (const id of ids) {
+      const elRows = byElement.get(id);
+      if (!elRows || elRows.length === 0) {
+        // No rows → 0 for both (matches countPostpones and rawPostponeCount).
+        continue;
+      }
+
+      // Effective count: full countPostpones marker logic (oldest-first, same as
+      // listForElement().reverse()).
+      let effectiveCount = 0;
+      for (const row of elRows) {
+        const payload = payloadObject(JSON.parse(row.payload));
+        if (row.opType === "reschedule_element" && payload?.postpone === true) {
+          effectiveCount += 1;
+          continue;
+        }
+        if (row.opType !== "update_element") continue;
+        if (payload?.chronicPostponeReset === true) {
+          effectiveCount = 0;
+          continue;
+        }
+        if (payload?.chronicPostponeResetUndo === true) {
+          const restored = payload.restoredEffectivePostponeCount;
+          effectiveCount =
+            typeof restored === "number" && Number.isFinite(restored) && restored >= 0
+              ? Math.floor(restored)
+              : effectiveCount;
+        }
+      }
+      if (effectiveCount !== 0) effective.set(id, effectiveCount);
+
+      // Raw count: ONLY reschedule_element rows with postpone===true, no reset folding.
+      let rawCount = 0;
+      for (const row of elRows) {
+        if (row.opType !== "reschedule_element") continue;
+        const payload = JSON.parse(row.payload) as unknown;
+        if (
+          typeof payload === "object" &&
+          payload !== null &&
+          (payload as { postpone?: unknown }).postpone === true
+        ) {
+          rawCount += 1;
+        }
+      }
+      if (rawCount !== 0) raw.set(id, rawCount);
+    }
+
+    return { effective, raw };
   }
 
   /** The whole log, newest first (audit/backup helper). */
