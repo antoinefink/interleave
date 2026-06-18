@@ -8,13 +8,7 @@
  */
 
 import { type ElementStatus, type IsoTimestamp, priorityToLabel } from "@interleave/core";
-import {
-  cards,
-  elements,
-  type InterleaveDatabase,
-  operationLog,
-  reviewStates,
-} from "@interleave/db";
+import { cards, elements, type InterleaveDatabase, reviewStates } from "@interleave/db";
 import { and, eq, inArray, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { CHRONIC_POSTPONE_TYPES, ChronicPostponeQuery } from "./chronic-postpone-query";
 import { OperationLogRepository } from "./operation-log-repository";
@@ -275,8 +269,16 @@ export class SchedulerConsistencyQuery {
   }
 
   private chronicPostponeReset(): SchedulerConsistencyRow[] {
+    // U13: Fetch the SAME full live-element set the old per-element code scanned, then
+    // build BOTH the `effective` and `raw` maps in ONE batched op-log scan instead of
+    // two per-element SQL calls per row (`rawPostponeCount` + `countPostpones`). An
+    // element absent from the op-log correctly contributes 0 to both maps (the
+    // `map.get(id) ?? 0` default), matching the per-element behaviour. The candidate
+    // scan covers all CHRONIC_POSTPONE_TYPES live elements — NOT scoped to "elements
+    // that have a postpone op" — to avoid dropping elements the old full scan evaluated
+    // (correctness guard; adversarial review anchor in U13 plan).
     const operationLogRepository = new OperationLogRepository(this.db);
-    return this.db
+    const allRows = this.db
       .select({
         id: elements.id,
         type: elements.type,
@@ -293,10 +295,13 @@ export class SchedulerConsistencyQuery {
           inArray(elements.type, CHRONIC_POSTPONE_TYPES as readonly string[]),
         ),
       )
-      .all()
-      .filter(
-        (row) => rawPostponeCount(this.db, row.id) > operationLogRepository.countPostpones(row.id),
-      )
+      .all();
+
+    const candidateIds = allRows.map((r) => r.id as never);
+    const { effective, raw } = operationLogRepository.postponeCountsForMany(candidateIds);
+
+    return allRows
+      .filter((row) => (raw.get(row.id as never) ?? 0) > (effective.get(row.id as never) ?? 0))
       .map((r) => ({
         element: ref(r),
         reason: "chronic-postpone-reset" as const,
@@ -304,23 +309,6 @@ export class SchedulerConsistencyQuery {
         reviewDueAt: null,
       }));
   }
-}
-
-function rawPostponeCount(db: InterleaveDatabase, elementId: string): number {
-  return db
-    .select({ payload: operationLog.payload, opType: operationLog.opType })
-    .from(operationLog)
-    .where(eq(operationLog.elementId, elementId))
-    .all()
-    .filter((row) => {
-      if (row.opType !== "reschedule_element") return false;
-      const payload = JSON.parse(row.payload) as unknown;
-      return (
-        typeof payload === "object" &&
-        payload !== null &&
-        (payload as { postpone?: unknown }).postpone === true
-      );
-    }).length;
 }
 
 function ref(row: {

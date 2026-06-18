@@ -107,11 +107,20 @@ export class ChronicPostponeQuery {
       .orderBy(asc(elements.updatedAt), asc(elements.createdAt))
       .all();
 
+    // U13: Batch the op-log postpone-count scan ONCE over ALL candidate ids — the full
+    // live-element set for CHRONIC_POSTPONE_TYPES — instead of one countPostpones() call
+    // per element. An element ABSENT from the op-log correctly returns 0 (the map default),
+    // matching the pre-refactor per-element behaviour. The candidate scan is NOT scoped to
+    // "elements with a postpone op" to avoid dropping elements the current full scan
+    // evaluates (correctness guard from the plan — adversarial review anchor).
+    const candidateIds = rows.map((r) => r.id as ElementId);
+    const { effective: effectiveMap } = this.operationLog.postponeCountsForMany(candidateIds);
+
     const out: ChronicPostponeRow[] = [];
     for (const row of rows) {
       if (!isQueueActionableStatus(row.status as ElementStatus)) continue;
       if (row.type === "card" && retiredCards.has(row.id)) continue;
-      const postponeCount = this.operationLog.countPostpones(row.id);
+      const postponeCount = effectiveMap.get(row.id as ElementId) ?? 0;
       if (postponeCount < threshold) continue;
       out.push({
         element: {

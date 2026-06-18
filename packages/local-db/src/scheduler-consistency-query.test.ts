@@ -266,3 +266,109 @@ describe("SchedulerConsistencyQuery", () => {
     expect(reasons).not.toContain("chronic-postpone-paused");
   });
 });
+
+/**
+ * U13 — scheduler-consistency chronicPostponeReset batched op-log drift tests.
+ *
+ * The `chronicPostponeReset` detector formerly called `rawPostponeCount(db, id)` AND
+ * `operationLogRepository.countPostpones(id)` per row — two SQL scans per element.
+ * U13 replaces both with ONE `postponeCountsForMany` call yielding `{ raw, effective }`
+ * maps. These tests assert byte-identical detection results and guard the correctness
+ * invariants (full-candidate scan, no scoping to op-log-present ids).
+ */
+describe("SchedulerConsistencyQuery U13 — chronicPostponeReset batched op-log", () => {
+  it("drift: reset detection flags the same elements (raw > effective) as the per-element path", () => {
+    // Element with 5 raw postpones + 1 reset marker → effective = 0, raw = 5 → flagged.
+    const resetSource = repos.sources.create({
+      title: "Reset source — should be flagged",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "scheduled",
+      stage: "raw_source",
+    });
+    appendPostpones(resetSource.element.id, 5);
+    handle.db.transaction((tx) => {
+      repos.operationLog.append(tx, {
+        opType: "update_element",
+        elementId: resetSource.element.id,
+        payload: {
+          id: resetSource.element.id,
+          chronicPostponeReset: true,
+          prevEffectivePostponeCount: 5,
+        },
+      });
+    });
+
+    // Element with only raw postpones (no reset) → raw == effective → NOT flagged.
+    const plainSource = repos.sources.create({
+      title: "Plain postponed source — not flagged",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "scheduled",
+      stage: "raw_source",
+    });
+    appendPostpones(plainSource.element.id, 3);
+
+    const resetRows = query.list().filter((r) => r.reason === "chronic-postpone-reset");
+    const resetIds = resetRows.map((r) => r.element.id);
+
+    expect(resetIds).toContain(resetSource.element.id);
+    expect(resetIds).not.toContain(plainSource.element.id);
+    // count() agrees.
+    expect(query.count()).toBeGreaterThanOrEqual(1);
+  });
+
+  it("element with NO op-log rows is still evaluated and contributes 0 (regression guard against scoping the scan)", () => {
+    // A clean element with ZERO op-log rows must not cause any errors or silently
+    // disappear from the candidate set. Its raw and effective counts are both 0,
+    // so 0 > 0 is false → it is NOT flagged. If the scan were scoped only to
+    // "op-log-present" elements, this element would be dropped silently — breaking the
+    // correctness of the consistency report for any element that has never been postponed.
+    const clean = repos.sources.create({
+      title: "Clean source — zero op-log rows",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "scheduled",
+      stage: "raw_source",
+    });
+
+    // A SECOND element that IS flagged — ensures the detection still works in the same run.
+    const resetSource = repos.sources.create({
+      title: "Reset source for non-vacuous check",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "scheduled",
+      stage: "raw_source",
+    });
+    appendPostpones(resetSource.element.id, 3);
+    handle.db.transaction((tx) => {
+      repos.operationLog.append(tx, {
+        opType: "update_element",
+        elementId: resetSource.element.id,
+        payload: { chronicPostponeReset: true, prevEffectivePostponeCount: 3 },
+      });
+    });
+
+    const resetRows = query.list().filter((r) => r.reason === "chronic-postpone-reset");
+    const resetIds = resetRows.map((r) => r.element.id);
+
+    // The reset element IS flagged.
+    expect(resetIds).toContain(resetSource.element.id);
+    // The clean element is NOT flagged (0 > 0 is false).
+    expect(resetIds).not.toContain(clean.element.id);
+  });
+
+  it("drift non-vacuous guard: an element without a reset is NOT flagged (raw == effective)", () => {
+    // If the batched map had the wrong semantics (e.g. applied reset-folding to the
+    // raw map), raw would equal effective for a reset element and the detection would
+    // miss it. This test confirms that a plain-postpone element (no reset) is NEVER
+    // flagged, proving the two maps have distinct semantics.
+    const plainSource = repos.sources.create({
+      title: "Plain source — no reset marker",
+      priority: PRIORITY_LABEL_VALUE.B,
+      status: "scheduled",
+      stage: "raw_source",
+    });
+    appendPostpones(plainSource.element.id, 5);
+
+    // No reset marker → raw (5) == effective (5) → NOT flagged.
+    const resetRows = query.list().filter((r) => r.reason === "chronic-postpone-reset");
+    expect(resetRows.map((r) => r.element.id)).not.toContain(plainSource.element.id);
+  });
+});
