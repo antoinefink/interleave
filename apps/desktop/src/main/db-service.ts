@@ -213,7 +213,6 @@ import type {
   CardsUpdateRequest,
   CardsUpdateResult,
   CatchUpPreview,
-  ConceptMemberSummary,
   ConceptsAssignRequest,
   ConceptsAssignResult,
   ConceptsCreateRequest,
@@ -5654,36 +5653,23 @@ export class DbService {
   conceptMembers(request: ConceptsMembersRequest): ConceptsMembersResult {
     const memberIds = this.repos.concepts.elementsForConcept(request.conceptId as ElementId);
 
-    const members: ConceptMemberSummary[] = [];
-    for (const id of memberIds) {
-      const element = this.repos.elements.findById(id);
-      if (!element || element.deletedAt) continue;
+    // Resolve the live member rows in ONE batched read (was a per-id `findById`),
+    // then restore the original member edge order — `elementsForConcept` already drops
+    // soft-deleted members, and `findManyLive` drops any that became soft-deleted, so a
+    // member absent from the live map is simply skipped (same as the old `deletedAt`
+    // continue). The member set is UNBOUNDED; `enrichElementRows` chunks the batched
+    // enrichment reads to stay under SQLite's parameter ceiling.
+    const liveById = new Map(
+      this.repos.elements.findManyLive(memberIds).map((el) => [el.id, el] as const),
+    );
+    const orderedElements = memberIds
+      .map((id) => liveById.get(id))
+      .filter((el): el is Element => el !== undefined);
 
-      // The owning-source title for the row's meta line (shared T043 resolver — a
-      // source references itself; extract/card reference their owning source).
-      const { sourceTitle } = this.refMetaForElement(element.id);
-
-      // The load-bearing scheduler chip + due badge — reuse the SAME builders the
-      // inspector + queue use so the chip/due read identically across surfaces. Both
-      // are best-effort: an element that vanished mid-read degrades to a calm
-      // attention "Scheduled" default rather than dropping out of the list.
-      const inspectorData = this.inspectorQuery.get(element.id);
-      const summary = this.queueQuery.summaryFor(element.id);
-      const scheduler = inspectorData?.scheduler ?? {
-        kind: "attention" as const,
-        retrievability: null,
-        stability: null,
-        difficulty: null,
-        reps: null,
-        lapses: null,
-        fsrsState: null,
-        stage: element.stage,
-        postponed: 0,
-        scheduleReason: null,
-        lastProcessedAt: element.updatedAt ?? null,
-      };
-
-      members.push({
+    const members = this.enrichElementRows(
+      orderedElements,
+      new Date(),
+      ({ element, scheduler, summary, sourceRef }) => ({
         id: element.id,
         type: element.type,
         title: element.title,
@@ -5691,15 +5677,15 @@ export class DbService {
         priorityLabel: priorityToLabel(element.priority),
         status: element.status,
         stage: element.stage,
-        sourceTitle,
+        sourceTitle: sourceRef?.sourceTitle ?? null,
         dueAt: summary?.dueAt ?? element.dueAt ?? null,
         scheduler,
         due: summary?.due ?? "soon",
         dueLabel: summary?.dueLabel ?? "No return scheduled",
         queueEligible: summary?.queueEligible ?? false,
         notInQueueReason: summary?.notInQueueReason ?? "Not in queue: summary unavailable",
-      });
-    }
+      }),
+    );
     return { members };
   }
 

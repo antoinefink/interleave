@@ -3948,7 +3948,7 @@ describe("DbService — review session (T037)", () => {
 // retired, parked, and fallow rows; a tagged source; a concept-assigned card).
 // ---------------------------------------------------------------------------
 
-describe("DbService — batch+trim drift (U5 libraryBrowse)", () => {
+describe("DbService — batch+trim drift (U5/U6)", () => {
   /** Reach the production private query getters so the reference uses the EXACT same instances. */
   function queries(svc: DbService): {
     queueQuery: {
@@ -4001,6 +4001,37 @@ describe("DbService — batch+trim drift (U5 libraryBrowse)", () => {
       linkedElementId: linked?.id ?? null,
       linkedElementType: linked?.type ?? null,
       taskType: task?.taskType ?? null,
+    };
+  }
+
+  /** The per-row ConceptMemberSummary reference (the U6 row shape). */
+  function referenceConceptMember(
+    svc: DbService,
+    id: ElementId,
+    asOf: Date,
+  ): Record<string, unknown> {
+    const element = svc.repos.elements.findById(id);
+    if (!element || element.deletedAt) throw new Error(`not a live element: ${id}`);
+    const summary = queries(svc).queueQuery.summaryFor(id, asOf.toISOString() as IsoTimestamp);
+    const ref = resolveSourceRef(svc.repos, id);
+    const scheduler = queries(svc).inspectorQuery.buildSchedulerSignals(element, asOf, {
+      includeYield: false,
+    });
+    return {
+      id: element.id,
+      type: element.type,
+      title: element.title,
+      priority: element.priority,
+      priorityLabel: priorityToLabel(element.priority),
+      status: element.status,
+      stage: element.stage,
+      sourceTitle: ref?.sourceTitle ?? null,
+      dueAt: summary?.dueAt ?? element.dueAt ?? null,
+      scheduler,
+      due: summary?.due ?? "soon",
+      dueLabel: summary?.dueLabel ?? "No return scheduled",
+      queueEligible: summary?.queueEligible ?? false,
+      notInQueueReason: summary?.notInQueueReason ?? "Not in queue: summary unavailable",
     };
   }
 
@@ -4135,6 +4166,71 @@ describe("DbService — batch+trim drift (U5 libraryBrowse)", () => {
 
     svc.repos.elements.softDelete(source.id);
     expect(svc.libraryBrowse({}).items).toEqual([]);
+    svc.close();
+  });
+
+  it("conceptMembers rows deepEqual the per-row composition (mixed-type members, same order)", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const { conceptId } = seedMixedFixture(svc);
+
+    const asOf = new Date("2026-06-18T12:00:00.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(asOf);
+    try {
+      const members = svc.conceptMembers({ conceptId }).members;
+      expect(members.length).toBe(2);
+      const reference = members.map((row) =>
+        referenceConceptMember(svc, row.id as ElementId, asOf),
+      );
+      expect(members).toEqual(reference);
+      // The retired card member is present + correctly non-eligible (not the shortcut).
+      expect(members.some((m) => m.type === "card" && m.queueEligible === false)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+    svc.close();
+  });
+
+  it("conceptMembers on a concept with no live members is empty", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+    const concept = svc.repos.concepts.createConcept({ name: "Empty concept" });
+    expect(svc.conceptMembers({ conceptId: concept.id }).members).toEqual([]);
+    svc.close();
+  });
+
+  it("conceptMembers over a large member set (>chunk size) returns rows identical to the per-row path", () => {
+    const svc = new DbService();
+    svc.open(dbPath, { migrationsDir: MIGRATIONS_DIR });
+
+    const concept = svc.repos.concepts.createConcept({ name: "Big concept" });
+    const memberCount = 150;
+    for (let i = 0; i < memberCount; i++) {
+      const el = svc.repos.elements.create({
+        type: i % 2 === 0 ? "extract" : "topic",
+        status: "scheduled",
+        stage: i % 2 === 0 ? "raw_extract" : "rough_topic",
+        priority: priorityFromLabel(["A", "B", "C", "D"][i % 4] as "A"),
+        title: `Member ${i}`,
+        dueAt: "2026-04-01T00:00:00.000Z" as IsoTimestamp,
+      });
+      svc.repos.concepts.assignConcept(el.id, concept.id);
+    }
+
+    const asOf = new Date("2026-06-18T12:00:00.000Z");
+    vi.useFakeTimers();
+    vi.setSystemTime(asOf);
+    try {
+      const members = svc.conceptMembers({ conceptId: concept.id }).members;
+      expect(members.length).toBe(memberCount);
+      const reference = members.map((row) =>
+        referenceConceptMember(svc, row.id as ElementId, asOf),
+      );
+      expect(members).toEqual(reference);
+    } finally {
+      vi.useRealTimers();
+    }
     svc.close();
   });
 });
