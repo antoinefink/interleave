@@ -416,6 +416,100 @@ describe("SourceYieldQuery.listSourceYield", () => {
   });
 });
 
+describe("SourceYieldQuery.getSourceYield (single-source drift)", () => {
+  it("deepEquals the listSourceYield row across sources with/without extracts, cards, and synthesis refs", () => {
+    // A) Barren read source (read, no output).
+    const barren = seedSource(handle, "Barren", 4);
+    setReadPoint(handle, barren, 3);
+
+    // B) Source with extracts + cards + reviews + block processing.
+    const productive = seedSource(handle, "Productive", 4);
+    setReadPoint(handle, productive, 1);
+    seedExtract(handle, productive, { fate: "reference" });
+    seedExtract(handle, productive);
+    const mature = seedCard(handle, productive, { stability: CARD_MATURE_STABILITY_DAYS + 5 });
+    seedCard(handle, productive, { leech: true, stability: 1 });
+    seedReview(handle, mature, 3000, "2026-05-30T08:00:00.000Z");
+    const pBlocks = new DocumentRepository(handle.db).listBlocks(productive);
+    const bps = new BlockProcessingService(handle.db);
+    bps.markBlockProcessed({
+      sourceElementId: productive,
+      stableBlockId: pBlocks[0]?.stableBlockId as BlockId,
+    });
+    bps.markBlockIgnored({
+      sourceElementId: productive,
+      stableBlockId: pBlocks[1]?.stableBlockId as BlockId,
+    });
+    setSourceMeta(handle, productive, { url: "https://example.com/p" });
+
+    // C) Source with a synthesis note referencing two of its extracts.
+    const synth = seedSource(handle, "Synthesized", 4);
+    setReadPoint(handle, synth, 3);
+    const e1 = seedExtract(handle, synth);
+    const e2 = seedExtract(handle, synth);
+    seedSynthesisNote(handle, [e1, e2]);
+
+    // D) Un-started neutral source (no read, no output).
+    const fresh = seedSource(handle, "Fresh import", 3);
+
+    const q = new SourceYieldQuery(handle.db);
+    const list = q.listSourceYield(ASOF, { limit: Number.MAX_SAFE_INTEGER }).rows;
+    for (const id of [barren, productive, synth, fresh]) {
+      const listed = list.find((r) => r.source.id === id);
+      expect(q.getSourceYield(id, ASOF)).toEqual(listed);
+    }
+  });
+
+  it("reports identical productiveExtracts for a source whose ONLY productive extract is a live synthesis reference (no extract_fate)", () => {
+    const src = seedSource(handle, "Synthesis-only productivity", 4);
+    setReadPoint(handle, src, 3);
+    const extract = seedExtract(handle, src); // NO fate
+    seedSynthesisNote(handle, [extract]);
+
+    const q = new SourceYieldQuery(handle.db);
+    const single = q.getSourceYield(src, ASOF);
+    const listed = q
+      .listSourceYield(ASOF, { limit: Number.MAX_SAFE_INTEGER })
+      .rows.find((r) => r.source.id === src);
+
+    // Dual-signal: productive via the synthesis edge, NOT via extract_fate.
+    expect(single?.productiveExtracts).toBe(1);
+    expect(single?.synthesisReferencedExtracts).toBe(1);
+    expect(single?.referenceExtracts).toBe(0);
+    expect(single).toEqual(listed);
+  });
+
+  it("returns null for an unknown / non-source / soft-deleted id (matching the old behavior)", () => {
+    const repo = new ElementRepository(handle.db);
+    const dead = seedSource(handle, "Dead", 2);
+    repo.softDelete(dead);
+    const extract = seedExtract(handle, seedSource(handle, "Owner", 2));
+
+    const q = new SourceYieldQuery(handle.db);
+    expect(q.getSourceYield("missing" as ElementId, ASOF)).toBeNull();
+    expect(q.getSourceYield(dead, ASOF)).toBeNull();
+    expect(q.getSourceYield(extract, ASOF)).toBeNull(); // an extract is not a source
+  });
+
+  it("drift guard is non-vacuous: a wrong productiveExtracts would fail the deepEquals", () => {
+    const src = seedSource(handle, "Guard", 4);
+    setReadPoint(handle, src, 3);
+    const extract = seedExtract(handle, src);
+    seedSynthesisNote(handle, [extract]);
+
+    const q = new SourceYieldQuery(handle.db);
+    const single = q.getSourceYield(src, ASOF);
+    const listed = q
+      .listSourceYield(ASOF, { limit: Number.MAX_SAFE_INTEGER })
+      .rows.find((r) => r.source.id === src);
+    // Sanity: deepEquals holds for the real value...
+    expect(single).toEqual(listed);
+    // ...and a deliberately corrupted copy would NOT (proving the assertion has teeth).
+    const corrupted = { ...(single as object), productiveExtracts: 999 };
+    expect(corrupted).not.toEqual(listed);
+  });
+});
+
 /** Insert the `sources` side-table row carrying author + URL for an existing source element. */
 function setSourceMeta(
   handle: DbHandle,

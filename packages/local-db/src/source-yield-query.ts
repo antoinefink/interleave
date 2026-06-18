@@ -446,27 +446,30 @@ export class SourceYieldQuery {
       }
     }
 
-    // 6) Assemble each source's row, computing read-% from its own read-point + blocks.
+    const emptyTally = (): DescendantTally => ({
+      extracts: 0,
+      referenceExtracts: 0,
+      synthesizedExtracts: 0,
+      doneWithoutCardExtracts: 0,
+      fatedExtractIds: new Set(),
+      synthesisReferencedExtractIds: new Set(),
+      synthesisNoteIds: new Set(),
+      cards: 0,
+      mature: 0,
+      leeches: 0,
+      cardIds: [],
+      lastUpdatedAt: null,
+    });
+
+    // 6) Assemble each source's row through the shared builder so the per-source math
+    //    here is byte-identical to the single-source `getSourceYield` path.
     const rows: SourceYieldRow[] = sourceRows.map((s) => {
-      const t = tallies.get(s.id);
-      const extractsCreated = t?.extracts ?? 0;
-      const fatedExtractIds = t?.fatedExtractIds ?? new Set<string>();
-      const synthesisReferencedExtractIds = t?.synthesisReferencedExtractIds ?? new Set<string>();
-      const productiveExtracts = new Set([...fatedExtractIds, ...synthesisReferencedExtractIds])
-        .size;
-      const referenceExtracts = t?.referenceExtracts ?? 0;
-      const synthesizedExtracts = t?.synthesizedExtracts ?? 0;
-      const doneWithoutCardExtracts = t?.doneWithoutCardExtracts ?? 0;
-      const synthesisReferencedExtracts = synthesisReferencedExtractIds.size;
-      const synthesisNotesCreated = t?.synthesisNoteIds.size ?? 0;
-      const cardsCreated = t?.cards ?? 0;
-      const matureCards = t?.mature ?? 0;
-      const leeches = t?.leeches ?? 0;
+      const t = tallies.get(s.id) ?? emptyTally();
 
       let timeSpentMs = 0;
       let reviewCount = 0;
       let lastReviewedAt: string | null = null;
-      for (const cardId of t?.cardIds ?? []) {
+      for (const cardId of t.cardIds) {
         const agg = timeByCard.get(cardId);
         if (!agg) continue;
         timeSpentMs += agg.ms;
@@ -479,54 +482,11 @@ export class SourceYieldQuery {
         }
       }
 
-      const readPct = this.computeReadPct(s.id as ElementId);
-      const blockSummary = this.blockProcessing.getSourceProcessingSummary(s.id as ElementId);
-
-      // Most recent activity: the latest of the descendant updatedAt + the latest
-      // review on its cards (the source itself has no review_logs of its own).
-      const lastActivityAt = maxIso(t?.lastUpdatedAt ?? null, lastReviewedAt);
-
-      const verdict = scoreSourceYield({
-        readPct,
-        extractsCreated,
-        honorableExtracts: productiveExtracts,
-        synthesisNotesCreated,
-        cardsCreated,
-        matureCards,
-        leeches,
-        timeSpentMs,
-      });
-
-      return {
-        source: {
-          id: s.id,
-          title: s.title,
-          priority: s.priority,
-          priorityLabel: priorityToLabel(s.priority),
-          createdAt: s.createdAt as IsoTimestamp,
-          url: urlById.get(s.id) ?? null,
-        },
-        readPct,
-        extractsCreated,
-        productiveExtracts,
-        referenceExtracts,
-        synthesizedExtracts,
-        doneWithoutCardExtracts,
-        synthesisReferencedExtracts,
-        synthesisNotesCreated,
-        cardsCreated,
-        matureCards,
-        leeches,
+      return this.assembleRow(s, urlById.get(s.id) ?? null, t, {
         timeSpentMs,
         reviewCount,
-        processedBlockRatio: blockSummary.terminalRatio,
-        ignoredBlockRatio: blockSummary.ignoredRatio,
-        unresolvedBlocks: blockSummary.unresolvedBlocks,
-        extractedOutputCount: blockSummary.extractedOutputCount,
-        lastActivityAt,
-        yieldScore: verdict.score,
-        yieldBand: verdict.band,
-      };
+        lastReviewedAt,
+      });
     });
 
     // Sort lowest-yield first (the whole point); tie-break by id ASC for stability.
@@ -541,15 +501,209 @@ export class SourceYieldQuery {
   }
 
   /**
-   * Convenience: the yield rollup for ONE source (the inspector "yield" chip),
-   * or `null` when the id is not a live source. Reuses {@link listSourceYield}'s
-   * per-row math so the chip and the ranked view can never disagree. (This runs the
-   * full grouped rollup and picks the one row — fine at MVP scale; the inspector
-   * opens infrequently. A genuinely single-source path is a T099 scale refinement.)
+   * The yield rollup for ONE source (the inspector "yield" chip), or `null` when the
+   * id is not a live source. A genuinely single-source query path: every pass is
+   * scoped to `sourceId` (its `sources` meta, its `extract`/`card` descendants, its
+   * synthesis-reference edges, its review logs, its read-% and block-processing
+   * summary) so the inspector chip does NOT scan the whole library. The per-source
+   * math is byte-identical to the row {@link listSourceYield} produces for the same
+   * id — including the R3 dual-signal `productiveExtracts` (the de-duplicated union
+   * of fated extract ids and live-synthesis-`references` extract ids) — so the chip
+   * and the ranked view can never disagree.
    */
   getSourceYield(sourceId: ElementId, asOf: IsoTimestamp): SourceYieldRow | null {
-    const summary = this.listSourceYield(asOf, { limit: Number.MAX_SAFE_INTEGER });
-    return summary.rows.find((r) => r.source.id === sourceId) ?? null;
+    void asOf; // point-in-time over current durable state; kept for surface symmetry.
+
+    // 1) The one source element (must be a live `source`), with its url/title meta.
+    const source = this.db
+      .select({
+        id: elements.id,
+        title: elements.title,
+        priority: elements.priority,
+        createdAt: elements.createdAt,
+      })
+      .from(elements)
+      .where(
+        and(eq(elements.id, sourceId), eq(elements.type, "source"), isNull(elements.deletedAt)),
+      )
+      .get();
+    if (!source) return null;
+
+    const sourceMeta = this.db
+      .select({ url: sourcesTable.url })
+      .from(sourcesTable)
+      .where(eq(sourcesTable.elementId, sourceId))
+      .get();
+
+    // 2) One grouped pass over THIS source's live extract/card descendants, joined to
+    //    their FSRS state + leech flag (scoped by `eq(elements.sourceId, sourceId)`).
+    const t: DescendantTally = {
+      extracts: 0,
+      referenceExtracts: 0,
+      synthesizedExtracts: 0,
+      doneWithoutCardExtracts: 0,
+      fatedExtractIds: new Set(),
+      synthesisReferencedExtractIds: new Set(),
+      synthesisNoteIds: new Set(),
+      cards: 0,
+      mature: 0,
+      leeches: 0,
+      cardIds: [],
+      lastUpdatedAt: null,
+    };
+    const liveTargets = new Map<string, YieldTarget>();
+    const descendants = this.db
+      .select({
+        id: elements.id,
+        type: elements.type,
+        extractFate: elements.extractFate,
+        updatedAt: elements.updatedAt,
+        isLeech: cardsTable.isLeech,
+        stability: reviewStates.stability,
+        fsrsState: reviewStates.fsrsState,
+      })
+      .from(elements)
+      .leftJoin(cardsTable, eq(cardsTable.elementId, elements.id))
+      .leftJoin(reviewStates, eq(reviewStates.elementId, elements.id))
+      .where(
+        and(
+          eq(elements.sourceId, sourceId),
+          inArray(elements.type, ["extract", "card"]),
+          isNull(elements.deletedAt),
+        ),
+      )
+      .all();
+
+    for (const d of descendants) {
+      liveTargets.set(d.id, { id: d.id, type: d.type, sourceId });
+      if (d.updatedAt && (t.lastUpdatedAt === null || d.updatedAt > t.lastUpdatedAt)) {
+        t.lastUpdatedAt = d.updatedAt;
+      }
+      if (d.type === "extract") {
+        t.extracts += 1;
+        const fate = d.extractFate as ExtractFate | null;
+        if (fate) {
+          t.fatedExtractIds.add(d.id);
+          if (fate === "reference") t.referenceExtracts += 1;
+          else if (fate === "synthesized") t.synthesizedExtracts += 1;
+          else if (fate === "done_without_card") t.doneWithoutCardExtracts += 1;
+        }
+      } else if (d.type === "card") {
+        t.cards += 1;
+        t.cardIds.push(d.id);
+        if (d.isLeech) t.leeches += 1;
+        if (
+          isCardMature({
+            retrievability: null,
+            stability: d.stability ?? null,
+            fsrsState: d.fsrsState ?? null,
+            lapses: null,
+          })
+        ) {
+          t.mature += 1;
+        }
+      }
+    }
+
+    // 3) Synthesis-note lineage scoped to THIS source's live targets: a live synthesis
+    //    note referencing this source's material counts once; referenced extracts also
+    //    count as productive output (de-duplicated with explicit fates — R3 dual-signal).
+    this.collectSynthesisCounters(liveTargets, t.synthesisNoteIds, t.synthesisReferencedExtractIds);
+
+    // 4) Review logs over THIS source's cards (scoped by `inArray(cardIds)`).
+    let timeSpentMs = 0;
+    let reviewCount = 0;
+    let lastReviewedAt: string | null = null;
+    if (t.cardIds.length > 0) {
+      const logs = this.db
+        .select({
+          responseMs: reviewLogs.responseMs,
+          reviewedAt: reviewLogs.reviewedAt,
+        })
+        .from(reviewLogs)
+        // Exclude T125 re-stabilization marker rows — not reviews.
+        .where(and(inArray(reviewLogs.elementId, t.cardIds), isNull(reviewLogs.editMarkerAt)))
+        .all();
+      for (const log of logs) {
+        timeSpentMs += log.responseMs;
+        reviewCount += 1;
+        if (lastReviewedAt === null || log.reviewedAt > lastReviewedAt) {
+          lastReviewedAt = log.reviewedAt;
+        }
+      }
+    }
+
+    return this.assembleRow(source, sourceMeta?.url ?? null, t, {
+      timeSpentMs,
+      reviewCount,
+      lastReviewedAt,
+    });
+  }
+
+  /**
+   * Build one {@link SourceYieldRow} from a tally + its review aggregates. The single
+   * source of truth for row shape — both {@link listSourceYield}'s assembly loop and
+   * {@link getSourceYield} call it so the two paths can never drift. Computes the R3
+   * dual-signal `productiveExtracts` (fated ∪ synthesis-referenced extract ids) and
+   * reads read-% + block-processing per source.
+   */
+  private assembleRow(
+    source: { id: string; title: string; priority: number; createdAt: string },
+    url: string | null,
+    t: DescendantTally,
+    review: { timeSpentMs: number; reviewCount: number; lastReviewedAt: string | null },
+  ): SourceYieldRow {
+    const extractsCreated = t.extracts;
+    const productiveExtracts = new Set([...t.fatedExtractIds, ...t.synthesisReferencedExtractIds])
+      .size;
+    const synthesisReferencedExtracts = t.synthesisReferencedExtractIds.size;
+    const synthesisNotesCreated = t.synthesisNoteIds.size;
+
+    const readPct = this.computeReadPct(source.id as ElementId);
+    const blockSummary = this.blockProcessing.getSourceProcessingSummary(source.id as ElementId);
+    const lastActivityAt = maxIso(t.lastUpdatedAt, review.lastReviewedAt);
+
+    const verdict = scoreSourceYield({
+      readPct,
+      extractsCreated,
+      honorableExtracts: productiveExtracts,
+      synthesisNotesCreated,
+      cardsCreated: t.cards,
+      matureCards: t.mature,
+      leeches: t.leeches,
+      timeSpentMs: review.timeSpentMs,
+    });
+
+    return {
+      source: {
+        id: source.id,
+        title: source.title,
+        priority: source.priority,
+        priorityLabel: priorityToLabel(source.priority),
+        createdAt: source.createdAt as IsoTimestamp,
+        url,
+      },
+      readPct,
+      extractsCreated,
+      productiveExtracts,
+      referenceExtracts: t.referenceExtracts,
+      synthesizedExtracts: t.synthesizedExtracts,
+      doneWithoutCardExtracts: t.doneWithoutCardExtracts,
+      synthesisReferencedExtracts,
+      synthesisNotesCreated,
+      cardsCreated: t.cards,
+      matureCards: t.mature,
+      leeches: t.leeches,
+      timeSpentMs: review.timeSpentMs,
+      reviewCount: review.reviewCount,
+      processedBlockRatio: blockSummary.terminalRatio,
+      ignoredBlockRatio: blockSummary.ignoredRatio,
+      unresolvedBlocks: blockSummary.unresolvedBlocks,
+      extractedOutputCount: blockSummary.extractedOutputCount,
+      lastActivityAt,
+      yieldScore: verdict.score,
+      yieldBand: verdict.band,
+    };
   }
 
   /**
