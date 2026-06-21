@@ -94,7 +94,10 @@
   width: 100%;
   height: 3px;
   border-radius: var(--r-full);
-  background: var(--sunken);
+  /* The line doubles as the band's bottom divider (it replaced the border), so
+     the unfilled track uses the divider token — visible in light AND dark, unlike
+     the recessed --sunken which washes out on the dark canvas. */
+  background: var(--border);
   overflow: hidden;
 }
 .pq-progress__fill {
