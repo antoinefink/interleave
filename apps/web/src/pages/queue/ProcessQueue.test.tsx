@@ -2524,6 +2524,8 @@ describe("ProcessQueue", () => {
     await screen.findByTestId("process-item");
     expect(currentItemId()).toBe("extract-1");
 
+    // Raise / Lower / Delete now live behind the "⋯" overflow — open it first.
+    fireEvent.click(screen.getByTestId("process-action-more"));
     fireEvent.click(screen.getByTestId("process-action-delete"));
     fireEvent.click(await screen.findByTestId("lineage-delete-branch"));
     await waitFor(() => expect(currentItemId()).toBe("card-1"));

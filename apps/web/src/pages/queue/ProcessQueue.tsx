@@ -58,6 +58,7 @@ import {
   useLineageDelete,
 } from "../../components/lineage/useLineageDelete";
 import { type DoneIntent, DoneIntentMenu } from "../../components/queue/DoneIntentMenu";
+import { ProcessOverflowMenu } from "../../components/queue/ProcessOverflowMenu";
 import { QueueSnackbar } from "../../components/queue/QueueSnackbar";
 import { listenQueueRefresh } from "../../components/queue/queueRefresh";
 import { ScheduleMenu } from "../../components/queue/ScheduleMenu";
@@ -734,8 +735,12 @@ export function ProcessQueue() {
       requestInspectorRefresh();
     },
   });
-  // The `delete` key bumps this so the loop's LineageDeleteMenu runs the same flow.
+  // The `delete` key and the overflow menu's Delete item both bump this so the
+  // loop's LineageDeleteMenu runs the same descendant-aware flow.
   const [deleteSignal, setDeleteSignal] = useState(0);
+  const requestDelete = useCallback(() => {
+    if (!busy) setDeleteSignal((n) => n + 1);
+  }, [busy]);
 
   /**
    * Fetch the current source's block-processing summary for {@link DoneIntentMenu}. The
@@ -1403,9 +1408,7 @@ export function ProcessQueue() {
       // Delete routes through the descendant-aware intent menu (T135 / U7): a leaf
       // deletes quietly, a node with live descendants opens the menu. Bumping the
       // trigger signal runs the exact same flow the Delete button does.
-      delete: () => {
-        if (!busy) setDeleteSignal((n) => n + 1);
-      },
+      delete: requestDelete,
       raise: () => void act("raise"),
       lower: () => void act("lower"),
       open,
@@ -1630,6 +1633,7 @@ export function ProcessQueue() {
             onAction={act}
             deleteActions={lineageDelete.actions}
             deleteSignal={deleteSignal}
+            onRequestDelete={requestDelete}
             onSchedule={schedule}
             onSkip={skip}
             onOpen={open}
@@ -2179,6 +2183,7 @@ function ProcessCard({
   onAction,
   deleteActions,
   deleteSignal,
+  onRequestDelete,
   onSchedule,
   onSkip,
   onOpen,
@@ -2227,6 +2232,8 @@ function ProcessCard({
   deleteActions: LineageDeleteActions;
   /** Bumped by the `delete` key to run the Delete intent flow from the keyboard. */
   deleteSignal: number;
+  /** Run the Delete intent flow from the overflow menu's Delete item (same flow as the key). */
+  onRequestDelete: () => void;
   /** Explicit (tomorrow/next-week/next-month/manual) scheduling — attention items only. */
   onSchedule: (choice: QueueScheduleChoice) => void;
   onSkip: () => void;
@@ -2551,26 +2558,25 @@ function ProcessCard({
           Open in full
         </button>
         <span className="pq-actions__spacer" />
-        <button
-          type="button"
-          className="pq-btn"
-          disabled={busy}
-          data-testid="process-action-raise"
-          onClick={() => onAction("raise")}
-        >
-          <Icon name="arrowUp" size={14} />
-          Raise
-        </button>
-        <button
-          type="button"
-          className="pq-btn"
-          disabled={busy}
-          data-testid="process-action-lower"
-          onClick={() => onAction("lower")}
-        >
-          <Icon name="arrowDown" size={14} />
-          Lower
-        </button>
+        {/* Raise / Lower / Delete are used infrequently, so they collapse behind a
+            single "⋯" overflow. The descendant-aware LineageDeleteMenu stays mounted
+            with its trigger inert and overlaying the kebab (see .pq-overflow-host) so
+            the leaf-quiet / branch-confirm flow stays authoritative and the confirm
+            popover anchors under the ⋯ control. */}
+        <span className="pq-overflow-host">
+          <ProcessOverflowMenu busy={busy} onAction={onAction} onDelete={onRequestDelete} />
+          <LineageDeleteMenu
+            target={{ id: item.id, type: item.type, title: item.title }}
+            actions={deleteActions}
+            busy={busy}
+            triggerSignal={deleteSignal}
+            triggerClassName="pq-overflow__delete-anchor"
+            triggerIcon="trash"
+            triggerTestId="process-delete-anchor"
+            tooltipLabel="Delete"
+            triggerAriaLabel="Delete"
+          />
+        </span>
         {/* Non-card attention items use Postpone as the explicit reschedule menu
             (tomorrow/next-week/next-month/manual). Cards stay on FSRS, so their
             Postpone button remains the immediate queue action. */}
@@ -2608,21 +2614,6 @@ function ProcessCard({
           <Icon name="x" size={14} />
           Dismiss
         </button>
-        {/* Descendant-aware delete (T135 / U7): a leaf deletes quietly; a node with live
-            descendants opens the intent menu. Keeps the `process-action-delete` testid +
-            the danger button look + advances via the controller's onAfter. */}
-        <LineageDeleteMenu
-          target={{ id: item.id, type: item.type, title: item.title }}
-          actions={deleteActions}
-          busy={busy}
-          triggerSignal={deleteSignal}
-          triggerClassName="pq-btn pq-btn--danger"
-          triggerIcon="trash"
-          triggerLabel="Delete"
-          triggerTestId="process-action-delete"
-          tooltipLabel="Delete"
-          triggerAriaLabel="Delete"
-        />
         <button
           type="button"
           className="pq-btn"

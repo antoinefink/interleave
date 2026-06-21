@@ -807,6 +807,27 @@
   background: var(--danger-soft);
 }
 
+/* The Raise/Lower/Delete overflow. The kept-mounted LineageDeleteMenu overlays the
+   "⋯" kebab so its descendant-delete confirm popover anchors under the control
+   instead of at an arbitrary wrap-flex slot. Its trigger is inert and hidden (the
+   overflow's Delete item fires the flow via deleteSignal); only the popover, which
+   re-enables pointer-events, is interactive. */
+.pq-overflow-host {
+  position: relative;
+  display: inline-flex;
+}
+.pq-overflow-host .lindel {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.pq-overflow-host .lindel__pop {
+  pointer-events: auto;
+}
+.pq-overflow__delete-anchor {
+  visibility: hidden;
+}
+
 .pq-card--extract .pq-card__meta {
   flex: none;
 }

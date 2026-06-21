@@ -1,0 +1,70 @@
+/*
+ * ProcessOverflowMenu styles — the "⋯" action overflow in the process bar.
+ *
+ * Token-only, mirroring schedule-menu.css / lineage-delete-menu.css. The popover
+ * is ABSOLUTE relative to the inline trigger but opens UPWARD (`bottom: 100%`)
+ * because the action bar sits low in the work area — a downward popover would
+ * push past the bottom edge.
+ *
+ * The host wraps this kebab and the (kept-mounted) LineageDeleteMenu in
+ * `.pq-overflow` so the descendant-delete confirm anchors under the kebab; see
+ * the `.pq-overflow .lindel` overlay rules in process-queue.css.
+ */
+
+.pq-overflow {
+  position: relative;
+  display: inline-flex;
+}
+
+.pq-overflow__trigger {
+  padding: 0 10px;
+}
+
+.pq-overflow__pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  top: auto;
+  z-index: 50;
+  min-width: 188px;
+  padding: 6px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pq-overflow__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--font-ui);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--fast) var(--ease);
+}
+.pq-overflow__item:hover:not(:disabled),
+.pq-overflow__item:focus-visible {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text);
+  outline: none;
+}
+.pq-overflow__item--danger:hover:not(:disabled),
+.pq-overflow__item--danger:focus-visible {
+  background: var(--danger-soft);
+  border-color: var(--danger);
+  color: var(--danger);
+}
