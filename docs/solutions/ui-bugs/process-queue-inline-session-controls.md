@@ -106,6 +106,16 @@ The CSS replaces the page-level header surface with compact inline chrome:
 Loading and done panels receive their own padding rule because they do not have the
 same card padding as live process items.
 
+> **Update (2026-06-21, plan 002).** `ProcessSessionControlsProps` later gained an
+> optional, source-gated `itemTitle?: string` — the source document heading now
+> rides in this band (as the single `h1`) instead of a separate `.pq-source__header`
+> band. The band's `border-bottom` divider was replaced by a **full-width progress
+> line** (`.pq-progress__bar`, `width: 100%`, `--border` track) that doubles as the
+> divider. The "avoid new full-width persistent bars" prevention rule below still
+> holds for *route-level* bars; the band's own in-place progress line is the
+> deliberate scoped exception. See
+> [Process toolbar: full-width progress line as divider, source-gated band title, sr-only readout](../design-patterns/process-toolbar-progress-divider-and-lifted-source-title.md).
+
 ## Why This Works
 
 The behavior stays centralized in the process route: progress math, mode changes,
