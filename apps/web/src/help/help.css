@@ -151,8 +151,11 @@
   content: "";
   position: absolute;
   top: 13px;
-  left: 50%;
-  width: 100%;
+  /* Span only the gap between this dot and the next (dot radius is 13px), so the
+     connector never runs under a node — important for the translucent --done dots,
+     which would otherwise let the line show through. */
+  left: calc(50% + 15px);
+  width: calc(100% - 30px);
   height: 1.5px;
   background: var(--border);
   z-index: 0;
