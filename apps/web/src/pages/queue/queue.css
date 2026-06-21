@@ -874,6 +874,7 @@
 }
 .q-session-preview__rail-label {
   padding: 0;
+  margin-bottom: var(--s-3);
   font: 600 var(--t-2xs) / 1 var(--font-mono);
   letter-spacing: 0.08em;
   text-transform: uppercase;
