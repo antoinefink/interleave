@@ -24,6 +24,7 @@
 .pq-session {
   display: flex;
   align-items: center;
+  min-height: 32px;
   gap: var(--s-4);
   padding-bottom: var(--s-3);
   border-bottom: 1px solid var(--border);
@@ -48,25 +49,28 @@
   color: var(--text);
   border-color: var(--border-strong);
 }
+/* Single compact row: count + estimate + a flex-grow slim bar, so the whole
+   session band stays one line tall (the stacked nums-over-bar block is gone). */
 .pq-progress {
   flex: 1;
   max-width: 360px;
   display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.pq-progress__nums {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--s-2);
   font-family: var(--font-mono);
   font-size: var(--t-2xs);
   color: var(--text-2);
 }
+.pq-progress__count {
+  white-space: nowrap;
+}
 .pq-progress__est {
   color: var(--text-3);
+  white-space: nowrap;
 }
 .pq-progress__bar {
+  flex: 1;
   height: 5px;
   border-radius: var(--r-full);
   background: var(--sunken);

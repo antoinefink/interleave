@@ -1718,13 +1718,11 @@ function ProcessSessionControls({
   return (
     <div className="pq-session" data-testid="process-session-controls">
       <div className="pq-progress" data-testid="process-progress">
-        <div className="pq-progress__nums">
-          <span>
-            {Math.min(cursor + (done ? 0 : 1), total)} / {total}
-          </span>
-          <span className="pq-progress__est">{done ? "all done" : `${remaining} left`}</span>
-        </div>
-        <div className="pq-progress__bar">
+        <span className="pq-progress__count">
+          {Math.min(cursor + (done ? 0 : 1), total)} / {total}
+        </span>
+        <span className="pq-progress__est">{done ? "all done" : `${remaining} left`}</span>
+        <div className="pq-progress__bar" aria-hidden>
           <span
             className="pq-progress__fill"
             style={{ width: `${total === 0 ? 0 : (Math.min(cursor, total) / total) * 100}%` }}
