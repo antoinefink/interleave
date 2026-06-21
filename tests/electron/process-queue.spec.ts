@@ -274,6 +274,8 @@ test("processes ten mixed elements one at a time, advancing after each action wi
     "markDone",
   ] as const;
 
+  // Raise / Lower / Delete now live behind the "⋯" overflow — open it first.
+  const overflowActions = new Set<string>(["raise", "lower", "delete"]);
   const seen = new Set<string>();
   let processedCount = 0;
   for (const action of actions) {
@@ -284,6 +286,9 @@ test("processes ten mixed elements one at a time, advancing after each action wi
     const id = await item.getAttribute("data-element-id");
     if (id) seen.add(id);
 
+    if (overflowActions.has(action)) {
+      await item.getByTestId("process-action-more").click();
+    }
     await item.getByTestId(`process-action-${action}`).click();
     if (action === "postpone" && (await page.getByTestId("schedule-menu-pop").isVisible())) {
       await page.getByTestId("schedule-nextWeek").click();

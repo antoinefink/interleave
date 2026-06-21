@@ -30,6 +30,22 @@ describe("process queue styles", () => {
     expect(donePanelSession).toContain("padding: var(--s-4) var(--s-5) var(--s-3);");
   });
 
+  it("opens action-bar popovers upward so they don't clip below the low bar", () => {
+    // The bar sits low in the work area; the kebab-anchored delete confirm and the
+    // shared Postpone/Done menus must open upward (bottom: 100%) inside .pq-actions.
+    const deleteConfirm = cssBlock(".pq-overflow-host .lindel__pop");
+    expect(deleteConfirm).toContain("bottom: calc(100% + 6px);");
+    expect(deleteConfirm).toContain("top: auto;");
+
+    // The shared Postpone (.schedmenu) / Done (.doneintent) menus get the same upward
+    // override, scoped to .pq-actions (a comma-joined rule cssBlock can't parse).
+    expect(processQueueCss).toContain(".pq-actions .schedmenu__pop");
+    expect(processQueueCss).toContain(".pq-actions .doneintent__pop");
+    expect(processQueueCss).toMatch(
+      /\.pq-actions \.schedmenu__pop,\s*\.pq-actions \.doneintent__pop \{[^}]*bottom: calc\(100% \+ 6px\);/,
+    );
+  });
+
   it("renders source reading as a full-height unframed workbench", () => {
     const center = cssBlock(".pq-center--source");
     const card = cssBlock(".pq-card--source");
