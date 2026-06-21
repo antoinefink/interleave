@@ -73,6 +73,18 @@ describe("ProcessOverflowMenu", () => {
     // Wrap-around: Up from the first item lands on the last (Delete).
     fireEvent.keyDown(document, { key: "ArrowUp" });
     expect(document.activeElement).toBe(screen.getByTestId("process-action-delete"));
+    // Wrap-around the other way: Down from the last item lands on the first (Raise).
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(screen.getByTestId("process-action-raise"));
+  });
+
+  it("closes on Tab", () => {
+    render(<ProcessOverflowMenu onAction={vi.fn()} onDelete={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("process-action-more"));
+    expect(screen.getByTestId("process-overflow-pop")).not.toBeNull();
+
+    fireEvent.keyDown(document, { key: "Tab" });
+    expect(screen.queryByTestId("process-overflow-pop")).toBeNull();
   });
 
   it("closes on Escape and restores focus to the trigger", () => {

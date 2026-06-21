@@ -24,7 +24,7 @@
 .pq-session {
   display: flex;
   align-items: center;
-  min-height: 32px;
+  min-height: var(--s-9);
   gap: var(--s-4);
   padding-bottom: var(--s-3);
   border-bottom: 1px solid var(--border);
@@ -530,11 +530,6 @@
   max-width: var(--reader-text-measure);
   margin: 0 auto var(--s-2);
 }
-.pq-source__progress {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
 .pq-source__editor {
   display: flex;
   flex-direction: column;
@@ -828,9 +823,6 @@
   pointer-events: auto;
   top: auto;
   bottom: calc(100% + 6px);
-}
-.pq-overflow__delete-anchor {
-  visibility: hidden;
 }
 
 /* The action bar sits low in the work area, so ALL of its anchored popovers open

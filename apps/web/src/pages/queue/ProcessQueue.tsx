@@ -739,8 +739,10 @@ export function ProcessQueue() {
   // loop's LineageDeleteMenu runs the same descendant-aware flow.
   const [deleteSignal, setDeleteSignal] = useState(0);
   const requestDelete = useCallback(() => {
-    if (!busy) setDeleteSignal((n) => n + 1);
-  }, [busy]);
+    // Guard on the combined busy (page + lineage mutation), matching the busy the
+    // overflow trigger is disabled on, so the keyboard path can't bump mid-delete.
+    if (!busy && !lineageDelete.busy) setDeleteSignal((n) => n + 1);
+  }, [busy, lineageDelete.busy]);
 
   /**
    * Fetch the current source's block-processing summary for {@link DoneIntentMenu}. The
@@ -2534,8 +2536,14 @@ function ProcessCard({
       <div className="pq-actions" data-testid="process-actions">
         {/* The read-point lives in the action bar (not a header band) — the
             primary "I read to here" action for a text source. Text sources only;
-            PDF/video have no inline read-point, cards/extracts have no read-point. */}
-        {isSource && doc.sourceFormat === null ? (
+            PDF/video have no inline read-point, cards/extracts have no read-point.
+            Gate off the loading/error states (where the editor isn't shown) so it
+            doesn't flash while a PDF/video source loads — its format resolves from
+            null to pdf/video only after the doc read returns. */}
+        {isSource &&
+        doc.status !== "loading" &&
+        doc.status !== "error" &&
+        doc.sourceFormat === null ? (
           <button
             type="button"
             className="pq-btn pq-btn--primary"

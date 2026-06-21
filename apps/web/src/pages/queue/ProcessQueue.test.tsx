@@ -1817,6 +1817,53 @@ describe("ProcessQueue", () => {
     expect(h.dismissSelection).toHaveBeenCalled();
   });
 
+  it("does not render the read-point button on card or extract items", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    // The read-point button lives in the shared action bar but is gated to text
+    // sources only; cards and extracts must never surface it.
+    expect(currentItemId()).toBe("card-1");
+    expect(screen.queryByTestId("process-source-readpoint")).not.toBeInTheDocument();
+
+    await moveToExtract();
+    expect(screen.queryByTestId("process-source-readpoint")).not.toBeInTheDocument();
+  });
+
+  it("raise and lower from the overflow route through the queue act path", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    const first = currentItemId();
+
+    fireEvent.click(screen.getByTestId("process-action-more"));
+    fireEvent.click(screen.getByTestId("process-action-raise"));
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({ id: first, action: { kind: "raise" } }),
+    );
+
+    await waitFor(() => expect(currentItemId()).not.toBe(first));
+    const second = currentItemId();
+    fireEvent.click(screen.getByTestId("process-action-more"));
+    fireEvent.click(screen.getByTestId("process-action-lower"));
+    await waitFor(() =>
+      expect(h.actOnQueueItem).toHaveBeenCalledWith({ id: second, action: { kind: "lower" } }),
+    );
+  });
+
+  it("deletes a leaf via the overflow menu with no confirm popover", async () => {
+    // Default countDescendants returns total 0 -> the leaf quiet-delete fast path,
+    // so the overflow's Delete item runs the delete and advances the cursor without
+    // ever opening the lineage confirm popover.
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    const first = currentItemId();
+
+    fireEvent.click(screen.getByTestId("process-action-more"));
+    fireEvent.click(screen.getByTestId("process-action-delete"));
+
+    await waitFor(() => expect(currentItemId()).not.toBe(first));
+    expect(screen.queryByTestId("lineage-delete-pop")).toBeNull();
+  });
+
   it("offers convert-now from process queue when a source extraction is born atomic", async () => {
     h.createExtraction.mockResolvedValueOnce({
       extract: {

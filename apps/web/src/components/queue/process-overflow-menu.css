@@ -6,9 +6,11 @@
  * because the action bar sits low in the work area — a downward popover would
  * push past the bottom edge.
  *
- * The host wraps this kebab and the (kept-mounted) LineageDeleteMenu in
- * `.pq-overflow` so the descendant-delete confirm anchors under the kebab; see
- * the `.pq-overflow .lindel` overlay rules in process-queue.css.
+ * The host (in ProcessQueue.tsx) wraps this kebab and the (kept-mounted)
+ * LineageDeleteMenu in `.pq-overflow-host` so the descendant-delete confirm anchors
+ * under the kebab; see the `.pq-overflow-host .lindel` overlay rules in
+ * process-queue.css. The hidden delete anchor's `display: none` lives here, beside
+ * its `.pq-overflow__` namespace.
  */
 
 .pq-overflow {
@@ -17,7 +19,14 @@
 }
 
 .pq-overflow__trigger {
-  padding: 0 10px;
+  padding: 0 var(--s-4);
+}
+
+/* The kept-mounted LineageDeleteMenu trigger is inert (the overflow's Delete item
+   fires it via deleteSignal); display:none keeps it out of the tab order and the
+   accessibility tree. Its confirm popover still anchors to .pq-overflow-host .lindel. */
+.pq-overflow__delete-anchor {
+  display: none;
 }
 
 .pq-overflow__pop {
@@ -27,7 +36,7 @@
   top: auto;
   z-index: 50;
   min-width: 188px;
-  padding: 6px;
+  padding: var(--s-2);
   border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--surface);
@@ -40,10 +49,10 @@
 .pq-overflow__item {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--s-4);
   width: 100%;
-  height: 32px;
-  padding: 0 8px;
+  height: var(--s-9);
+  padding: 0 var(--s-3);
   border-radius: var(--r-sm);
   border: 1px solid transparent;
   background: transparent;
