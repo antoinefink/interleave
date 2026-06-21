@@ -705,6 +705,27 @@ test("undoes a lifecycle action inside /process and persists the restored item a
     .toBe("done");
   await expect(page.getByTestId("queue-snackbar")).toHaveCount(0);
 
+  // Wait for the loop to advance OFF the extract before undoing. `markDone`
+  // advances the cursor AND registers the loop's local undo recipe in the SAME
+  // render, so "the current item is no longer the extract" is a reliable proxy
+  // for "the loop's local ⌘Z undo is now armed". This matters: the loop's
+  // capture-phase ⌘Z handler only intercepts the keystroke once a local undo is
+  // pending; press ⌘Z before that render commits and it falls through to the
+  // shell's GLOBAL undo, which reverts the row (so the status check still passes)
+  // but never restores the loop cursor — leaving the surfaced item on the next
+  // queue entry (often a source), which failed the restored-item assertion below.
+  // Read the live DOM via `page.evaluate` (not a `getByTestId` locator) so the poll
+  // observes the current value without the locator's auto-wait/strict-mode retries.
+  await expect
+    .poll(async () =>
+      page.evaluate(
+        () =>
+          document.querySelector('[data-testid="process-item"]')?.getAttribute("data-element-id") ??
+          null,
+      ),
+    )
+    .not.toBe(extractId);
+
   await page.keyboard.press(UNDO_KEY);
   await expect
     .poll(async () => (await inspectElement(page, extractId))?.element.status)
