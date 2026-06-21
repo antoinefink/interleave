@@ -1712,6 +1712,34 @@ describe("ProcessQueue", () => {
     expect(screen.getByTestId("process-session-controls")).not.toHaveTextContent("Scheduled");
   });
 
+  it("renders no toolbar title for an untitled source (no empty heading / awkward gap)", async () => {
+    // An in-progress import can resolve to an empty title; the itemTitle?.trim()
+    // guard must suppress the h1 entirely rather than render an empty heading.
+    h.getInspectorData.mockResolvedValue({
+      data: {
+        element: {
+          id: "source-1",
+          type: "source",
+          status: "active",
+          stage: "raw_source",
+          priority: 0,
+          title: "",
+        },
+        scheduler: null,
+        provenance: null,
+        source: null,
+        sourceRef: null,
+        location: null,
+        children: [],
+      },
+    });
+    render(<ProcessQueue />);
+    await moveToSource();
+
+    expect(screen.getByTestId("process-source-workbench")).toBeInTheDocument();
+    expect(screen.queryByTestId("process-session-title")).not.toBeInTheDocument();
+  });
+
   it.each([
     "pdf",
     "video",
@@ -1939,6 +1967,8 @@ describe("ProcessQueue", () => {
 
     expect(screen.getByTestId("process-extract-workbench")).toBeInTheDocument();
     expect(screen.getByTestId("process-extract-stage-stepper")).toBeInTheDocument();
+    // The toolbar title is source-only — extracts (and cards) never render it.
+    expect(screen.queryByTestId("process-session-title")).not.toBeInTheDocument();
     expect(screen.getByTestId("mock-source-editor")).toBeInTheDocument();
     expect(screen.queryByTestId("process-extract-save")).not.toBeInTheDocument();
     expect(screen.queryByTestId("process-extract-subextract")).not.toBeInTheDocument();

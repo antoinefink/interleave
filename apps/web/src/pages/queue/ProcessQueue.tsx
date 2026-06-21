@@ -1451,9 +1451,10 @@ export function ProcessQueue() {
     mode,
     assembled: assembledSession !== null,
     // The source document heading rides in the toolbar row (replacing the old
-    // .pq-source__header band). Source items only — same title expression the
-    // workbench used; the loading/done panels have no current source.
-    itemTitle: current?.type === "source" ? (inspector?.element.title ?? current.title) : undefined,
+    // .pq-source__header band). Gated on isRenderingSource (not deckLoading, not
+    // done) so the loading/done panels never flash the prior source's title
+    // mid-reload — same title expression the workbench used.
+    itemTitle: isRenderingSource ? (inspector?.element.title ?? current?.title) : undefined,
     onModeChange,
     onAdjust: () => {
       const target = assembledSession?.origin === "home" ? "/" : "/queue";

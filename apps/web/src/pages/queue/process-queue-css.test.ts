@@ -24,6 +24,7 @@ describe("process queue styles", () => {
     const session = cssBlock(".pq-session");
     const row = cssBlock(".pq-session__row");
     const progress = cssBlock(".pq-progress");
+    const sr = cssBlock(".pq-progress__sr");
     const bar = cssBlock(".pq-progress__bar");
     const donePanelSession = cssBlock(".pq-donepanel > .pq-session");
 
@@ -32,11 +33,19 @@ describe("process queue styles", () => {
     expect(session).toContain("flex-direction: column;");
     expect(session).toContain("padding-bottom: var(--s-3);");
     expect(session).toContain("background: transparent;");
+    // The full-width bar IS the divider now — the band must not also carry a
+    // border-bottom, which would double the line.
+    expect(session).not.toContain("border-bottom");
     expect(row).toContain("display: flex;");
     expect(row).toContain("align-items: center;");
-    // The readout no longer caps at a fixed segment; the bar spans the full row.
+    // The readout never grows (shrink-0) so the title slot absorbs width; the
+    // bar spans the full row instead of a fixed 360px segment.
+    expect(progress).toContain("flex: 0 0 auto;");
     expect(progress).not.toContain("max-width: 360px;");
     expect(bar).toContain("width: 100%;");
+    // The spoken-only progress label uses the modern visually-hidden pattern.
+    expect(sr).toContain("position: absolute;");
+    expect(sr).toContain("clip-path: inset(50%);");
     expect(donePanelSession).toContain("padding: var(--s-4) var(--s-5) var(--s-3);");
   });
 
