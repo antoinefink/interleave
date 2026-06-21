@@ -1,5 +1,6 @@
 {
   "pkg": "@interleave/web",
+  "projectId": "dcd9996b-9260-4055-8497-842c8a32d33d",
   "globalName": "Interleave",
   "shape": "package",
   "entry": "apps/web/ds-sync-entry.tsx",

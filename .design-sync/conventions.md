@@ -26,14 +26,17 @@ The brand is CSS variables (defined in the bound `_ds/.../styles.css` closure). 
 - **Text** `--text --text-2 --text-3` (primary→muted) → `text-text`, `text-text-2`,
   `text-text-3`; on accent → `text-text-on-accent` / `text-accent-text`.
 - **Borders** `--border --border-strong` → `border-border`, `border-border-strong`.
-- **Accent** `--accent --accent-hover --accent-soft` → `bg-accent`, `text-accent`.
-- **Status** `--ok --warn --danger` → `bg-ok` `bg-warn` `bg-danger`, `text-ok/warn/danger`.
+- **Accent** `--accent --accent-hover --accent-soft` → `bg-accent`; for accent-colored
+  text use `var(--accent)` inline (no `text-accent` utility is compiled).
+- **Status** `--ok --warn --danger` → `bg-danger` and `text-ok` `text-warn` `text-danger`
+  are compiled; for ok/warn backgrounds use `var(--ok)` / `var(--warn)` inline.
 - **Domain tokens** (use as `var(--*)`): element-type colors `--el-source --el-topic
   --el-extract --el-card --el-task --el-concept --el-synthesis`; priority `--prio-a --prio-b
   --prio-c`; the two schedulers `--sched-fsrs` (cards) and `--sched-attn` (everything else).
 - **Scale** (compact, pro-tool): spacing `gap-2 px-3 py-2` (4px base, `--s-1`…`--s-12`);
   radii `rounded-md` `rounded-lg` (`--r-xs`…`--r-full`); type `text-2xs text-xs text-sm
-  text-base text-md text-lg text-xl` (`--t-*`, base ≈ 13.5px).
+  text-base text-xl` (`--t-*`, base ≈ 13.5px; for the `--t-md`/`--t-lg` steps use
+  `var(--t-md)` / `var(--t-lg)` inline — no `text-md`/`text-lg` utility is compiled).
 
 The available utilities are exactly those the app uses; for anything not covered, use
 `var(--token)` inline. The authoritative source is the bound `styles.css` and its imports —

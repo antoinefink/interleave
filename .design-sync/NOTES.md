@@ -101,3 +101,17 @@ Curated to **presentational primitives with no runtime appApi/router usage**
   machine needs a matching cached build or a download.
 - **Curated entry is partial by design** — re-running discovery won't add new components;
   edit `apps/web/ds-sync-entry.tsx` + `gen-config.mjs` to grow the set.
+- **conventions.md utility names must be tree-shaken-safe** — the bound `_ds_bundle.css`
+  ships ONLY the Tailwind utilities the app actually renders. The first upload (Jun 21 2026)
+  validation found 5 utilities named in the header that aren't compiled: `text-accent`,
+  `bg-ok`, `bg-warn`, `text-md`, `text-lg` (their tokens `--accent/--ok/--warn/--t-md/--t-lg`
+  DO exist, so the header now points to `var(--token)` inline for those). On any re-sync,
+  re-run the conventions validation pass against the fresh `_ds_bundle.css`; if the app starts
+  using one of these utilities it will reappear, and any newly-named utility must be grep-checked
+  before shipping.
+
+## Project (claude.ai/design)
+
+- Synced to project **"Interleave"** `dcd9996b-9260-4055-8497-842c8a32d33d`
+  (`https://claude.ai/design/p/dcd9996b-9260-4055-8497-842c8a32d33d`). `projectId` is pinned in
+  config.json; re-syncs fetch its `_ds_sync.json` anchor automatically.
