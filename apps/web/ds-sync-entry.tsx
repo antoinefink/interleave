@@ -4,6 +4,7 @@
 // bundles this; the component LIST shown as cards comes from cfg.componentSrcMap.
 
 // Badges, priority & stages (inspector primitives)
+// biome-ignore assist/source/organizeImports: exports are grouped by concern (badges, controls, icons, lineage, banners) on purpose — sorting would scramble the curated card order.
 export {
   Prio,
   Status,

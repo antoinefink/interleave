@@ -20,10 +20,7 @@
     "node_modules/@fontsource/ibm-plex-mono/500.css",
     "node_modules/@fontsource/ibm-plex-mono/600.css"
   ],
-  "runtimeFontPrefixes": [
-    "KaTeX",
-    "Cambria"
-  ],
+  "runtimeFontPrefixes": ["KaTeX", "Cambria"],
   "overrides": {
     "AutoPostponeReceiptLine": {
       "cardMode": "column"

@@ -13,10 +13,7 @@ const appliedReceipt = {
 /** Applied auto-postpone receipt — shows item count, minutes, bands, and the Undo button. */
 export const Applied = () => (
   <div style={{ width: 520 }}>
-    <AutoPostponeReceiptLine
-      receipt={appliedReceipt}
-      onUndo={async () => ({ undone: true })}
-    />
+    <AutoPostponeReceiptLine receipt={appliedReceipt} onUndo={async () => ({ undone: true })} />
   </div>
 );
 

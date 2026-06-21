@@ -2,11 +2,7 @@ import { ExternalUrlLink } from "@interleave/web";
 
 /** A clean https URL with the link icon — the standard external reference treatment. */
 export const WithIcon = () => (
-  <ExternalUrlLink
-    url="https://arxiv.org/abs/1911.01547"
-    icon="link"
-    iconSize={12}
-  />
+  <ExternalUrlLink url="https://arxiv.org/abs/1911.01547" icon="link" iconSize={12} />
 );
 
 /** A long URL typical of a paper or documentation permalink — truncation and wrapping behaviour. */

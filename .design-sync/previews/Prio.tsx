@@ -12,7 +12,15 @@ export const Bands = () => (
 
 /** A single high-priority badge as it appears inline next to an item title. */
 export const Inline = () => (
-  <div style={{ display: "flex", gap: 8, alignItems: "center", font: "var(--t-base)/1.4 var(--font-ui)", color: "var(--text)" }}>
+  <div
+    style={{
+      display: "flex",
+      gap: 8,
+      alignItems: "center",
+      font: "var(--t-base)/1.4 var(--font-ui)",
+      color: "var(--text)",
+    }}
+  >
     <Prio priority={0.92} />
     <span>Spaced repetition and the forgetting curve</span>
   </div>
