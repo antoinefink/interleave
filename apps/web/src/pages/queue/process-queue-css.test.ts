@@ -20,13 +20,23 @@ function cssBlock(selector: string): string {
 }
 
 describe("process queue styles", () => {
-  it("uses inline session controls instead of the removed page header bar", () => {
+  it("uses inline session controls with a full-width progress line", () => {
     const session = cssBlock(".pq-session");
+    const row = cssBlock(".pq-session__row");
+    const progress = cssBlock(".pq-progress");
+    const bar = cssBlock(".pq-progress__bar");
     const donePanelSession = cssBlock(".pq-donepanel > .pq-session");
 
+    // The band stacks a content row over a full-width progress line.
     expect(session).toContain("display: flex;");
+    expect(session).toContain("flex-direction: column;");
     expect(session).toContain("padding-bottom: var(--s-3);");
     expect(session).toContain("background: transparent;");
+    expect(row).toContain("display: flex;");
+    expect(row).toContain("align-items: center;");
+    // The readout no longer caps at a fixed segment; the bar spans the full row.
+    expect(progress).not.toContain("max-width: 360px;");
+    expect(bar).toContain("width: 100%;");
     expect(donePanelSession).toContain("padding: var(--s-4) var(--s-5) var(--s-3);");
   });
 
@@ -50,7 +60,6 @@ describe("process queue styles", () => {
     const center = cssBlock(".pq-center--source");
     const card = cssBlock(".pq-card--source");
     const source = cssBlock(".pq-source");
-    const header = cssBlock(".pq-source__header");
     const rail = cssBlock(".pq-source__rail");
     const sourceActions = cssBlock(".pq-card--source .pq-actions");
 
@@ -67,9 +76,9 @@ describe("process queue styles", () => {
     expect(card).toContain("padding: var(--s-4) var(--s-6);");
     expect(source).toContain("flex: 1 1 auto;");
     expect(source).toContain("min-height: 0;");
-    expect(header).toContain("margin-inline: calc(var(--s-6) * -1);");
-    expect(header).toContain("padding: var(--s-3) var(--s-6) var(--s-2);");
-    expect(header).toContain("border-bottom: 1px solid var(--border);");
+    // The .pq-source__header band was removed; the title now lives in the toolbar.
+    expect(processQueueCss).not.toMatch(/\.pq-source__header\s*\{/);
+    expect(processQueueCss).not.toMatch(/\.pq-source__title\s*\{/);
     expect(rail).toContain("flex: 1 1 auto;");
     // The rail spans the full work-area width so the side gutters fall inside the
     // scroll region; the reading measure is applied to the editor content instead.
@@ -90,15 +99,18 @@ describe("process queue styles", () => {
     expect(pbar).toContain("margin: 0 auto var(--s-2);");
   });
 
-  it("uses tokenized source header spacing and a rail-local reading caption", () => {
-    // The duplicated metadata row was removed (the Inspector owns identity); the
-    // reading-position caption is the only survivor and lives in the rail.
-    const title = cssBlock(".pq-source__title");
+  it("uses a tokenized inline source title and a rail-local reading caption", () => {
+    // The title rides in the toolbar row and truncates; the duplicated metadata
+    // row was removed (the Inspector owns identity); the reading-position caption
+    // is the only survivor and lives in the rail.
+    const title = cssBlock(".pq-session__title");
     const railMeta = cssBlock(".pq-source__railmeta");
     const monoMeta = cssBlock(".pq-source__meta--mono");
     const dot = cssBlock(".pq-source__dot");
 
-    expect(title).toContain("margin: 0 0 var(--s-2);");
+    expect(title).toContain("min-width: 0;");
+    expect(title).toContain("text-overflow: ellipsis;");
+    expect(title).toContain("white-space: nowrap;");
     expect(railMeta).toContain("gap: var(--s-2);");
     expect(railMeta).toContain("max-width: var(--reader-text-measure);");
     expect(monoMeta).toContain("font-family: var(--font-mono);");

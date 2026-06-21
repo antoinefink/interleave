@@ -1450,6 +1450,10 @@ export function ProcessQueue() {
     remaining,
     mode,
     assembled: assembledSession !== null,
+    // The source document heading rides in the toolbar row (replacing the old
+    // .pq-source__header band). Source items only — same title expression the
+    // workbench used; the loading/done panels have no current source.
+    itemTitle: current?.type === "source" ? (inspector?.element.title ?? current.title) : undefined,
     onModeChange,
     onAdjust: () => {
       const target = assembledSession?.origin === "home" ? "/" : "/queue";
@@ -1704,6 +1708,9 @@ type ProcessSessionControlsProps = {
   remaining: number;
   mode: SessionMode;
   assembled: boolean;
+  /** Source document heading, lifted into the toolbar row. Source items only;
+      omitted/empty for every other type and the loading/done panels. */
+  itemTitle?: string | undefined;
   onModeChange: (mode: SessionMode) => void;
   onAdjust: () => void;
   onEnd: () => void;
@@ -1716,59 +1723,78 @@ function ProcessSessionControls({
   remaining,
   mode,
   assembled,
+  itemTitle,
   onModeChange,
   onAdjust,
   onEnd,
 }: ProcessSessionControlsProps) {
+  const position = Math.min(cursor + (done ? 0 : 1), total);
+  const fillPct = total === 0 ? 0 : (Math.min(cursor, total) / total) * 100;
+  // Spoken progress: a single clean label so screen readers don't read "1 slash 3
+  // middle dot 1 left". The visual count/separator/estimate are aria-hidden.
+  const spokenProgress = done
+    ? "Session complete"
+    : `${position} of ${total}, ${remaining} remaining`;
+  const title = itemTitle?.trim();
   return (
     <div className="pq-session" data-testid="process-session-controls">
-      <div className="pq-progress" data-testid="process-progress">
-        <span className="pq-progress__count">
-          {Math.min(cursor + (done ? 0 : 1), total)} / {total}
-        </span>
-        <span className="pq-progress__est">{done ? "all done" : `${remaining} left`}</span>
-        <div className="pq-progress__bar" aria-hidden>
-          <span
-            className="pq-progress__fill"
-            style={{ width: `${total === 0 ? 0 : (Math.min(cursor, total) / total) * 100}%` }}
-          />
+      <div className="pq-session__row">
+        <div className="pq-progress" data-testid="process-progress">
+          <span className="pq-progress__sr">{spokenProgress}</span>
+          <span className="pq-progress__count" aria-hidden>
+            {position} / {total}
+          </span>
+          <span className="pq-progress__sep" aria-hidden>
+            ·
+          </span>
+          <span className="pq-progress__est" aria-hidden>
+            {done ? "all done" : `${remaining} left`}
+          </span>
         </div>
-      </div>
-      {assembled ? (
-        <div className="pq-modes pq-modes--assembled" data-testid="process-assembled-mode">
-          <span className="pq-modes__label">Planned deck</span>
-          <button
-            type="button"
-            className="pq-seg"
-            data-testid="process-adjust-session"
-            onClick={onAdjust}
-          >
-            <Icon name="calendar" size={12} />
-            Adjust session
-          </button>
-        </div>
-      ) : (
-        <div className="pq-modes" data-testid="process-modes">
-          <span className="pq-modes__label">Mode</span>
-          {MODES.map((m) => (
+        {title ? (
+          <h1 className="pq-session__title" data-testid="process-session-title" title={title}>
+            {title}
+          </h1>
+        ) : null}
+        {assembled ? (
+          <div className="pq-modes pq-modes--assembled" data-testid="process-assembled-mode">
+            <span className="pq-modes__label">Planned deck</span>
             <button
               type="button"
-              key={m.id}
-              data-testid={`process-mode-${m.id}`}
-              aria-pressed={mode === m.id}
-              className={`pq-seg${mode === m.id ? " pq-seg--on" : ""}`}
-              onClick={() => onModeChange(m.id)}
+              className="pq-seg"
+              data-testid="process-adjust-session"
+              onClick={onAdjust}
             >
-              <Icon name={m.icon} size={12} />
-              {m.label}
+              <Icon name="calendar" size={12} />
+              Adjust session
             </button>
-          ))}
-        </div>
-      )}
-      <button type="button" className="pq-end" data-testid="process-end" onClick={onEnd}>
-        <Icon name="x" size={14} />
-        End session
-      </button>
+          </div>
+        ) : (
+          <div className="pq-modes" data-testid="process-modes">
+            <span className="pq-modes__label">Mode</span>
+            {MODES.map((m) => (
+              <button
+                type="button"
+                key={m.id}
+                data-testid={`process-mode-${m.id}`}
+                aria-pressed={mode === m.id}
+                className={`pq-seg${mode === m.id ? " pq-seg--on" : ""}`}
+                onClick={() => onModeChange(m.id)}
+              >
+                <Icon name={m.icon} size={12} />
+                {m.label}
+              </button>
+            ))}
+          </div>
+        )}
+        <button type="button" className="pq-end" data-testid="process-end" onClick={onEnd}>
+          <Icon name="x" size={14} />
+          End session
+        </button>
+      </div>
+      <div className="pq-progress__bar" aria-hidden>
+        <span className="pq-progress__fill" style={{ width: `${fillPct}%` }} />
+      </div>
     </div>
   );
 }
@@ -1850,7 +1876,6 @@ function SourceMetaDot() {
 function ProcessSourceWorkbench({
   item,
   doc,
-  inspector,
   readPoint,
   selectionPosition,
   onEditorReady,
@@ -1858,7 +1883,6 @@ function ProcessSourceWorkbench({
 }: {
   item: QueueItemSummary;
   doc: UseDocumentResult;
-  inspector: InspectorData | null;
   readPoint: UseReadPointResult;
   selectionPosition: SelectionToolbarPosition | null;
   onEditorReady: (editor: Editor | null) => void;
@@ -1867,25 +1891,17 @@ function ProcessSourceWorkbench({
   const progress = readPoint.progress(doc.currentDoc);
   const progressPct = readPoint.progressFraction(doc.currentDoc) * 100;
   // Identity (title, author, URL, status, priority, scheduler) is owned by the
-  // right-hand Inspector SOURCE column — the reading workbench keeps only the
-  // document heading and the reading-position caption (see the redesign plan).
-  const sourceTitle = inspector?.element.title ?? item.title;
+  // right-hand Inspector SOURCE column; the document heading now rides in the
+  // session toolbar row (ProcessSessionControls.itemTitle). The workbench keeps
+  // only the reading-position caption (see the redesign plan).
   const progressLabel =
     progress.total > 0
       ? `block ${Math.min(progress.index + 1, progress.total)} of ${progress.total} · ${Math.round(progressPct)}%`
       : "no readable blocks";
-  const sourceHeader = (
-    <header className="pq-source__header" data-testid="process-source-header">
-      <h1 className="pq-source__title" data-testid="process-source-title">
-        {sourceTitle}
-      </h1>
-    </header>
-  );
 
   if (doc.sourceFormat === "pdf" || doc.sourceFormat === "video") {
     return (
       <div className="pq-source" data-testid="process-source-workbench">
-        {sourceHeader}
         <p className="pq-body__text pq-body__text--empty">
           This source uses a specialized reader. Open it in full to extract from pages, regions, or
           media timestamps.
@@ -1896,8 +1912,6 @@ function ProcessSourceWorkbench({
 
   return (
     <div className="pq-source" data-testid="process-source-workbench">
-      {sourceHeader}
-
       <div className="pq-source__rail" data-testid="process-source-rail">
         <div className="pbar pq-source__pbar" data-testid="process-source-pbar">
           <div
@@ -2491,7 +2505,6 @@ function ProcessCard({
         <ProcessSourceWorkbench
           item={item}
           doc={doc}
-          inspector={inspector}
           readPoint={sourceReadPoint}
           selectionPosition={sourceSelectionPosition}
           onEditorReady={onSourceEditorReady}

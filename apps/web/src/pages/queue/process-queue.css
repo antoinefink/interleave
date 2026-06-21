@@ -21,14 +21,21 @@
 }
 
 /* ---------- Session controls ---------- */
+/* Two stacked bands: a content row (progress readout · optional source title ·
+   mode controls · End) and a full-width progress line that doubles as the bottom
+   divider (replacing the old border-bottom). */
 .pq-session {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  padding-bottom: var(--s-3);
+  background: transparent;
+}
+.pq-session__row {
   display: flex;
   align-items: center;
   min-height: var(--s-9);
   gap: var(--s-4);
-  padding-bottom: var(--s-3);
-  border-bottom: 1px solid var(--border);
-  background: transparent;
 }
 .pq-end {
   display: inline-flex;
@@ -49,29 +56,43 @@
   color: var(--text);
   border-color: var(--border-strong);
 }
-/* Single compact row: count + estimate + a flex-grow slim bar, so the whole
-   session band stays one line tall (the stacked nums-over-bar block is gone). */
+/* Compact textual readout — position "N / total" · remaining "N left". It never
+   grows (the title slot beside it absorbs width); the visual progress is the
+   full-width bar below the row. */
 .pq-progress {
-  flex: 1;
-  max-width: 360px;
-  display: flex;
-  flex-direction: row;
+  flex: 0 0 auto;
+  display: inline-flex;
   align-items: center;
   gap: var(--s-2);
   font-family: var(--font-mono);
   font-size: var(--t-2xs);
   color: var(--text-2);
 }
+/* Spoken-only progress label; the visual spans are aria-hidden. */
+.pq-progress__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .pq-progress__count {
   white-space: nowrap;
+}
+.pq-progress__sep {
+  color: var(--text-3);
 }
 .pq-progress__est {
   color: var(--text-3);
   white-space: nowrap;
 }
 .pq-progress__bar {
-  flex: 1;
-  height: 5px;
+  width: 100%;
+  height: 3px;
   border-radius: var(--r-full);
   background: var(--sunken);
   overflow: hidden;
@@ -81,6 +102,21 @@
   height: 100%;
   background: var(--accent);
   transition: width var(--fast) var(--ease);
+}
+/* Source document heading, lifted into the toolbar row to reclaim a header band
+   for the article. Source items only; truncates so it never pushes the controls
+   off-row (full text via the title attribute on hover). */
+.pq-session__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 .pq-modes {
   display: inline-flex;
@@ -473,20 +509,9 @@
   flex: 1 1 auto;
   min-height: 0;
 }
-.pq-source__header {
-  flex: 0 0 auto;
-  margin-inline: calc(var(--s-6) * -1);
-  padding: var(--s-3) var(--s-6) var(--s-2);
-  border-bottom: 1px solid var(--border);
-}
-.pq-source__title {
-  margin: 0 0 var(--s-2);
-  color: var(--text);
-  font-size: var(--t-xl);
-  font-weight: 600;
-  line-height: 1.25;
-  letter-spacing: -0.02em;
-}
+/* The source document heading moved to the session toolbar row
+   (.pq-session__title); the .pq-source__header band is gone, reclaiming a band
+   of vertical space for the article body. */
 /* Reading-position caption under the rail's progress bar. Aligned to the text
    measure so it sits with the centered prose column, not the full-width rail. */
 .pq-source__railmeta {
@@ -671,12 +696,9 @@
 }
 
 @media (max-width: 1120px) {
-  .pq-session {
+  .pq-session__row {
     flex-wrap: wrap;
     gap: var(--s-3);
-  }
-  .pq-progress {
-    min-width: 160px;
   }
   .pq-modes {
     flex-wrap: wrap;
@@ -708,13 +730,14 @@
 }
 
 @media (max-width: 760px) {
-  .pq-session {
+  .pq-session__row {
     align-items: flex-start;
+    flex-wrap: wrap;
   }
-  .pq-progress {
-    order: 3;
-    flex-basis: 100%;
-    max-width: none;
+  /* Below a readable width, drop the inline title (full text stays on hover and
+     in the Inspector) so the readout and controls keep their place. */
+  .pq-session__title {
+    display: none;
   }
   .pq-modes {
     margin-left: 0;

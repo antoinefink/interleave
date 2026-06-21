@@ -1615,19 +1615,20 @@ describe("ProcessQueue", () => {
     expect(screen.getByTestId("process-item")).toHaveClass("pq-card--source");
     expect(screen.getByTestId("process-item")).not.toHaveClass("pq-card--extract");
     expect(screen.getByTestId("process-source-workbench")).toBeInTheDocument();
+    // The source title is the document heading, lifted into the session toolbar
+    // row (the .pq-source__header band is gone). It appears exactly once.
     expect(screen.getAllByRole("heading", { name: "The Bitter Lesson" })).toHaveLength(1);
-    expect(screen.getByTestId("process-source-header")).toContainElement(
-      screen.getByTestId("process-source-title"),
+    expect(screen.queryByTestId("process-source-header")).not.toBeInTheDocument();
+    expect(screen.getByTestId("process-session-controls")).toContainElement(
+      screen.getByTestId("process-session-title"),
     );
+    expect(screen.getByTestId("process-session-title")).toHaveTextContent("The Bitter Lesson");
     // The read-point button moved out of the header into the shared action bar.
     expect(screen.getByTestId("process-actions")).toContainElement(
       screen.getByTestId("process-source-readpoint"),
     );
-    expect(screen.getByTestId("process-source-header")).not.toContainElement(
-      screen.getByTestId("process-source-readpoint"),
-    );
     // The duplicated metadata row is gone (the Inspector owns identity); the
-    // reading-position caption now lives in the rail, not the header.
+    // reading-position caption now lives in the rail.
     expect(screen.getByTestId("process-source-rail")).toContainElement(
       screen.getByTestId("process-source-progress"),
     );
@@ -1636,7 +1637,6 @@ describe("ProcessQueue", () => {
     );
     expect(screen.getByTestId("process-source-rail")).toHaveTextContent("block 1 of 4");
     expect(screen.getByTestId("process-source-rail")).toHaveTextContent("3 words");
-    expect(screen.getByTestId("process-source-header")).not.toHaveTextContent("block 1 of 4");
     expect(screen.getByTestId("process-item")).toContainElement(
       screen.getByTestId("process-session-controls"),
     );
@@ -1704,16 +1704,18 @@ describe("ProcessQueue", () => {
     await moveToSource();
 
     expect(await screen.findByRole("heading", { name: "Inspector source title" })).toBeVisible();
-    // Identity that used to be duplicated in the metadata row is no longer here.
+    // The toolbar title uses the inspector title; identity that used to be
+    // duplicated in the metadata row is no longer rendered in the workbench.
+    expect(screen.getByTestId("process-session-title")).toHaveTextContent("Inspector source title");
     expect(screen.queryByTestId("process-source-url")).not.toBeInTheDocument();
     expect(screen.queryByText("Source Author")).not.toBeInTheDocument();
-    expect(screen.getByTestId("process-source-header")).not.toHaveTextContent("Scheduled");
+    expect(screen.getByTestId("process-session-controls")).not.toHaveTextContent("Scheduled");
   });
 
   it.each([
     "pdf",
     "video",
-  ] as const)("keeps specialized %s sources out of the inline text reader while preserving header context", async (sourceFormat) => {
+  ] as const)("keeps specialized %s sources out of the inline text reader while keeping the toolbar title", async (sourceFormat) => {
     h.getDocument.mockResolvedValue({
       document: {
         prosemirrorJson: { type: "doc", content: [], mockPlainText: "Specialized body text." },
@@ -1728,7 +1730,10 @@ describe("ProcessQueue", () => {
     await waitFor(() => expect(currentItemId()).toBe("source-1"));
 
     expect(await screen.findByTestId("process-source-workbench")).toBeInTheDocument();
-    expect(screen.getByTestId("process-source-title")).toHaveTextContent("The Bitter Lesson");
+    // PDF/video sources still show the title in the toolbar (it is source-gated,
+    // not format-gated) — exactly once, with no rail reading caption.
+    expect(screen.getByTestId("process-session-title")).toHaveTextContent("The Bitter Lesson");
+    expect(screen.getAllByRole("heading", { name: "The Bitter Lesson" })).toHaveLength(1);
     expect(screen.queryByTestId("process-source-progress")).not.toBeInTheDocument();
     expect(screen.queryByTestId("process-source-words")).not.toBeInTheDocument();
     expect(screen.getByText(/specialized reader/i)).toBeInTheDocument();
