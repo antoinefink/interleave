@@ -141,6 +141,18 @@ the *item* and the progress to the *session*; merging them couples two lifetimes
 is per-type (cards/extracts have different headers), whereas `ProcessSessionControls` is the one
 shared session band. Keeping progress in the session band is the semantically correct "main bar."
 
+> **Superseded (2026-06-21, plan 002).** KTD1's *rejected alternative* — pulling the item title
+> into the session band — was later adopted in
+> `docs/plans/2026-06-21-002-feat-process-session-toolbar-fullwidth-title-plan.md` at the user's
+> explicit request (reclaiming the whole `.pq-source__header` band for the article). The two
+> objections were contained rather than ignored: per-type divergence is preserved because the title
+> is a **strictly-optional, source-only** prop (`ProcessSessionControls.itemTitle`) that other types
+> and the done/loading panels never set; the item-vs-session lifetime coupling is reduced to one
+> nullable string computed in the parent where the current item already lives (it is *deferred*, not
+> eliminated — a constraint the future multi-type-title work inherits). KTD1's primary decision
+> (compact progress in place; no page-level bar) still holds; plan 002 additionally makes the
+> progress bar a full-width flush line and splits the `N / total` · `N left` readout.
+
 **KTD2 — Inspector is the single identity owner; reading-progress (with word count) moves to the
 rail.** `docs/solutions/ui-bugs/process-queue-source-reader-library-header.md` established a
 one-owner rule for source identity. After removing `.pq-source__metarow`, the right-hand Inspector

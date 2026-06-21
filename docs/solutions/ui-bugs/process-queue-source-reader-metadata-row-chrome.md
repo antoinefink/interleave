@@ -144,3 +144,12 @@ under the progress bar, consistent with this doc's rail-local progress guidance.
 The `.pq-source__metarow` / `.pq-source__meta` / `.pq-source__meta--link` /
 `.pq-source__format` selectors and the `sourceUrlLabel` / `sourceExternalHref`
 helpers are gone; the css-contract test now pins `.pq-source__railmeta` instead.
+
+### Follow-up (2026-06-21, plan 002)
+
+The `.pq-source__header` band itself was then removed
+(`docs/plans/2026-06-21-002-feat-process-session-toolbar-fullwidth-title-plan.md`):
+the source title moved into the session toolbar row, so the negative-margin
+breakout that this doc references on `.pq-source__header` no longer exists. The
+rail-local reading caption (`.pq-source__railmeta`) is unchanged and remains the
+single survivor of the old metadata row.

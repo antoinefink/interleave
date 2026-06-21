@@ -123,3 +123,17 @@ Inspector SOURCE column (with its own `ExternalUrlLink` http/https guard). The
 workbench header keeps only the document title; the reading-position caption moved
 to the rail. When changing source identity rendering, edit the Inspector, not the
 process workbench.
+
+### Follow-up (2026-06-21, plan 002)
+
+The document title left the workbench too. In
+`docs/plans/2026-06-21-002-feat-process-session-toolbar-fullwidth-title-plan.md`
+the `.pq-source__header` band was removed and the title relocated into the shared
+session toolbar row (`ProcessSessionControls`, as `.pq-session__title` / testid
+`process-session-title`), reclaiming a header band of vertical space for the
+article. The single-owner rule is unchanged: the title still renders **exactly
+once** (gated to source items via an optional `itemTitle` prop; the `{!isSource}`
+guard keeps `.pq-card__title` suppressed for sources), now as the document `h1` in
+the toolbar instead of in `.pq-source__header`. The Inspector still owns all other
+identity. So "the workbench header keeps only the document title" is now stale —
+there is no workbench header; the title lives in the toolbar.
