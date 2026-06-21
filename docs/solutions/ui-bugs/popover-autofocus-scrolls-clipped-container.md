@@ -124,3 +124,9 @@ symptom; it does not make the popover escape the clip. If a future viewport conf
 popover, the more robust fix is a portal / `position: fixed` overlay anchored to the trigger's
 bounding rect with viewport-edge flipping (open upward when near the bottom). That refactor was out
 of scope for this fix.
+
+**Update (2026-06-21):** the `.pq-actions` action bar is low enough that its popovers *did* clip,
+so the redesign implemented the simpler half of this — open every `.pq-actions` popover upward
+(`bottom: calc(100% + 6px)`, scoped to `.pq-actions` so the shared menus keep their downward default
+in the queue list / source reader). A full portal/flip refactor is still deferred. See
+[../design-patterns/action-bar-overflow-menu-and-upward-popovers](../design-patterns/action-bar-overflow-menu-and-upward-popovers.md).
