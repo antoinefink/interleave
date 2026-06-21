@@ -49,7 +49,6 @@ import {
   Prio,
   SchedulerChip,
   Stage,
-  Status,
   stageLabel,
   TypeIcon,
 } from "../../components/inspector/primitives";
@@ -1842,27 +1841,6 @@ function SourceMetaDot() {
   return <span className="pq-source__dot" aria-hidden />;
 }
 
-function sourceUrlLabel(url: string): string {
-  const trimmed = url.trim();
-  try {
-    const parsed = new URL(trimmed);
-    return `${parsed.host}${parsed.pathname === "/" ? "" : parsed.pathname}`;
-  } catch {
-    return trimmed || url;
-  }
-}
-
-function sourceExternalHref(url: string): string | null {
-  const trimmed = url.trim();
-  if (!trimmed) return null;
-  try {
-    const parsed = new URL(trimmed);
-    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.href : null;
-  } catch {
-    return null;
-  }
-}
-
 function ProcessSourceWorkbench({
   item,
   doc,
@@ -1886,88 +1864,19 @@ function ProcessSourceWorkbench({
 }) {
   const progress = readPoint.progress(doc.currentDoc);
   const progressPct = readPoint.progressFraction(doc.currentDoc) * 100;
+  // Identity (title, author, URL, status, priority, scheduler) is owned by the
+  // right-hand Inspector SOURCE column — the reading workbench keeps only the
+  // document heading and the reading-position caption (see the redesign plan).
   const sourceTitle = inspector?.element.title ?? item.title;
-  const provenance = inspector?.provenance ?? null;
-  const sourceStatus = inspector?.element.status ?? item.status;
-  const sourcePriority = inspector?.element.priority ?? item.priority;
-  const sourceScheduler = inspector?.scheduler ?? chipSignals(item);
-  const sourceFormatLabel =
-    doc.sourceFormat === "pdf"
-      ? "PDF source"
-      : doc.sourceFormat === "video"
-        ? "Media source"
-        : null;
   const progressLabel =
     progress.total > 0
       ? `block ${Math.min(progress.index + 1, progress.total)} of ${progress.total} · ${Math.round(progressPct)}%`
       : "no readable blocks";
-  const provenanceHref = provenance?.url ? sourceExternalHref(provenance.url) : null;
-  const provenanceLabel = provenance?.url ? sourceUrlLabel(provenance.url) : null;
   const sourceHeader = (
     <header className="pq-source__header" data-testid="process-source-header">
       <h1 className="pq-source__title" data-testid="process-source-title">
         {sourceTitle}
       </h1>
-      <div className="pq-source__metarow">
-        {provenance?.author ? (
-          <>
-            <span className="pq-source__meta">
-              <Icon name="user" size={13} /> {provenance.author}
-            </span>
-            <SourceMetaDot />
-          </>
-        ) : null}
-        {provenance?.url ? (
-          <>
-            {provenanceHref ? (
-              <a
-                className="pq-source__meta pq-source__meta--link"
-                href={provenanceHref}
-                target="_blank"
-                rel="noreferrer noopener"
-                data-testid="process-source-url"
-              >
-                <Icon name="globe" size={13} /> {provenanceLabel}
-              </a>
-            ) : (
-              <span className="pq-source__meta" data-testid="process-source-url">
-                <Icon name="globe" size={13} /> {provenance.url}
-              </span>
-            )}
-            <SourceMetaDot />
-          </>
-        ) : null}
-        <Prio priority={sourcePriority} />
-        <Status status={sourceStatus} />
-        <SourceMetaDot />
-        <SchedulerChip scheduler={sourceScheduler} />
-        {sourceFormatLabel ? (
-          <>
-            <SourceMetaDot />
-            <span className="pq-source__format" data-testid="process-source-format">
-              {sourceFormatLabel}
-            </span>
-          </>
-        ) : null}
-        {doc.sourceFormat === null ? (
-          <>
-            <SourceMetaDot />
-            <span
-              className="pq-source__meta pq-source__meta--mono"
-              data-testid="process-source-progress"
-            >
-              {progressLabel}
-            </span>
-            <SourceMetaDot />
-            <span
-              className="pq-source__meta pq-source__meta--mono"
-              data-testid="process-source-words"
-            >
-              {wordCount(doc.plainText)} words
-            </span>
-          </>
-        ) : null}
-      </div>
       {doc.sourceFormat === null ? (
         <div className="pq-source__actions">
           <button
@@ -2008,6 +1917,17 @@ function ProcessSourceWorkbench({
             data-testid="process-source-pbar-fill"
             style={{ width: `${progressPct}%` }}
           />
+        </div>
+        {/* Reading-position caption: the one piece of the old metadata row not
+            owned by the Inspector. Rail-local, aligned to the text measure. */}
+        <div className="pq-source__railmeta">
+          <span className="pq-source__meta--mono" data-testid="process-source-progress">
+            {progressLabel}
+          </span>
+          <SourceMetaDot />
+          <span className="pq-source__meta--mono" data-testid="process-source-words">
+            {wordCount(doc.plainText)} words
+          </span>
         </div>
 
         <div className="pq-source__editor" data-testid="process-source-editor">

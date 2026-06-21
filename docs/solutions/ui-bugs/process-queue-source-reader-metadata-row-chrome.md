@@ -131,3 +131,16 @@ shared reader measure.
   spans full width.
 - [Source Reader Taller Middle Area](./source-reader-taller-middle-area.md) covers
   the adjacent one-header ownership pattern in the standalone source route.
+
+## Superseded (2026-06-21)
+
+The dense source **metadata row** described here was removed in the process-session
+top-bar redesign (`docs/plans/2026-06-21-001-feat-process-session-topbar-redesign-plan.md`).
+Author / URL / status / priority / scheduler were duplicates of the right-hand
+Inspector SOURCE column, which is now the single identity owner. The one piece of
+the row not owned by the Inspector — the reading-position caption (`block N of M ·
+% · N words`) — moved to a rail-local caption (`.pq-source__railmeta`) directly
+under the progress bar, consistent with this doc's rail-local progress guidance.
+The `.pq-source__metarow` / `.pq-source__meta` / `.pq-source__meta--link` /
+`.pq-source__format` selectors and the `sourceUrlLabel` / `sourceExternalHref`
+helpers are gone; the css-contract test now pins `.pq-source__railmeta` instead.

@@ -112,3 +112,14 @@ Moving progress into the reader rail keeps source status metadata out of the pro
 - [Source Reader Taller Middle Area](./source-reader-taller-middle-area.md) covers adjacent standalone source-reader chrome compaction.
 - [Source Reader Scroll Extents and Rich Source Rendering](./source-reader-scroll-extents-rich-source-rendering.md) covers scroll and rich-source rendering contracts that reader rail changes must preserve.
 - [Large Selection Toolbar Must Anchor to Visible Viewport Geometry](./large-selection-toolbar-visible-viewport-anchoring.md) remains relevant because source extraction is still selection-driven.
+
+## Superseded (2026-06-21)
+
+The single-owner rule still holds, but the owner changed. In the process-session
+top-bar redesign (`docs/plans/2026-06-21-001-feat-process-session-topbar-redesign-plan.md`)
+the source workbench header stopped rendering identity entirely: author, URL,
+status, priority, and the scheduler chip are now owned solely by the right-hand
+Inspector SOURCE column (with its own `ExternalUrlLink` http/https guard). The
+workbench header keeps only the document title; the reading-position caption moved
+to the rail. When changing source identity rendering, edit the Inspector, not the
+process workbench.

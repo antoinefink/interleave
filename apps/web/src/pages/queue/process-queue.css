@@ -487,27 +487,21 @@
   line-height: 1.25;
   letter-spacing: -0.02em;
 }
-.pq-source__metarow {
+/* Reading-position caption under the rail's progress bar. Aligned to the text
+   measure so it sits with the centered prose column, not the full-width rail. */
+.pq-source__railmeta {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--s-2);
+  width: 100%;
+  max-width: var(--reader-text-measure);
+  margin: 0 auto var(--s-5);
 }
-.pq-source__meta {
+.pq-source__meta--mono {
   display: inline-flex;
   align-items: center;
   gap: var(--s-1);
-  color: var(--text-2);
-  font-size: var(--t-sm);
-}
-.pq-source__meta--link {
-  color: var(--accent-text);
-  text-decoration: none;
-}
-.pq-source__meta--link:hover {
-  text-decoration: underline;
-}
-.pq-source__meta--mono {
   color: var(--text-3);
   font-family: var(--font-mono);
   font-size: var(--t-2xs);
@@ -541,7 +535,7 @@
 .pq-source__pbar {
   width: 100%;
   max-width: var(--reader-text-measure);
-  margin: 0 auto var(--s-5);
+  margin: 0 auto var(--s-2);
 }
 .pq-source__readpoint .kbd {
   margin-left: var(--s-1);
@@ -556,11 +550,6 @@
   border-color: var(--accent-hover);
   background: var(--accent-hover);
   color: var(--text-on-accent);
-}
-.pq-source__format {
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--t-2xs);
 }
 .pq-source__progress {
   display: flex;

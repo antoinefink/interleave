@@ -71,27 +71,24 @@ describe("process queue styles", () => {
     // Now the rail is full-width, the pbar carries the reading measure + centering
     // itself so it stays aligned with the text column.
     expect(pbar).toContain("max-width: var(--reader-text-measure);");
-    expect(pbar).toContain("margin: 0 auto var(--s-5);");
+    expect(pbar).toContain("margin: 0 auto var(--s-2);");
   });
 
-  it("uses tokenized source header spacing and a solid reader-style read-point button", () => {
+  it("uses tokenized source header spacing and a rail-local reading caption", () => {
+    // The duplicated metadata row was removed (the Inspector owns identity); the
+    // reading-position caption is the only survivor and lives in the rail.
     const title = cssBlock(".pq-source__title");
-    const metaRow = cssBlock(".pq-source__metarow");
-    const meta = cssBlock(".pq-source__meta");
+    const railMeta = cssBlock(".pq-source__railmeta");
     const monoMeta = cssBlock(".pq-source__meta--mono");
     const dot = cssBlock(".pq-source__dot");
-    const readpoint = cssBlock(".pq-source__readpoint");
 
     expect(title).toContain("margin: 0 0 var(--s-2);");
-    expect(metaRow).toContain("gap: var(--s-2);");
-    expect(meta).toContain("gap: var(--s-1);");
+    expect(railMeta).toContain("gap: var(--s-2);");
+    expect(railMeta).toContain("max-width: var(--reader-text-measure);");
     expect(monoMeta).toContain("font-family: var(--font-mono);");
     expect(monoMeta).toContain("font-size: var(--t-2xs);");
     expect(dot).toContain("width: var(--s-1);");
     expect(dot).toContain("height: var(--s-1);");
-    expect(readpoint).toContain("background: var(--accent);");
-    expect(readpoint).toContain("border-color: var(--accent);");
-    expect(readpoint).toContain("color: var(--text-on-accent);");
   });
 
   it("frames the review card as a three-zone surface where only the body scrolls", () => {

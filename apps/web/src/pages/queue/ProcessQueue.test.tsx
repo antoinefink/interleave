@@ -1622,19 +1622,20 @@ describe("ProcessQueue", () => {
     expect(screen.getByTestId("process-source-header")).toContainElement(
       screen.getByTestId("process-source-readpoint"),
     );
-    expect(screen.getByTestId("process-source-header")).toContainElement(
+    // The duplicated metadata row is gone (the Inspector owns identity); the
+    // reading-position caption now lives in the rail, not the header.
+    expect(screen.getByTestId("process-source-rail")).toContainElement(
       screen.getByTestId("process-source-progress"),
     );
-    expect(screen.getByTestId("process-source-header")).toContainElement(
+    expect(screen.getByTestId("process-source-rail")).toContainElement(
       screen.getByTestId("process-source-words"),
     );
-    expect(screen.getByTestId("process-source-header")).toHaveTextContent("block 1 of 4");
-    expect(screen.getByTestId("process-source-header")).toHaveTextContent("3 words");
+    expect(screen.getByTestId("process-source-rail")).toHaveTextContent("block 1 of 4");
+    expect(screen.getByTestId("process-source-rail")).toHaveTextContent("3 words");
+    expect(screen.getByTestId("process-source-header")).not.toHaveTextContent("block 1 of 4");
     expect(screen.getByTestId("process-item")).toContainElement(
       screen.getByTestId("process-session-controls"),
     );
-    expect(screen.getByTestId("process-source-rail")).not.toHaveTextContent("block 1 of 4");
-    expect(screen.getByTestId("process-source-rail")).not.toHaveTextContent("3 words");
     expect(screen.getByTestId("process-source-rail")).toContainElement(
       screen.getByTestId("process-source-pbar"),
     );
@@ -1649,7 +1650,10 @@ describe("ProcessQueue", () => {
     expect(h.navigateSpy).not.toHaveBeenCalled();
   });
 
-  it("renders inspector-backed source metadata with a guarded external URL", async () => {
+  it("uses the inspector title for the workbench heading without duplicating identity chips", async () => {
+    // The workbench no longer renders author / URL / status / priority — the
+    // right-hand Inspector SOURCE column is the single owner of that identity.
+    // (URL http/https guarding is covered by ExternalUrlLink + Inspector tests.)
     h.getInspectorData.mockImplementation(async ({ id }: { id: string }) => ({
       data:
         id === "source-1"
@@ -1696,73 +1700,16 @@ describe("ProcessQueue", () => {
     await moveToSource();
 
     expect(await screen.findByRole("heading", { name: "Inspector source title" })).toBeVisible();
-    expect(screen.getByText("Source Author")).toBeInTheDocument();
-    expect(screen.getByTestId("process-source-url")).toHaveTextContent("example.com/source/path");
-    expect(screen.getByTestId("process-source-url")).toHaveAttribute(
-      "href",
-      "https://example.com/source/path",
-    );
-    expect(screen.getByTestId("process-source-header")).toHaveTextContent("A");
-    expect(screen.getByTestId("process-source-header")).toHaveTextContent("Scheduled");
-    expect(screen.getByTestId("process-source-header")).toHaveTextContent("postponed ×1");
-  });
-
-  it("renders non-http source URLs as plain metadata instead of broken links", async () => {
-    h.getInspectorData.mockImplementation(async ({ id }: { id: string }) => ({
-      data:
-        id === "source-1"
-          ? {
-              element: {
-                id: "source-1",
-                type: "source",
-                status: "scheduled",
-                stage: "raw_source",
-                priority: 0.625,
-                title: "Manual source",
-                dueAt: null,
-              },
-              scheduler: {
-                kind: "attention",
-                retrievability: null,
-                stability: null,
-                difficulty: null,
-                reps: null,
-                lapses: null,
-                fsrsState: null,
-                stage: "raw_source",
-                postponed: 0,
-                lastProcessedAt: null,
-              },
-              provenance: {
-                title: "Manual source",
-                url: "example.com/source/path",
-                canonicalUrl: null,
-                originalUrl: null,
-                author: null,
-                publishedAt: null,
-                accessedAt: null,
-                snapshotKey: null,
-              },
-              source: null,
-              sourceRef: null,
-              location: null,
-              children: [],
-            }
-          : null,
-    }));
-    render(<ProcessQueue />);
-    await moveToSource();
-
-    const url = await screen.findByTestId("process-source-url");
-    expect(url).toHaveTextContent("example.com/source/path");
-    expect(url.tagName).toBe("SPAN");
-    expect(url).not.toHaveAttribute("href");
+    // Identity that used to be duplicated in the metadata row is no longer here.
+    expect(screen.queryByTestId("process-source-url")).not.toBeInTheDocument();
+    expect(screen.queryByText("Source Author")).not.toBeInTheDocument();
+    expect(screen.getByTestId("process-source-header")).not.toHaveTextContent("Scheduled");
   });
 
   it.each([
-    ["pdf", "PDF source"],
-    ["video", "Media source"],
-  ] as const)("keeps specialized %s sources out of the inline text reader while preserving header context", async (sourceFormat, formatLabel) => {
+    "pdf",
+    "video",
+  ] as const)("keeps specialized %s sources out of the inline text reader while preserving header context", async (sourceFormat) => {
     h.getDocument.mockResolvedValue({
       document: {
         prosemirrorJson: { type: "doc", content: [], mockPlainText: "Specialized body text." },
@@ -1778,7 +1725,6 @@ describe("ProcessQueue", () => {
 
     expect(await screen.findByTestId("process-source-workbench")).toBeInTheDocument();
     expect(screen.getByTestId("process-source-title")).toHaveTextContent("The Bitter Lesson");
-    expect(screen.getByTestId("process-source-format")).toHaveTextContent(formatLabel);
     expect(screen.queryByTestId("process-source-progress")).not.toBeInTheDocument();
     expect(screen.queryByTestId("process-source-words")).not.toBeInTheDocument();
     expect(screen.getByText(/specialized reader/i)).toBeInTheDocument();
