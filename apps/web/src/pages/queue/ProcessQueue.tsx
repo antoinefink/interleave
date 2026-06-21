@@ -1846,21 +1846,17 @@ function ProcessSourceWorkbench({
   doc,
   inspector,
   readPoint,
-  busy,
   selectionPosition,
   onEditorReady,
   onSelectionAction,
-  onSetReadPoint,
 }: {
   item: QueueItemSummary;
   doc: UseDocumentResult;
   inspector: InspectorData | null;
   readPoint: UseReadPointResult;
-  busy: boolean;
   selectionPosition: SelectionToolbarPosition | null;
   onEditorReady: (editor: Editor | null) => void;
   onSelectionAction: (action: SelectionToolbarAction) => void;
-  onSetReadPoint: () => void;
 }) {
   const progress = readPoint.progress(doc.currentDoc);
   const progressPct = readPoint.progressFraction(doc.currentDoc) * 100;
@@ -1877,20 +1873,6 @@ function ProcessSourceWorkbench({
       <h1 className="pq-source__title" data-testid="process-source-title">
         {sourceTitle}
       </h1>
-      {doc.sourceFormat === null ? (
-        <div className="pq-source__actions">
-          <button
-            type="button"
-            className="pq-btn pq-btn--primary pq-source__readpoint"
-            data-testid="process-source-readpoint"
-            disabled={busy || readPoint.saving}
-            onClick={onSetReadPoint}
-          >
-            <Icon name="bookmark" size={14} />
-            Set read-point <Kbd keys="␣" />
-          </button>
-        </div>
-      ) : null}
     </header>
   );
 
@@ -2502,11 +2484,9 @@ function ProcessCard({
           doc={doc}
           inspector={inspector}
           readPoint={sourceReadPoint}
-          busy={busy}
           selectionPosition={sourceSelectionPosition}
           onEditorReady={onSourceEditorReady}
           onSelectionAction={onSourceSelectionAction}
-          onSetReadPoint={onSetSourceReadPoint}
         />
       ) : isExtract ? (
         <ProcessExtractWorkbench
@@ -2545,6 +2525,21 @@ function ProcessCard({
 
       {/* action bar — the same T030 actions, every one advances the cursor */}
       <div className="pq-actions" data-testid="process-actions">
+        {/* The read-point lives in the action bar (not a header band) — the
+            primary "I read to here" action for a text source. Text sources only;
+            PDF/video have no inline read-point, cards/extracts have no read-point. */}
+        {isSource && doc.sourceFormat === null ? (
+          <button
+            type="button"
+            className="pq-btn pq-btn--primary"
+            disabled={busy || sourceReadPoint.saving}
+            data-testid="process-source-readpoint"
+            onClick={onSetSourceReadPoint}
+          >
+            <Icon name="bookmark" size={14} />
+            Set read-point
+          </button>
+        ) : null}
         <button
           type="button"
           className="pq-btn pq-btn--primary"

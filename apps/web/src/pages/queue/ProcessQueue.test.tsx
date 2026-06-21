@@ -1619,7 +1619,11 @@ describe("ProcessQueue", () => {
     expect(screen.getByTestId("process-source-header")).toContainElement(
       screen.getByTestId("process-source-title"),
     );
-    expect(screen.getByTestId("process-source-header")).toContainElement(
+    // The read-point button moved out of the header into the shared action bar.
+    expect(screen.getByTestId("process-actions")).toContainElement(
+      screen.getByTestId("process-source-readpoint"),
+    );
+    expect(screen.getByTestId("process-source-header")).not.toContainElement(
       screen.getByTestId("process-source-readpoint"),
     );
     // The duplicated metadata row is gone (the Inspector owns identity); the

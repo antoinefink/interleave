@@ -513,13 +513,6 @@
   border-radius: var(--r-full);
   background: var(--text-3);
 }
-.pq-source__actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--s-2);
-  margin-top: var(--s-2);
-}
 /* Full work-area width so the empty side gutters live INSIDE the scroll region
    (the .reader below owns the scroll) — wheeling over the gutters scrolls the
    text. The reading measure is applied to the editor content, not here, so the
@@ -536,20 +529,6 @@
   width: 100%;
   max-width: var(--reader-text-measure);
   margin: 0 auto var(--s-2);
-}
-.pq-source__readpoint .kbd {
-  margin-left: var(--s-1);
-}
-.pq-source__readpoint {
-  height: 30px;
-  border-color: var(--accent);
-  background: var(--accent);
-  color: var(--text-on-accent);
-}
-.pq-source__readpoint:hover:not(:disabled) {
-  border-color: var(--accent-hover);
-  background: var(--accent-hover);
-  color: var(--text-on-accent);
 }
 .pq-source__progress {
   display: flex;
@@ -746,8 +725,6 @@
     margin-left: 0;
     justify-content: flex-start;
   }
-  .pq-source__actions,
-  .pq-source__railhead,
   .pq-extract__top,
   .pq-extract__tools,
   .pq-actions {
