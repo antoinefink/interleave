@@ -1,0 +1,88 @@
+{
+  "pkg": "@interleave/web",
+  "globalName": "Interleave",
+  "shape": "package",
+  "entry": "apps/web/ds-sync-entry.tsx",
+  "cssEntry": ".ds-brand.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "extraFonts": [
+    "node_modules/@fontsource/ibm-plex-sans/400.css",
+    "node_modules/@fontsource/ibm-plex-sans/400-italic.css",
+    "node_modules/@fontsource/ibm-plex-sans/500.css",
+    "node_modules/@fontsource/ibm-plex-sans/600.css",
+    "node_modules/@fontsource/ibm-plex-sans/700.css",
+    "node_modules/@fontsource/ibm-plex-serif/400.css",
+    "node_modules/@fontsource/ibm-plex-serif/400-italic.css",
+    "node_modules/@fontsource/ibm-plex-serif/500.css",
+    "node_modules/@fontsource/ibm-plex-serif/600.css",
+    "node_modules/@fontsource/ibm-plex-mono/400.css",
+    "node_modules/@fontsource/ibm-plex-mono/500.css",
+    "node_modules/@fontsource/ibm-plex-mono/600.css"
+  ],
+  "runtimeFontPrefixes": [
+    "KaTeX",
+    "Cambria"
+  ],
+  "overrides": {
+    "AutoPostponeReceiptLine": {
+      "cardMode": "column"
+    },
+    "ExtractAgingReceiptLine": {
+      "cardMode": "column"
+    },
+    "Pipeline": {
+      "cardMode": "column"
+    },
+    "LibrarySearchField": {
+      "cardMode": "column"
+    }
+  },
+  "componentSrcMap": {
+    "Prio": "src/components/inspector/primitives.tsx",
+    "Status": "src/components/inspector/primitives.tsx",
+    "Stage": "src/components/inspector/primitives.tsx",
+    "TypeIcon": "src/components/inspector/primitives.tsx",
+    "Tag": "src/components/inspector/primitives.tsx",
+    "ConceptTag": "src/components/inspector/primitives.tsx",
+    "SchedulerChip": "src/components/inspector/primitives.tsx",
+    "FsrsStats": "src/components/inspector/primitives.tsx",
+    "MetaRow": "src/components/inspector/primitives.tsx",
+    "Btn": "src/help/primitives.tsx",
+    "Segmented": "src/help/primitives.tsx",
+    "Pipeline": "src/help/primitives.tsx",
+    "Kbd": "src/shell/Kbd.tsx",
+    "SuggestionChip": "src/pages/inbox/SuggestionChip.tsx",
+    "LibrarySearchField": "src/library/LibrarySearchField.tsx",
+    "Icon": "src/components/Icon.tsx",
+    "RefBlock": "src/components/RefBlock.tsx",
+    "ExternalUrlLink": "src/components/ExternalUrlLink.tsx",
+    "LineageTree": "src/components/inspector/LineageTree.tsx",
+    "ExpiryBanner": "src/review/ExpiryBanner.tsx",
+    "AutoPostponeReceiptLine": "src/components/AutoPostponeReceiptLine.tsx",
+    "ExtractAgingReceiptLine": "src/components/ExtractAgingReceiptLine.tsx"
+  },
+  "dtsPropsFor": {
+    "Prio": "  /** Numeric priority 0.0–1.0 → coarse A/B/C/D band (A ≥ 0.75, B ≥ 0.5, C ≥ 0.25, else D). */\n  priority: number;",
+    "Status": "  /** Lifecycle status: inbox | pending | active | scheduled | done | parked | dismissed | suspended | deleted. */\n  status: string;",
+    "Stage": "  /** Distillation stage: raw_source | rough_topic | raw_extract | clean_extract | atomic_statement | card_draft | active_card | mature_card | synthesis. */\n  stage: string;",
+    "TypeIcon": "  /** Element type: source | topic | extract | card | task | concept | media_fragment | synthesis_note. */\n  type: string;\n  /** Larger 17px variant (default 14px). */\n  lg?: boolean;",
+    "Tag": "  /** Tag label, rendered as a flat pill. */\n  name: string;",
+    "ConceptTag": "  /** Concept name. */\n  name: string;\n  /** When provided, the pill becomes a clickable button (filter / navigate). */\n  onClick?: () => void;",
+    "SchedulerChip": "  /** Scheduler signals — the load-bearing FSRS-vs-attention split. */\n  scheduler: {\n    kind: \"fsrs\" | \"attention\";\n    retrievability: number | null;\n    stability: number | null;\n    difficulty: number | null;\n    reps: number | null;\n    lapses: number | null;\n    fsrsState: string | null;\n    stage: string;\n    postponed: number;\n    lastProcessedAt: string | null;\n  };",
+    "FsrsStats": "  /** Scheduler signals — the load-bearing FSRS-vs-attention split. */\n  scheduler: {\n    kind: \"fsrs\" | \"attention\";\n    retrievability: number | null;\n    stability: number | null;\n    difficulty: number | null;\n    reps: number | null;\n    lapses: number | null;\n    fsrsState: string | null;\n    stage: string;\n    postponed: number;\n    lastProcessedAt: string | null;\n  };",
+    "MetaRow": "  /** Row key / label. */\n  k: string;\n  /** Row value. */\n  children?: React.ReactNode;",
+    "Btn": "  /** Visual variant (default neutral). */\n  variant?: \"primary\" | \"ghost\" | \"soft\" | \"danger\";\n  /** Size (default medium). */\n  size?: \"sm\" | \"lg\";\n  /** Leading icon name (see Icon). */\n  icon?: string;\n  /** Trailing icon name. */\n  iconRight?: string;\n  /** Full-width. */\n  block?: boolean;\n  children?: React.ReactNode;\n  onClick?: React.MouseEventHandler<HTMLButtonElement>;\n  disabled?: boolean;\n  type?: \"button\" | \"submit\" | \"reset\";\n  className?: string;",
+    "Segmented": "  /** Toggle options. */\n  options: ReadonlyArray<{ value: string; label: string; icon?: string }>;\n  /** The selected value. */\n  value: string;\n  /** Called with the newly-selected value. */\n  onChange: (value: string) => void;",
+    "Pipeline": "  /** Current stage key (source | extract | clean | atomic | card | mature); null = neutral diagram, every stage uniform. */\n  active?: string | null;",
+    "Kbd": "  /** A single key, or a sequence rendered as adjacent caps (e.g. [\"⌘\", \"K\"]). */\n  keys: string | readonly string[];",
+    "SuggestionChip": "  /** Suggested priority band. */\n  band: \"A\" | \"B\" | \"C\" | \"D\";\n  /** When provided, renders as an accept button. */\n  onAccept?: () => void;\n  /** Disabled/busy state. */\n  busy?: boolean;\n  /** Compact label variant. */\n  compact?: boolean;",
+    "LibrarySearchField": "  /** The externally-driven query (the route q). Resets the field when it changes. */\n  syncQuery: string;\n  /** Monotonic token that forces an external sync even when syncQuery is unchanged. */\n  syncToken: number;\n  /** Emitted at most every 150ms with the latest raw text. */\n  onDebouncedChange: (value: string) => void;",
+    "Icon": "  /** Design-kit icon name (see design/icon-map.md, e.g. \"source\", \"card\", \"brain\"). */\n  name: string;\n  /** Pixel size (default 16). */\n  size?: number;\n  /** Stroke width (default 1.75 — the kit's thin weight). */\n  strokeWidth?: number;\n  className?: string;\n  color?: string;",
+    "RefBlock": "  /** The resolved source reference, or null (the calm orphan placeholder). */\n  ref: {\n    sourceElementId: string | null;\n    sourceTitle: string | null;\n    url: string | null;\n    author: string | null;\n    publishedAt: string | null;\n    locationLabel: string | null;\n    snippet: string | null;\n    sourceType: string | null;\n    reliabilityTier: \"primary\" | \"secondary\" | \"tertiary\" | null;\n    confidence: \"high\" | \"medium\" | \"low\" | null;\n    reliabilityNotes: string | null;\n  } | null;\n  /** Jump-to-source affordance (shown when provided and the source resolves). */\n  onOpenSource?: () => void;\n  /** Render the verbatim source snippet (default true). */\n  showSnippet?: boolean;\n  /** Suppress the snippet when it duplicates nearby body text. */\n  dedupeSnippetAgainst?: string | null;\n  testId?: string;\n  style?: React.CSSProperties;",
+    "ExternalUrlLink": "  /** The URL to render (validated http/https; non-URLs render as plain text). */\n  url: string;\n  testId?: string;\n  className?: string;\n  /** Optional leading icon name. */\n  icon?: string | null;\n  iconSize?: number;",
+    "LineageTree": "  /** Flattened, depth-tagged lineage nodes (source → extract → … → card). */\n  nodes: ReadonlyArray<{\n    id: string;\n    type: string;\n    title: string;\n    stage: string;\n    /** Indentation depth from the lineage root (root = 0). */\n    depth: number;\n    /** Short trailing label (stage / card type / \"source\"). */\n    meta: string;\n    /** True for the focused element. */\n    active: boolean;\n    /** True for a soft-deleted tombstone node. */\n    deleted: boolean;\n  }>;\n  /** Called with the picked node (caller re-selects + navigates). */\n  onPick: (node: { id: string; type: string; title: string }) => void;\n  /** Restore a soft-deleted tombstone; omit to hide the inline Restore control. */\n  onRestore?: (node: { id: string }) => void;\n  /** Id of the tombstone whose restore is in flight. */\n  restoringId?: string | null;\n  /** Right-click report for an in-app context menu. */\n  onNodeContextMenu?: (node: { id: string }, position: { x: number; y: number }) => void;",
+    "ExpiryBanner": "  /** Derived expiry state (computed main-side; this only renders it). */\n  expiry: {\n    status: \"expired\" | \"due_for_review\" | string;\n    validUntil: string | null;\n    reviewBy: string | null;\n    jurisdiction: string | null;\n    softwareVersion: string | null;\n  };\n  /** When supplied, renders a \"Create verify task\" button. */\n  onCreateTask?: () => void | Promise<void>;",
+    "AutoPostponeReceiptLine": "  /** The auto-postpone receipt, or null (renders nothing). */\n  receipt: {\n    batchId: string;\n    localDay: string;\n    status: \"applied\" | \"undone\" | string;\n    postponed: number;\n    postponedMinutes: number;\n    remainingMinutesAfter: number;\n    priorityBands: readonly string[];\n  } | null;\n  /** Undo handler keyed by batchId. */\n  onUndo: (batchId: string) => Promise<{ undone: boolean; reason?: string }>;",
+    "ExtractAgingReceiptLine": "  /** The extract-aging receipt, or null (renders nothing). */\n  receipt: {\n    batchId: string;\n    localDay: string;\n    status: \"applied\" | \"undone\" | string;\n    policy: \"suggest\" | \"automatic\";\n    demoted: number;\n    remainingCandidateCount: number;\n    thresholds: { returnThreshold: number; ageDays: number };\n  } | null;\n  /** Undo handler keyed by batchId. */\n  onUndo: (batchId: string) => Promise<{ undo: { undone: boolean } }>;"
+  }
+}

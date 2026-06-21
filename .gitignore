@@ -79,3 +79,9 @@ Thumbs.db
 apps/desktop/release.op-env
 .claude/skills/release-macos/
 docs/plans/2026-06-09-macos-signing-notarization-plan.md
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules
+apps/web/.ds-brand.css
