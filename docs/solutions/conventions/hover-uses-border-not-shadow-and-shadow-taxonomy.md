@@ -209,6 +209,10 @@ silently reintroducing the heavy green rail with no compile error to stop them.
 - [[inbox-row-cursor-selection-single-border]] — border-color as the single
   list-row hover/selection cue (ring/shadow doubling avoided); cites
   `.qitem--active` as the reference treatment.
+- [[sidebar-hover-token-color-mix-on-sunken]] — the surface-specific exception:
+  on the recessed `--sunken` sidebar a `color-mix(var(--text))` background fill is
+  the hover cue (border-color reads as near-invisible there), and the active item
+  still must not escalate `box-shadow` on hover.
 - [[three-zone-scroll-owned-review-card-surface]] — structural shadow on the
   review card is deliberate; `.pq-card` is pinned flat by a contract test. This
   doc owns the fuller shadow-taxonomy treatment that one references in passing.
