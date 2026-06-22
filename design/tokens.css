@@ -66,6 +66,16 @@
   --fast: 110ms;
   --med: 200ms;
 
+  /* ---- Theme-adaptive overlays ---- */
+  /* Hover fill for interactive items resting on the recessed `--sunken` sidebar
+     (nav items, user chip). NOT a static value: it resolves lazily against the
+     active theme's `--text` (defined in the light block below, overridden under
+     `[data-theme="dark"]`), so one declaration serves both themes. A `--text`
+     overlay rather than a fixed surface so it steps perceptibly above `--sunken`
+     in light mode AND stays below the active card (`--surface`) in dark mode —
+     both themes self-correct from this single value. */
+  --sidebar-hover: color-mix(in oklch, var(--text) 6%, transparent);
+
   /* ============ LIGHT THEME ============ */
   --canvas: oklch(1 0 0);
   --surface: oklch(1 0 0);

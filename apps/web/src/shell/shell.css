@@ -126,13 +126,22 @@
     color var(--fast) var(--ease);
 }
 .shell-nav__item:hover {
-  background: var(--surface-2);
+  background: var(--sidebar-hover);
   color: var(--text);
 }
 .shell-nav__item--on {
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow-sm);
+}
+/* Ordered before `:focus-visible` (so the focus ring still wins) and after the
+   base hover (equal specificity, source order) so hovering the active item
+   keeps its crisp card instead of muddying to the generic hover fill. Hover
+   signals via the background pin alone — escalating the selection `box-shadow`
+   on hover is the anti-pattern called out in
+   docs/solutions/conventions/hover-uses-border-not-shadow-and-shadow-taxonomy.md. */
+.shell-nav__item--on:hover {
+  background: var(--surface);
 }
 .shell-nav__item--on svg {
   color: var(--accent-text);
@@ -220,7 +229,7 @@
   color: var(--text);
 }
 .shell-userchip:hover {
-  background: var(--surface-2);
+  background: var(--sidebar-hover);
 }
 .shell-userchip:focus-visible {
   outline: none;

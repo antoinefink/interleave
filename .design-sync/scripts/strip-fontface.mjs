@@ -12,7 +12,7 @@ import { join } from "node:path";
 const assets = "apps/web/dist/assets";
 const cssName = readdirSync(assets).find((f) => /\.css$/.test(f));
 if (!cssName) {
-  console.error("no built CSS in " + assets);
+  console.error(`no built CSS in ${assets}`);
   process.exit(1);
 }
 const css = readFileSync(join(assets, cssName), "utf8");
