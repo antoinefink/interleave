@@ -100,7 +100,12 @@
   padding: var(--s-2) var(--s-3) var(--s-3);
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  /* Token-aligned breathing room (4px) between rows. A hairline gap is invisible
+     while rows are transparent, but collides the moment two adjacent rows both
+     carry a fill — e.g. a hovered row (--sidebar-hover) directly above the active
+     route's --surface card. --s-1 keeps those two rounded cards reading as
+     distinct instead of kissing along a 1px seam. */
+  gap: var(--s-1);
   overflow-y: auto;
   min-height: 0;
 }
