@@ -159,6 +159,9 @@ test("⌘K opens the command palette and can navigate from it", async ({ page })
 
 test("? opens the keyboard cheat sheet", async ({ page }) => {
   await page.goto("/");
+  // Wait for the shell to mount before pressing `?` — otherwise the keypress can
+  // land before `useShellShortcuts` binds its global handler and is dropped.
+  await expect(page.getByTestId("user-chip")).toBeVisible();
 
   await page.keyboard.press("?");
   await expect(page.getByTestId("cheat-sheet")).toBeVisible();
