@@ -46,6 +46,7 @@ import { InboxTriagePanelProvider } from "./inboxTriagePanel";
 import { Kbd } from "./Kbd";
 import { LibraryInspectorPanelProvider } from "./libraryInspectorPanel";
 import {
+  isInspectorHidden,
   type NavItem,
   NEW_SOURCE_EVENT,
   OPEN_HELP_EVENT,
@@ -363,7 +364,7 @@ function ShellInner() {
   const navigate = useNavigate();
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
-  const { selectedId } = useSelection();
+  const { selectedId, select } = useSelection();
   const globalActions = useGlobalActions();
   // The command/search bar is shell chrome, not the owner of command behaviour
   // (the ⌘K palette + g-nav shortcuts stay mounted unconditionally below). Omit
@@ -371,6 +372,12 @@ function ShellInner() {
   // session — so the --topbar-h row is reclaimed for reading. Exact route match
   // so adjacent routes keep their topbar.
   const hideTopbar = pathname === "/queue" || pathname === "/process";
+  // The right inspector is selection-driven chrome: on routes where no screen ever
+  // drives a selection or injects a panel it only shows an empty placeholder, so we
+  // omit the whole <aside> there (flexbox reclaims its --inspector-w width with no
+  // gap — see isInspectorHidden). Like hideTopbar, the selection context + ⌘K element
+  // actions stay mounted; only the visible panel is route-aware.
+  const showInspector = !isInspectorHidden(pathname);
 
   const [commandOpen, setCommandOpen] = useState(false);
   const [cheatOpen, setCheatOpen] = useState(false);
@@ -412,6 +419,17 @@ function ShellInner() {
     if (overlayOpen) return;
     router.history.forward();
   };
+
+  // Selection persists in context across navigation, but on a route that hides the
+  // inspector there is no UI showing WHICH element is selected — yet the global
+  // element actions (open-source, raise/lower priority via shortcut or ⌘K) would
+  // still target it, letting the user mutate an element they can no longer see.
+  // Clear the selection on hide-route entry so those actions have no stale target.
+  // Race-free: every inspector-hidden route is selection-free, so no screen re-sets
+  // a selection this would fight; re-entering a show route lets it select afresh.
+  useEffect(() => {
+    if (!showInspector && selectedId !== null) select(null);
+  }, [showInspector, selectedId, select]);
 
   /**
    * Create a backup now (T050) — the single handler the ⌘B shortcut, the ⌘K
@@ -687,7 +705,7 @@ function ShellInner() {
           <StatusBar />
         </div>
 
-        <Inspector />
+        {showInspector ? <Inspector /> : null}
 
         {/* First-run welcome (design handoff) — shown once, then a `ui.seenOnboarding`
           flag persists in settings (survives restart). Replaces the minimal T050

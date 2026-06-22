@@ -110,13 +110,21 @@ export const ALL_NAV: readonly NavItem[] = [...PRIMARY_NAV, ...SECONDARY_NAV];
  *    entries highlighted. Library and Concepts own their own `/library` and
  *    `/concepts` routes, while `/search` is route-only and has no sidebar owner.
  */
+/**
+ * True when `pathname` is exactly `base` or one of its child routes (`${base}/…`).
+ * The trailing-slash boundary is what keeps a route family from bleeding onto a
+ * same-prefix sibling — `/maintenance` must match `/maintenance/leeches` but not
+ * `/maintenancex`. Shared by `resolveActiveNavId` and `isInspectorHidden` so the
+ * boundary rule has one definition.
+ */
+function matchesRouteFamily(pathname: string, base: string): boolean {
+  return pathname === base || pathname.startsWith(`${base}/`);
+}
+
 export function resolveActiveNavId(pathname: string): string | null {
   let best: NavItem | null = null;
   for (const item of ALL_NAV) {
-    const matches =
-      item.to === "/"
-        ? pathname === "/"
-        : pathname === item.to || pathname.startsWith(`${item.to}/`);
+    const matches = item.to === "/" ? pathname === "/" : matchesRouteFamily(pathname, item.to);
     if (!matches) continue;
     if (best === null) {
       best = item;
@@ -139,6 +147,46 @@ export function resolveActiveNavId(pathname: string): string | null {
     }
   }
   return best?.id ?? null;
+}
+
+/**
+ * Routes that HIDE the shell inspector — the right `<aside className="shell-inspector">`
+ * panel — because nothing on the screen (or its descendants) ever drives a selection,
+ * injects a panel, or refreshes it, so the inspector would only ever show its empty
+ * "Select an element…" placeholder. Mirrors the `hideTopbar` precedent in `Shell.tsx`:
+ * a route hide-list, not a show-list, so an unlisted/future route keeps the inspector
+ * (the benign default that matches today's always-on behavior).
+ *
+ * The split is a CURRENT-STATE judgment ("does this screen use the inspector today"),
+ * not a claim a route can never benefit from it; if element detail is later consolidated
+ * into the inspector, a route simply moves off this list.
+ *
+ * Matching mirrors `resolveActiveNavId`: an exact-match set, plus a family-prefix list
+ * for parent routes whose children also hide (`/maintenance`, `/maintenance/leeches`, …;
+ * `/analytics`, `/analytics/sources`). `/synthesis/new` is an EXACT entry, never a
+ * family — a `startsWith("/synthesis")` would wrongly hide the selection-driving
+ * `/synthesis/$id` editor too.
+ */
+const INSPECTOR_HIDDEN_EXACT: ReadonlySet<string> = new Set([
+  "/convert",
+  "/weekly",
+  "/synthesis/new",
+  "/concepts",
+  "/trash",
+  "/settings",
+]);
+
+/** Parent routes whose whole family (the route + any `${base}/…` child) hides the inspector. */
+const INSPECTOR_HIDDEN_FAMILIES: readonly string[] = ["/maintenance", "/analytics"];
+
+/**
+ * Whether the shell inspector should be HIDDEN for `pathname`. Pure, route-derived,
+ * and React/DOM-free so it can be unit-tested in isolation (see `nav.test.ts`) and
+ * called once in `ShellInner`. Everything not on the hide-list shows the inspector.
+ */
+export function isInspectorHidden(pathname: string): boolean {
+  if (INSPECTOR_HIDDEN_EXACT.has(pathname)) return true;
+  return INSPECTOR_HIDDEN_FAMILIES.some((base) => matchesRouteFamily(pathname, base));
 }
 
 /**

@@ -14,23 +14,45 @@ import { expect, type Page, test } from "@playwright/test";
  * `pnpm e2e` (and CI) fails.
  */
 
-/** The seven typed routes and their in-page route-content test ids. */
-const ROUTES: ReadonlyArray<[string, string]> = [
-  ["/", "route-home"],
-  ["/inbox", "route-inbox"],
-  ["/queue", "route-queue"],
-  ["/source/demo-1", "route-source"],
-  ["/review", "route-review"],
-  ["/search", "route-search"],
-  ["/settings", "route-settings"],
+/**
+ * Typed routes, their in-page route-content test ids, and whether the route shows
+ * the inspector. The third element keeps the inspector expectation next to the
+ * route so adding a route can't silently desync the assertion (the prior inline
+ * `url !== "/settings"` would have). Covers both selection-driving routes (inspector
+ * shown) and several hide routes (inspector unmounted), so the route-conditional
+ * mount is exercised in the real shell on more than one hide route.
+ */
+const ROUTES: ReadonlyArray<[string, string, { inspector: boolean }]> = [
+  ["/", "route-home", { inspector: true }],
+  ["/inbox", "route-inbox", { inspector: true }],
+  ["/queue", "route-queue", { inspector: true }],
+  ["/source/demo-1", "route-source", { inspector: true }],
+  ["/review", "route-review", { inspector: true }],
+  ["/search", "route-search", { inspector: true }],
+  ["/settings", "route-settings", { inspector: false }],
+  ["/analytics", "route-analytics", { inspector: false }],
+  ["/trash", "route-trash", { inspector: false }],
 ];
 
-/** Asserts the persistent shell chrome is present on the current page. */
-async function expectShell(page: Page, options: { commandBar?: boolean } = {}) {
+/**
+ * Asserts the persistent shell chrome is present on the current page. The command
+ * bar and the inspector are route-conditional chrome — pass `commandBar: false`
+ * for the focused work sessions that hide the topbar (`/queue`, `/process`) and
+ * `inspector: false` for routes that hide the inspector (e.g. `/settings`), so the
+ * assertion matches what the route actually renders.
+ */
+async function expectShell(
+  page: Page,
+  options: { commandBar?: boolean; inspector?: boolean } = {},
+) {
   if (options.commandBar !== false) {
     await expect(page.getByTestId("command-bar")).toBeVisible();
   }
-  await expect(page.getByTestId("inspector")).toBeVisible();
+  if (options.inspector === false) {
+    await expect(page.getByTestId("inspector")).toHaveCount(0);
+  } else {
+    await expect(page.getByTestId("inspector")).toBeVisible();
+  }
   await expect(page.getByTestId("status-bar")).toBeVisible();
   await expect(page.getByTestId("user-chip")).toBeVisible();
 }
@@ -44,10 +66,10 @@ test("app boots and the home route renders inside the shell", async ({ page }) =
 });
 
 test("every main route renders inside the same shell", async ({ page }) => {
-  for (const [url, testId] of ROUTES) {
+  for (const [url, testId, { inspector }] of ROUTES) {
     await page.goto(url);
     await expect(page.getByTestId(testId)).toBeVisible();
-    await expectShell(page, { commandBar: url !== "/queue" });
+    await expectShell(page, { commandBar: url !== "/queue", inspector });
   }
 });
 

@@ -5,6 +5,7 @@ import {
   CHEAT_SHEET,
   COMMAND_ITEMS,
   GOTO_MAP,
+  isInspectorHidden,
   PRIMARY_NAV,
   resolveActiveNavId,
   SECONDARY_NAV,
@@ -229,5 +230,76 @@ describe("nav active-state exclusivity (resolveActiveNavId)", () => {
     // The deeper routes still resolve to their own owners — `/` does not leak.
     expect(resolveActiveNavId("/queue")).toBe("queue");
     expect(resolveActiveNavId("/search")).toBeNull();
+  });
+});
+
+describe("inspector visibility per route (isInspectorHidden)", () => {
+  /**
+   * SHOW routes — a screen (or a descendant) drives the inspector today, so it must
+   * stay mounted. Includes the dynamic-param detail routes (`/source/$id` etc.), which
+   * resolve to concrete ids at runtime and must NOT be caught by a hide family.
+   */
+  const SHOW_ROUTES = [
+    "/",
+    "/inbox",
+    "/queue",
+    "/process",
+    "/review",
+    "/search",
+    "/library",
+    "/source/demo-1",
+    "/extract/demo-1",
+    "/card/demo-1",
+    "/synthesis/abc-123",
+  ];
+
+  /** HIDE routes — nothing drives the inspector, so the empty placeholder is suppressed. */
+  const HIDE_ROUTES = [
+    "/convert",
+    "/weekly",
+    "/synthesis/new",
+    "/concepts",
+    "/trash",
+    "/settings",
+    "/maintenance",
+    "/maintenance/leeches",
+    "/maintenance/retired",
+    "/maintenance/stagnant",
+    "/maintenance/reverify",
+    "/analytics",
+    "/analytics/sources",
+  ];
+
+  it.each(SHOW_ROUTES)("shows the inspector on %s", (route) => {
+    expect(isInspectorHidden(route)).toBe(false);
+  });
+
+  it.each(HIDE_ROUTES)("hides the inspector on %s", (route) => {
+    expect(isInspectorHidden(route)).toBe(true);
+  });
+
+  it("treats `/synthesis/new` as exact-hide but keeps `/synthesis/$id` shown", () => {
+    expect(isInspectorHidden("/synthesis/new")).toBe(true);
+    expect(isInspectorHidden("/synthesis/abc-123")).toBe(false);
+  });
+
+  it("matches hide families by route boundary, never by loose prefix", () => {
+    // `/maintenance` and any `${base}/…` child hide…
+    expect(isInspectorHidden("/maintenance")).toBe(true);
+    expect(isInspectorHidden("/analytics/sources")).toBe(true);
+    // …but a same-prefix sibling that is NOT a `${base}/…` child does not bleed.
+    expect(isInspectorHidden("/maintenancex")).toBe(false);
+    expect(isInspectorHidden("/analyticsxyz")).toBe(false);
+  });
+
+  it("treats exact-set entries as exact — children of a non-family route still show", () => {
+    // `/convert` is an exact entry, not a family, so a hypothetical child route is
+    // NOT hidden (only the families `/maintenance` and `/analytics` extend to children).
+    expect(isInspectorHidden("/convert")).toBe(true);
+    expect(isInspectorHidden("/convert/foo")).toBe(false);
+  });
+
+  it("shows the inspector on an unknown/future route (hide-list fails safe)", () => {
+    expect(isInspectorHidden("/totally-new")).toBe(false);
   });
 });

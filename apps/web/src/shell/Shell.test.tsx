@@ -31,6 +31,13 @@ const h = vi.hoisted(() => ({
     createBackupCallback: undefined as (() => void) | undefined,
   },
   sourceOpenCallback: undefined as ((sourceId: string) => void) | undefined,
+  // Controllable selection state so route-conditional inspector tests can seed a
+  // selection and assert the hide-route clear (KTD5). `select` mirrors the real
+  // store by writing back, so the clear-on-hide effect settles in one pass.
+  selectedId: null as string | null,
+  select: vi.fn((id: string | null) => {
+    h.selectedId = id;
+  }),
   onMenuCreateBackup: vi.fn((callback: () => void) => {
     h.menu.createBackupCallback = callback;
     return vi.fn();
@@ -68,6 +75,13 @@ vi.mock("../components/Snackbar", () => ({
 
 vi.mock("../components/inspector/Inspector", () => ({
   Inspector: () => <aside data-testid="mock-inspector" />,
+}));
+
+// Faithful selection mock: a passthrough provider plus a controllable hook reading
+// the hoisted state, so route-conditional inspector tests can seed/clear a selection.
+vi.mock("./selection", () => ({
+  SelectionProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  useSelection: () => ({ selectedId: h.selectedId, select: h.select }),
 }));
 
 vi.mock("../lib/appApi", async () => {
@@ -191,6 +205,8 @@ beforeEach(() => {
   h.updateSetting.mockResolvedValue({});
   h.menu.createBackupCallback = undefined;
   h.sourceOpenCallback = undefined;
+  h.selectedId = null;
+  h.select.mockClear();
   h.onMenuCreateBackup.mockClear();
   h.onSourceOpenReader.mockClear();
   h.useShellShortcuts.mockReset();
@@ -294,6 +310,88 @@ describe("Shell", () => {
     render(<Shell />);
 
     expect(screen.getByTestId("command-bar")).toBeInTheDocument();
+  });
+
+  it.each([
+    "/queue",
+    "/process",
+    "/",
+    "/library",
+    "/card/demo-1",
+  ])("mounts the inspector on the selection-driving route %s", (route) => {
+    h.pathname = route;
+
+    render(<Shell />);
+
+    expect(screen.getByTestId("mock-inspector")).toBeInTheDocument();
+  });
+
+  it.each([
+    "/settings",
+    "/analytics",
+    "/maintenance/leeches",
+  ])("omits the inspector on the non-selection route %s", (route) => {
+    h.pathname = route;
+
+    render(<Shell />);
+
+    // The route still renders; only the inspector aside is gone.
+    expect(screen.getByTestId("route-outlet")).toBeInTheDocument();
+    expect(screen.queryByTestId("mock-inspector")).not.toBeInTheDocument();
+  });
+
+  it("hides the inspector independently of the topbar on /settings", () => {
+    h.pathname = "/settings";
+
+    render(<Shell />);
+
+    // The two route decisions are independent: /settings keeps its topbar but
+    // drops the inspector.
+    expect(screen.getByTestId("command-bar")).toBeInTheDocument();
+    expect(screen.queryByTestId("mock-inspector")).not.toBeInTheDocument();
+  });
+
+  it("clears an inherited selection on entering an inspector-hidden route", () => {
+    h.pathname = "/settings";
+    h.selectedId = "el-1";
+
+    render(<Shell />);
+
+    expect(h.select).toHaveBeenCalledWith(null);
+  });
+
+  it("keeps the selection on a route that shows the inspector", () => {
+    h.pathname = "/queue";
+    h.selectedId = "el-1";
+
+    render(<Shell />);
+
+    expect(h.select).not.toHaveBeenCalled();
+  });
+
+  it("clears the selection when navigating from a show route into a hide route", () => {
+    // Start on a show route with a live selection, then navigate to a hide route:
+    // the clear must fire on the transition, not only on initial mount.
+    h.pathname = "/queue";
+    h.selectedId = "el-1";
+    const { rerender } = render(<Shell />);
+    expect(h.select).not.toHaveBeenCalled();
+
+    h.pathname = "/settings";
+    rerender(<Shell />);
+
+    expect(h.select).toHaveBeenCalledWith(null);
+  });
+
+  it("does not clear when nothing is selected on a hide route", () => {
+    // The effect's `selectedId !== null` guard: no selection means no redundant
+    // select(null) churn on every hide-route render.
+    h.pathname = "/settings";
+    h.selectedId = null;
+
+    render(<Shell />);
+
+    expect(h.select).not.toHaveBeenCalled();
   });
 
   it("wires ⌘←/⌘→ to the router's history back/forward", () => {
