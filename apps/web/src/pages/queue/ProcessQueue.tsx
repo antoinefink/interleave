@@ -2571,7 +2571,7 @@ function ProcessCard({
         ) : null}
         <button
           type="button"
-          className="pq-btn pq-btn--primary"
+          className="pq-btn"
           disabled={busy}
           data-testid="process-action-open"
           onClick={onOpen}
