@@ -599,6 +599,11 @@ test("distills an extract inline inside /process and persists stage, body, and c
   await expect(page.getByTestId("process-extract-workbench")).toBeVisible();
   expect(new URL(page.url()).pathname).toBe("/process");
 
+  // Source provenance collapses onto a single wrapping "meta" row (RefBlock): the
+  // citation, source-type/reliability badge, and URL share one line when short. Assert
+  // the meta container renders so a future revert to stacked rows is caught end-to-end.
+  await expect(page.getByTestId("process-extract-refblock-meta")).toBeVisible();
+
   // Advance raw -> clean in-place. This is a distillation action, so the cursor
   // stays on the extract rather than advancing to the next queue item.
   await page.getByTestId("process-extract-advance").click();

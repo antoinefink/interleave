@@ -14,7 +14,11 @@
 }
 
 .refblock__cite {
-  margin-top: var(--s-3, 10px);
+  /* min-width:0 + overflow-wrap let the citation shrink and break a pathologically long
+     token inside the meta flex row, so it never forces horizontal overflow on the narrow
+     Inspector column (~296px) instead of wrapping. */
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-family: var(--font-ui);
   font-size: var(--t-xs);
   color: var(--text-2);
@@ -27,8 +31,7 @@
 .refblock__url {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-top: var(--s-2, 6px);
+  gap: var(--s-2, 6px);
   font-family: var(--font-ui);
   font-size: var(--t-xs);
   color: var(--accent-text);
@@ -46,16 +49,20 @@
   font-style: normal;
 }
 
-/* Source-reliability badge + uncertainty note (T091). The badge reuses the shared
-   `.badge` primitive (inspector.css) and adds tier-colored variants; the note is a calm
-   second line. Restrained + status-colored, matching the kit's dense visual language.
-   `.refblock__reliability` wraps the badge so it sits on its own row beneath the
-   citation/location, never inline with the URL. */
-.refblock__reliability {
+/* The wrapping "meta" row: the source-reliability badge (T091 — reusing the shared `.badge`
+   primitive from inspector.css with tier-colored variants), the citation/locator, and the
+   source URL share one line when short and wrap gracefully when long. This intentionally
+   reverses the earlier decision that put the badge on its own row beneath the citation;
+   inlining it reclaims vertical space. `align-items: flex-start` anchors the badge and URL to
+   the FIRST line of a wrapping citation (baseline tracks the last line; center floats
+   mid-block). `overflow` is left at its default (visible) so a focused URL's focus ring is
+   not clipped. The container owns spacing, so its children carry no block `margin-top`. */
+.refblock__meta {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  column-gap: var(--s-3, 8px);
+  row-gap: var(--s-2, 6px);
   margin-top: var(--s-2, 6px);
   font-style: normal;
 }

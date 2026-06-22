@@ -109,6 +109,12 @@ export function RefBlock({
   const shouldShowSnippet =
     showSnippet && f.snippet && !isDuplicateSnippet(f.snippet, dedupeSnippetAgainst);
 
+  // Citation, reliability badge, and source URL collapse onto one wrapping "meta" row
+  // (badge leading) so short provenance reads on a single line and long provenance wraps
+  // gracefully. Rendered only when at least one piece is present, so an otherwise-empty
+  // ref adds no stray row.
+  const hasMeta = Boolean(f.reliability || f.citation || f.locationLabel || f.href);
+
   return (
     <div className="refblock serif" data-testid={testId} style={style}>
       {shouldShowSnippet ? (
@@ -117,48 +123,53 @@ export function RefBlock({
         </span>
       ) : null}
 
-      {f.citation ? (
-        <div className="refblock__cite" data-testid={`${testId}-citation`}>
-          {f.citation}
-          {f.locationLabel ? <span className="refblock__loc"> · {f.locationLabel}</span> : null}
-        </div>
-      ) : f.locationLabel ? (
-        <div className="refblock__cite" data-testid={`${testId}-citation`}>
-          {f.locationLabel}
+      {/* The wrapping meta row: badge leads, then citation/locator, then the URL. DOM
+          order is the visual order (no CSS `order`), so reading order matches the render
+          (WCAG 1.3.2); the URL anchor is the row's only tab stop. Source-reliability badge
+          (T091) shows only when the source carries reliability metadata; colored by tier,
+          tinted warn on uncertainty. In review this rides the post-reveal gate (the whole
+          refblock is hidden until reveal), so it never leaks the answer. */}
+      {hasMeta ? (
+        <div className="refblock__meta" data-testid={`${testId}-meta`}>
+          {f.reliability ? (
+            <span
+              className={`badge ${reliabilityBadgeClass(f.reliability)}`}
+              data-testid={`${testId}-reliability`}
+              data-reliability-tier={f.reliability.tier ?? ""}
+              data-reliability-confidence={f.reliability.confidence ?? ""}
+            >
+              <Icon name={f.reliability.hasUncertainty ? "warning" : "shield"} size={11} />
+              {f.reliability.label}
+            </span>
+          ) : null}
+
+          {f.citation ? (
+            <div className="refblock__cite" data-testid={`${testId}-citation`}>
+              {f.citation}
+              {f.locationLabel ? <span className="refblock__loc"> · {f.locationLabel}</span> : null}
+            </div>
+          ) : f.locationLabel ? (
+            <div className="refblock__cite" data-testid={`${testId}-citation`}>
+              {f.locationLabel}
+            </div>
+          ) : null}
+
+          {f.href ? (
+            <ExternalUrlLink
+              className="refblock__url"
+              icon="link"
+              testId={`${testId}-url`}
+              url={f.href}
+            />
+          ) : null}
         </div>
       ) : null}
 
-      {/* Source-reliability badge + uncertainty note (T091). Shown only when the source
-          carries reliability metadata; a null-reliability source renders nothing extra
-          (the unchanged pre-T091 refblock). Colored by tier; tinted warn on uncertainty.
-          In review this rides the post-reveal reveal gate (the whole refblock is hidden
-          until reveal), so it never leaks the answer. */}
-      {f.reliability ? (
-        <div className="refblock__reliability">
-          <span
-            className={`badge ${reliabilityBadgeClass(f.reliability)}`}
-            data-testid={`${testId}-reliability`}
-            data-reliability-tier={f.reliability.tier ?? ""}
-            data-reliability-confidence={f.reliability.confidence ?? ""}
-          >
-            <Icon name={f.reliability.hasUncertainty ? "warning" : "shield"} size={11} />
-            {f.reliability.label}
-          </span>
-        </div>
-      ) : null}
+      {/* The uncertainty caveat stays a full-width block below the meta row. */}
       {f.reliability?.notes ? (
         <span className="refblock__rel-note" data-testid={`${testId}-reliability-note`}>
           {f.reliability.notes}
         </span>
-      ) : null}
-
-      {f.href ? (
-        <ExternalUrlLink
-          className="refblock__url"
-          icon="link"
-          testId={`${testId}-url`}
-          url={f.href}
-        />
       ) : null}
 
       {onOpenSource ? (
