@@ -50,9 +50,12 @@ export function SessionGauge({
   const overMin = reference != null ? Math.max(0, elapsedMin - reference) : 0;
 
   // A 0-priced deck (`pricedItemCount === 0`) is "unknown", not "done" — never render a
-  // false "0 min left" while items remain.
+  // false "0 min left" while items remain. A non-finite total is treated as unavailable
+  // too, so a malformed backend value degrades to "—" rather than "NaN min left".
   const remaining =
-    estimate && estimate.pricedItemCount > 0 ? formatQueueTimeEstimate(estimate) : null;
+    estimate && estimate.pricedItemCount > 0 && Number.isFinite(estimate.totalMinutes)
+      ? formatQueueTimeEstimate(estimate)
+      : null;
 
   const elapsedText =
     reference != null
@@ -65,7 +68,9 @@ export function SessionGauge({
   // Distillation visibility (KTD-5): show how much of today's due work is extract
   // distillation, so a card-heavy day makes the share obvious rather than hiding it.
   const distillMin =
-    composition && composition.status !== "unavailable_no_time_estimate"
+    composition &&
+    composition.status !== "unavailable_no_time_estimate" &&
+    Number.isFinite(composition.distillationMinutes)
       ? Math.round(composition.distillationMinutes)
       : null;
   const distillText =

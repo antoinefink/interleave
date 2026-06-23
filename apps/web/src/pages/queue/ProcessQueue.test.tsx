@@ -2514,19 +2514,110 @@ describe("ProcessQueue", () => {
     expect(screen.getByTestId("process-progress").textContent).toBe(progressAfterSkip);
   });
 
-  it("queue-as-session: a mutating action re-prices the gauge from the live queue", async () => {
+  it("queue-as-session: a cross-surface refresh appends new work at the tail and keeps place", async () => {
     render(<ProcessQueue />);
     await screen.findByTestId("process-item");
-    h.listQueue.mockClear();
+    fireEvent.click(screen.getByTestId("process-action-skip"));
+    await waitFor(() => expect(currentItemId()).toBe("source-1"));
+    expect(screen.getByTestId("process-progress")).toHaveTextContent("2 / 3");
 
-    // dismiss is a real mutation → advance the cursor AND fire an ambient reprice
-    // (a fresh listQueue read). A pure skip would NOT reprice (the due set is unchanged).
+    // A genuinely-new item arrives in the live queue; reconcile appends it at the tail.
+    const newItem = { ...h.result.items[2], id: "extract-99", title: "Newly arrived" };
+    h.listQueue.mockResolvedValue({
+      ...h.result,
+      items: [...h.result.items, newItem],
+      counts: { ...h.result.counts, all: 4 },
+    });
+    requestQueueRefresh();
+
+    await waitFor(() => expect(screen.getByTestId("process-progress")).toHaveTextContent("2 / 4"));
+    expect(currentItemId()).toBe("source-1"); // place preserved, not restarted
+  });
+
+  it("queue-as-session: a refresh that removes the current item advances to the nearest surviving one", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    fireEvent.click(screen.getByTestId("process-action-skip"));
+    await waitFor(() => expect(currentItemId()).toBe("source-1"));
+
+    // source-1 (the current item) disappears from the live queue; extract-1 remains.
+    h.listQueue.mockResolvedValue({
+      ...h.result,
+      items: h.result.items.filter((i) => i.id !== "source-1"),
+      counts: { ...h.result.counts, all: 2 },
+    });
+    requestQueueRefresh();
+
+    await waitFor(() => expect(currentItemId()).toBe("extract-1")); // nearest surviving, not item 0
+  });
+
+  it("queue-as-session: a mutating action re-prices the gauge from the live queue (and the new minutes reach it)", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    expect(screen.getByTestId("process-gauge")).toHaveTextContent("~18 min");
+
+    // The post-action reprice returns a smaller, now-learned estimate.
+    h.listQueue.mockClear();
+    h.listQueue.mockResolvedValue({
+      ...h.result,
+      timeEstimate: { confidence: "learned", totalMinutes: 9, pricedItemCount: 2, items: [] },
+    });
     fireEvent.click(screen.getByTestId("process-action-dismiss"));
 
     await waitFor(() => expect(h.listQueue).toHaveBeenCalled());
     expect(h.listQueue).toHaveBeenCalledWith(
       expect.objectContaining({ includeTimeEstimate: true }),
     );
+    // The gauge reflects the reprice result, proving applyGauge wiring (not just a fetch).
+    await waitFor(() =>
+      expect(screen.getByTestId("process-gauge")).toHaveTextContent("9 min left"),
+    );
+  });
+
+  it("queue-as-session: a failed reprice is non-destructive — the live deck is not blanked", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    const before = currentItemId();
+
+    // dismiss is a mutating action → it advances, then fires a post-action reprice whose
+    // listQueue read rejects. The rejection must NOT blank the deck or surface "done".
+    h.listQueue.mockRejectedValueOnce(new Error("reprice failed"));
+    fireEvent.click(screen.getByTestId("process-action-dismiss"));
+    await waitFor(() => expect(currentItemId()).not.toBe(before));
+    const afterDismiss = currentItemId();
+
+    // Let the rejected reprice settle; the deck must still serve the advanced item.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.getByTestId("process-item")).toBeInTheDocument();
+    expect(currentItemId()).toBe(afterDismiss);
+    expect(screen.queryByTestId("process-done")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("process-error")).not.toBeInTheDocument();
+  });
+
+  it("queue-as-session: a queueRefresh that lands mid-action is deferred, then flushed when busy clears", async () => {
+    let resolveAct: (v: { item: null; removed: true; undo: null }) => void = () => {};
+    h.actOnQueueItem.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveAct = resolve;
+        }),
+    );
+
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+
+    // Start a mutating action (busy = true, never resolves yet).
+    fireEvent.click(screen.getByTestId("process-action-dismiss"));
+    h.listQueue.mockClear();
+
+    // A refresh lands WHILE busy — it must be deferred, not run now.
+    requestQueueRefresh();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.listQueue).not.toHaveBeenCalled();
+
+    // Action settles → the deferred refresh flushes exactly once.
+    resolveAct({ item: null, removed: true, undo: null });
+    await waitFor(() => expect(h.listQueue).toHaveBeenCalled());
   });
 
   it("queue-as-session: draining the queue lands on the honest 'Queue clear' state", async () => {
@@ -2598,6 +2689,28 @@ describe("ProcessQueue", () => {
     }
   });
 
+  it("queue-as-session: the wrap-up nudge fires against the daily budget when no ?target= is set", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      // No ?target=, but the daily minute budget (1 min here) is the fallback reference.
+      h.search = {};
+      h.listQueue.mockResolvedValue({
+        ...h.result,
+        minuteBudget: { usedMinutes: 0, targetMinutes: 1, confidence: "default" },
+      });
+      render(<ProcessQueue />);
+      await screen.findByTestId("process-item");
+      expect(screen.queryByTestId("process-wrapup")).not.toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(61_000);
+      });
+      expect(screen.getByTestId("process-wrapup")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("queue-as-session: with no reference target at all, the wrap-up nudge never fires", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
@@ -2620,10 +2733,11 @@ describe("ProcessQueue", () => {
 
   it("T076: the 'N left' counter reflects the FULL mixed deck, not a type-filtered slice", async () => {
     render(<ProcessQueue />);
-    await screen.findByTestId("process-progress");
     // The seeded mock returns a card + a source + an extract (3 mixed items): the deck
-    // total is 3 and "N left" counts the full mixed remainder.
-    expect(screen.getByTestId("process-progress")).toHaveTextContent("1 / 3");
+    // total is 3 and "N left" counts the full mixed remainder. Wait for the LOADED value
+    // (process-progress also renders "0 / 0" in the loading panel, so a bare findByTestId
+    // can resolve mid-load).
+    await waitFor(() => expect(screen.getByTestId("process-progress")).toHaveTextContent("1 / 3"));
     expect(screen.getByTestId("process-progress")).toHaveTextContent("3 left");
 
     // Switching to review mode keeps the FULL deck (cards AND reading items) — the

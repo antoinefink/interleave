@@ -117,6 +117,7 @@ import { useStatusHint } from "../../shell/statusHint";
 import { resumeLabel } from "./doneIntentBreakdown";
 import { jitterOrder } from "./jitter";
 import { openQueueItem } from "./openQueueItem";
+import { reconcileOrder } from "./reconcileOrder";
 import "./queue.css";
 import "./process-queue.css";
 import { useProcessShortcuts } from "./useProcessShortcuts";
@@ -379,6 +380,19 @@ export function ProcessQueue() {
   // mid-action is deferred (refreshDirtyRef) and flushed when busy clears.
   const busyRef = useRef(busy);
   busyRef.current = busy;
+  // Single-flight token: every deck read (rebuild + reprice + end-of-order) bumps this
+  // at START and only applies its result if it is still the latest — so the newest
+  // request always wins and a stale in-flight read can never re-pollute `seenIdsRef` or
+  // clobber a fresher order/gauge after a rebuild. Paired with `mountedRef` so a read
+  // resolving after unmount/navigation never calls setState on a dead tree.
+  const loadSeqRef = useRef(0);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const toast = useCallback((message: string) => {
     setFlash(message);
@@ -493,6 +507,8 @@ export function ProcessQueue() {
   const rebuildDeck = useCallback(
     async (modeOverride?: SessionMode) => {
       if (!isDesktop()) return;
+      loadSeqRef.current += 1;
+      const seq = loadSeqRef.current;
       const activeMode = modeOverride ?? modeRef.current;
       setDeckLoading(true);
       try {
@@ -504,6 +520,8 @@ export function ProcessQueue() {
           }),
           appApi.getDailyWorkSummary(asOf ? { asOf } : {}),
         ]);
+        // A newer load started, or we unmounted, while this read was in flight — drop it.
+        if (!mountedRef.current || seq !== loadSeqRef.current) return;
         let nextError: string | null = null;
         setUndoState(null);
         setDoneIntentSnackbar(null);
@@ -543,10 +561,11 @@ export function ProcessQueue() {
         }
         setError(nextError);
       } catch (e) {
+        if (!mountedRef.current || seq !== loadSeqRef.current) return;
         setDeckLoaded(false);
         setError(e instanceof Error ? e.message : String(e));
       } finally {
-        setDeckLoading(false);
+        if (mountedRef.current && seq === loadSeqRef.current) setDeckLoading(false);
       }
     },
     [asOf, applyGauge],
@@ -555,13 +574,17 @@ export function ProcessQueue() {
   // Ambient refresh — runs after each action, on a cross-surface queueRefresh, and at
   // end-of-order. Always re-prices the gauge from the live due universe. When
   // `reconcile` is set (an EXTERNAL mutation may have changed the upcoming items), it
-  // reconciles the order BY ID: the already-seen prefix stays put (no re-jitter), the
-  // current item is preserved (or the loop advances to the nearest surviving item if it
-  // vanished), and genuinely-new work is appended at the tail in score order. A failed
-  // read is non-destructive — it never blanks a live session.
+  // reconciles the order BY ID (see `reconcileOrder`): the already-seen prefix stays put
+  // (no re-jitter), the current item is preserved (or the loop advances to the nearest
+  // surviving item if it vanished), and genuinely-new work is appended at the tail. A
+  // failed read is non-destructive — it never blanks a live session. Single-flight via
+  // `loadSeqRef`: the newest read wins, so a stale reconcile can't re-pollute `seenIdsRef`
+  // or clobber a fresher order after a rebuild, and a read resolving post-unmount is dropped.
   const repriceDeck = useCallback(
     async (options?: { reconcile?: boolean }) => {
       if (!isDesktop()) return;
+      loadSeqRef.current += 1;
+      const seq = loadSeqRef.current;
       const [queueResult, workResult] = await Promise.allSettled([
         appApi.listQueue({
           ...(asOf ? { asOf } : {}),
@@ -570,25 +593,20 @@ export function ProcessQueue() {
         }),
         appApi.getDailyWorkSummary(asOf ? { asOf } : {}),
       ]);
+      if (!mountedRef.current || seq !== loadSeqRef.current) return;
       if (workResult.status === "fulfilled") setDailyWork(workResult.value);
       if (queueResult.status !== "fulfilled") return; // non-destructive on failure
       applyGauge(queueResult.value);
       if (!options?.reconcile) return;
       const fresh = jitterOrder(processableQueueItems(queueResult.value.items));
-      const prevOrder = orderRef.current;
-      const prevCursor = cursorRef.current;
-      const anchorId = prevOrder[prevCursor]?.id ?? null;
-      const prefix = prevOrder.slice(0, prevCursor);
-      const prefixIds = new Set(prefix.map((item) => item.id));
-      const upcoming = fresh.filter((item) => !prefixIds.has(item.id));
-      const nextOrder = [...prefix, ...upcoming];
-      for (const item of upcoming) seenIdsRef.current.add(item.id);
-      const anchorIdx = anchorId == null ? -1 : upcoming.findIndex((item) => item.id === anchorId);
-      // anchor present → keep the user on it; anchor gone → nearest surviving item
-      // (first upcoming); was already at/after the end → end-of-order.
-      const nextCursor = anchorIdx >= 0 ? prefix.length + anchorIdx : prefix.length;
-      setOrder(nextOrder);
-      setCursor(Math.min(nextCursor, nextOrder.length));
+      const { nextOrder, nextCursor, newlySeenIds } = reconcileOrder(
+        orderRef.current,
+        cursorRef.current,
+        fresh,
+      );
+      for (const id of newlySeenIds) seenIdsRef.current.add(id);
+      setOrder(nextOrder as QueueItemSummary[]);
+      setCursor(nextCursor);
     },
     [asOf, applyGauge],
   );
@@ -630,6 +648,8 @@ export function ProcessQueue() {
       return;
     }
     endOfOrderCheckedRef.current = true;
+    loadSeqRef.current += 1;
+    const seq = loadSeqRef.current;
     void (async () => {
       try {
         const res = await appApi.listQueue({
@@ -637,6 +657,9 @@ export function ProcessQueue() {
           mode: modeRef.current,
           includeTimeEstimate: true,
         });
+        // A rebuild/reprice started, or we unmounted, while this check was in flight —
+        // drop it so a late resolve can't flash phantom "new work" onto a reset deck.
+        if (!mountedRef.current || seq !== loadSeqRef.current) return;
         applyGauge(res);
         const fresh = processableQueueItems(res.items);
         const newCount = fresh.filter((item) => !seenIdsRef.current.has(item.id)).length;
@@ -1778,7 +1801,7 @@ export function ProcessQueue() {
         <div className="pq-wrapup" role="alert" data-testid="process-wrapup">
           <span className="pq-wrapup__text">
             You've spent about{" "}
-            {Math.max(0, Math.round((Date.now() - sessionStartedAtRef.current) / 60000))} min
+            {Math.max(0, Math.floor((Date.now() - sessionStartedAtRef.current) / 60000))} min
             {wrapUpReference != null ? ` of your ~${wrapUpReference} min target` : ""}. Wrap up or
             keep going?
           </span>
