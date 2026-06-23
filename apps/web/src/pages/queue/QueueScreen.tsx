@@ -1067,7 +1067,6 @@ export function QueueScreen() {
 
         <SessionAssemblyPreview
           open={sessionPreviewOpen}
-          origin="queue"
           {...(asOf ? { asOf } : {})}
           defaultTargetMinutes={data?.minuteBudget?.targetMinutes ?? 25}
           request={{

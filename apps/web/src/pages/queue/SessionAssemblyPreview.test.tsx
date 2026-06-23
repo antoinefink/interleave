@@ -7,7 +7,6 @@ import type {
   QueueSessionPlanResult,
 } from "../../lib/appApi";
 import { SessionAssemblyPreview } from "./SessionAssemblyPreview";
-import { clearAcceptedSessionAssembly } from "./sessionAssemblyState";
 
 const h = vi.hoisted(() => ({
   navigate: vi.fn(),
@@ -130,7 +129,6 @@ function plan(
 describe("SessionAssemblyPreview", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    clearAcceptedSessionAssembly();
   });
 
   it("does not enable start from a stale preview response", async () => {
@@ -148,7 +146,6 @@ describe("SessionAssemblyPreview", () => {
     render(
       <SessionAssemblyPreview
         open
-        origin="queue"
         defaultTargetMinutes={30}
         request={{ mode: "full" }}
         onClose={() => undefined}
@@ -190,9 +187,11 @@ describe("SessionAssemblyPreview", () => {
     expect(screen.getByTestId("session-preview-start")).toBeEnabled();
 
     fireEvent.click(screen.getByTestId("session-preview-start"));
+    // Demoted to a non-binding forecast: Start just opens the live queue with the chosen
+    // time box as the gauge reference (?target=) — no frozen deck, no `assembled` handoff.
     expect(h.navigate).toHaveBeenCalledWith({
       to: "/process",
-      search: { assembled: 1 },
+      search: { target: 20 },
     });
   });
 
@@ -204,7 +203,6 @@ describe("SessionAssemblyPreview", () => {
     render(
       <SessionAssemblyPreview
         open
-        origin="home"
         defaultTargetMinutes={25}
         request={{ mode: "full" }}
         onClose={() => undefined}
@@ -247,14 +245,7 @@ describe("SessionAssemblyPreview", () => {
     };
     h.previewSessionPlan.mockResolvedValue(withCut);
 
-    render(
-      <SessionAssemblyPreview
-        open
-        origin="queue"
-        defaultTargetMinutes={15}
-        onClose={() => undefined}
-      />,
-    );
+    render(<SessionAssemblyPreview open defaultTargetMinutes={15} onClose={() => undefined} />);
 
     expect(await screen.findByText("Cut row")).toBeInTheDocument();
     expect(screen.getByText(/Didn't fit/)).toBeInTheDocument();
@@ -264,14 +255,7 @@ describe("SessionAssemblyPreview", () => {
   it("keeps the left-out summary visible when nothing is cut", async () => {
     h.previewSessionPlan.mockResolvedValue(plan(45, item("kept", "Everything fits")));
 
-    render(
-      <SessionAssemblyPreview
-        open
-        origin="queue"
-        defaultTargetMinutes={45}
-        onClose={() => undefined}
-      />,
-    );
+    render(<SessionAssemblyPreview open defaultTargetMinutes={45} onClose={() => undefined} />);
 
     await screen.findByText("Everything fits");
     expect(screen.getByTestId("session-cut-list")).toBeVisible();
@@ -292,14 +276,7 @@ describe("SessionAssemblyPreview", () => {
       }),
     );
 
-    render(
-      <SessionAssemblyPreview
-        open
-        origin="queue"
-        defaultTargetMinutes={15}
-        onClose={() => undefined}
-      />,
-    );
+    render(<SessionAssemblyPreview open defaultTargetMinutes={15} onClose={() => undefined} />);
 
     expect(await screen.findByTestId("session-composition")).toHaveTextContent(
       "Distillation share returned: no due extracts.",
@@ -323,14 +300,7 @@ describe("SessionAssemblyPreview", () => {
       }),
     );
 
-    render(
-      <SessionAssemblyPreview
-        open
-        origin="queue"
-        defaultTargetMinutes={15}
-        onClose={() => undefined}
-      />,
-    );
+    render(<SessionAssemblyPreview open defaultTargetMinutes={15} onClose={() => undefined} />);
 
     expect(await screen.findByTestId("session-composition")).toHaveTextContent(
       "Current filter: distillation quota inactive.",
@@ -351,14 +321,7 @@ describe("SessionAssemblyPreview", () => {
       }),
     );
 
-    render(
-      <SessionAssemblyPreview
-        open
-        origin="queue"
-        defaultTargetMinutes={15}
-        onClose={() => undefined}
-      />,
-    );
+    render(<SessionAssemblyPreview open defaultTargetMinutes={15} onClose={() => undefined} />);
 
     await screen.findByText("Unavailable plan");
     expect(screen.queryByTestId("session-composition")).not.toBeInTheDocument();
@@ -373,7 +336,6 @@ describe("SessionAssemblyPreview", () => {
     const { rerender } = render(
       <SessionAssemblyPreview
         open
-        origin="home"
         defaultTargetMinutes={25}
         request={{ ...requestProp }}
         onClose={() => undefined}
@@ -393,7 +355,6 @@ describe("SessionAssemblyPreview", () => {
     rerender(
       <SessionAssemblyPreview
         open
-        origin="home"
         defaultTargetMinutes={25}
         request={{ ...requestProp }}
         onClose={() => undefined}
@@ -412,7 +373,6 @@ describe("SessionAssemblyPreview", () => {
     render(
       <SessionAssemblyPreview
         open
-        origin="home"
         defaultTargetMinutes={25}
         request={{ mode: "full" }}
         onClose={() => undefined}

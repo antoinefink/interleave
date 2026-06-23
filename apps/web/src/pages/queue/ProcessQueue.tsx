@@ -78,7 +78,10 @@ import {
   type QueueActAction,
   type QueueActUndo,
   type QueueItemSummary,
+  type QueueMinuteBudget,
+  type QueueQuotaComposition,
   type QueueScheduleChoice,
+  type QueueTimeEstimate,
   type ReviewCardView,
   type ReviewIntervalPreview,
   type ReviewRating,
@@ -98,6 +101,7 @@ import {
 } from "../../reader/AtomicExtractPrompt";
 import { CardBuilder } from "../../reader/CardBuilder";
 import "../../reader/extract-view.css";
+import { SessionGauge } from "../../components/queue/SessionGauge";
 import {
   EXTRACT_SELECTION_ACTIONS,
   SelectionToolbar,
@@ -113,12 +117,6 @@ import { useStatusHint } from "../../shell/statusHint";
 import { resumeLabel } from "./doneIntentBreakdown";
 import { jitterOrder } from "./jitter";
 import { openQueueItem } from "./openQueueItem";
-import {
-  type AcceptedSessionAssembly,
-  clearAcceptedSessionAssembly,
-  consumeAcceptedSessionAssembly,
-  sessionMinuteLabel,
-} from "./sessionAssemblyState";
 import "./queue.css";
 import "./process-queue.css";
 import { useProcessShortcuts } from "./useProcessShortcuts";
@@ -234,16 +232,23 @@ export function ProcessQueue() {
   const navigate = useNavigate();
   const { select } = useSelection();
   // The route declares no `validateSearch`, so search is loosely typed — an
-  // optional `asOf` date-scopes the due reads (the E2E drives a fixed clock) and an
-  // optional `mode` seeds the session ordering bias (T076).
+  // optional `asOf` date-scopes the due reads (the E2E drives a fixed clock), an
+  // optional `mode` seeds the session ordering bias (T076), and an optional `target`
+  // sets the ambient gauge's reference line (a non-binding minute box, NOT a frozen
+  // deck — there is no `assembled` handoff anymore; the loop always serves the live queue).
   const search = useSearch({ strict: false }) as {
     asOf?: string;
     mode?: string;
-    assembled?: string | number | boolean;
+    target?: string | number;
   };
   const asOf = typeof search.asOf === "string" ? search.asOf : undefined;
-  const assembledMode =
-    search.assembled === 1 || search.assembled === "1" || search.assembled === true;
+  // A valid session target is a whole number of minutes >= 1 (stricter than the
+  // preview's >= 0 check so a 0/blank target never fires the wrap-up prompt on mount).
+  const targetMinutes = (() => {
+    const raw = search.target;
+    const n = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : Number.NaN;
+    return Number.isFinite(n) && Number.isInteger(n) && n >= 1 ? n : undefined;
+  })();
 
   const [mode, setMode] = useState<SessionMode>(
     search.mode === "review" || search.mode === "read" ? search.mode : "full",
@@ -279,11 +284,29 @@ export function ProcessQueue() {
   const [dailyWork, setDailyWork] = useState<DailyWorkSummaryResult | null>(null);
   const [deckLoading, setDeckLoading] = useState(true);
   const [deckLoaded, setDeckLoaded] = useState(false);
-  const [assembledSession, setAssembledSession] = useState<AcceptedSessionAssembly | null>(null);
-  const [missingAssembly, setMissingAssembly] = useState(false);
-  const [completedEstimatedMinutes, setCompletedEstimatedMinutes] = useState(0);
-  const assembledSessionRef = useRef<AcceptedSessionAssembly | null>(null);
+  // The ambient, adaptive minute gauge's backend-priced inputs (T115/T116). Refreshed
+  // after each action and on a cross-surface queue refresh so "remaining" tracks the
+  // live due universe; the renderer never re-prices locally.
+  const [minuteBudget, setMinuteBudget] = useState<QueueMinuteBudget | null>(null);
+  const [timeEstimate, setTimeEstimate] = useState<QueueTimeEstimate | null>(null);
+  const [dayComposition, setDayComposition] = useState<QueueQuotaComposition | null>(null);
   const sessionStartedAtRef = useRef(Date.now());
+  // Every id that has appeared in an order this session — the basis for the
+  // end-of-order "new work arrived" check (KTD-7). Kept SEPARATE from `gradedRef`
+  // (the card double-grade guard) so undo can re-serve a restored item.
+  const seenIdsRef = useRef<Set<string>>(new Set());
+  // When the live deck drains, a reprice surfaces genuinely-new actionable work as a
+  // user-driven "keep going?" affordance rather than auto-extending the loop.
+  const [newWorkAvailable, setNewWorkAvailable] = useState(0);
+  const endOfOrderCheckedRef = useRef(false);
+  // The soft "wrap up or keep going?" nudge — shown once when elapsed crosses the
+  // reference target, dismissible without re-nagging (KTD-6). Never a hard gate.
+  const [wrapUpVisible, setWrapUpVisible] = useState(false);
+  const [wrapUpDismissed, setWrapUpDismissed] = useState(false);
+  const wrapUpShownRef = useRef(false);
+  // A queueRefresh that arrives mid-action is deferred (not dropped): this flag makes
+  // the reconcile run once the action settles, so external mutations are never lost.
+  const refreshDirtyRef = useRef(false);
 
   // --- The inline card-review surface state (lifted here so the keyboard can drive
   // reveal/grade while a card is the current item, exactly like the review session).
@@ -302,14 +325,15 @@ export function ProcessQueue() {
   /** Card ids already graded this session — the hard guard against a double grade. */
   const gradedRef = useRef<Set<string>>(new Set());
 
-  // The ordered session list: the read's deterministic T076 SCORE order (which the
+  // The ordered live-serve deck: the read's deterministic T076 SCORE order (which the
   // `mode` already biases server-side), then the stable seeded jitter (so the user
   // isn't trapped in one topic). The FULL mixed deck — `mode` re-orders it, never
-  // slices it (the old `modeIncludes` filter is gone), so both cards and reading items
-  // are always present. Frozen for the session's lifetime via the fetch — the cursor
-  // walks THIS order; acting on an item just advances the cursor (we never re-read and
-  // reshuffle mid-session, which would yank the ground out from under the user). A
-  // mode switch is the ONE deliberate re-fetch (the order changes, not the membership).
+  // slices it — so both cards and reading items are always present. The cursor walks
+  // THIS order; an action just advances the cursor. Unlike the old frozen deck, the
+  // live queue is the source of truth: a cross-surface refresh RECONCILES the order by
+  // id (preserving the user's place, appending new work at the tail) instead of
+  // restarting, and reopening /process re-derives the next best item — there is no
+  // frozen snapshot to lose, so a session can never "expire".
   const [order, setOrder] = useState<QueueItemSummary[]>([]);
 
   const total = order.length;
@@ -318,6 +342,12 @@ export function ProcessQueue() {
   const currentType = current?.type ?? null;
   const currentItemIdRef = useRef(currentId);
   currentItemIdRef.current = currentId;
+  // Live mirrors so the ambient reprice can reconcile against the current order/cursor
+  // without re-subscribing or going stale inside a [asOf]-scoped callback.
+  const orderRef = useRef(order);
+  orderRef.current = order;
+  const cursorRef = useRef(cursor);
+  cursorRef.current = cursor;
   const done = deckLoaded && (total === 0 || cursor >= total);
   const zeroLoad = deckLoaded && total === 0 && processed === 0;
   const isCard = current?.type === "card";
@@ -345,6 +375,10 @@ export function ProcessQueue() {
   // the clock alone uses whatever mode is current (a mode switch passes it explicitly).
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  // Mirror of `busy` for the queueRefresh subscription closure: a refresh that lands
+  // mid-action is deferred (refreshDirtyRef) and flushed when busy clears.
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
 
   const toast = useCallback((message: string) => {
     setFlash(message);
@@ -437,48 +471,36 @@ export function ProcessQueue() {
     }
   }, []);
 
-  // Load the queue (on mount, when the clock changes, and on a mode switch). `mode`
-  // flows to `queue.list` as a SOFT ordering bias, so the loop reads the FULL mixed
-  // deck re-ordered for the mode — no client-side slice. The loop freezes that order
-  // at load so the cursor is stable; subsequent actions advance the cursor.
-  const load = useCallback(
+  // Push the backend-priced minute inputs into the ambient gauge. Pure setter — the
+  // renderer never recomputes pricing/eligibility/quota locally (read-model invariant).
+  const applyGauge = useCallback(
+    (value: {
+      minuteBudget?: QueueMinuteBudget;
+      timeEstimate?: QueueTimeEstimate;
+      dayComposition?: QueueQuotaComposition;
+    }) => {
+      setMinuteBudget(value.minuteBudget ?? null);
+      setTimeEstimate(value.timeEstimate ?? null);
+      setDayComposition(value.dayComposition ?? null);
+    },
+    [],
+  );
+
+  // Full (re)load — mount, mode switch, manual "Reload queue", and the user-confirmed
+  // end-of-order continuation. `mode` flows to `queue.list` as a SOFT ordering bias, so
+  // the loop reads the FULL mixed deck re-ordered for the mode. Resets the cursor and
+  // session bookkeeping; the cursor then walks this order until the next rebuild.
+  const rebuildDeck = useCallback(
     async (modeOverride?: SessionMode) => {
       if (!isDesktop()) return;
       const activeMode = modeOverride ?? modeRef.current;
       setDeckLoading(true);
       try {
-        if (assembledMode) {
-          const isInitialAssemblyLoad = assembledSessionRef.current === null;
-          const accepted = assembledSessionRef.current ?? consumeAcceptedSessionAssembly();
-          assembledSessionRef.current = accepted;
-          if (isInitialAssemblyLoad) {
-            setUndoState(null);
-            setDoneIntentSnackbar(null);
-            setMissingAssembly(accepted === null);
-            setAssembledSession(accepted);
-            setOrder(accepted ? [...accepted.plannedItems] : []);
-            setMode(accepted?.mode ?? activeMode);
-            setCursor(0);
-            setProcessed(0);
-            setCompletedEstimatedMinutes(0);
-            sessionStartedAtRef.current = Date.now();
-            gradedRef.current = new Set();
-            setDeckLoaded(accepted !== null);
-          }
-          try {
-            const workResult = await appApi.getDailyWorkSummary(asOf ? { asOf } : {});
-            setDailyWork(workResult);
-            setError(null);
-          } catch (e) {
-            setDailyWork(null);
-            setError(e instanceof Error ? e.message : String(e));
-          }
-          return;
-        }
         const [queueResult, workResult] = await Promise.allSettled([
           appApi.listQueue({
             ...(asOf ? { asOf } : {}),
             mode: activeMode,
+            includeTimeEstimate: true,
           }),
           appApi.getDailyWorkSummary(asOf ? { asOf } : {}),
         ]);
@@ -486,16 +508,21 @@ export function ProcessQueue() {
         setUndoState(null);
         setDoneIntentSnackbar(null);
         if (queueResult.status === "fulfilled") {
-          setOrder(jitterOrder(processableQueueItems(queueResult.value.items)));
+          const items = jitterOrder(processableQueueItems(queueResult.value.items));
+          setOrder(items);
           setCursor(0);
           setProcessed(0);
-          setCompletedEstimatedMinutes(0);
           sessionStartedAtRef.current = Date.now();
           gradedRef.current = new Set();
+          seenIdsRef.current = new Set(items.map((item) => item.id));
+          setNewWorkAvailable(0);
+          endOfOrderCheckedRef.current = false;
+          refreshDirtyRef.current = false;
+          setWrapUpVisible(false);
+          setWrapUpDismissed(false);
+          wrapUpShownRef.current = false;
+          applyGauge(queueResult.value);
           setDeckLoaded(true);
-          setAssembledSession(null);
-          assembledSessionRef.current = null;
-          setMissingAssembly(false);
         } else {
           setOrder([]);
           setDeckLoaded(false);
@@ -522,19 +549,103 @@ export function ProcessQueue() {
         setDeckLoading(false);
       }
     },
-    [asOf, assembledMode],
+    [asOf, applyGauge],
+  );
+
+  // Ambient refresh — runs after each action, on a cross-surface queueRefresh, and at
+  // end-of-order. Always re-prices the gauge from the live due universe. When
+  // `reconcile` is set (an EXTERNAL mutation may have changed the upcoming items), it
+  // reconciles the order BY ID: the already-seen prefix stays put (no re-jitter), the
+  // current item is preserved (or the loop advances to the nearest surviving item if it
+  // vanished), and genuinely-new work is appended at the tail in score order. A failed
+  // read is non-destructive — it never blanks a live session.
+  const repriceDeck = useCallback(
+    async (options?: { reconcile?: boolean }) => {
+      if (!isDesktop()) return;
+      const [queueResult, workResult] = await Promise.allSettled([
+        appApi.listQueue({
+          ...(asOf ? { asOf } : {}),
+          mode: modeRef.current,
+          includeTimeEstimate: true,
+        }),
+        appApi.getDailyWorkSummary(asOf ? { asOf } : {}),
+      ]);
+      if (workResult.status === "fulfilled") setDailyWork(workResult.value);
+      if (queueResult.status !== "fulfilled") return; // non-destructive on failure
+      applyGauge(queueResult.value);
+      if (!options?.reconcile) return;
+      const fresh = jitterOrder(processableQueueItems(queueResult.value.items));
+      const prevOrder = orderRef.current;
+      const prevCursor = cursorRef.current;
+      const anchorId = prevOrder[prevCursor]?.id ?? null;
+      const prefix = prevOrder.slice(0, prevCursor);
+      const prefixIds = new Set(prefix.map((item) => item.id));
+      const upcoming = fresh.filter((item) => !prefixIds.has(item.id));
+      const nextOrder = [...prefix, ...upcoming];
+      for (const item of upcoming) seenIdsRef.current.add(item.id);
+      const anchorIdx = anchorId == null ? -1 : upcoming.findIndex((item) => item.id === anchorId);
+      // anchor present → keep the user on it; anchor gone → nearest surviving item
+      // (first upcoming); was already at/after the end → end-of-order.
+      const nextCursor = anchorIdx >= 0 ? prefix.length + anchorIdx : prefix.length;
+      setOrder(nextOrder);
+      setCursor(Math.min(nextCursor, nextOrder.length));
+    },
+    [asOf, applyGauge],
   );
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void rebuildDeck();
+  }, [rebuildDeck]);
 
+  // A cross-surface queue mutation reconciles the live deck in place (preserving the
+  // user's spot). One that lands mid-action is deferred via refreshDirtyRef and flushed
+  // by the busy-clear effect below, so an external mutation is never silently lost.
   useEffect(() => {
     if (!desktop) return;
     return listenQueueRefresh(() => {
-      void load();
+      if (busyRef.current) {
+        refreshDirtyRef.current = true;
+        return;
+      }
+      void repriceDeck({ reconcile: true });
     });
-  }, [desktop, load]);
+  }, [desktop, repriceDeck]);
+
+  useEffect(() => {
+    if (busy || !refreshDirtyRef.current) return;
+    refreshDirtyRef.current = false;
+    void repriceDeck({ reconcile: true });
+  }, [busy, repriceDeck]);
+
+  // End-of-order continuity (KTD-7): when the live deck drains, re-read once and surface
+  // genuinely-new actionable work (ids not seen this session — e.g. extracts created
+  // mid-session) as a user-driven "keep going?" affordance, rather than silently
+  // auto-extending the loop. Reaching the end is a legitimate stopping point.
+  useEffect(() => {
+    if (!done) {
+      endOfOrderCheckedRef.current = false;
+      return;
+    }
+    if (zeroLoad || !deckLoaded || deckLoading || endOfOrderCheckedRef.current || !isDesktop()) {
+      return;
+    }
+    endOfOrderCheckedRef.current = true;
+    void (async () => {
+      try {
+        const res = await appApi.listQueue({
+          ...(asOf ? { asOf } : {}),
+          mode: modeRef.current,
+          includeTimeEstimate: true,
+        });
+        applyGauge(res);
+        const fresh = processableQueueItems(res.items);
+        const newCount = fresh.filter((item) => !seenIdsRef.current.has(item.id)).length;
+        setNewWorkAvailable(newCount);
+      } catch {
+        // Non-destructive — the done panel just shows the plain "Queue clear" copy.
+      }
+    })();
+  }, [done, zeroLoad, deckLoaded, deckLoading, asOf, applyGauge]);
 
   // Load the current card's full reveal-ready view OR the current attention item's
   // inspector context. The body itself comes from `useDocument`, so extract editing
@@ -607,31 +718,10 @@ export function ProcessQueue() {
    */
   const onModeChange = useCallback(
     (next: SessionMode) => {
-      if (assembledMode) return;
       setMode(next);
-      void load(next);
+      void rebuildDeck(next);
     },
-    [assembledMode, load],
-  );
-
-  const recordCompletedEstimate = useCallback(
-    (id: string) => {
-      if (!assembledSession) return;
-      setCompletedEstimatedMinutes(
-        (minutes) => minutes + (assembledSession.plannedEstimates[id] ?? 0),
-      );
-    },
-    [assembledSession],
-  );
-
-  const subtractCompletedEstimate = useCallback(
-    (id: string) => {
-      if (!assembledSession) return;
-      setCompletedEstimatedMinutes((minutes) =>
-        Math.max(0, minutes - (assembledSession.plannedEstimates[id] ?? 0)),
-      );
-    },
-    [assembledSession],
+    [rebuildDeck],
   );
 
   const openRecommendedWork = useCallback(() => {
@@ -670,9 +760,9 @@ export function ProcessQueue() {
       try {
         const res = await appApi.actOnQueueItem({ id: current.id, action });
         setProcessed((p) => p + 1);
-        recordCompletedEstimate(current.id);
         advance();
         requestInspectorRefresh();
+        void repriceDeck();
         const undo: ProcessUndoState["undo"] | null = res.undo
           ? { kind: "queue", recipe: res.undo }
           : kind === "postpone" ||
@@ -699,7 +789,7 @@ export function ProcessQueue() {
         setBusy(false);
       }
     },
-    [current, busy, cursor, clearUndo, advance, recordCompletedEstimate],
+    [current, busy, cursor, clearUndo, advance, repriceDeck],
   );
 
   /**
@@ -722,17 +812,20 @@ export function ProcessQueue() {
     onAfter: (_target, kind) => {
       if (kind === "quiet") return; // runAction already advanced + bookkept.
       setProcessed((p) => p + 1);
-      if (current) recordCompletedEstimate(current.id);
       clearUndo();
       advance();
       requestInspectorRefresh();
+      void repriceDeck();
     },
     onUndoAfter: (target) => {
-      setCursor(cursor);
+      // Restore the cursor BY ID (the reconcile may have shifted indices) so the
+      // cursor and the inspector selection always agree on the restored item.
+      const idx = orderRef.current.findIndex((item) => item.id === target.id);
+      setCursor(idx >= 0 ? idx : Math.min(cursorRef.current, Math.max(0, orderRef.current.length)));
       setProcessed((p) => Math.max(0, p - 1));
-      if (current) subtractCompletedEstimate(current.id);
       select(target.id);
       requestInspectorRefresh();
+      void repriceDeck();
     },
   });
   // The `delete` key and the overflow menu's Delete item both bump this so the
@@ -806,9 +899,9 @@ export function ProcessQueue() {
       try {
         await appApi.scheduleQueueItem({ id: current.id, choice });
         setProcessed((p) => p + 1);
-        recordCompletedEstimate(current.id);
         advance();
         requestInspectorRefresh();
+        void repriceDeck();
         setUndoState({
           id: current.id,
           index: undoIndex,
@@ -820,7 +913,7 @@ export function ProcessQueue() {
         setBusy(false);
       }
     },
-    [current, busy, cursor, clearUndo, advance, recordCompletedEstimate],
+    [current, busy, cursor, clearUndo, advance, repriceDeck],
   );
 
   const undoLastProcessAction = useCallback(async () => {
@@ -842,11 +935,20 @@ export function ProcessQueue() {
           return;
         }
       }
-      setCursor(pending.index);
+      // Restore the cursor BY ID — a post-action gauge reprice leaves `order` intact
+      // (the acted item is still in place behind the cursor), but a cross-surface
+      // reconcile may have shifted indices, so locate the restored item by id and fall
+      // back to the captured index only if it is no longer in the live order.
+      const restoreIdx = orderRef.current.findIndex((item) => item.id === pending.id);
+      setCursor(
+        restoreIdx >= 0
+          ? restoreIdx
+          : Math.min(pending.index, Math.max(0, orderRef.current.length)),
+      );
       setProcessed((p) => Math.max(0, p - 1));
-      subtractCompletedEstimate(pending.id);
       select(pending.id);
       requestInspectorRefresh();
+      void repriceDeck();
       toast("Undone");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -854,7 +956,7 @@ export function ProcessQueue() {
     } finally {
       setBusy(false);
     }
-  }, [undoState, busy, select, subtractCompletedEstimate, toast]);
+  }, [undoState, busy, select, repriceDeck, toast]);
 
   const onExtractChange = useCallback(
     (change: SourceEditorChange) => {
@@ -1366,11 +1468,11 @@ export function ProcessQueue() {
       }
       gradedRef.current.add(cardView.id);
       setProcessed((p) => p + 1);
-      recordCompletedEstimate(cardView.id);
       advance();
       setBusy(false);
+      void repriceDeck();
     },
-    [isCard, cardView, revealed, busy, clearUndo, asOf, advance, recordCompletedEstimate],
+    [isCard, cardView, revealed, busy, clearUndo, asOf, advance, repriceDeck],
   );
 
   /** Open the current item in its full surface — the ONLY navigation in the loop. */
@@ -1388,6 +1490,51 @@ export function ProcessQueue() {
   const loopActive = desktop && !done;
   const processKeysActive = desktop && (!done || undoState !== null);
   useActiveScope("queue", loopActive);
+
+  // The ambient gauge's reference line: the explicit ?target= box when valid, else the
+  // configured daily minute budget. Drives the soft wrap-up nudge so EVERY entry path
+  // (preview "Start", deep-link, reload) behaves consistently.
+  const wrapUpReference =
+    targetMinutes ??
+    (minuteBudget && minuteBudget.targetMinutes > 0 ? minuteBudget.targetMinutes : undefined);
+
+  const dismissWrapUp = useCallback(() => {
+    setWrapUpVisible(false);
+    setWrapUpDismissed(true);
+  }, []);
+
+  // Fire the "wrap up or keep going?" nudge ONCE when elapsed crosses the reference. A
+  // single timeout (not a poll) avoids re-rendering the loop every tick; keep-going /
+  // Esc suppresses it for the rest of the session. Never a hard stop.
+  useEffect(() => {
+    if (!loopActive || wrapUpReference == null || wrapUpDismissed || wrapUpShownRef.current) {
+      return;
+    }
+    const fire = () => {
+      wrapUpShownRef.current = true;
+      setWrapUpVisible(true);
+    };
+    const remainingMs = wrapUpReference * 60_000 - (Date.now() - sessionStartedAtRef.current);
+    if (remainingMs <= 0) {
+      fire();
+      return;
+    }
+    const handle = window.setTimeout(fire, remainingMs);
+    return () => window.clearTimeout(handle);
+  }, [loopActive, wrapUpReference, wrapUpDismissed]);
+
+  // Esc dismisses the nudge as "keep going" (non-modal, no focus trap).
+  useEffect(() => {
+    if (!wrapUpVisible) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        dismissWrapUp();
+      }
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [wrapUpVisible, dismissWrapUp]);
   useProcessShortcuts(
     {
       canProcess: !done,
@@ -1449,24 +1596,24 @@ export function ProcessQueue() {
     done,
     remaining,
     mode,
-    assembled: assembledSession !== null,
     // The source document heading rides in the toolbar row (replacing the old
     // .pq-source__header band). Gated on isRenderingSource (not deckLoading, not
     // done) so the loading/done panels never flash the prior source's title
     // mid-reload — same title expression the workbench used.
     itemTitle: isRenderingSource ? (inspector?.element.title ?? current?.title) : undefined,
+    // The ambient minute gauge — hidden during a rebuild (deckLoading) so it never
+    // flashes the prior deck's stale minutes (mirrors the itemTitle stale-flash guard).
+    gauge: deckLoading
+      ? undefined
+      : {
+          startedAt: sessionStartedAtRef.current,
+          estimate: timeEstimate,
+          reference: wrapUpReference,
+          composition: dayComposition,
+        },
     onModeChange,
-    onAdjust: () => {
-      const target = assembledSession?.origin === "home" ? "/" : "/queue";
-      clearAcceptedSessionAssembly();
-      void navigate({ to: target, search: asOf ? { asOf } : {} });
-    },
     onEnd: () => navigate({ to: "/queue", search: asOf ? { asOf } : {} }),
   };
-  const elapsedMinutes = Math.max(
-    0,
-    Math.round((Date.now() - sessionStartedAtRef.current) / 60000),
-  );
 
   // The source's "block N of M" resume location for the DoneIntentMenu — only when an
   // actual read-point exists (read-point = where, decoupled from due-date = when). Null
@@ -1498,29 +1645,6 @@ export function ProcessQueue() {
               <p className="q-empty__body">Checking scheduled work for today.</p>
             </div>
           </div>
-        ) : missingAssembly ? (
-          <div className="q-panel pq-donepanel" data-testid="process-session-expired">
-            <div className="q-empty">
-              <div className="q-empty__icon q-empty__icon--filter">
-                <Icon name="queue" size={24} />
-              </div>
-              <h2 className="q-empty__title">Session plan expired</h2>
-              <p className="q-empty__body">
-                Return to the queue to preview the current due work before starting a planned deck.
-              </p>
-              <div className="pq-done__actions">
-                <button
-                  type="button"
-                  className="sessionbar__start"
-                  data-testid="process-back"
-                  onClick={() => navigate({ to: "/queue", search: asOf ? { asOf } : {} })}
-                >
-                  <Icon name="return" size={14} />
-                  Back to queue
-                </button>
-              </div>
-            </div>
-          </div>
         ) : done ? (
           <div className="q-panel pq-donepanel" data-testid="process-done">
             <ProcessSessionControls {...sessionControls} />
@@ -1539,37 +1663,18 @@ export function ProcessQueue() {
                       ? ` ${dailyWork.resumeSource.title} is active without a return date.`
                       : ""}
                 </p>
+              ) : newWorkAvailable > 0 ? (
+                <p className="q-empty__body" data-testid="process-newwork">
+                  You cleared the queue — {processed} item{processed === 1 ? "" : "s"} processed.{" "}
+                  {newWorkAvailable} new item{newWorkAvailable === 1 ? "" : "s"} arrived while you
+                  worked.
+                </p>
               ) : (
                 <p className="q-empty__body">
-                  You processed {processed} item{processed === 1 ? "" : "s"} one at a time — no
-                  list, no detours. Your high-priority items are protected; the rest return when
-                  they're due.
+                  You processed {processed} item{processed === 1 ? "" : "s"}, one at a time. Your
+                  high-priority items are protected; the rest return when they're due.
                 </p>
               )}
-              {assembledSession && !zeroLoad ? (
-                <div className="pq-session-summary" data-testid="process-session-summary">
-                  <span>
-                    Planned{" "}
-                    {sessionMinuteLabel(
-                      assembledSession.plannedMinutes,
-                      assembledSession.usesDefaultEstimate,
-                    )}
-                  </span>
-                  {assembledSession.composition &&
-                  assembledSession.composition.status !== "unavailable_no_time_estimate" ? (
-                    <span>
-                      Distillation{" "}
-                      {sessionMinuteLabel(assembledSession.composition.distillationMinutes, false)}
-                    </span>
-                  ) : null}
-                  <span>Completed {sessionMinuteLabel(completedEstimatedMinutes, false)}</span>
-                  <span>Elapsed {elapsedMinutes} min</span>
-                  <span>
-                    Left out {assembledSession.cut.totalCount} item
-                    {assembledSession.cut.totalCount === 1 ? "" : "s"}
-                  </span>
-                </div>
-              ) : null}
               <div className="pq-done__actions">
                 {zeroLoad &&
                 (dailyWork?.recommendedAction === "triage_inbox" ||
@@ -1590,24 +1695,27 @@ export function ProcessQueue() {
                       : "Resume source"}
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  className="pq-btn"
-                  data-testid="process-restart"
-                  onClick={() => {
-                    if (assembledSession) {
-                      void navigate({
-                        to: assembledSession.origin === "home" ? "/" : "/queue",
-                        search: asOf ? { asOf } : {},
-                      });
-                      return;
-                    }
-                    void load();
-                  }}
-                >
-                  <Icon name="review" size={14} />
-                  {assembledSession ? "Plan another" : "Reload queue"}
-                </button>
+                {newWorkAvailable > 0 ? (
+                  <button
+                    type="button"
+                    className="sessionbar__start"
+                    data-testid="process-keep-going"
+                    onClick={() => void rebuildDeck()}
+                  >
+                    <Icon name="play" size={14} />
+                    Keep going
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="pq-btn"
+                    data-testid="process-restart"
+                    onClick={() => void rebuildDeck()}
+                  >
+                    <Icon name="review" size={14} />
+                    Reload queue
+                  </button>
+                )}
                 <button
                   type="button"
                   className="sessionbar__start"
@@ -1666,6 +1774,36 @@ export function ProcessQueue() {
           />
         ) : null}
       </div>
+      {wrapUpVisible && !done ? (
+        <div className="pq-wrapup" role="alert" data-testid="process-wrapup">
+          <span className="pq-wrapup__text">
+            You've spent about{" "}
+            {Math.max(0, Math.round((Date.now() - sessionStartedAtRef.current) / 60000))} min
+            {wrapUpReference != null ? ` of your ~${wrapUpReference} min target` : ""}. Wrap up or
+            keep going?
+          </span>
+          <div className="pq-wrapup__actions">
+            <button
+              type="button"
+              className="pq-btn"
+              data-testid="process-wrapup-keep"
+              onClick={dismissWrapUp}
+            >
+              <Icon name="play" size={13} />
+              Keep going
+            </button>
+            <button
+              type="button"
+              className="sessionbar__start"
+              data-testid="process-wrapup-end"
+              onClick={() => navigate({ to: "/queue", search: asOf ? { asOf } : {} })}
+            >
+              <Icon name="return" size={13} />
+              Wrap up
+            </button>
+          </div>
+        </div>
+      ) : null}
       {flash ? (
         <div className="reader-flash" data-testid="process-flash" role="status">
           <span className="extract-flash__pill">
@@ -1708,12 +1846,19 @@ type ProcessSessionControlsProps = {
   done: boolean;
   remaining: number;
   mode: SessionMode;
-  assembled: boolean;
   /** Source document heading, lifted into the toolbar row. Source items only;
       omitted/empty for every other type and the loading/done panels. */
   itemTitle?: string | undefined;
+  /** The ambient minute gauge inputs (omitted while a rebuild is loading). */
+  gauge?:
+    | {
+        startedAt: number;
+        estimate: QueueTimeEstimate | null;
+        reference: number | undefined;
+        composition: QueueQuotaComposition | null;
+      }
+    | undefined;
   onModeChange: (mode: SessionMode) => void;
-  onAdjust: () => void;
   onEnd: () => void;
 };
 
@@ -1723,10 +1868,9 @@ function ProcessSessionControls({
   done,
   remaining,
   mode,
-  assembled,
   itemTitle,
+  gauge,
   onModeChange,
-  onAdjust,
   onEnd,
 }: ProcessSessionControlsProps) {
   const position = Math.min(cursor + (done ? 0 : 1), total);
@@ -1752,42 +1896,36 @@ function ProcessSessionControls({
             {done ? "all done" : `${remaining} left`}
           </span>
         </div>
+        {gauge ? (
+          <SessionGauge
+            startedAt={gauge.startedAt}
+            estimate={gauge.estimate}
+            reference={gauge.reference}
+            composition={gauge.composition}
+            done={done}
+          />
+        ) : null}
         {title ? (
           <h1 className="pq-session__title" data-testid="process-session-title" title={title}>
             {title}
           </h1>
         ) : null}
-        {assembled ? (
-          <div className="pq-modes pq-modes--assembled" data-testid="process-assembled-mode">
-            <span className="pq-modes__label">Planned deck</span>
+        <div className="pq-modes" data-testid="process-modes">
+          <span className="pq-modes__label">Mode</span>
+          {MODES.map((m) => (
             <button
               type="button"
-              className="pq-seg"
-              data-testid="process-adjust-session"
-              onClick={onAdjust}
+              key={m.id}
+              data-testid={`process-mode-${m.id}`}
+              aria-pressed={mode === m.id}
+              className={`pq-seg${mode === m.id ? " pq-seg--on" : ""}`}
+              onClick={() => onModeChange(m.id)}
             >
-              <Icon name="calendar" size={12} />
-              Adjust session
+              <Icon name={m.icon} size={12} />
+              {m.label}
             </button>
-          </div>
-        ) : (
-          <div className="pq-modes" data-testid="process-modes">
-            <span className="pq-modes__label">Mode</span>
-            {MODES.map((m) => (
-              <button
-                type="button"
-                key={m.id}
-                data-testid={`process-mode-${m.id}`}
-                aria-pressed={mode === m.id}
-                className={`pq-seg${mode === m.id ? " pq-seg--on" : ""}`}
-                onClick={() => onModeChange(m.id)}
-              >
-                <Icon name={m.icon} size={12} />
-                {m.label}
-              </button>
-            ))}
-          </div>
-        )}
+          ))}
+        </div>
         <button type="button" className="pq-end" data-testid="process-end" onClick={onEnd}>
           <Icon name="x" size={14} />
           End session

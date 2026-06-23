@@ -635,7 +635,7 @@ describe("QueueScreen", () => {
     await waitFor(() =>
       expect(h.navigateSpy).toHaveBeenCalledWith({
         to: "/process",
-        search: { assembled: 1 },
+        search: { target: 25 },
       }),
     );
   });

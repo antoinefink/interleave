@@ -756,7 +756,7 @@ describe("HomeScreen", () => {
     await waitFor(() =>
       expect(h.navigateSpy).toHaveBeenCalledWith({
         to: "/process",
-        search: { assembled: 1 },
+        search: { target: 25 },
       }),
     );
   });
@@ -905,7 +905,7 @@ describe("HomeScreen", () => {
     await waitFor(() =>
       expect(h.navigateSpy).toHaveBeenCalledWith({
         to: "/process",
-        search: { asOf, assembled: 1 },
+        search: { asOf, target: 25 },
       }),
     );
 

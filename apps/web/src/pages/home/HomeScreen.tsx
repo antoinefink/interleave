@@ -570,7 +570,6 @@ export function HomeScreen() {
 
         <SessionAssemblyPreview
           open={sessionPreviewOpen}
-          origin="home"
           {...(asOf ? { asOf } : {})}
           defaultTargetMinutes={queue?.minuteBudget?.targetMinutes ?? 25}
           request={{ mode: "full" }}

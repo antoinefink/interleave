@@ -5,6 +5,17 @@ export interface QueueTimeEstimateLabel {
   readonly ariaLabel: string;
 }
 
+/**
+ * Format a minute count for session/forecast surfaces, prefixing `~` when the figure
+ * leans on documented default estimates rather than learned timings. Rounds to one
+ * decimal for non-integers so small estimates stay honest. (Relocated from the deleted
+ * `sessionAssemblyState` module — its natural home next to the queue time formatter.)
+ */
+export function sessionMinuteLabel(minutes: number, approximate: boolean): string {
+  const rounded = Number.isInteger(minutes) ? minutes : Math.round(minutes * 10) / 10;
+  return `${approximate ? "~" : ""}${rounded} min`;
+}
+
 function pluralizeMinutes(minutes: number): string {
   return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }

@@ -7,11 +7,7 @@ import {
   type QueueSessionPlanRequest,
   type QueueSessionPlanResult,
 } from "../../lib/appApi";
-import {
-  acceptSessionAssembly,
-  type SessionAssemblyOrigin,
-  sessionMinuteLabel,
-} from "./sessionAssemblyState";
+import { sessionMinuteLabel } from "../../lib/queueTimeEstimate";
 
 const PRESETS = [15, 25, 45] as const;
 
@@ -29,14 +25,12 @@ const CATEGORIES = [
 
 export function SessionAssemblyPreview({
   open,
-  origin,
   asOf,
   defaultTargetMinutes,
   request,
   onClose,
 }: {
   open: boolean;
-  origin: SessionAssemblyOrigin;
   asOf?: string;
   defaultTargetMinutes: number;
   request?: Omit<QueueSessionPlanRequest, "targetMinutes">;
@@ -182,10 +176,10 @@ export function SessionAssemblyPreview({
       <div className="q-session-preview__head">
         <div>
           <h2 id={titleId} className="q-session-preview__title">
-            Plan session
+            Session forecast
           </h2>
           <p className="q-session-preview__sub">
-            Set a box on the left; the deck assembles on the right.
+            Set a time box to preview what's ahead; starting serves the live queue.
           </p>
         </div>
         <button
@@ -435,27 +429,17 @@ export function SessionAssemblyPreview({
           onClick={() => {
             if (!plan || planRequestKey !== requestKey) return;
             setConfirming(true);
-            acceptSessionAssembly({
-              origin,
-              ...(asOf ? { asOf } : {}),
-              mode: request?.mode ?? "full",
-              filters: {
-                ...(request?.types ? { types: request.types } : {}),
-                ...(request?.statuses ? { statuses: request.statuses } : {}),
-                ...(request?.protectedOnly ? { protectedOnly: true } : {}),
-                ...(request?.concept ? { concept: request.concept } : {}),
-                ...(request?.tag ? { tag: request.tag } : {}),
-              },
-              plan,
-            });
+            // Non-binding: the forecast is informational. Starting just opens the live
+            // queue with the chosen time box as the gauge's reference line (?target=) —
+            // no frozen deck is stored, so a reload/back can never "expire" a session.
             void navigate({
               to: "/process",
-              search: { ...(asOf ? { asOf } : {}), assembled: 1 },
+              search: { ...(asOf ? { asOf } : {}), target },
             });
           }}
         >
           <Icon name="play" size={14} />
-          Start planned deck
+          Start
         </button>
       </div>
     </section>

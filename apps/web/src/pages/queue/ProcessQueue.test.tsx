@@ -20,7 +20,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { requestQueueRefresh } from "../../components/queue/queueRefresh";
 import type {
@@ -199,7 +199,7 @@ const h = vi.hoisted(() => {
     easy: { dueAt: "2026-06-09T08:00:00.000Z", scheduledDays: 10, label: "10d" },
   };
   return {
-    search: {} as { asOf?: string; mode?: string; assembled?: string | number | boolean },
+    search: {} as { asOf?: string; mode?: string; target?: string | number },
     navigateSpy: vi.fn(),
     selectSpy: vi.fn(),
     setHintSpy: vi.fn(),
@@ -526,11 +526,9 @@ vi.mock("./jitter", () => ({
 }));
 
 import { ProcessQueue } from "./ProcessQueue";
-import { acceptSessionAssembly, clearAcceptedSessionAssembly } from "./sessionAssemblyState";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  clearAcceptedSessionAssembly();
   h.search = {};
   h.listQueue.mockResolvedValue(h.result);
   h.actOnQueueItem.mockResolvedValue({ item: null, removed: true, undo: null });
@@ -588,53 +586,6 @@ beforeEach(() => {
     },
   });
 });
-
-function acceptTestAssembly(
-  rows: readonly { readonly item: QueueItemSummary; readonly estimatedMinutes: number }[],
-  cut: { readonly totalCount: number; readonly totalMinutes: number } = {
-    totalCount: 0,
-    totalMinutes: 0,
-  },
-) {
-  acceptSessionAssembly({
-    origin: "queue",
-    mode: "full",
-    plan: {
-      targetMinutes: 25,
-      plannedMinutes: rows.reduce((sum, row) => sum + row.estimatedMinutes, 0),
-      candidateMinutes: rows.reduce((sum, row) => sum + row.estimatedMinutes, 0) + cut.totalMinutes,
-      plannedCount: rows.length,
-      candidateCount: rows.length + cut.totalCount,
-      overTarget: false,
-      confidence: "default",
-      usesDefaultEstimate: true,
-      composition: {
-        status: "inactive_zero_target",
-        quotaFloorMinutes: 0,
-        eligibleDistillationMinutes: 0,
-        selectedDistillationMinutes: 0,
-        returnedQuotaMinutes: 0,
-        cardMinutes: 0,
-        distillationMinutes: 0,
-        otherMinutes: 0,
-      },
-      items: rows.map((row) => ({
-        item: row.item,
-        estimatedMinutes: row.estimatedMinutes,
-        estimateConfidence: "default",
-        estimateBasis: "test",
-      })),
-      cut: {
-        totalCount: cut.totalCount,
-        totalMinutes: cut.totalMinutes,
-        detailLimit: 25,
-        items: [],
-        byReason: { did_not_fit: { count: cut.totalCount, minutes: cut.totalMinutes } },
-        byType: {},
-      },
-    },
-  });
-}
 
 /** The id of the single rendered process item (the cursor item), or null. */
 function currentItemId(): string | null {
@@ -2495,150 +2446,179 @@ describe("ProcessQueue", () => {
     );
   });
 
-  it("T118: assembled mode consumes the accepted deck without re-reading queue.list", async () => {
-    h.search = { assembled: 1 };
-    const sourceItem = h.result.items.find((item) => item.id === "source-1");
-    if (!sourceItem) throw new Error("Missing source fixture");
-    acceptTestAssembly([{ item: sourceItem, estimatedMinutes: 10 }], {
-      totalCount: 1,
-      totalMinutes: 2,
+  it("queue-as-session: /process always serves the live queue (with time pricing) — never an expired state", async () => {
+    // Even a leftover ?assembled= param has no special path anymore: the loop just
+    // serves the live queue, so the "Session plan expired" dead-end cannot occur.
+    h.search = { assembled: 1 } as never;
+
+    render(<ProcessQueue />);
+
+    await screen.findByTestId("process-item");
+    expect(screen.queryByTestId("process-session-expired")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("process-assembled-mode")).not.toBeInTheDocument();
+    expect(screen.getByTestId("process-modes")).toBeInTheDocument();
+    expect(h.listQueue).toHaveBeenCalledWith(
+      expect.objectContaining({ includeTimeEstimate: true }),
+    );
+  });
+
+  it("queue-as-session: the ambient gauge renders elapsed + confidence-aware remaining minutes", async () => {
+    render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+
+    const gauge = screen.getByTestId("process-gauge");
+    // Reference falls back to the daily minute budget (30) when no ?target= is set.
+    expect(gauge).toHaveTextContent("/ 30 min");
+    // timeEstimate is default-confidence → "~" prefix, and never a false "done".
+    expect(gauge).toHaveTextContent("~18 min left");
+  });
+
+  it("queue-as-session: the gauge keeps the distillation share visible (KTD-5)", async () => {
+    h.listQueue.mockResolvedValue({
+      ...h.result,
+      dayComposition: {
+        status: "active",
+        quotaFloorMinutes: 6,
+        eligibleDistillationMinutes: 6,
+        selectedDistillationMinutes: 6,
+        returnedQuotaMinutes: 0,
+        cardMinutes: 10,
+        distillationMinutes: 6,
+        otherMinutes: 2,
+      },
     });
 
     render(<ProcessQueue />);
-
     await screen.findByTestId("process-item");
-    expect(h.listQueue).not.toHaveBeenCalled();
-    expect(screen.queryByTestId("process-modes")).not.toBeInTheDocument();
-    expect(screen.getByTestId("process-assembled-mode")).toHaveTextContent("Planned deck");
+
+    expect(screen.getByTestId("process-gauge-distill")).toHaveTextContent("6 distill");
   });
 
-  it("T118: queue refresh does not restart an active assembled deck", async () => {
-    h.search = { assembled: 1 };
-    const card = h.result.items.find((item) => item.id === "card-1");
-    const extract = h.result.items.find((item) => item.id === "extract-1");
-    if (!card || !extract) throw new Error("Missing assembled fixtures");
-    acceptTestAssembly([
-      { item: card, estimatedMinutes: 2 },
-      { item: extract, estimatedMinutes: 6 },
-    ]);
-
+  it("queue-as-session: a cross-surface refresh reconciles in place — it does NOT restart the session", async () => {
     render(<ProcessQueue />);
     await screen.findByTestId("process-item");
-    expect(currentItemId()).toBe("card-1");
 
-    fireEvent.click(screen.getByTestId("process-action-markDone"));
-    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
+    // Advance off the first item so a restart-to-0 would be observable.
+    const first = currentItemId();
+    fireEvent.click(screen.getByTestId("process-action-skip"));
+    await waitFor(() => expect(currentItemId()).not.toBe(first));
+    const afterSkip = currentItemId();
+    const progressAfterSkip = screen.getByTestId("process-progress").textContent;
 
-    h.getDailyWorkSummary.mockClear();
+    h.listQueue.mockClear();
     requestQueueRefresh();
 
-    await waitFor(() => expect(h.getDailyWorkSummary).toHaveBeenCalledTimes(1));
-    expect(screen.getByTestId("process-progress")).toHaveTextContent("2 / 2");
-    expect(currentItemId()).toBe("extract-1");
-    expect(h.listQueue).not.toHaveBeenCalled();
+    // The reconcile re-reads the live queue (the C3 fix), but the cursor stays put.
+    await waitFor(() => expect(h.listQueue).toHaveBeenCalled());
+    expect(currentItemId()).toBe(afterSkip);
+    expect(screen.getByTestId("process-progress").textContent).toBe(progressAfterSkip);
   });
 
-  it("T118: daily-work read failure does not invalidate the assembled deck", async () => {
-    h.search = { assembled: 1 };
-    const extract = h.result.items.find((item) => item.id === "extract-1");
-    if (!extract) throw new Error("Missing extract fixture");
-    h.getDailyWorkSummary.mockRejectedValueOnce(new Error("daily failed"));
-    acceptTestAssembly([{ item: extract, estimatedMinutes: 6 }]);
-
+  it("queue-as-session: each action re-prices the gauge from the live queue", async () => {
     render(<ProcessQueue />);
-
     await screen.findByTestId("process-item");
-    fireEvent.click(screen.getByTestId("process-action-markDone"));
+    h.listQueue.mockClear();
 
-    expect(await screen.findByTestId("process-session-summary")).toHaveTextContent(
-      "Completed 6 min",
+    fireEvent.click(screen.getByTestId("process-action-skip"));
+
+    // skip advances the cursor AND fires an ambient reprice (a fresh listQueue read).
+    await waitFor(() => expect(h.listQueue).toHaveBeenCalledTimes(1));
+    expect(h.listQueue).toHaveBeenCalledWith(
+      expect.objectContaining({ includeTimeEstimate: true }),
     );
   });
 
-  it("T118: undo subtracts completed minutes before a repeated assembled action", async () => {
-    h.search = { assembled: 1 };
-    const card = h.result.items.find((item) => item.id === "card-1");
-    const extract = h.result.items.find((item) => item.id === "extract-1");
-    if (!card || !extract) throw new Error("Missing assembled fixtures");
-    acceptTestAssembly([
-      { item: card, estimatedMinutes: 2 },
-      { item: extract, estimatedMinutes: 6 },
-    ]);
-
-    render(<ProcessQueue />);
-    await screen.findByTestId("process-item");
-
-    fireEvent.click(screen.getByTestId("process-action-markDone"));
-    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
-    fireEvent.keyDown(window, { key: "z", metaKey: true });
-    await waitFor(() => expect(currentItemId()).toBe("card-1"));
-    fireEvent.click(screen.getByTestId("process-action-markDone"));
-    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
-    fireEvent.click(screen.getByTestId("process-action-markDone"));
-
-    expect(await screen.findByTestId("process-session-summary")).toHaveTextContent(
-      "Completed 8 min",
-    );
-  });
-
-  it("T118: lineage branch-delete undo restores assembled cursor and minutes", async () => {
-    h.search = { assembled: 1 };
-    const card = h.result.items.find((item) => item.id === "card-1");
-    const extract = h.result.items.find((item) => item.id === "extract-1");
-    if (!card || !extract) throw new Error("Missing assembled fixtures");
-    h.countDescendants.mockResolvedValueOnce({
-      extracts: 0,
-      cards: 1,
-      cardsWithHistory: 0,
-      total: 1,
+  it("queue-as-session: draining the queue lands on the honest 'Queue clear' state", async () => {
+    h.listQueue.mockResolvedValue({
+      ...h.result,
+      items: [h.result.items[0]],
+      counts: { ...h.result.counts, all: 1 },
     });
-    h.softDeleteSubtree.mockResolvedValueOnce({
-      batchId: "branch-1",
-      affected: ["extract-1"],
-      skipped: [],
-    });
-    acceptTestAssembly([
-      { item: extract, estimatedMinutes: 6 },
-      { item: card, estimatedMinutes: 2 },
-    ]);
 
     render(<ProcessQueue />);
     await screen.findByTestId("process-item");
-    expect(currentItemId()).toBe("extract-1");
 
-    // Raise / Lower / Delete now live behind the "⋯" overflow — open it first.
-    fireEvent.click(screen.getByTestId("process-action-more"));
-    fireEvent.click(screen.getByTestId("process-action-delete"));
-    fireEvent.click(await screen.findByTestId("lineage-delete-branch"));
-    await waitFor(() => expect(currentItemId()).toBe("card-1"));
+    fireEvent.click(screen.getByTestId("process-action-skip"));
 
-    const snackbar = await screen.findByTestId("process-delete-snackbar");
-    fireEvent.click(within(snackbar).getByRole("button", { name: /undo/i }));
-
-    await waitFor(() =>
-      expect(h.restoreBatchFromTrash).toHaveBeenCalledWith({ batchId: "branch-1" }),
-    );
-    await waitFor(() => expect(currentItemId()).toBe("extract-1"));
-    expect(screen.getByTestId("process-progress")).toHaveTextContent("1 / 2");
-
-    fireEvent.click(screen.getByTestId("process-action-markDone"));
-    await waitFor(() => expect(currentItemId()).toBe("card-1"));
-    fireEvent.click(screen.getByTestId("process-action-markDone"));
-
-    expect(await screen.findByTestId("process-session-summary")).toHaveTextContent(
-      "Completed 8 min",
-    );
+    expect(await screen.findByTestId("process-done")).toHaveTextContent("Queue clear");
+    // No frozen-deck summary survives.
+    expect(screen.queryByTestId("process-session-summary")).not.toBeInTheDocument();
   });
 
-  it("T118: assembled mode recovers when the accepted plan state is missing", async () => {
-    h.search = { assembled: 1 };
+  it("queue-as-session: end-of-order surfaces newly-arrived work as a 'Keep going' affordance", async () => {
+    // Start with one item; after it drains, the end-of-order re-read sees a second,
+    // not-yet-seen item — surfaced as user-driven continuation, not a silent extend.
+    h.listQueue
+      .mockResolvedValueOnce({
+        ...h.result,
+        items: [h.result.items[0]],
+        counts: { ...h.result.counts, all: 1 },
+      })
+      // post-skip reprice (gauge): still one item
+      .mockResolvedValueOnce({
+        ...h.result,
+        items: [h.result.items[0]],
+        counts: { ...h.result.counts, all: 1 },
+      })
+      // end-of-order check: a new item has arrived
+      .mockResolvedValue({
+        ...h.result,
+        items: [h.result.items[0], h.result.items[1]],
+        counts: { ...h.result.counts, all: 2 },
+      });
 
     render(<ProcessQueue />);
+    await screen.findByTestId("process-item");
+    fireEvent.click(screen.getByTestId("process-action-skip"));
 
-    expect(await screen.findByTestId("process-session-expired")).toHaveTextContent(
-      "Session plan expired",
-    );
-    expect(h.listQueue).not.toHaveBeenCalled();
+    expect(await screen.findByTestId("process-keep-going")).toBeInTheDocument();
+    expect(screen.getByTestId("process-newwork")).toHaveTextContent("new item");
+  });
+
+  it("queue-as-session: the soft wrap-up nudge fires at the target and 'Keep going' dismisses it without re-nagging", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      h.search = { target: 1 };
+      render(<ProcessQueue />);
+      await screen.findByTestId("process-item");
+      expect(screen.queryByTestId("process-wrapup")).not.toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(61_000);
+      });
+      expect(screen.getByTestId("process-wrapup")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId("process-wrapup-keep"));
+      expect(screen.queryByTestId("process-wrapup")).not.toBeInTheDocument();
+
+      // Keep going suppresses re-nagging for the rest of the session.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(61_000);
+      });
+      expect(screen.queryByTestId("process-wrapup")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("queue-as-session: with no reference target at all, the wrap-up nudge never fires", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      // No ?target= AND a zero daily budget → no reference line → no nudge.
+      h.listQueue.mockResolvedValue({
+        ...h.result,
+        minuteBudget: { usedMinutes: 0, targetMinutes: 0, confidence: "default" },
+      });
+      render(<ProcessQueue />);
+      await screen.findByTestId("process-item");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000);
+      });
+      expect(screen.queryByTestId("process-wrapup")).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("T076: the 'N left' counter reflects the FULL mixed deck, not a type-filtered slice", async () => {
