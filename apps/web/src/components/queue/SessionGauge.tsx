@@ -68,7 +68,8 @@ export function SessionGauge({
     composition && composition.status !== "unavailable_no_time_estimate"
       ? Math.round(composition.distillationMinutes)
       : null;
-  const distillText = !done && distillMin != null && distillMin > 0 ? `${distillMin} distill` : null;
+  const distillText =
+    !done && distillMin != null && distillMin > 0 ? `${distillMin} distill` : null;
 
   const spoken = done
     ? `${elapsedMin} minutes elapsed; queue clear.`

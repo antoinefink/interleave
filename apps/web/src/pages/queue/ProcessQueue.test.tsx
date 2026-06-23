@@ -2514,15 +2514,16 @@ describe("ProcessQueue", () => {
     expect(screen.getByTestId("process-progress").textContent).toBe(progressAfterSkip);
   });
 
-  it("queue-as-session: each action re-prices the gauge from the live queue", async () => {
+  it("queue-as-session: a mutating action re-prices the gauge from the live queue", async () => {
     render(<ProcessQueue />);
     await screen.findByTestId("process-item");
     h.listQueue.mockClear();
 
-    fireEvent.click(screen.getByTestId("process-action-skip"));
+    // dismiss is a real mutation → advance the cursor AND fire an ambient reprice
+    // (a fresh listQueue read). A pure skip would NOT reprice (the due set is unchanged).
+    fireEvent.click(screen.getByTestId("process-action-dismiss"));
 
-    // skip advances the cursor AND fires an ambient reprice (a fresh listQueue read).
-    await waitFor(() => expect(h.listQueue).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(h.listQueue).toHaveBeenCalled());
     expect(h.listQueue).toHaveBeenCalledWith(
       expect.objectContaining({ includeTimeEstimate: true }),
     );
@@ -2549,18 +2550,14 @@ describe("ProcessQueue", () => {
     // Start with one item; after it drains, the end-of-order re-read sees a second,
     // not-yet-seen item — surfaced as user-driven continuation, not a silent extend.
     h.listQueue
+      // mount rebuild: a single item
       .mockResolvedValueOnce({
         ...h.result,
         items: [h.result.items[0]],
         counts: { ...h.result.counts, all: 1 },
       })
-      // post-skip reprice (gauge): still one item
-      .mockResolvedValueOnce({
-        ...h.result,
-        items: [h.result.items[0]],
-        counts: { ...h.result.counts, all: 1 },
-      })
-      // end-of-order check: a new item has arrived
+      // end-of-order check (skip is a pure advance, so this is the next read): a new
+      // item has arrived while the user worked.
       .mockResolvedValue({
         ...h.result,
         items: [h.result.items[0], h.result.items[1]],

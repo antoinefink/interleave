@@ -7,8 +7,9 @@
  * the shared demo collection, manufactures a mixed due set of ≥10 items (the seeded
  * cards + extracts created via the existing `extractions.create` bridge), then:
  *
- *   1. opens the session preview from the queue's "Start session", then starts the
- *      assembled `/process` deck (date-scoped via `?asOf=` so near-future due dates read as due);
+ *   1. opens the session forecast from the queue's "Start session", then starts the
+ *      live `/process` loop with a non-binding `?target=` box (date-scoped via `?asOf=`
+ *      so near-future due dates read as due) — no frozen deck, no expirable state;
  *   2. processes each item one at a time with a MIX of actions (done / postpone /
  *      raise / lower / skip), asserting only ONE item shows at a time, the cursor
  *      advances after each action, and the URL never leaves `/process` (no return to
@@ -189,21 +190,27 @@ test("Start session opens the loop, which shows ONE element at a time", async ()
   await page.getByTestId("queue-start-session").click();
   await expect(page.getByTestId("session-preview")).toBeVisible();
   await expect(page.getByTestId("session-cut-list")).toBeVisible();
-  const plannedMinutes = await page.getByTestId("session-planned-minutes").innerText();
-  const completedMinutes = await page
-    .getByTestId("session-planned-row-minutes")
-    .first()
-    .innerText();
-  const cutCount = await page.getByTestId("session-cut-count").innerText();
   await page.getByTestId("session-preview-start").click();
   await expect(page.getByTestId("route-process")).toBeVisible();
   expect(new URL(page.url()).pathname).toBe("/process");
-  expect(new URL(page.url()).searchParams.get("assembled")).toBe("1");
+  // Demoted forecast: Start carries a non-binding ?target= box, NOT a frozen ?assembled= deck.
+  expect(new URL(page.url()).searchParams.get("assembled")).toBeNull();
+  expect(Number(new URL(page.url()).searchParams.get("target"))).toBeGreaterThan(0);
 
-  // Exactly ONE process item is shown (the cursor item), with a progress readout.
+  // Exactly ONE process item is shown (the cursor item), with the live mode controls
+  // and the ambient minute gauge — no assembled "Planned deck" chrome, no expired state.
   await expect(page.getByTestId("process-item")).toHaveCount(1);
   await expect(page.getByTestId("process-progress")).toBeVisible();
-  await expect(page.getByTestId("process-assembled-mode")).toBeVisible();
+  await expect(page.getByTestId("process-modes")).toBeVisible();
+  await expect(page.getByTestId("process-gauge")).toBeVisible();
+  await expect(page.getByTestId("process-assembled-mode")).toHaveCount(0);
+  await expect(page.getByTestId("process-session-expired")).toHaveCount(0);
+
+  // Reloading mid-stream resumes the live queue — it can never "expire".
+  await page.reload();
+  await page.waitForLoadState("domcontentloaded");
+  await expect(page.getByTestId("process-item")).toHaveCount(1);
+  await expect(page.getByTestId("process-session-expired")).toHaveCount(0);
 
   let processed = 0;
   for (let i = 0; i < 20; i++) {
@@ -236,18 +243,10 @@ test("Start session opens the loop, which shows ONE element at a time", async ()
 
   expect(processed).toBeGreaterThan(0);
   await expect(page.getByTestId("process-done")).toBeVisible();
-  await expect(page.getByTestId("process-session-summary")).toContainText(
-    `Planned ${plannedMinutes}`,
-  );
-  await expect(page.getByTestId("process-session-summary")).toContainText(
-    `Completed ${completedMinutes.replace(/^~/, "")}`,
-  );
-  // The Plan session styles its left-out header as an uppercase section label,
-  // so `innerText()` reads it uppercased; the /process summary renders the same
-  // count in sentence case. Compare the carried-through count case-insensitively.
-  await expect(page.getByTestId("process-session-summary")).toContainText(
-    new RegExp(cutCount.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"),
-  );
+  // The live-serve loop ends on the honest "Queue clear" state — the frozen-deck
+  // planned/completed/cut session summary is gone.
+  await expect(page.getByTestId("process-done")).toContainText("Queue clear");
+  await expect(page.getByTestId("process-session-summary")).toHaveCount(0);
 
   await app.close();
 });
