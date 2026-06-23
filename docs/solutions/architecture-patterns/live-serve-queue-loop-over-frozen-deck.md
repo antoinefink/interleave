@@ -64,6 +64,34 @@ disruption in a live-serve model (the order changes on every read).
 A pure *skip* (cursor advance, no DB change) must NOT reprice — the due set is unchanged.
 Only mutations (act/grade/schedule/lineage-delete) reprice.
 
+**Guard the many fire-and-forget reads with a single-flight token + a mounted ref.** Once
+several `void repriceDeck()` calls fire from different sites (each action, the queueRefresh
+listener, the busy-clear flush, the end-of-order check), they race: with no ordering guard
+the *later-resolving* read wins regardless of start order, and a stale reconcile resolving
+*after* a `rebuildDeck` re-pollutes the freshly-reset seen-id set — which permanently
+suppressed the end-of-order "keep going". The fix is two refs, not a fetching library:
+
+- `loadSeqRef` — every read (rebuild + reprice + end-of-order) bumps it at START and
+  captures its value; after the await it applies its result only if it is still the latest
+  (`seq === loadSeqRef.current`). Newest-started read wins; stale in-flight reads bail
+  *before* mutating `seenIdsRef` / `setOrder` / the gauge.
+- `mountedRef` — set false in an unmount effect; checked alongside the seq so a read
+  resolving after navigation never `setState`s a dead tree.
+
+This is the load-bearing lesson of moving from a frozen deck to a live loop: you trade
+"expired session" bugs for "concurrent read" bugs, and a start-order single-flight token is
+the smallest thing that removes the whole class.
+
+**Extract the reconciliation into a pure helper.** The order/cursor reconcile (anchor-by-id,
+prefix preservation, nearest-surviving fallback, append-new, the was-drained clamp) is the
+densest, most regression-prone logic in the change. Inlined in an async callback it is only
+reachable through a full `listQueue` mock, so its branches were effectively untested. Pulling
+it out as a pure `reconcileOrder(prevOrder, prevCursor, fresh) -> { nextOrder, nextCursor,
+newlySeenIds }` (it depends only on those three inputs; the refs are just call-site plumbing)
+makes every branch a table-test without a React/IPC harness — and is where the
+"finished deck stays finished" clamp lives so new work always routes through the explicit
+"keep going" affordance, never a silent resume.
+
 **Drive the ambient gauge from backend-priced minutes only.** "Remaining" is
 `timeEstimate.totalMinutes` (the full filtered due universe, server-priced); "elapsed" is
 wall-clock. The renderer never sums per-item minutes itself. Keep the gauge component's own
