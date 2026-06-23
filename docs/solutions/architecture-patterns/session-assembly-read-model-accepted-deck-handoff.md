@@ -26,6 +26,24 @@ tags:
 
 # Assemble minute-sized sessions as read-only queue plans with one-shot deck handoff
 
+> **Update (2026-06-23) — the accepted-deck handoff and expired-plan state were removed.**
+> The "queue-as-session" refactor replaced the frozen one-shot deck in `/process` with a
+> continuous **live-serve loop** over the live scored queue, and demoted the session
+> preview to a **non-binding forecast** + ambient minute gauge. The `assembled=1` param,
+> the in-memory `sessionAssemblyState` handoff, and the "Session plan expired" dead-end
+> are gone — so an expired session is now impossible to express.
+>
+> What the expired guard protected ("don't make the user execute work they did not
+> accept") is preserved differently: the user never accepts a frozen set, so serving the
+> live queue's current best item is always legitimate. **The read-only-preview invariant
+> below still holds** — the forecast/gauge append no `operation_log`, change no schedules,
+> and grade nothing; progress still flows only through command-shaped queue/review
+> actions. See
+> [`live-serve-queue-loop-over-frozen-deck.md`](./live-serve-queue-loop-over-frozen-deck.md)
+> for the replacement pattern (including the distillation-quota interaction). The pure
+> `planSession` / `SessionPlanQuery.preview()` / time-cost read models documented here are
+> unchanged — only the renderer's *binding* consumption of them changed.
+
 ## Context
 
 T118 needed a way to let users choose a time box, preview exactly what due work fits, then start `/process` with that exact deck. The existing process loop reads the live due queue directly, which is right for an open-ended session but wrong for a planned session: a previewed plan needs stable membership, stable order, honest minute accounting, and no hidden mutations during preview.

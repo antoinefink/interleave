@@ -244,9 +244,21 @@ The quota changes daily composition, not due dates or priority scores. When no d
 
 ### Session assembly
 
-The read-only process that selects a bounded deck of current Due queue work to fit a target amount of estimated time before handing that exact deck to the processing loop.
+The read-only process that previews a bounded slice of current Due queue work for a target amount of estimated time, as a non-binding forecast before the user starts processing.
 
-Session assembly is distinct from Auto-postpone: it does not move work or change schedules. Acceptance creates a short-lived execution handoff, not a durable scheduling decision.
+Session assembly is distinct from Auto-postpone: it does not move work or change schedules. As of the queue-as-session model it no longer freezes a deck or creates an execution handoff — starting a session serves the live Due queue directly (the chosen time becomes the [[Time-budget gauge]]'s reference), so there is no accepted deck that can be lost or expire.
+
+### Live-served session
+
+A processing sitting that serves the next best item directly from the live Due queue, re-deriving "what's next" rather than walking a frozen snapshot.
+
+A Live-served session has no durable session object: reopening the processing loop resumes at the current best item with no data loss, and a cross-surface queue change reconciles the running order in place instead of restarting it. It ends when the queue drains (an honest empty state) or the user stops — never at a fixed deck boundary.
+
+### Time-budget gauge
+
+The ambient, adaptive readout of elapsed time against the live estimated remaining Due queue minutes shown during a [[Live-served session]].
+
+The Time-budget gauge informs rather than gates: when elapsed crosses the reference box (an explicit session target or the [[Daily budget]]) it raises a soft, dismissible "wrap up or keep going?" nudge, never a hard stop. Its minutes come from the trusted [[Queue time estimate]] (full filtered due universe, confidence-labeled); the renderer never re-prices locally.
 
 ### Auto-postpone
 
